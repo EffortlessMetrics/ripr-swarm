@@ -377,7 +377,8 @@ fn files_in_skipped_unit_test_targets(
 ///   attribute-position `path` token, since its expansion can mount any
 ///   file (`mod /* c */ $n;`); a macro without them, such as `($e:expr) =>
 ///   { $e * 2 }`, is no doubt;
-/// - any `include` token other than an `include!` (any delimiter) whose
+/// - any `include` token other than a plain metavariable or an `include!`
+///   (any delimiter) whose
 ///   operand is a string literal naming a `.rs` file: a generated
 ///   `include!(concat!(env!("OUT_DIR"), ..))`, an `include!("gen.inc")` the
 ///   scan does not read (it reads only `.rs` sources), and an alias such as
@@ -390,6 +391,7 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
     let tokens = mount_tokens(source);
     let ident = |at: usize, name: &str| matches!(tokens.get(at), Some(MountToken::Ident(word)) if word == name);
     let punct = |at: usize, mark: char| matches!(tokens.get(at), Some(MountToken::Punct(found)) if *found == mark);
+    let is_metavariable = |at: usize| at.checked_sub(1).is_some_and(|prev| punct(prev, '$'));
     // A literal with an escape (`"\u{73}hared.rs"`) decodes to a name the
     // substring scan cannot match, so it names no source the scan can tie
     // back (#14962 review, Devin).
@@ -424,6 +426,7 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
             return true;
         }
         if ident(at, "include")
+            && (!is_metavariable(at) || punct(at + 1, '!'))
             && !(punct(at + 1, '!')
                 && (punct(at + 2, '(') || punct(at + 2, '{') || punct(at + 2, '['))
                 && names_rust_source(at + 3))
@@ -441,9 +444,7 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
             return true;
         }
         if ident(at, "mod")
-            && (punct(at + 1, '$')
-                || (invocation_depth > 0
-                    && !at.checked_sub(1).is_some_and(|prev| punct(prev, '$'))))
+            && (punct(at + 1, '$') || (invocation_depth > 0 && !is_metavariable(at)))
         {
             return true;
         }
@@ -476,12 +477,13 @@ fn macro_body_may_mount(tokens: &[MountToken], from: usize, first_group_only: bo
                         matches!(tokens.get(near), Some(MountToken::Punct(':')))
                     })
                 };
+                let metavariable = at > 0 && matches!(tokens[at - 1], MountToken::Punct('$'));
                 let mounts = match word.as_str() {
-                    // A metavariable named `$mod` is not a `mod` keyword.
-                    "mod" => !at.checked_sub(1).is_some_and(|previous| {
-                        matches!(tokens.get(previous), Some(MountToken::Punct('$')))
-                    }),
-                    "include" => true,
+                    "mod" => !metavariable,
+                    // A metavariable followed by `!` can expand to a mount.
+                    "include" => {
+                        !metavariable || matches!(tokens.get(at + 1), Some(MountToken::Punct('!')))
+                    }
                     "path" => !in_path(at.checked_sub(1)) && !in_path(Some(at + 1)),
                     _ => false,
                 };
@@ -1970,6 +1972,7 @@ mod tests {
             "macro_rules! m { ($n:ident) => { const U: &str = r#\"/*\"#; mod/*c*/$n; }; }",
             // Any `mod`, `include` or attribute `path` in a macro body.
             "macro_rules! m { ($f:literal) => { include!($f); }; }",
+            "macro_rules! m { ($include:ident, $f:literal) => { $include!($f); }; }",
             "macro_rules! m [ ($n:ident) => { pub mod $n {} } ];",
             "macro_rules! m { ($a:meta) => { #[$a] mod inner; }; }",
             "macro m($n:ident) { mod $n; }",
@@ -1987,6 +1990,7 @@ mod tests {
         for plain in [
             "macro_rules! twice { ($e:expr) => { $e * 2 }; }",
             "macro_rules! m { ($mod:ident) => { $mod::One }; }\nmod tests {}",
+            "macro_rules! m { ($include:expr) => { $include }; }",
             "include!(\"gen.rs\");",
             "include!{\"gen.rs\"}",
             "include![\"gen.rs\"];",

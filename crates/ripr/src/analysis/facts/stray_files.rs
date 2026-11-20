@@ -75,7 +75,7 @@ pub(super) fn never_compiled(
     let mut uncertain_source = None;
     for (path, facts) in index.files().iter() {
         let source: &str = &facts.source;
-        if (may_build_mount_operands(source) || spells_a_path_with_escapes(source))
+        if (spells_a_path_with_escapes(source) || may_build_mount_operands(source))
             && uncertain_source.replace(path).is_some()
         {
             // At least one source other than each candidate could mount it.

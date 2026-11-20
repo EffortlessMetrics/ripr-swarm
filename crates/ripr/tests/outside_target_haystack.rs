@@ -16,8 +16,9 @@ const HAY_SOURCE: &str =
 // The same text with a token the reference parser refuses, so it is indexed
 // lexically.
 const REFUSED_HAY_SOURCE: &str = "use keyed::discount;\n#[test]\nfn corpus_case() {\n    assert_eq!(discount(10), 5);\n}\nmacro_rules! declare { ($name:ident) => { mod $name; } }\nfn broken( {\n";
-// A metavariable name can spell a keyword without declaring a module.
-const ORDINARY_MACRO: &str = "macro_rules! value { ($mod:ident) => { $mod }; }\n";
+// A metavariable name can spell a mount token without generating a mount.
+const ORDINARY_MACRO: &str =
+    "macro_rules! value { ($mod:ident, $include:expr) => { ($mod, $include) }; }\n";
 const TESTS: &str = "use keyed::discount;\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(10), 5);\n}\n";
 const MANIFEST: &str = "[package]\nname = \"keyed\"\nversion = \"0.0.0\"\nedition = \"2024\"\nexclude = [\"/benchmarks\"]\n";
 const LIB: &str = "pub fn discount(q: u32) -> u32 {\n    if q > 9 { 5 } else { 0 }\n}\n";
