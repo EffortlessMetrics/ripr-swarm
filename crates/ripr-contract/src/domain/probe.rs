@@ -285,8 +285,8 @@ impl StopReason {
 /// repo-mode probes cover existing code with no diff at all.
 ///
 /// A probe is static evidence. It names where the behavior is and what kind
-/// of oracle could discriminate it; it does not claim that any mutant of the
-/// line survives or is killed.
+/// of oracle could discriminate it; it makes no claim about any runtime
+/// mutation outcome for the line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probe {
     /// Identifier for this probe within one run. A [`Finding`] built from the
