@@ -19,3 +19,7 @@ The analyzer checks the edit against those two calls.
 
 The comparison can evaluate differently while the returned Boolean stays false.
 The return-value finding reads `propagation_unknown` and names the gate.
+
+## Must Not
+
+- Credit the return-value finding because the test asserts a Boolean. With the unchanged gate closed, both versions return false on both calls.
