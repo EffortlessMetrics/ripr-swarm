@@ -8977,7 +8977,11 @@ mod tests {
     /// A mixed repository must get one snippet that keeps the languages
     /// already enabled: a `["rust", "typescript"]` snippet would switch off
     /// Python, and the next doctor run would then suggest `["rust",
-    /// "python"]`, undoing the first edit.
+    /// "python"]`, undoing the first edit. The `rust` written in
+    /// `[languages].enabled` is kept too, though no Rust marker is found:
+    /// markers are shallow, and dropping an explicit entry would switch off
+    /// Rust in a repository that keeps it below `rust/` (#15304). Only the
+    /// built-in default is left out (#7648).
     #[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
     #[test]
     fn doctor_enable_tip_keeps_already_enabled_languages() -> Result<(), String> {
@@ -9004,13 +9008,8 @@ mod tests {
             suggestions[0]
         );
         assert!(
-            suggestions[0].contains(r#"enabled = ["python", "typescript"]"#),
-            "the snippet must keep python and omit undetected rust; got:\n{}",
-            suggestions[0]
-        );
-        assert!(
-            !suggestions[0].contains(r#""rust""#),
-            "no Rust markers means the tip must not name rust; got:\n{}",
+            suggestions[0].contains(r#"enabled = ["rust", "python", "typescript"]"#),
+            "the snippet must keep the explicitly enabled rust and python; got:\n{}",
             suggestions[0]
         );
         assert_eq!(
