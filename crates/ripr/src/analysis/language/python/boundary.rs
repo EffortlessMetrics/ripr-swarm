@@ -2378,7 +2378,12 @@ pub(super) fn unresolved_loop_list_boundary(
         return false;
     };
     let unspaced = |text: &str| text.split_whitespace().collect::<String>();
-    if unspaced(&new) != unspaced(&format!("{left}{new_op}{right}")) {
+    // The one exception is the `None`-seeded selector's own guard,
+    // `best is None or x > best`: `is None` has no effect and only holds
+    // before the first element is taken (checked with the body below).
+    let none_guarded =
+        unspaced(&new) == unspaced(&format!("{right} is None or {left}{new_op}{right}"));
+    if !none_guarded && unspaced(&new) != unspaced(&format!("{left}{new_op}{right}")) {
         return false;
     }
     // Only the complete accumulator-selection owner is understood here. An
@@ -2432,7 +2437,8 @@ pub(super) fn unresolved_loop_list_boundary(
                 return false;
             };
             let indent = indentation(definition);
-            !iterator_name.is_empty()
+            !none_guarded
+                && !iterator_name.is_empty()
                 && owner
                     .parameters
                     .get(1)
@@ -2461,14 +2467,22 @@ pub(super) fn unresolved_loop_list_boundary(
             if line == owner.start_line + 3 =>
         {
             let indent = indentation(definition);
-            initial.trim() == format!("{right} = {}[0]", parameter.name)
-                // `for x in xs:` also visits `xs[0]` first; comparing it with
-                // itself either keeps `best` or rebinds it to the same object.
-                && [
-                    format!("for {left} in {}[1:]:", parameter.name),
-                    format!("for {left} in {}:", parameter.name),
-                ]
-                .contains(&loop_line.trim().to_string())
+            let seeded = if none_guarded {
+                // `best = None` takes the first element through the guard,
+                // then compares the rest exactly as the `xs[0]` forms do.
+                initial.trim() == format!("{right} = None")
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else {
+                initial.trim() == format!("{right} = {}[0]", parameter.name)
+                    // `for x in xs:` also visits `xs[0]` first; comparing it
+                    // with itself keeps `best` or rebinds it to the same object.
+                    && [
+                        format!("for {left} in {}[1:]:", parameter.name),
+                        format!("for {left} in {}:", parameter.name),
+                    ]
+                    .contains(&loop_line.trim().to_string())
+            };
+            seeded
                 && condition.trim() == line_text.trim()
                 && update.trim() == format!("{right} = {left}")
                 && result.trim() == format!("return {right}")

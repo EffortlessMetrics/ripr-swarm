@@ -4814,6 +4814,102 @@ fn loop_boundary_full_list_loop_keeps_identity_and_other_bodies() -> Result<(), 
 }
 
 #[test]
+fn loop_boundary_none_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = None` takes the first element through `best is None`, then
+    // compares the rest like the `xs[0]` forms, so equal integers select an
+    // equal value under either operator.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    for (before, after, expected) in [
+        (
+            "        if best is None or x > best:",
+            "        if best is None or x >= best:",
+            5,
+        ),
+        (
+            "        if best is None or x < best:",
+            "        if best is None or x <= best:",
+            1,
+        ),
+    ] {
+        let source = source.replace("        if best is None or x >= best:", after);
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_none_guard_needs_its_own_seed_and_shape() -> Result<(), String> {
+    let edit = (
+        "        if best is None or x > best:",
+        "        if best is None or x >= best:",
+    );
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    for (label, source) in [
+        // Seeded from the list, the guard never holds, but the shape is not
+        // the one the guard belongs to; it is left to the prior reading.
+        (
+            "xs[0] seed",
+            "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // A guard on another name than the accumulator is a different test.
+        (
+            "guard on another name",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if x is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // The guard spelled with `and` is not a selector at all.
+        (
+            "and instead of or",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None and x >= best:\n            best = x\n    return best\n",
+        ),
+        // The iterator form has its own seed; the guard does not belong there.
+        (
+            "iterator form",
+            "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+    ] {
+        let (before, after) = if label == "guard on another name" {
+            (
+                "        if x is None or x > best:",
+                "        if x is None or x >= best:",
+            )
+        } else if label == "and instead of or" {
+            (
+                "        if best is None and x > best:",
+                "        if best is None and x >= best:",
+            )
+        } else {
+            edit
+        };
+        let line = if label == "iterator form" { 8 } else { 4 };
+        let finding = classify_edit_case(source, tests, line, before, after)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // Identity still tells `>` from `>=` on equal keys.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(source, identity, 4, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "identity: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_edit_that_also_changes_the_rest_of_the_condition_keeps_prior_class()
 -> Result<(), String> {
     let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
