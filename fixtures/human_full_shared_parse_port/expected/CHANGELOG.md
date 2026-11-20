@@ -382,3 +382,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — human_full_shared_parse_port (30)
+
+Reason:
+RIPR-SPEC-0229 (#15359): repair no longer reads a match arm no test input selects as strongly gripped, so its no-repair-start reason matches check
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -191,3 +191,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (16)
+
+Reason:
+RIPR-SPEC-0229 (#15359): repair no longer reads a match arm no test input selects as strongly gripped, so its no-repair-start reason matches check
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

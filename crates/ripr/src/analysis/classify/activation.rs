@@ -4607,24 +4607,7 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
     related_tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
-    let source_line = owner
-        .body
-        .lines()
-        .nth(line.checked_sub(owner.start_line)?)?
-        .trim()
-        .to_string();
-    let probe = Probe {
-        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
-        location: SourceLocation::new(file, line, 1),
-        owner: Some(owner.id.clone()),
-        family: ProbeFamily::MatchArm,
-        delta: DeltaKind::Control,
-        before: None,
-        after: Some(source_line.clone()),
-        expression: source_line,
-        expected_sinks: Vec::new(),
-        required_oracles: Vec::new(),
-    };
+    let probe = repo_seam_arm_probe(file, line, owner)?;
     // The selector read is cheap and refuses most arms (a computed or
     // guarded arm, a non-parameter scrutinee) before the workspace lookups.
     super::arm_selection::ArmSelector::establish(&probe, owner)?;
@@ -4643,6 +4626,128 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
         })
     });
     (!imports_foreign).then_some(fact)
+}
+
+/// The probe a repo `match_arm` seam reads as: the owner's own source line
+/// at the seam, as an arm whose pattern did not change.
+fn repo_seam_arm_probe(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+) -> Option<Probe> {
+    let source_line = owner
+        .body
+        .lines()
+        .nth(line.checked_sub(owner.start_line)?)?
+        .trim()
+        .to_string();
+    Some(Probe {
+        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
+        location: SourceLocation::new(file, line, 1),
+        owner: Some(owner.id.clone()),
+        family: ProbeFamily::MatchArm,
+        delta: DeltaKind::Control,
+        before: None,
+        after: Some(source_line.clone()),
+        expression: source_line,
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    })
+}
+
+/// #15359: whether some related test's direct owner call passes an input
+/// the shared arm reading ([`super::arm_selection::ArmSelector`]) reads as
+/// selecting the `match_arm` seam on `line` of `owner`. A call to the owner
+/// runs the `match`, not every arm of it, so only this reading shows that a
+/// test runs the arm. A guarded arm, a scrutinee computed inside the owner
+/// (`match (a.parse::<u64>(), b.parse::<u64>())`), or an input the reading
+/// cannot resolve reads `false`: the arm may run or not, and nothing shows
+/// which.
+pub(in crate::analysis) fn repo_seam_arm_selected(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let Some(probe) = repo_seam_arm_probe(file, line, owner) else {
+        return false;
+    };
+    let Some(selector) = super::arm_selection::ArmSelector::establish(&probe, owner) else {
+        return false;
+    };
+    // A selecting input names the owner only when a bare call reaches it:
+    // a trait method runs from calls that never name it, a same-named
+    // function elsewhere makes the call ambiguous, and a test file that
+    // imports the name from a foreign path may call that item instead
+    // (#15359 review; the same identity refusals as the unselected reading).
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
+        return false;
+    }
+    // A same-named method on another type (`Other::rate` beside
+    // `Window::rate`) leaves the name ambiguous, but an inherent method
+    // call whose receiver the test built as the owner's own impl type
+    // (`let window = Window { .. }; window.rate(..)`) resolves to the owner
+    // (#15359 CI): there every mention of the name in the test must be such
+    // a call.
+    // The receiver reading compares bare type names, so another method of
+    // that name on the same bare type (a `Window<Silver>` impl beside
+    // `Window<Gold>`, or a trait method, which a by-value receiver may
+    // reach first) leaves the call ambiguous (#15359 review).
+    let unique = super::helper_transfer::callee_is_unique(&owner.name, index);
+    let inherent_method = matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) && owner.item.has_self_param
+        && super::helper_transfer::impl_self_type(owner).is_some_and(|self_type| {
+            index
+                .functions()
+                .iter()
+                .filter(|function| {
+                    function.name == owner.name
+                        && !(function.file == owner.file && function.start_line == owner.start_line)
+                })
+                .all(|function| {
+                    super::helper_transfer::impl_self_type(function)
+                        .is_some_and(|other| other != self_type)
+                })
+        });
+    if !unique && !inherent_method {
+        return false;
+    }
+    let selector =
+        selector.in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    let context =
+        super::context::ProbeContext::new(&probe, Some(owner), Vec::new(), false, index, true);
+    related_tests.iter().any(|test| {
+        let imports_foreign = index.files().get(&test.file).is_some_and(|facts| {
+            context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
+        });
+        let identity = unique
+            || test
+                .body
+                .lines()
+                .filter(|line| {
+                    !super::owner_pin::whole_word_offsets(
+                        &crate::analysis::extract::mask_comments_and_strings(line),
+                        &owner.name,
+                    )
+                    .is_empty()
+                })
+                .all(|line| {
+                    super::helper_transfer::receivers_are_entry_type(index, test, owner, line)
+                });
+        identity
+            && !imports_foreign
+            && selector.observed_inputs(test).is_some_and(|observed| {
+                observed.selection == super::arm_selection::ArmSelection::Selects
+            })
+    })
 }
 
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
