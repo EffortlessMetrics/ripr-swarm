@@ -429,10 +429,12 @@ a gitlink (#10648).
   retry spends only the remaining `--timeout` (skipped below one second) and
   is labeled on stderr only after its result replaces the output, never
   through the progress stream; its git probes honor `--git-timeout`.
-  The retry's stderr disclosures (deletion-only, rename, submodule and the
-  other post-analysis notes) are buffered and print, before that label, only
-  when its result replaces the output; a discarded retry prints none of them
-  (#15330).
+  The retry's post-analysis diff disclosures (deletion-only, rename,
+  submodule, symlink, unanalyzed, artifact, zero-file and truncated-stream
+  notes) are buffered and print, before that label, only when its result
+  replaces the output; a discarded retry prints none of them (#15330). Other
+  stderr lines (the committed-history missing-path note and `--verbose`
+  diagnostics) still print as the retry runs.
 
 ## Metrics
 
