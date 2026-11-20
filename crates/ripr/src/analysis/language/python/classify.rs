@@ -131,7 +131,7 @@ pub(super) fn classify_change_with_source(
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct PythonNoBehaviorContext {
+pub(super) struct PythonNoBehaviorContext<'a> {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
     /// The changed line lies in the body of `if TYPE_CHECKING:`, which never
@@ -144,7 +144,7 @@ pub(super) struct PythonNoBehaviorContext {
     /// comment-looking change there edits the string (#10706).
     pub(super) new_line_in_multiline_string: bool,
     /// Bracket-continuation facts for the changed line (#13875).
-    pub(super) brackets: BracketLine,
+    pub(super) brackets: BracketLine<'a>,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -210,7 +210,7 @@ pub(super) fn classify_change_with_context(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &[PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
 ) -> Option<Finding> {
     classify_change_full(
@@ -238,7 +238,7 @@ pub(super) fn classify_change_with_value_origins<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     origins: &mut crate::value_origins::ValueOrigins,
     related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -272,7 +272,7 @@ fn classify_change_full<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -432,7 +432,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     mut value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -489,7 +489,7 @@ fn classify_change_for_owner_inner<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -518,8 +518,7 @@ fn classify_change_for_owner_inner<'a>(
     {
         return None;
     }
-    let statement_text =
-        bare_string_statement_text(line_text, no_behavior.brackets.span, owner_source);
+    let statement_text = bare_string_statement_text(line_text, no_behavior.brackets, owner_source);
     let (family, delta) = classify_probe_shape_with_old(
         statement_text.as_deref().unwrap_or(line_text),
         old_line_text,

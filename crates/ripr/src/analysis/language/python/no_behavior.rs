@@ -31,33 +31,30 @@ pub(super) fn is_python_no_behavior_line(line: &str) -> bool {
 }
 
 /// Whether a line is a comment, blank, or bare-string no-op, for a line whose
-/// position is known: a line
-/// that starts inside an open `(`, `[` or `{` is an argument or element, not a
-/// statement, so a bare string there (often one part of an implicit
-/// concatenation, `raise E(\n    "a"\n    " b")`) is a changed value and
-/// carries behavior (#13875). Blank and comment lines stay no-ops anywhere.
-pub(super) fn is_python_no_behavior_line_at(line: &str, inside_brackets: bool) -> bool {
+/// position is known. A bare string continuing an expression contributes to
+/// its value, including through implicit concatenation (#13875, #13888).
+/// Blank and comment lines stay no-ops anywhere.
+pub(super) fn is_python_no_behavior_line_at(line: &str, continues_expression: bool) -> bool {
     let trimmed = line.trim();
     trimmed.is_empty()
         || trimmed.starts_with('#')
-        || (!inside_brackets && is_bare_string_literal_statement(trimmed))
+        || (!continues_expression && is_bare_string_literal_statement(trimmed))
 }
 
-/// Bracket-continuation evidence for one changed file, from one lex of each
+/// Continuation evidence for one changed file, from one lex of each
 /// side (#13875). A side that does not lex counts every line as inside
 /// brackets; with no rebuilt old file there is no old evidence at all, so an
 /// old line keeps the docstring reading.
 pub(super) struct BracketEvidence {
-    new: Option<Vec<std::ops::RangeInclusive<usize>>>,
-    old: Option<Vec<std::ops::RangeInclusive<usize>>>,
+    new: Option<ContinuationRanges>,
+    old: Option<ContinuationRanges>,
     has_old: bool,
 }
 
 /// The bracket facts of one changed line, as the classifier reads them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct BracketLine {
-    /// The new line starts inside an open bracket, so a bare string on it is
-    /// an argument, not a docstring (#13875). True when the file did not lex.
+pub(super) struct BracketLine<'a> {
+    /// True for an expression continuation or when the new file did not lex.
     pub(super) new_in: bool,
     /// The same for the paired old line, against the rebuilt old source.
     pub(super) old_in: bool,
@@ -65,6 +62,10 @@ pub(super) struct BracketLine {
     /// the new line continues, when the file lexed. A bare string there takes
     /// the statement's probe shape, not a bare string's.
     pub(super) span: Option<(usize, usize)>,
+    /// Byte bounds exclude neighboring simple statements on the same line.
+    pub(super) explicit_bytes: Option<(usize, usize)>,
+    /// Physical lines whose terminal backslash the lexer consumed as a join.
+    pub(super) join_lines: &'a [usize],
 }
 
 impl BracketEvidence {
@@ -83,19 +84,32 @@ impl BracketEvidence {
 
     pub(super) fn read(new_source: Option<&str>, old_source: Option<&str>) -> Self {
         Self {
-            new: new_source.and_then(bracket_continuation_line_ranges),
-            old: old_source.and_then(bracket_continuation_line_ranges),
+            new: new_source.and_then(continuation_line_ranges),
+            old: old_source.and_then(continuation_line_ranges),
             has_old: old_source.is_some(),
         }
     }
 
     /// The classifier's bracket facts for new-side `line` paired with
     /// old-side `old_line`.
-    pub(super) fn line(&self, line: usize, old_line: Option<usize>) -> BracketLine {
+    pub(super) fn line(&self, line: usize, old_line: Option<usize>) -> BracketLine<'_> {
+        let ranges = self.new.as_ref();
+        let span = ranges.and_then(|ranges| enclosing_statement(&ranges.lines, line));
+        let explicit = span.and_then(|_| {
+            ranges?
+                .explicit_statements
+                .iter()
+                .find(|statement| statement.open < line && line <= statement.close)
+        });
         BracketLine {
-            new_in: self.new_line_in(line),
+            new_in: ranges.is_none() || span.is_some(),
             old_in: old_line.is_some_and(|old| self.old_line_in(old)),
-            span: self.new_statement_span(line),
+            span: explicit.map(|s| (s.open, s.close)).or(span),
+            explicit_bytes: explicit.map(|s| (s.start, s.end)),
+            join_lines: self
+                .new
+                .as_ref()
+                .map_or(&[], |ranges| ranges.join_lines.as_slice()),
         }
     }
 
@@ -109,88 +123,169 @@ impl BracketEvidence {
         is_python_no_behavior_line_at(text, self.old_line_in(line))
     }
 
-    /// Whether new-side `line` starts inside an open bracket.
+    /// Whether new-side `line` continues an expression.
     pub(super) fn new_line_in(&self, line: usize) -> bool {
         match &self.new {
-            Some(ranges) => super::line_is_in_ranges(line, ranges),
+            Some(ranges) => super::line_is_in_ranges(line, &ranges.lines),
             None => true,
         }
     }
 
-    /// Whether old-side `line` starts inside an open bracket.
+    /// Whether old-side `line` continues an expression.
     pub(super) fn old_line_in(&self, line: usize) -> bool {
         if !self.has_old {
             return false;
         }
         match &self.old {
-            Some(ranges) => super::line_is_in_ranges(line, ranges),
+            Some(ranges) => super::line_is_in_ranges(line, &ranges.lines),
             None => true,
         }
-    }
-
-    /// The enclosing bracketed statement of new-side `line`, when it lexed.
-    pub(super) fn new_statement_span(&self, line: usize) -> Option<(usize, usize)> {
-        enclosing_bracket_statement(self.new.as_deref()?, line)
     }
 
     /// The old-side ranges for the deleted-line path: none to check when the
     /// old file did not lex, and an empty set when there is no old file.
     pub(super) fn old_ranges_for_deleted(&self) -> Option<&[std::ops::RangeInclusive<usize>]> {
         if self.has_old {
-            self.old.as_deref()
+            self.old.as_ref().map(|ranges| ranges.lines.as_slice())
         } else {
             Some(&[])
         }
     }
 }
 
-/// One-based line spans of the lines that start inside an open bracket: for
-/// each outermost `(`/`[`/`{` that closes on a later line, the lines after
-/// the opening one through the closing one. Taken from a lex of the whole
-/// `source`, so brackets inside strings and comments do not count. `None`
-/// when the source does not lex, so the caller can fail closed (#13875).
-pub(super) fn bracket_continuation_line_ranges(
-    source: &str,
-) -> Option<Vec<std::ops::RangeInclusive<usize>>> {
+#[derive(Default)]
+struct ContinuationRanges {
+    /// Physical lines reached through brackets or a lexer-confirmed join.
+    lines: Vec<std::ops::RangeInclusive<usize>>,
+    /// The corresponding logical statement for a join can also contain a
+    /// multiline token. Its interior is not itself an explicit join.
+    explicit_statements: Vec<ExplicitStatement>,
+    join_lines: Vec<usize>,
+}
+
+struct ExplicitStatement {
+    open: usize,
+    close: usize,
+    start: usize,
+    end: usize,
+}
+
+/// Physical lines that continue an outermost bracket or an explicitly joined
+/// expression. A lexer error withholds all evidence for that side.
+fn continuation_line_ranges(source: &str) -> Option<ContinuationRanges> {
     use rustpython_parser::{Mode, Tok, lexer::lex};
-    let (mut line, mut scanned) = (1usize, 0usize);
-    let mut line_at = |offset: usize| {
-        line += source
-            .get(scanned..offset)
-            .map_or(0, |gap| gap.matches('\n').count());
-        scanned = scanned.max(offset);
-        line
-    };
-    let mut spans = Vec::new();
+    let indexed = super::source_utils::SourceText::new(source);
+    let mut ranges = ContinuationRanges::default();
     let (mut depth, mut open_line) = (0usize, 0usize);
+    let mut statement_start = None;
+    let mut has_expression = false;
+    let mut previous_end = 0;
+    let mut pending_joins = Vec::<std::ops::Range<usize>>::new();
+    let mut header_lambdas = None;
     for result in lex(source, Mode::Module) {
         let (token, range) = result.ok()?;
+        // A compound header's colon separates an inline suite just as a
+        // semicolon separates simple statements. A colon binding a lambda
+        // in the header is still inside the header expression.
+        let suite_colon = depth == 0 && matches!(token, Tok::Colon) && header_lambdas == Some(0);
+        if matches!(token, Tok::Newline | Tok::Semi) || suite_colon {
+            if has_expression
+                && !pending_joins.is_empty()
+                && let Some(start) = statement_start
+            {
+                for gap in pending_joins.drain(..) {
+                    ranges.lines.push(gap.start + 1..=gap.end);
+                    ranges.join_lines.extend(gap);
+                }
+                // One statement can mix brackets and explicit joins.
+                ranges.explicit_statements.push(ExplicitStatement {
+                    open: indexed.line_for_offset(start),
+                    close: indexed.line_for_offset(previous_end),
+                    start,
+                    end: previous_end,
+                });
+            }
+            pending_joins.clear();
+            statement_start = None;
+            has_expression = false;
+            header_lambdas = None;
+            continue;
+        }
+        if matches!(token, Tok::Indent | Tok::Dedent) {
+            continue;
+        }
+        let start = usize::from(range.start());
+        // Outside brackets a physical break *between code tokens* in the
+        // same logical statement must have been joined by a backslash. A
+        // newline inside a string token or after a comment is not such a gap.
+        if depth == 0
+            && statement_start.is_some()
+            && source.get(previous_end..start)?.contains('\n')
+        {
+            let from = indexed.line_for_offset(previous_end);
+            let to = indexed.line_for_offset(start);
+            pending_joins.push(from..to);
+        }
+        // Decide at the logical boundary: a string sequence can acquire an
+        // operator or method after a join, while plain strings alone stay quiet.
+        has_expression |= !matches!(token, Tok::String { .. });
+        if statement_start.is_none() {
+            statement_start = Some(start);
+            if matches!(
+                token,
+                Tok::If
+                    | Tok::Elif
+                    | Tok::Else
+                    | Tok::While
+                    | Tok::For
+                    | Tok::Try
+                    | Tok::Except
+                    | Tok::Finally
+                    | Tok::With
+                    | Tok::Def
+                    | Tok::Class
+                    | Tok::Async
+                    | Tok::Match
+                    | Tok::Case
+            ) {
+                header_lambdas = Some(0usize);
+            }
+        }
+        if depth == 0
+            && let Some(count) = &mut header_lambdas
+        {
+            match token {
+                Tok::Lambda => *count += 1,
+                Tok::Colon => *count -= 1,
+                _ => {}
+            }
+        }
+        previous_end = usize::from(range.end());
         match token {
             Tok::Lpar | Tok::Lsqb | Tok::Lbrace => {
                 if depth == 0 {
-                    open_line = line_at(usize::from(range.start()));
+                    open_line = indexed.line_for_offset(start);
                 }
                 depth += 1;
             }
             Tok::Rpar | Tok::Rsqb | Tok::Rbrace => {
                 depth = depth.checked_sub(1)?;
                 if depth == 0 {
-                    let close_line = line_at(usize::from(range.start()));
-                    if open_line < close_line {
-                        spans.push(open_line + 1..=close_line);
+                    let close = indexed.line_for_offset(start);
+                    if open_line < close {
+                        ranges.lines.push(open_line + 1..=close);
                     }
                 }
             }
             _ => {}
         }
     }
-    Some(spans)
+    Some(ranges)
 }
 
 /// The one-based `(opening, closing)` lines of the outermost bracketed
-/// statement that `line` continues, from [`bracket_continuation_line_ranges`].
-/// `None` when the line does not start inside a bracket.
-pub(super) fn enclosing_bracket_statement(
+/// statement that `line` continues, from [`continuation_line_ranges`].
+fn enclosing_statement(
     ranges: &[std::ops::RangeInclusive<usize>],
     line: usize,
 ) -> Option<(usize, usize)> {
@@ -207,10 +302,10 @@ pub(super) fn enclosing_bracket_statement(
 /// is unknown.
 pub(super) fn bare_string_statement_text(
     line_text: &str,
-    span: Option<(usize, usize)>,
+    continuation: BracketLine<'_>,
     source: Option<&str>,
 ) -> Option<String> {
-    let (open, close) = span?;
+    let (open, close) = continuation.span?;
     // Inside brackets a trailing comma separates arguments, so `"msg",` is
     // the same bare string argument as `"msg"`; a trailing `# comment` is not
     // part of it either.
@@ -219,11 +314,27 @@ pub(super) fn bare_string_statement_text(
     if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
         return None;
     }
-    let lines: Vec<&str> = source?
+    let source = source?;
+    let (statement, skip) = match continuation.explicit_bytes {
+        Some((start, end)) => (source.get(start..end)?, 0),
+        None => (source, open.checked_sub(1)?),
+    };
+    let lines: Vec<&str> = statement
         .lines()
-        .skip(open.checked_sub(1)?)
+        .skip(skip)
         .take(close.checked_sub(open)? + 1)
-        .map(str::trim)
+        .enumerate()
+        .map(|(offset, text)| {
+            if continuation
+                .join_lines
+                .binary_search(&(open + offset))
+                .is_ok()
+            {
+                text.strip_suffix('\\').unwrap_or(text).trim()
+            } else {
+                text.trim()
+            }
+        })
         .collect();
     (!lines.is_empty()).then(|| lines.join(" "))
 }

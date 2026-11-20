@@ -2074,6 +2074,12 @@ Tests: `tests.rs::a_changed_message_string_on_a_continuation_line_gets_a_probe`,
 `deleted_lines_tests.rs::deleted_string_argument_inside_brackets_is_base_side_evidence` and
 `deleted_lines_tests.rs::changed_string_argument_inside_brackets_gets_a_finding`.
 
+A bare string on an explicitly joined line also contributes to the value of
+its enclosing expression (#13888). Editing it produces a candidate finding.
+Deleting it from a kept statement produces base-side evidence. A backslash in
+a comment or a string token supplies no evidence of a join between tokens.
+Docstrings and standalone sequences of plain string literals stay quiet.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed
