@@ -140,3 +140,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (12)
+
+Reason:
+RIPR-SPEC-0201: reach summary names the dunder path for both the dunder owner and its self.-helper variant (#15339 review)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/human.txt`
