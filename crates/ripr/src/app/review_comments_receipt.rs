@@ -8,18 +8,24 @@ use crate::output::review_comments_receipt::{
     CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM, REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
     REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY, REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM,
     REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE, REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY,
-    ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
+    ReviewCommentsPhaseTiming, ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
+    ReviewCommentsStepTiming,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write as _;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Mutable review-comments run receipt with lifecycle orchestration.
 pub(crate) struct ReviewCommentsReceiptRun {
     receipt: ReviewCommentsRunReceipt,
+    phase_started: Instant,
+    step_started: Option<Instant>,
+    current_step: Option<String>,
+    current_steps: Vec<ReviewCommentsStepTiming>,
+    phase_open: bool,
 }
 
 impl Deref for ReviewCommentsReceiptRun {
@@ -69,6 +75,11 @@ impl ReviewCommentsReceiptRun {
         let head_sha = resolve_revision(root, head, remaining(resolve_started.elapsed()));
         let reusable_cache_identity = reusable_cache_identity(&root_identity, &base_sha, &head_sha);
         Self {
+            phase_started: Instant::now(),
+            step_started: None,
+            current_step: None,
+            current_steps: Vec::new(),
+            phase_open: true,
             receipt: ReviewCommentsRunReceipt {
                 schema_version: REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
                 status: "in_progress",
@@ -80,6 +91,7 @@ impl ReviewCommentsReceiptRun {
                 active_phase: Some("input_validation".to_string()),
                 active_step: None,
                 canonical_analysis_evaluated_seams: None,
+                phase_timings: Vec::new(),
                 completed_artifacts: Vec::new(),
                 missing_artifacts: expected_artifacts.to_vec(),
                 reusable_cache_identity,
@@ -93,7 +105,45 @@ impl ReviewCommentsReceiptRun {
         }
     }
 
+    fn close_step(&mut self, completed: bool) {
+        // Timing tracks the step internally so terminal receipts keep naming
+        // the active pass in `active_step` (its pre-existing contract).
+        let Some(step) = self.current_step.take() else {
+            self.step_started = None;
+            return;
+        };
+        let elapsed_ms = self
+            .step_started
+            .take()
+            .map(|started| u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or(0);
+        self.current_steps.push(ReviewCommentsStepTiming {
+            step,
+            elapsed_ms,
+            completed,
+        });
+    }
+
+    fn close_phase(&mut self, phase: &str, completed: bool) {
+        if !self.phase_open {
+            return;
+        }
+        self.close_step(completed);
+        let elapsed_ms =
+            u64::try_from(self.phase_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.receipt.phase_timings.push(ReviewCommentsPhaseTiming {
+            phase: phase.to_string(),
+            elapsed_ms,
+            completed,
+            steps: std::mem::take(&mut self.current_steps),
+        });
+        self.phase_started = Instant::now();
+        self.phase_open = completed;
+    }
+
     pub(crate) fn phase(&mut self, completed: &str, active: &str) {
+        self.close_phase(completed, true);
+        self.phase_open = true;
         self.receipt.last_completed_phase = Some(completed.to_string());
         self.receipt.active_phase = Some(active.to_string());
         self.receipt.active_step = None;
@@ -108,10 +158,19 @@ impl ReviewCommentsReceiptRun {
 
     /// Names the pass now running inside the active phase.
     pub(crate) fn step(&mut self, active_step: &str) {
+        self.close_step(true);
         self.receipt.active_step = Some(active_step.to_string());
+        self.current_step = Some(active_step.to_string());
+        self.step_started = Some(Instant::now());
     }
 
     pub(crate) fn complete(&mut self, artifacts: &[String]) {
+        let active_phase = self
+            .receipt
+            .active_phase
+            .clone()
+            .unwrap_or_else(|| "artifact_io".to_string());
+        self.close_phase(&active_phase, true);
         self.receipt.status = "complete";
         self.receipt.last_completed_phase = Some("artifact_io".to_string());
         self.receipt.active_phase = None;
@@ -122,6 +181,7 @@ impl ReviewCommentsReceiptRun {
     }
 
     pub fn limited_timeout(&mut self, active_phase: &str) {
+        self.close_phase(active_phase, false);
         self.receipt.status = "limited_timeout";
         self.receipt.active_phase = Some(active_phase.to_string());
         self.receipt
@@ -141,6 +201,7 @@ impl ReviewCommentsReceiptRun {
     }
 
     pub fn failed(&mut self, active_phase: &str, error: &str) {
+        self.close_phase(active_phase, false);
         self.receipt.status = "failed";
         self.receipt.active_phase = Some(active_phase.to_string());
         let repair_route = if error.trim().is_empty() {
@@ -185,6 +246,7 @@ impl ReviewCommentsReceiptRun {
     }
 
     pub fn oversized(&mut self, active_phase: &str, error: &str) {
+        self.close_phase(active_phase, false);
         self.receipt.status = "failed";
         self.receipt.active_phase = Some(active_phase.to_string());
         let repair_route = if error.trim().is_empty() {
@@ -414,6 +476,64 @@ mod tests {
         finished.step("owner_attribution");
         finished.complete(&["comments.json".to_string()]);
         assert_eq!(finished.active_step, None);
+        Ok(())
+    }
+
+    /// #1604: phase history must survive terminalization. A completed phase
+    /// and each named step are recorded in transition order; a timeout
+    /// records the active phase/step as not completed instead of losing the
+    /// time already spent there.
+    #[test]
+    fn phase_timings_record_completed_steps_and_the_active_timeout_phase() -> Result<(), String> {
+        let mut receipt = sample_receipt();
+        receipt.phase("input_validation", "configuration");
+        receipt.phase("configuration", "language_facts");
+        receipt.step("corpus_admission");
+        receipt.step("test_change_detection");
+        receipt.phase("language_facts", "canonical_analysis");
+        receipt.limited_timeout("canonical_analysis");
+        let value = serde_json::to_value(&*receipt).map_err(|err| err.to_string())?;
+        let timings = value["phase_timings"]
+            .as_array()
+            .ok_or("phase_timings must be an array")?;
+        let recorded: Vec<(&str, bool, Vec<(&str, bool)>)> = timings
+            .iter()
+            .map(|timing| {
+                let steps = timing["steps"]
+                    .as_array()
+                    .map(|steps| {
+                        steps
+                            .iter()
+                            .map(|step| {
+                                (
+                                    step["step"].as_str().unwrap_or_default(),
+                                    step["completed"].as_bool().unwrap_or_default(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (
+                    timing["phase"].as_str().unwrap_or_default(),
+                    timing["completed"].as_bool().unwrap_or_default(),
+                    steps,
+                )
+            })
+            .collect();
+        assert_eq!(
+            recorded,
+            vec![
+                ("input_validation", true, Vec::new()),
+                ("configuration", true, Vec::new()),
+                (
+                    "language_facts",
+                    true,
+                    vec![("corpus_admission", true), ("test_change_detection", true)]
+                ),
+                ("canonical_analysis", false, Vec::new()),
+            ]
+        );
+        assert!(timings.iter().all(|timing| timing["elapsed_ms"].is_u64()));
         Ok(())
     }
 
