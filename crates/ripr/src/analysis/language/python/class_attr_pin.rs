@@ -64,7 +64,9 @@ pub(super) fn python_class_attr_pin_gap(
             // The old text must fit with the half-fixed rule; the new text only
             // needs one fixed character, so a placeholder-heavy new text that
             // could still produce the literal never reads as rejecting it.
-            literal.len() >= 4
+            // A short literal is ambiguous as a fragment, but whole-text
+            // equality with it is exact.
+            (literal.len() >= 4 || (pin.whole && !literal.is_empty()))
                 && text_matches(&old, &literal, &pin, true)
                 && !text_matches(&new, &literal, &pin, false)
         });

@@ -5907,3 +5907,36 @@ fn class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals() 
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+// #15294 review: whole-text equality with a short message is exact, while a
+// short fragment on `in` stays unread.
+#[test]
+fn class_attribute_short_text_pins_only_through_whole_equality() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"NO\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message)\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for (tests, expected) in [
+        (
+            "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert str(exc.value) == \"OK\"\n",
+            ExposureClass::Exposed,
+        ),
+        (
+            "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert \"OK\" in str(exc.value)\n",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+        let finding = classify_change_with_source(
+            file,
+            6,
+            "    message = \"NO\"",
+            Some("    message = \"OK\""),
+            &owners,
+            &tests_facts,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_eq!(finding.class, expected, "{tests}: {finding:?}");
+    }
+    Ok(())
+}
