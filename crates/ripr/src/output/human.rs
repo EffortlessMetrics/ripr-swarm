@@ -879,10 +879,19 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             };
             if note_follows {
                 // #15288: one line naming every language that is off, not one
-                // identical anonymous line per language.
-                if !named_not_analyzed_printed {
-                    named_not_analyzed_printed = true;
-                    out.push_str(&not_analyzed_languages_line(output, &subject));
+                // identical anonymous line per language. When no off language
+                // can be named (an enabled adapter whose run failed), each
+                // limitation keeps its own count line.
+                match not_analyzed_languages_line(output) {
+                    Some(line) => {
+                        if !named_not_analyzed_printed {
+                            named_not_analyzed_printed = true;
+                            out.push_str(&line);
+                        }
+                    }
+                    None => out.push_str(&format!(
+                        "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
+                    )),
                 }
             } else {
                 out.push_str(&format!(
@@ -1543,9 +1552,9 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
 
 /// The default-view "Not analyzed" line that points at the preview notes,
 /// naming each language that is off (`1 changed Python file and 1 changed
-/// TypeScript file`). Falls back to the limitation's own count when no
-/// advisory names a language.
-fn not_analyzed_languages_line(output: &CheckOutput, fallback_subject: &str) -> String {
+/// TypeScript file`). `None` when no advisory names a language that is off,
+/// so the caller keeps the limitation's own count line.
+fn not_analyzed_languages_line(output: &CheckOutput) -> Option<String> {
     let parts: Vec<String> = output
         .preview_language_advisories
         .iter()
@@ -1564,16 +1573,14 @@ fn not_analyzed_languages_line(output: &CheckOutput, fallback_subject: &str) -> 
         })
         .collect();
     match parts.as_slice() {
-        [] => format!(
-            "  Not analyzed: {fallback_subject} in a language ripr is not set up to analyze (see the note below).\n"
-        ),
-        [one] => format!(
+        [] => None,
+        [one] => Some(format!(
             "  Not analyzed: {one}, a language ripr is not set up to analyze (see the note below).\n"
-        ),
-        many => format!(
+        )),
+        many => Some(format!(
             "  Not analyzed: {}, languages ripr is not set up to analyze (see the notes below).\n",
             many.join(" and ")
-        ),
+        )),
     }
 }
 
@@ -1644,8 +1651,10 @@ fn nested_python_root_hint(
 /// Names Rust only when the analyzed root actually has Rust markers (#7648).
 fn preview_enablement_toml(output: &CheckOutput) -> String {
     let rust_detected = crate::domain::rust_markers_at(&output.root);
-    // Keep the preview languages already on (their advisories say so), then
-    // add every language still off, so one edit enables them all (#15288).
+    // Keep the preview languages this diff shows are already on (their
+    // advisories say so), then add every language still off, so one edit
+    // enables them all (#15288). A preview language enabled in ripr.toml but
+    // absent from this diff has no advisory and is not listed.
     let wire_id = |wire: &str| match crate::domain::LanguageId::from_wire(wire) {
         Some(crate::domain::LanguageId::JavaScript) => Some(crate::domain::LanguageId::TypeScript),
         other => other,

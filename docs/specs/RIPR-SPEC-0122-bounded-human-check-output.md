@@ -126,7 +126,11 @@ to the preview-language note, which carries the `ripr.toml` recovery block
 (#10691). The pointer is printed only when such a note follows for that
 limitation: with no preview-language advisory, or for Rust switched off in
 `[languages]` (which has no such note), the line drops the pointer and a
-`Fix:` line carries the limitation's own recovery (#14152). The static-limited `State:` line reads `ripr cannot tell from reading
+`Fix:` line carries the limitation's own recovery (#14152). When the
+pointer names languages that are off, one line names each of them
+(`1 changed TypeScript file and 1 changed Python file`), and with more than one
+off language a single `[languages] enabled = [...]` block after all notes
+enables every one of them (#15288). The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
 effect)`). The canonical gap id is labelled `Gap ID (for scripts)`; because the id
