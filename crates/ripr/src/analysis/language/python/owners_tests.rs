@@ -1013,7 +1013,7 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = test_assertions(
+                let mut assertions = test_assertions(
                     &function.body,
                     source,
                     function.range,
@@ -1026,17 +1026,28 @@ pub(super) fn collect_tests_from_statements(
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run only when settings still include
                 // `Phase.explicit`.
-                let parametrize = (framework == PythonFramework::Pytest)
+                let pytest_cases = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
-                    .flatten()
-                    .or_else(|| {
-                        super::hypothesis::example_cases(
-                            source,
-                            &function.args,
-                            &function.decorator_list,
-                            &definition_imports,
-                        )
-                    });
+                    .flatten();
+                super::bool_oracle::settle_parametrized_names(
+                    &mut assertions,
+                    &function.body,
+                    &text_for_range(source, function.range),
+                    pytest_cases.as_ref(),
+                    |name| {
+                        direct_parametrized.iter().any(|direct| direct == name)
+                            && !unsettled_indirect.iter().any(|unsettled| unsettled == name)
+                            && !generated_inputs.iter().any(|generated| generated == name)
+                    },
+                );
+                let parametrize = pytest_cases.or_else(|| {
+                    super::hypothesis::example_cases(
+                        source,
+                        &function.args,
+                        &function.decorator_list,
+                        &definition_imports,
+                    )
+                });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -1160,21 +1171,32 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = test_assertions(&function.body, source, function.range, false);
+                let mut assertions = test_assertions(&function.body, source, function.range, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run only when settings still include
                 // `Phase.explicit`.
-                let parametrize = (framework == PythonFramework::Pytest)
+                let pytest_cases = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
-                    .flatten()
-                    .or_else(|| {
-                        super::hypothesis::example_cases(
-                            source,
-                            &function.args,
-                            &function.decorator_list,
-                            &definition_imports,
-                        )
-                    });
+                    .flatten();
+                super::bool_oracle::settle_parametrized_names(
+                    &mut assertions,
+                    &function.body,
+                    &text_for_range(source, function.range),
+                    pytest_cases.as_ref(),
+                    |name| {
+                        direct_parametrized.iter().any(|direct| direct == name)
+                            && !unsettled_indirect.iter().any(|unsettled| unsettled == name)
+                            && !generated_inputs.iter().any(|generated| generated == name)
+                    },
+                );
+                let parametrize = pytest_cases.or_else(|| {
+                    super::hypothesis::example_cases(
+                        source,
+                        &function.args,
+                        &function.decorator_list,
+                        &definition_imports,
+                    )
+                });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
