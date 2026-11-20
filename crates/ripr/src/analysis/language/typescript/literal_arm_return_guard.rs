@@ -75,24 +75,14 @@ pub(crate) fn literal_arm_return(
         return None;
     }
     let returns = owner_returns(&owner.file, source)?;
-    // `undefined` is an ordinary identifier: a parameter or local may bind it.
-    let binds_undefined = owner.params.iter().any(|param| param == "undefined")
-        || [
-            "let undefined",
-            "const undefined",
-            "var undefined",
-            "function undefined",
-            "undefined:",
-            "undefined =",
-            "(undefined",
-            ", undefined",
-        ]
+    // `undefined` is an ordinary identifier: a parameter, local, module
+    // binding, or a comment between `const` and the name can shadow the
+    // global, and the recorded source cannot prove which one a
+    // `return undefined` reads. Decline the rule rather than treat it as a
+    // scalar; a bare `return;` is the same unreadable value here.
+    if returns
         .iter()
-        .any(|binding| source.contains(binding));
-    if binds_undefined
-        && returns
-            .iter()
-            .any(|(_, value)| *value == Some(ArmConstant::Undefined))
+        .any(|(_, value)| *value == Some(ArmConstant::Undefined))
     {
         return None;
     }

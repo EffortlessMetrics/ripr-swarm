@@ -5556,20 +5556,31 @@ fn starts_with_spread(argument: &str) -> bool {
 
 /// Split the text after a call's opening parenthesis into its top-level
 /// arguments, stopping at the matching closing parenthesis. Commas inside
-/// strings, template literals, brackets and `/* */` or `//` comments do not
-/// split an argument; an unterminated comment or string leaves the list
-/// unreadable (`None`), so a caller that needs exact arguments keeps its
-/// verdict instead of reading invented slots.
+/// strings, template literals, brackets, `/* */` or `//` comments and regex
+/// literals do not split an argument; an unterminated comment, string or
+/// regex leaves the list unreadable (`None`), so a caller that needs exact
+/// arguments keeps its verdict instead of reading invented slots.
 pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
+    let chars: Vec<char> = inner.chars().collect();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let mut block_comment = false;
     let mut line_comment = false;
+    let mut regex = false;
+    let mut regex_class = false;
+    let mut skip_next = false;
     let mut previous = '\0';
     let mut current = String::new();
     let mut arguments = Vec::new();
-    for ch in inner.chars() {
+    for (index, &ch) in chars.iter().enumerate() {
+        if skip_next {
+            // The `*` of a `/*` opener is not a closer's `*`.
+            current.push(ch);
+            previous = '\0';
+            skip_next = false;
+            continue;
+        }
         if block_comment {
             current.push(ch);
             if previous == '*' && ch == '/' {
@@ -5582,6 +5593,24 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
             current.push(ch);
             if ch == '\n' {
                 line_comment = false;
+            }
+            previous = ch;
+            continue;
+        }
+        if regex {
+            current.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '[' {
+                regex_class = true;
+            } else if ch == ']' {
+                regex_class = false;
+            } else if ch == '/' && !regex_class {
+                regex = false;
+            } else if ch == '\n' {
+                return None;
             }
             previous = ch;
             continue;
@@ -5607,8 +5636,18 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
                 line_comment = true;
                 current.push(ch);
             }
-            '*' if previous == '/' => {
+            '/' if chars.get(index + 1) == Some(&'*') => {
                 block_comment = true;
+                current.push(ch);
+                // The opener's `*` is not the closer's: `/*/` opens a comment
+                // that runs on, it does not close at the third character.
+                skip_next = true;
+                previous = '\0';
+                continue;
+            }
+            '/' if regex_can_start(previous) && regex_end(&chars, index).is_some() => {
+                regex = true;
+                regex_class = false;
                 current.push(ch);
             }
             '(' | '[' | '{' => {
@@ -5633,6 +5672,59 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
             _ => current.push(ch),
         }
         previous = ch;
+    }
+    None
+}
+
+/// Whether a `/` after `previous` can open a regex literal rather than divide:
+/// at the start of an expression, after an operator, an opening bracket or a
+/// comma. After an identifier, number, `)` or `]` it is division.
+fn regex_can_start(previous: char) -> bool {
+    previous.is_whitespace()
+        || matches!(
+            previous,
+            '\0' | '('
+                | '['
+                | '{'
+                | ','
+                | '='
+                | ':'
+                | ';'
+                | '!'
+                | '&'
+                | '|'
+                | '?'
+                | '+'
+                | '-'
+                | '*'
+                | '%'
+                | '<'
+                | '>'
+                | '~'
+                | '^'
+        )
+}
+
+/// The index of the `/` that closes a regex literal starting at `start`, or
+/// `None` when the text has no closing `/` before a line break (so the `/` is
+/// division, not a regex).
+fn regex_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut escaped = false;
+    let mut class = false;
+    for (offset, &ch) in chars.iter().enumerate().skip(start + 1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '[' {
+            class = true;
+        } else if ch == ']' {
+            class = false;
+        } else if ch == '/' && !class {
+            return Some(offset);
+        } else if ch == '\n' {
+            return None;
+        }
     }
     None
 }

@@ -155,6 +155,33 @@ fn a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused() {
 }
 
 #[test]
+fn an_undefined_return_is_refused_without_a_proven_binding() {
+    // A module-level binding and a comment between `const` and the name both
+    // shadow the global; the recorded source cannot prove which one a
+    // `return undefined` reads, so the rule declines instead of treating the
+    // identifier as a scalar.
+    for source in [
+        "const undefined = 1;\nexport function dir(n: number): unknown {\n  if (n === 1) {\n    return undefined;\n  }\n  return 2;\n}\n",
+        "const /* shadow */ undefined = 1;\nexport function dir(n: number): unknown {\n  if (n === 1) {\n    return undefined;\n  }\n  return 2;\n}\n",
+    ] {
+        assert_eq!(
+            literal_arm_return(
+                &owner(source),
+                13,
+                "    return undefined;",
+                Some("    return 1;")
+            ),
+            None
+        );
+    }
+    // Numeric control: the same shape with numbers still locates the arm.
+    let numeric = "export function dir(n: number): number {\n  if (n === 1) {\n    return 7;\n  }\n  return 2;\n}\n";
+    assert!(
+        literal_arm_return(&owner(numeric), 12, "    return 7;", Some("    return 5;")).is_some()
+    );
+}
+
+#[test]
 fn a_bigint_return_is_not_a_readable_scalar() {
     // `5n` and `5` are different values: an arm returning `5n` neither
     // duplicates nor shares a changed `5`, so the reader refuses it.
@@ -631,6 +658,40 @@ fn a_multiline_arrow_reads_the_changed_arms_own_selector() -> Result<(), String>
             ExposureClass::Exposed,
             "{label}: {:?}",
             silver.missing
+        );
+    }
+    Ok(())
+}
+
+/// A regex literal or a comment holding commas must not move the selector
+/// slot: the second argument still selects the changed arm, so the shared new
+/// result is the changed arm's own and the verdict is kept.
+#[test]
+fn a_regex_or_comment_comma_does_not_move_the_selector_slot() -> Result<(), String> {
+    const TWO_PARAMS: &str = "export function dir(pattern: string, kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 7;\n    case 'silver':\n      return 5;\n    default:\n      return 0;\n  }\n}\n";
+    for (label, body) in [
+        (
+            "slot-regex",
+            "    expect(dir(/x, 'gold', y/, 'silver')).toBe(7);\n",
+        ),
+        (
+            "slot-comment",
+            "    expect(dir(0 /*/, 'gold', ignored */, 'silver')).toBe(7);\n",
+        ),
+    ] {
+        let finding = finding_at(
+            label,
+            TWO_PARAMS,
+            6,
+            "      return 5;",
+            "      return 7;",
+            &vitest(body),
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
         );
     }
     Ok(())
