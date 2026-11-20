@@ -11,6 +11,9 @@ tests = [
   "crates/ripr/tests/constant_tail_cfg_twin.rs::the_second_platform_twin_changing_is_not_credited",
   "crates/ripr/tests/constant_tail_cfg_twin.rs::a_cfg_module_twin_is_not_credited",
   "crates/ripr/tests/constant_tail_cfg_twin.rs::a_cfg_attr_on_the_owner_is_not_credited",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::may_declare_module_keeps_any_mod_keyword",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::path_declarations_gate_only_the_files_they_may_move",
+  "crates/ripr/tests/constant_tail_cfg_twin.rs::an_unparseable_declaring_file_withholds_the_credit",
 ]
 code = [
   "crates/ripr/src/analysis/diff/base_owner.rs",
