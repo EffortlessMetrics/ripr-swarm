@@ -379,7 +379,7 @@ root evidence stays a separate
 host-local hash), `failed` with a typed failure code and bounded detail (the
 last-known-good snapshot is kept), `in_flight`, or `workspace_unavailable`.
 A failed attempt's `recovery` follows the cause: a deleted root says restart the server with
-a valid `--root`, a shallow clone says fetch history before retrying, an oversized diff scope says pick a nearer base or raise the limit, and only a failure with no
+a valid `--root`, a failure naming a missing merge base on a shallow clone says fetch history before retrying, an oversized diff scope says pick a nearer base or raise the limit, and only a failure with no
 such cause says to retry `ripr_refresh`.
 An attempt runs to a terminal state; cancelling the MCP request never rolls
 an attempt back or manufactures a snapshot. A cancelled attempt still commits
