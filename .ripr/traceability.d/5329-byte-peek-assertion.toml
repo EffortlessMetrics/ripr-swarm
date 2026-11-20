@@ -1,0 +1,11 @@
+# A literal byte-peek comparison must be paired with the assertion on that call (#5329).
+[[extend]]
+id = "RIPR-SPEC-0186"
+tests = [
+  "crates/ripr/tests/byte_peek_assertion.rs::comparison_of_the_changed_byte_peek_credits_the_asserting_test",
+  "crates/ripr/tests/byte_peek_assertion.rs::an_unasserted_byte_peek_cannot_borrow_an_unrelated_assertion",
+]
+code = [
+  "crates/ripr/src/analysis/classify/byte_peek.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+]

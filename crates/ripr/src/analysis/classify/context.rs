@@ -84,6 +84,7 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// removed inside the owner). `None` when the diff is not at hand or
     /// changes the owner elsewhere.
     pub owner_sole_change: Option<String>,
+    pub byte_peek_change: Option<super::byte_peek::BytePeekChange>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -122,6 +123,7 @@ impl<'a> ProbeContext<'a> {
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
             owner_sole_change: None,
+            byte_peek_change: None,
         }
     }
 

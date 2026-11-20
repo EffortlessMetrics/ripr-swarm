@@ -556,6 +556,37 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
         );
         let mut activation = gathered.activation;
+        let byte_peek_assertion = |test: &TestSummary, assertion: &OracleFact| {
+            let change = context.byte_peek_change?;
+            if !activation_credited
+                .iter()
+                .any(|credited| std::ptr::eq(*credited, test))
+            {
+                return None;
+            }
+            change.assertion_distinguishes(context, pin_syntax, test, assertion)
+        };
+        let byte_peek_assertions = || {
+            context.related_tests.iter().flat_map(|(test, _)| {
+                test.assertions
+                    .iter()
+                    .map(|assertion| byte_peek_assertion(test, assertion))
+            })
+        };
+        let byte_peek_asserted = context.byte_peek_change.is_some()
+            && byte_peek_assertions().any(|result| result == Some(true));
+        // Only downgrade a legacy strong oracle when every related
+        // assertion was read and checked the same result in both versions.
+        let byte_peek_missed = context.byte_peek_change.is_some()
+            && !byte_peek_asserted
+            && byte_peek_assertions().try_fold(false, |_, result| {
+                result.map(|distinguishes| !distinguishes)
+            }) == Some(true);
+        if byte_peek_asserted {
+            activation
+                .missing_discriminators
+                .retain(|fact| fact.value != context.probe.expression);
+        }
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
         // test's package against it.
@@ -649,6 +680,15 @@ impl ClassifiedProbeEvidence {
             owner_has_other_callers,
             assertion_macros_rebound,
         );
+        let infect = if byte_peek_asserted {
+            StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                "A related assertion uses a byte string that makes the comparison return a different result",
+            )
+        } else {
+            infect
+        };
         // #15034: the #8659 invisibility reading declines when another
         // function holds the owner, since that caller may feed other inputs.
         // A pure forwarding wrapper (`pub fn w(a) -> T { owner(a) }`, the
@@ -1225,6 +1265,7 @@ impl ClassifiedProbeEvidence {
                     })
                 });
             entry_pinned
+                || byte_peek_assertion(test, assertion) == Some(true)
                 || fmt_display_pin(test, assertion)
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
@@ -1845,6 +1886,7 @@ impl ClassifiedProbeEvidence {
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
             && !guard_side_flip_paired
+            && !byte_peek_asserted
             && !gathered
                 .literal_length_boundary
                 .as_ref()
@@ -1952,6 +1994,15 @@ impl ClassifiedProbeEvidence {
                     }),
                 context.index,
             ) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                same_test_pairing_missing_summary(),
+            )
+        } else {
+            discriminate
+        };
+        let discriminate = if byte_peek_missed && discriminate.state == StageState::Yes {
             StageEvidence::new(
                 StageState::Weak,
                 Confidence::Medium,
