@@ -90,15 +90,25 @@ impl PlaceholderScope {
     }
 
     pub(crate) fn on_line(&self, body: &str, row: usize, assertion: &str) -> BTreeSet<String> {
-        let Some(&start) = self.line_starts.get(row) else {
+        if self.bindings.is_empty() {
+            return self.fallback.clone();
+        }
+        // A scanned statement can start with a closure declaration or match
+        // pattern. Locate the same macro whose operands the classifier reads.
+        let offset =
+            super::arguments::assertion_oracle_text_at(assertion).map_or(0, |(offset, _)| offset);
+        let prefix = &assertion[..offset];
+        let preceding_rows = prefix.bytes().filter(|&b| b == b'\n').count();
+        let Some(&start) = self.line_starts.get(row + preceding_rows) else {
             return self.fallback.clone();
         };
         let line = body[start..].lines().next().unwrap_or_default();
-        let token = assertion
-            .split(|ch: char| !ch.is_alphanumeric() && ch != '_')
-            .next()
-            .unwrap_or_default();
-        self.at(start + line.find(token).unwrap_or(0))
+        let column = prefix.rsplit('\n').next().unwrap_or_default().len();
+        let first = assertion.lines().nth(preceding_rows).unwrap_or_default();
+        let shift = line
+            .find(first.trim_end_matches(';'))
+            .unwrap_or_else(|| line.len() - line.trim_start().len());
+        self.at(start + shift + column)
     }
 
     pub(crate) fn at(&self, offset: usize) -> BTreeSet<String> {
@@ -132,9 +142,25 @@ fn binding_extent(ident: &ast::IdentPat) -> Option<(std::ops::Range<usize>, bool
         if let Some(stmt) = ast::LetStmt::cast(node.clone()) {
             let direct = stmt.pat()?.syntax() == ident.syntax();
             let placeholder = direct
-                && matches!(stmt.initializer(), Some(ast::Expr::MacroExpr(mac))
-                if mac.macro_call().and_then(|call| call.path()).is_some_and(|path|
-                    matches!(path.syntax().text().to_string().as_str(), "todo" | "unimplemented" | "panic" | "unreachable")));
+                && stmt.initializer().is_some_and(|expr| {
+                    let Some(first) = expr.syntax().first_token() else {
+                        return false;
+                    };
+                    // Preserve the existing diverging-prefix rule, including
+                    // `todo!() == value`: evaluating its left operand cannot return.
+                    first
+                        .parent_ancestors()
+                        .find_map(ast::MacroCall::cast)
+                        .is_some_and(|call| {
+                            call.syntax().text_range().start() == expr.syntax().text_range().start()
+                                && call.path().is_some_and(|path| {
+                                    matches!(
+                                        path.syntax().text().to_string().as_str(),
+                                        "todo" | "unimplemented" | "panic" | "unreachable"
+                                    )
+                                })
+                        })
+                });
             return Some((bytes(&node).end..bytes(&node.parent()?).end, placeholder));
         }
         if ast::Param::can_cast(node.kind()) {

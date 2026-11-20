@@ -21,6 +21,10 @@ pub(crate) fn equality_assertion_arguments(line: &str) -> Option<Vec<String>> {
 /// (or the two comparison/pattern operands) is diagnostic formatting, including
 /// non-string expressions. Unknown helpers keep their existing fallback path.
 pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
+    assertion_oracle_text_at(line).map(|(_, text)| text)
+}
+
+pub(super) fn assertion_oracle_text_at(line: &str) -> Option<(usize, String)> {
     let masked = mask_comments_and_strings(line);
     [
         ("assert!", 1),
@@ -44,7 +48,6 @@ pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
     // `assert!(matches!(...))` must use the outer assertion's condition;
     // a nested assertion in its diagnostic never becomes the observer.
     .min_by_key(|(offset, _)| *offset)
-    .map(|(_, text)| text)
 }
 
 pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {

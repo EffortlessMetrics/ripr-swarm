@@ -716,8 +716,9 @@ Two pattern terms are used below.
     when all of these hold:
 
     - in a parsed Rust test, the asserted name resolves at the comparison
-      to a local initialized directly by a `todo!`, `unimplemented!`,
-      `unreachable!` or `panic!` invocation. A same-named closure
+      to a local whose initializer starts with a diverging `todo!`,
+      `unimplemented!`, `unreachable!` or `panic!` invocation (including
+      an expression such as `todo!() == price(10)`). A same-named closure
       parameter, match-arm pattern or later local only shadows the
       placeholder within its own lexical scope (#14868);
     - the reading this replaces is strong (`exact_value`,
