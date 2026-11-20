@@ -175,7 +175,10 @@ pub(super) fn compare_reports(
     current_generation: &str,
 ) -> Vec<String> {
     let judge_evidence_path =
-        super::report_cache_schema::judges_evidence_path(committed, current_generation);
+        match super::report_cache_schema::judges_evidence_path(committed, current_generation) {
+            Ok(judge) => judge,
+            Err(error) => return vec![format!("{case_label}: committed report: {error}")],
+        };
     let (committed, regenerated) = match (
         judged_seams(committed, judge_evidence_path),
         judged_seams(regenerated, judge_evidence_path),
@@ -816,6 +819,7 @@ mod tests {
 
     fn report(grip: &str, propagate: &str, strength: &str) -> Value {
         json!({
+            "source_subject": {"corpus": {"cache_schema_version": CURRENT_GENERATION}},
             "seams": [{
                 "seam_id": "a1",
                 "file": "src/lib.rs", "line": 5, "column": 8, "kind": "predicate_boundary",
@@ -1269,7 +1273,8 @@ mod tests {
     #[test]
     fn a_seam_present_on_only_one_side_is_a_difference() {
         let committed = report("strongly_gripped", "yes", "strong");
-        let empty = json!({"seams": []});
+        let mut empty = committed.clone();
+        empty["seams"] = json!([]);
         let gone = compare_reports("case", &committed, &empty, CURRENT_GENERATION);
         assert_eq!(gone.len(), 1, "{gone:?}");
         assert!(gone[0].contains("no longer produces"), "{gone:?}");
@@ -1426,20 +1431,31 @@ mod tests {
         assert!(super::super::report_cache_schema::judges_evidence_path(
             &at_current,
             &current
-        ));
-        let mut pinned = report("strongly_gripped", "yes", "strong");
+        )?);
+        let mut pinned = at_current.clone();
         at_generation(&mut pinned, "1.0");
         assert!(!super::super::report_cache_schema::judges_evidence_path(
             &pinned, &current
-        ));
-        assert!(
-            !super::super::report_cache_schema::judges_evidence_path(
-                &report("strongly_gripped", "yes", "strong"),
-                &current
-            ),
-            "a capture with no recorded generation is not judged"
-        );
+        )?);
         Ok(())
+    }
+
+    #[test]
+    fn regenerable_records_require_corpus_provenance() {
+        let fresh = report("strongly_gripped", "yes", "strong");
+        let mut committed = fresh.clone();
+        for version in ["1.176", CURRENT_GENERATION] {
+            at_generation(&mut committed, version);
+            assert!(compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty());
+        }
+        committed["source_subject"] = json!({});
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(
+            found,
+            [
+                "case: committed report: regenerable capture requires `source_subject.corpus.cache_schema_version` to check currentness"
+            ]
+        );
     }
 
     #[test]
