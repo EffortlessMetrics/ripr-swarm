@@ -20,6 +20,7 @@ use super::builder_override::{
     literals_equal, overridden_fields_read, setter_names, struct_literal_field_texts,
     struct_literal_fields,
 };
+use super::owner_value_sink::{OwnerValueFlow, owner_value_flow};
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
     assertion_observes_direct_collection_in_test_for_probe, direct_collection_mutation_receiver,
@@ -506,6 +507,8 @@ pub(in crate::analysis) fn reveal_outcome(
                 PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
             },
         )
+    } else if analysis.strongest_owner_value_masked {
+        StageEvidence::new(StageState::Weak, Confidence::Medium, OWNER_VALUE_MASKED)
     } else {
         build_discriminate_evidence(
             &analysis.strongest,
@@ -553,6 +556,10 @@ const BUILDER_OVERRIDE_UNOBSERVED_SUMMARY: &str = "Discriminator unconfirmed: th
 
 const PROXIMITY_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)";
 
+/// #14206: the wording when the best related assertion calls the changed
+/// function but its compared value does not carry the call's result.
+const OWNER_VALUE_MASKED: &str = "Discriminator unconfirmed: the related assertion calls the changed function but discards or masks the call's value before comparing, so it cannot tell the changed behavior apart (observation_unverified)";
+
 const PROXIMITY_VARIANT_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)";
 
 struct RevealAssertionAnalysis {
@@ -582,6 +589,9 @@ struct RevealAssertionAnalysis {
     /// but could not confirm a match arm, because another related test reaches
     /// the owner (#6297).
     proximity_confirmation_withheld: bool,
+    /// #14206: the selected oracle is an assertion that calls the owner and
+    /// discards or masks the call's value before comparing.
+    strongest_owner_value_masked: bool,
     /// True when a matched assertion's only confirming tokens were struct
     /// fields the test overwrote on the owner's result before reading them
     /// (`builder_override`, #6613). Names the downgrade only; the class is
@@ -2469,6 +2479,7 @@ fn analyze_related_assertions(
         removed_variant_selected: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
+    let predicate_family = matches!(probe.family, ProbeFamily::Predicate);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
     // literal (`return_value`) or field initializer (`field_construction`)
     // writes. Such a field's token confirms nothing in an assertion that
@@ -2537,6 +2548,9 @@ fn analyze_related_assertions(
     // match arm (#6297), so the unconfirmed summary can say why rather than
     // claim no assertion names the arm.
     let mut proximity_confirmation_withheld = false;
+    // #14206: the selected oracle calls the owner but cannot observe the
+    // call's value, so the summary can say that.
+    let mut strongest_owner_value_masked = false;
     // When any related test is tied to the owner by a call, helper chain,
     // assertion affinity or seam callee, reach comes from that test.
     // Same-file and same-module relations do not count: `reach.rs` treats
@@ -3141,6 +3155,13 @@ fn analyze_related_assertions(
                     test,
                     assertion,
                 );
+                // #14206: a predicate probe needs no token confirmation, so
+                // an exact assertion that calls the owner and then discards
+                // or masks the call's value would otherwise confirm.
+                let owner_value_masked = predicate_family
+                    && match_context.owner_callee.is_some_and(|owner| {
+                        owner_value_flow(test, &assertion.text, owner) == OwnerValueFlow::Masked
+                    });
                 let observation_confirmed = !self_computed
                     // Refusal withholds kind-only credit, not an independently
                     // confirmed token. Retain the token path's existing identity gates.
@@ -3190,7 +3211,8 @@ fn analyze_related_assertions(
                             owner_pinned,
                             import_defeats_owner,
                             cross_package_defeats_owner,
-                        ));
+                        ))
+                    && !owner_value_masked;
                 proximity_confirmation_withheld |= !confirms_observation;
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -3287,6 +3309,11 @@ fn analyze_related_assertions(
                         import_defeats_owner,
                         cross_package_defeats_owner,
                     );
+                // #14206: relative to this probe, an assertion that drops the
+                // owner call's value is no stronger than a smoke check.
+                if owner_value_masked && relative_strength.rank() > OracleStrength::Weak.rank() {
+                    relative_strength = OracleStrength::Weak;
+                }
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -3301,6 +3328,7 @@ fn analyze_related_assertions(
                     strongest_observation_confirmed = observation_confirmed;
                     strongest_identity = identity;
                     strongest_reason = Some(*reason);
+                    strongest_owner_value_masked = owner_value_masked;
                 }
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -3311,11 +3339,12 @@ fn analyze_related_assertions(
                     oracle_strength: relative_strength,
                     relation_reason,
                     relation_confidence,
-                    miss: ((!effect_kind_confirms || return_admission.owner_return_pin_required)
-                        && !observation_confirmed
-                        && (return_admission.owner_return_pin_required
-                            || effect_observer_confirms(assertion)
-                            || implicit_observer == Some(false)))
+                    miss: (owner_value_masked
+                        || ((!effect_kind_confirms || return_admission.owner_return_pin_required)
+                            && !observation_confirmed
+                            && (return_admission.owner_return_pin_required
+                                || effect_observer_confirms(assertion)
+                                || implicit_observer == Some(false))))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
                     miss_support: None,
                     role: crate::domain::RelatedTestRole::Contributing,
@@ -3375,6 +3404,7 @@ fn analyze_related_assertions(
         refused_context,
         observation_unverified,
         proximity_confirmation_withheld,
+        strongest_owner_value_masked,
         override_defeated,
     }
 }

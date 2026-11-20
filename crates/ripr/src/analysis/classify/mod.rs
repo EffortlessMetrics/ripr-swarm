@@ -52,6 +52,7 @@ pub(in crate::analysis) fn nominal_observer_trace_decisions(
 }
 mod owner_shape;
 mod owner_value;
+mod owner_value_sink;
 mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;
