@@ -223,7 +223,7 @@ pub(super) fn name_scopes_in_tree(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
             .collect();
         modules.reverse();
         modules
@@ -405,8 +405,33 @@ pub(crate) fn name_scopes_for_test_caller(
     match generated {
         None => name_scopes_in_tree(tree, line_index, fn_line, fn_name),
         Some(origin) if origin.body_declares_items => None,
-        Some(_) => name_scopes_at_line(tree, line_index, fn_line),
+        Some(_) if file_rebinds_a_std_macro(tree) => None,
+        Some(_) => name_scopes_at_line(tree, line_index, fn_line)
+            .filter(|scopes| !scopes_import_a_std_macro_name(scopes)),
     }
+}
+
+/// A `macro_rules!` anywhere in the file that reuses an exempt std macro name.
+/// Textual macro scope is positional, so any definition counts: the exemption
+/// reads a bare name, and a local definition may expand to a rebinding `use`
+/// (#12852). Macros defined in another file are not seen.
+fn file_rebinds_a_std_macro(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter_map(|rules| rules.name())
+        .any(|name| NAME_FREE_STD_MACROS.contains(&name.text().trim_start_matches("r#")))
+}
+
+/// An explicit import at the invocation site that binds an exempt std macro
+/// name (`use other::assert_eq;`). Glob imports are not read (#12852).
+fn scopes_import_a_std_macro_name(scopes: &NameScopes) -> bool {
+    scopes.scopes.iter().any(|scope| {
+        scope
+            .imports
+            .iter()
+            .any(|import| NAME_FREE_STD_MACROS.contains(&import.bound.trim_start_matches("r#")))
+    })
 }
 
 fn name_scopes_at_line(
@@ -447,7 +472,7 @@ fn name_scopes_at_line(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
             .collect();
         modules.reverse();
         modules
@@ -567,9 +592,9 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
     let mut define = |name: Option<ast::Name>, value_item: bool| {
         if let Some(name) = name {
             if value_item {
-                scope.value_items.insert(name.text().to_string());
+                scope.value_items.insert(unraw(name.text()));
             }
-            scope.defines.insert(name.text().to_string());
+            scope.defines.insert(unraw(name.text()));
         }
     };
     match item {
@@ -580,8 +605,8 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
         }
         ast::Item::ExternCrate(item) => {
             let bound = match item.rename() {
-                Some(rename) => rename.name().map(|ident| ident.text().to_string()),
-                None => item.name_ref().map(|name| name.text().to_string()),
+                Some(rename) => rename.name().map(|ident| unraw(ident.text())),
+                None => item.name_ref().map(|name| unraw(name.text())),
             };
             if let Some(bound) = bound {
                 scope.imports.push(UseImport {
@@ -592,7 +617,7 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
         }
         ast::Item::Module(module) => {
             if let Some(name) = module.name() {
-                scope.child_modules.insert(name.text().to_string());
+                scope.child_modules.insert(unraw(name.text()));
             }
         }
         ast::Item::Fn(item) => define(item.name(), false),
@@ -639,9 +664,15 @@ pub(crate) fn path_segments(path: &ast::Path) -> Option<Vec<String>> {
         {
             return None;
         }
-        segments.push(segment.name_ref()?.text().to_string());
+        segments.push(unraw(segment.name_ref()?.text()));
     }
     (!segments.is_empty()).then_some(segments)
+}
+
+/// An identifier's name without the raw prefix: `r#render` and `render` are
+/// one name to the compiler, so scopes record and compare the plain spelling.
+fn unraw(text: &str) -> String {
+    text.strip_prefix("r#").unwrap_or(text).to_string()
 }
 
 /// Import leaves of one use item, sharing the same grouped-path reading as
@@ -663,7 +694,7 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mu
         last_text = path
             .segment()
             .and_then(|segment| segment.name_ref())
-            .map(|name| name.text().to_string());
+            .map(|name| unraw(name.text()));
         full = match (full, path_segments(&path)) {
             (Some(mut full), Some(segments)) => {
                 full.extend(segments);
@@ -691,7 +722,7 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mu
     }
     let renamed_to = tree
         .rename()
-        .map(|rename| rename.name().map(|ident| ident.text().to_string()));
+        .map(|rename| rename.name().map(|ident| unraw(ident.text())));
     let bound = match &renamed_to {
         // `use x as _;` binds no name.
         Some(name) => name.clone(),
@@ -759,6 +790,42 @@ mod tests {
             assert!(found.scopes[1].defines.contains(name), "{name} is defined");
         }
         assert!(found.scopes[2].value_items.is_empty());
+    }
+
+    /// #14087 shape B: `r#name` and `name` are one name, so every recorded
+    /// spelling drops the raw prefix.
+    #[test]
+    fn records_raw_identifiers_under_their_plain_names() {
+        let source = "\
+mod r#inner {}
+mod tests {
+    use crate::b::r#render;
+    use crate::r#a::{r#snap as r#draw, r#other::*};
+    extern crate r#alloc;
+    const r#limit: u32 = 1;
+    fn r#helper() {}
+    fn probe() {
+        assert_eq!(render(1), 1);
+    }
+}
+";
+        let found = scopes(source, 8, "probe");
+        assert_eq!(found.scopes.len(), 3, "fn body, mod tests, file root");
+        let tests = &found.scopes[1];
+        assert_eq!(
+            imports_of(tests, "render"),
+            vec![UseBinding::Path(strings(&["crate", "b", "render"]))]
+        );
+        assert!(imports_of(tests, "r#render").is_empty());
+        assert_eq!(
+            imports_of(tests, "draw"),
+            vec![UseBinding::Renamed(strings(&["crate", "a", "snap"]))]
+        );
+        assert_eq!(imports_of(tests, "alloc"), vec![UseBinding::Opaque]);
+        assert_eq!(tests.globs, vec![Some(strings(&["crate", "a", "other"]))]);
+        assert!(tests.defines.contains("limit") && tests.defines.contains("helper"));
+        assert!(tests.value_items.contains("limit"));
+        assert!(found.scopes[2].child_modules.contains("inner"));
     }
 
     #[test]
@@ -1012,6 +1079,37 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
         assert!(tree.is_some_and(|tree| {
             name_scopes_for_test_caller(&tree, &LineIndex::new(source), 2, "case", None).is_none()
         }));
+    }
+
+    #[test]
+    fn a_rebound_std_macro_name_takes_no_invocation_scopes() {
+        let origin = Some(MacroGeneratedOrigin::default());
+        let run = |source: &str, line: usize| -> Result<Option<NameScopes>, String> {
+            let parse = parse_clean_source_file(source).ok_or("parse")?;
+            Ok(name_scopes_for_test_caller(
+                &parse.tree(),
+                &LineIndex::new(source),
+                line,
+                "case",
+                origin,
+            ))
+        };
+        // Control: no rebinding, the invocation scopes are borrowed.
+        let plain = "use demo::owner;\nchild_table!(case);\n";
+        assert!(matches!(run(plain, 2), Ok(Some(_))));
+        // A local `macro_rules!` reusing a std name, an explicit import of it.
+        let local = "use demo::owner;\nmacro_rules! assert_eq { () => {}; }\nchild_table!(case);\n";
+        assert!(matches!(run(local, 3), Ok(None)));
+        let imported = "use demo::owner;\nuse other::assert_eq;\nchild_table!(case);\n";
+        assert!(matches!(run(imported, 3), Ok(None)));
+        // Raw identifiers name the same binding, including an import alias.
+        for import in [
+            "use other::r#assert_eq;",
+            "use other::anything as r#assert_eq;",
+        ] {
+            let source = format!("use demo::owner;\n{import}\nchild_table!(case);\n");
+            assert!(matches!(run(&source, 3), Ok(None)), "{import}");
+        }
     }
 
     #[test]

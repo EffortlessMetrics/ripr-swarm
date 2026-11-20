@@ -53,7 +53,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/owner_self_body_same_name_no_unseen_reach/input --diff <cwd>/fixtures/owner_self_body_same_name_no_unseen_reach/diff.patch --mode fast probe:src_lib.rs:predicate:6fb64460
   ripr context --root <cwd>/fixtures/owner_self_body_same_name_no_unseen_reach/input --diff <cwd>/fixtures/owner_self_body_same_name_no_unseen_reach/diff.patch --mode fast --at probe:src_lib.rs:predicate:6fb64460
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 1 changed expression(s), and 1 related test(s) with no
   established call path to the changed code. This is not a coverage assessment. A test may already

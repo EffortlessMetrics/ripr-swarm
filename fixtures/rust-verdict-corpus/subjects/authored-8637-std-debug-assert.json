@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-8637-std-debug-assert",
+  "origin": "authored",
+  "version_label": "authored 2026-11-19 for a std-rooted debug_assert_eq! pin (#8637)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "c1d01ea9bcd5e085a0e88ae02cc32cdac2f0ea6f43d7469de5b98343dc404d50"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "38ee7beacb9040ffdd691fe639781eb347015f3e761729236f21291391f440e9"
+    }
+  ]
+}

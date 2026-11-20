@@ -134,7 +134,7 @@ map is:
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.3` |
-| `ripr cache export` success stdout | `schema_version` | `0.1` |
+| `ripr cache export` success stdout (published as `schemas/ripr/cache-export.schema.json`) | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
@@ -167,6 +167,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
+| `schemas/ripr/cache-export.schema.json` | `0.1` | `crates/ripr/src/analysis/seam_cache/export.rs`; cache export success report (`ripr cache export`) |
 | `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
@@ -174,6 +175,9 @@ records that distinction.
 | `schemas/ripr/cli-refusal.schema.json` | `0.1` | `crates/ripr/src/app.rs` and `crates/ripr/src/output/refusal.rs`; minimal usage-error / selector-miss refusal under an explicit JSON request (#11584) |
 | `schemas/ripr/diff.schema.json` | `0.1` | `crates/ripr/src/output/diff_report.rs`; `ripr_diff` report (`ripr diff --json`) |
 | `schemas/ripr/diff-refusal.schema.json` | `0.1` | `crates/ripr/src/cli/commands.rs`; the refusal envelope `ripr diff --json` writes when it cannot produce a report, keyed with the diff report's version |
+| `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
+| `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
+| `schemas/ripr/agent-packet-refusal.schema.json` | `0.5` | `crates/ripr/src/app.rs`; the refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet, keyed with the packet's version |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/muse-plugin-eval.schema.json` | `muse-plugin-eval-v1` | `xtask/src/reports/dx_scoreboard/muse_plugin.rs`; canonical Muse evaluation record with optional structured observations; [contract](verification/muse-plugin-eval.md) |
@@ -234,7 +238,7 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
   is not suppressed by an explicit `--suppression-policy`, is not severity
   `off` for its file in `ripr.toml`, and its class is not `exposed`. Exposed
   findings print nothing.
-- `<classification>` is the check document's `class` token verbatim
+- `<classification>` is the check document's `classification` token verbatim
   (`weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
   `infection_unknown`, `propagation_unknown`, `static_unknown`);
   `<probe family>` is the probe's `family` token. These are static
@@ -898,7 +902,8 @@ same `canonical_next_action.v1` DTO that `ripr check --format json` embeds
 rather than re-inferred for the machine document. It is present only when the
 first-command state is a precise recovery: `stop.kind` is `doctor_recovery`,
 `stop.check_name` names the failing check (`root_directory`, `config`, or
-`cargo_toml` for the generic failed-prerequisite case), `stop.recovery_route`
+`cargo_toml` or `output_location` for the generic failed-prerequisite case),
+`stop.recovery_route`
 is the recovery prose, `action_class` is `satisfy_prerequisite`, and `command`
 is absent because a recovery is not a runnable command. The key is omitted when
 the state names a runnable command, and for the `source-build` profile. The
@@ -1013,6 +1018,11 @@ exit zero before consuming the directory. Failures after output creation name th
 retained owned partial output; preflight refusals, including unavailable Cargo
 input identity, occur before the output directory exists and create no output.
 The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-cache-export.md).
+The success object is published as
+[`schemas/ripr/cache-export.schema.json`](../schemas/ripr/cache-export.schema.json);
+`crates/ripr/tests/cache_export_json_schema.rs` validates the bytes the real
+command writes and holds `copied_files` and `logical_file_bytes` to the files
+in the directory `cache_dir` names.
 
 ## Matched intervention-study preregistration
 
@@ -1659,6 +1669,9 @@ positions, so the churn is line-ending-only and probes treat the text as
 unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
+For Rust, such a pair seeds no probe (#14175): a line-ending rewrite or a final
+newline added or removed reports no finding for the paired lines, also beside a
+real edit in the same block, which keeps its own finding.
 
 `verification_only_change` (RIPR-SPEC-0368, #10749) is the second change-shape
 disclosure that may ride on a complete outcome. Changed lines that are
@@ -1852,6 +1865,19 @@ The exit stays `2` and the human prose stays on stderr, except an unknown or
 policy-withheld `agent packet --seam-id`, which exits `3` (#10712); argv usage errors keep
 empty stdout, except the covered classes listed under `cli_refusal` below,
 which write that minimal document when JSON was explicitly requested (#11584).
+
+These envelopes have published schemas, each tested against the real
+command's output:
+[`schemas/ripr/diff-refusal.schema.json`](../schemas/ripr/diff-refusal.schema.json),
+[`schemas/ripr/rerun-refusal.schema.json`](../schemas/ripr/rerun-refusal.schema.json),
+[`schemas/ripr/agent-brief-refusal.schema.json`](../schemas/ripr/agent-brief-refusal.schema.json)
+and
+[`schemas/ripr/agent-packet-refusal.schema.json`](../schemas/ripr/agent-packet-refusal.schema.json).
+The last three are the diff refusal schema with the command's own version and
+scope and without the fields it never writes (`mode`, and `base` except on
+agent brief), and `crates/ripr/tests/refusal_envelope_schemas.rs` holds them
+to exactly that difference. The `ripr context` refusal has no published schema
+yet.
 
 For `ripr check`, the machine-readable formats also carry their own refusal
 document on stdout instead of zero bytes (#7332), each parseable as its own
@@ -2284,7 +2310,8 @@ exits `2` and writes the refusal envelope,
 the check JSON refusal shape keyed with the diff report's `schema_version`,
 with no `kind`, empty `findings`, a zeroed `summary`, `analysis_scope.scope`
 `diff`, and exactly one `run_limitations` entry carrying the refusal identity
-and its `remedy`. Argument usage errors write no JSON. The two schemas'
+and its `remedy`. Argument usage errors never write this envelope; the
+classes `cli_refusal` covers write that document instead. The two schemas'
 `analysis_outcome.outcome`, `preview_languages[]`, `summary`,
 `run_limitations[]` and `remedy` definitions are the check schema's, held
 identical by `crates/ripr/tests/diff_json_schema.rs`, which also validates the
@@ -5400,6 +5427,9 @@ Field contract:
   `unavailable` when the producer cannot resolve Git; the envelope is a
   disclosure, not a verify-contract, and `ripr agent verify` does not
   consume this artifact. The Markdown sibling does not carry the envelope.
+  `generated_at` is the wall-clock time of the run as `unix_ms:<millis>`
+  unless `RIPR_GENERATED_AT` pins it (see `docs/CONFIGURATION.md`); the
+  digest covers it, so only a pinned stamp makes two runs byte-comparable.
 - `scope` — always `"repo"` for this artifact. Distinguishes the repo seam
   inventory from diff-scoped findings.
 - `seam_id` — 16-char lowercase hex. FNV-1a 64-bit hash of
@@ -15762,7 +15792,7 @@ ripr first-pr \
   --agent-packet target/ripr/agent/gap-packet.md \
   --gate-decision target/ripr/reports/gate-decision.json \
   --receipts-dir target/ripr/receipts \
-  --out-dir target/ripr/reports
+  --output-dir target/ripr/reports
 ```
 
 The command writes:
@@ -16389,7 +16419,21 @@ Field contract:
   command and keep it only if it passes. `status: "complete"` never means the test passed:
   static movement `improved` survives a failing test, so a consumer that needs
   a test result runs the test itself. The Markdown form prints the same as a
-  `Test run: none recorded.` line under `Seam:`.
+  `Test run: none recorded.` line under `Seam:`. When that attempt retained a
+  caller-reported focused result (`--phase after --test-result`, #14079),
+  `status` is `"caller_reported"` and the object adds `file`, `ran`, `passed`
+  and `failed` from the retained record; `next_step` names a reported failure,
+  and otherwise says that ripr checked the result's binding and did not run or
+  observe the tests. The Markdown line then starts `Test run: reported by the
+  caller, not run by ripr:`. The receipt's `verification.status` stays
+  `verification_not_run` either way: the counts are the caller's claim, on a
+  separate axis from the static movement. The object also carries
+  `attempt_id`, the attempt it speaks for (#14146). When several attempts
+  have such a receipt, it reports the most telling one: a caller-reported
+  failure first, then `not_recorded`, then a caller-reported pass, earliest
+  attempt within each; the Markdown form then prints one line per attempt,
+  in that order, as `Test run (attempt `<id>`): ...`, so one attempt's
+  `none recorded` never hides another attempt's reported failure.
 - `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
   one current awaiting repair attempt's recorded after command
   (`repair_attempt_after`; when that attempt recorded a refused after phase,
@@ -16718,12 +16762,22 @@ Field notes:
   keeps `status` at `incomplete`. `static_movement` is still copied, and
   `reviewer_summary.headline`, `reviewer_summary.what_changed` and the
   Markdown `Receipt:` line say that the recorded movement is not review
-  evidence. The wording is fixed per case and never echoes receipt text.
+  evidence, and `reviewer_summary.remaining` says to reissue the receipt
+  instead of repeating the receipt's own guidance. The wording is fixed per
+  case and never echoes receipt text.
 - `analysis_outcome` is copied from the producer's typed check envelope. Its
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.
 - `surfaces[]` reports each joined surface as `computed`, `present`, `missing`,
   `optional_missing`, `invalid`, or `invalid_json`.
+  `missing` and `optional_missing` mean nothing exists at the path. A path
+  that holds something whose text cannot be read (not UTF-8, a directory, a
+  read failure) is `invalid`, and unparseable text is `invalid_json`.
+- When a receipt file is present but no movement can be read from it,
+  `static_movement.state` stays `missing_artifact` while
+  `static_movement.summary`, `static_movement.next_action` and
+  `reviewer_summary.what_changed` say the receipt is unreadable or invalid
+  rather than missing.
 - `ci_artifacts[]` is local file presence for artifacts that generated CI can
   upload later; it does not query GitHub Actions.
 - `reviewer_summary` is intentionally compact enough for PR comments and LLM
@@ -20762,7 +20816,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.183",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.184",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21547,7 +21601,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.183",
+      "schema_version": "1.184",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -21957,7 +22011,7 @@ Field contract:
 
 ## Python repair verification records
 
-`ripr agent repair --phase prepare` retains a schema-`0.1`
+`ripr agent repair --phase before` retains a schema-`0.1`, `phase: "prepare"`
 `python_repair_driver_binding` record (RIPR-SPEC-0176) under the attempt and
 projects it to `target/ripr/workflow/python-repair-trust-binding.json`.
 `--phase after` writes a separate

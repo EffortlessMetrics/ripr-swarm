@@ -4750,10 +4750,11 @@ pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
 /// (`add(&mut v, 4)` against `if x > 10`; a let-bound literal or a
 /// file-level `const` bound reads too, #7964). The probe then never runs
 /// under the tests, so no assertion over its effect can reveal it. The same
-/// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
-/// use of the owner, one computed input, a partial index, a same-named
-/// function, or a related test that may reach the owner through a helper
-/// or macro leaves the guard unnamed.
+/// refusals as [`missing_match_arm_discriminator`] apply: a trait-method or
+/// unestablished-container owner (#15010), one unreadable use of the owner,
+/// one computed input, a partial index, a same-named function, or a related
+/// test that may reach the owner through a helper or macro leaves the guard
+/// unnamed.
 fn missing_guard_entry_discriminator(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -4764,6 +4765,19 @@ fn missing_guard_entry_discriminator(
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
     if related_tests.is_empty() || !workspace_complete {
+        return None;
+    }
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may enter the guard and no mention scan below can see it
+    // (#15010, as in `missing_match_arm_discriminator`). An unestablished
+    // container may be one, so only a known non-trait owner reads on.
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
         return None;
     }
     // The cheap text read first: most side effects sit under no readable
@@ -4816,7 +4830,10 @@ fn missing_guard_entry_discriminator(
 /// that selects one arm can still run another. The same refusals as
 /// [`missing_guard_entry_discriminator`]: a callee may call it back
 /// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
-/// read, or anything outside the related tests names it
+/// read, a read macro that it, a callee, a related test or a test helper
+/// invokes is rebound ([`invoked_read_macro_rebound`]; the guard reading
+/// asks about every read-macro name), or anything outside the related tests
+/// names it
 /// ([`owner_named_outside_related_tests`]): its own body (a direct,
 /// `Self::`-qualified or `self.` self-call), a helper passed as a function
 /// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
@@ -4833,6 +4850,46 @@ fn owner_may_call_itself(
     owner_may_reenter(owner, functions_by_name)
         || invokes_unread_macro(&owner.body)
         || owner_named_outside_related_tests(index, &owner.name, related_tests)
+        // The read macros are trusted by name (#15022, as in
+        // `missing_guard_entry_discriminator`): a workspace that defines,
+        // imports or may glob in another macro under one of those names can
+        // run the owner with an input the call it wraps never shows. Only
+        // the names the owner, its callees, the related tests and their
+        // helpers invoke are asked about, so an unrelated `macro_rules!
+        // assert` elsewhere leaves an `assert_eq!`-only arm readable.
+        || invoked_read_macro_rebound(owner, functions_by_name, index, related_tests)
+}
+
+/// Whether a [`READ_MACROS`] name that the owner, a function it reaches,
+/// a related test or a helper that test reaches invokes is rebound in the
+/// workspace ([`macro_names_rebound`]). A name nothing on those paths
+/// invokes cannot run the owner from a read call.
+fn invoked_read_macro_rebound(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
+) -> bool {
+    let mut invoked = std::collections::BTreeSet::new();
+    let mut pending = Vec::new();
+    collect_read_macros(&owner.body, &mut invoked);
+    pending.extend(owner.calls.iter().map(|call| call.name.as_str()));
+    for test in related_tests {
+        collect_read_macros(&test.body, &mut invoked);
+        pending.extend(test.body_calls().map(|call| call.name.as_str()));
+    }
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name.get(name).into_iter().flatten() {
+            collect_read_macros(&function.body, &mut invoked);
+            pending.extend(function.calls.iter().map(|call| call.name.as_str()));
+        }
+    }
+    let names = invoked.into_iter().collect::<Vec<_>>();
+    !names.is_empty() && macro_names_rebound(index, &names)
 }
 
 /// Whether a function the owner reaches through its calls names the owner
@@ -5236,46 +5293,69 @@ fn rebound_scan(index: &crate::analysis::rust_index::RustIndex, names: &[&str]) 
 /// Whether `body` invokes a macro other than [`READ_MACROS`], whose
 /// expansion is not read and may call any function.
 fn invokes_unread_macro(body: &str) -> bool {
+    macro_invocations(body)
+        .iter()
+        .any(|(name, foreign_path)| *foreign_path || !READ_MACROS.contains(&name.as_str()))
+}
+
+/// Add to `invoked` each [`READ_MACROS`] name that `body` invokes without a
+/// path outside the standard crates (#15022).
+fn collect_read_macros(body: &str, invoked: &mut std::collections::BTreeSet<&'static str>) {
+    for (name, foreign_path) in macro_invocations(body) {
+        if let Some(read) = READ_MACROS.iter().find(|read| **read == name)
+            && !foreign_path
+        {
+            invoked.insert(*read);
+        }
+    }
+}
+
+/// The macro invocations in `body`, comments and strings masked: each
+/// name, and whether a path outside the standard crates qualifies it.
+fn macro_invocations(body: &str) -> Vec<(String, bool)> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let bytes = masked.as_bytes();
     // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
     // `exercise !()`), so both are skipped before reading the delimiter
     // and the name.
-    masked.match_indices('!').any(|(offset, _)| {
-        let next = bytes[offset + 1..]
-            .iter()
-            .copied()
-            .find(|byte| !byte.is_ascii_whitespace());
-        if !matches!(next, Some(b'(' | b'[' | b'{')) {
-            return false;
-        }
-        let name_end = masked[..offset].trim_end().len();
-        let name_start = masked[..name_end]
-            .char_indices()
-            .rev()
-            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
-            .map_or(0, |(index, ch)| index + ch.len_utf8());
-        let name = &masked[name_start..name_end];
-        // A path-qualified name (`util::println!`) is a read macro only
-        // under the standard crates.
-        let qualifier = masked[..name_start].trim_end();
-        let foreign_path = qualifier.ends_with("::")
-            && !["std::", "core::", "alloc::"].iter().any(|root| {
-                qualifier.strip_suffix(root).is_some_and(|head| {
-                    !head
-                        .chars()
-                        .next_back()
-                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-                })
-            });
-        // `if !(done)` is a negation after a keyword, not a macro.
-        !name.is_empty()
-            && (foreign_path || !READ_MACROS.contains(&name))
-            && !matches!(
-                name,
-                "if" | "while" | "match" | "return" | "in" | "else" | "break"
-            )
-    })
+    masked
+        .match_indices('!')
+        .filter_map(|(offset, _)| {
+            let next = bytes[offset + 1..]
+                .iter()
+                .copied()
+                .find(|byte| !byte.is_ascii_whitespace());
+            if !matches!(next, Some(b'(' | b'[' | b'{')) {
+                return None;
+            }
+            let name_end = masked[..offset].trim_end().len();
+            let name_start = masked[..name_end]
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+                .map_or(0, |(index, ch)| index + ch.len_utf8());
+            let name = &masked[name_start..name_end];
+            // A path-qualified name (`util::println!`) is a read macro only
+            // under the standard crates.
+            let qualifier = masked[..name_start].trim_end();
+            let foreign_path = qualifier.ends_with("::")
+                && !["std::", "core::", "alloc::"].iter().any(|root| {
+                    qualifier.strip_suffix(root).is_some_and(|head| {
+                        !head
+                            .chars()
+                            .next_back()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                    })
+                });
+            // `if !(done)` is a negation after a keyword, not a macro.
+            (!name.is_empty()
+                && !matches!(
+                    name,
+                    "if" | "while" | "match" | "return" | "in" | "else" | "break"
+                ))
+            .then(|| (name.to_string(), foreign_path))
+        })
+        .collect()
 }
 
 /// Produce a missing-discriminator fact for a `FieldConstruction` seam whose
@@ -9917,6 +9997,12 @@ fn owner_row_argument_values(
     scope: super::argument_fold::FoldScope<'_>,
 ) -> Vec<String> {
     if let Some(value) = scope.property_argument(argument) {
+        return vec![value];
+    }
+    // RIPR-SPEC-0158: `level("12")` through the file's one closed parse helper
+    // is the number it parses to. The helper call is no literal-carrying
+    // argument, so this reads first.
+    if let Some(value) = super::argument_fold::folded_parse_argument(&test.body, argument, scope) {
         return vec![value];
     }
     let values = owner_argument_values_in(test, argument, text_cells);

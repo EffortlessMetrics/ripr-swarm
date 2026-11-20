@@ -59,5 +59,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_bool_owner_unrelated_patching/input --diff <cwd>/fixtures/python_bool_owner_unrelated_patching/diff.patch --mode fast probe:rules.py:python_preview:9d399b85
   ripr context --root <cwd>/fixtures/python_bool_owner_unrelated_patching/input --diff <cwd>/fixtures/python_bool_owner_unrelated_patching/diff.patch --mode fast --at probe:rules.py:python_preview:9d399b85
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

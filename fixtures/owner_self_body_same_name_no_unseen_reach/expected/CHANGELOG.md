@@ -192,6 +192,28 @@ Updated:
 ## Pending — owner_self_body_same_name_no_unseen_reach (16)
 
 Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (17)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (18)
+
+Reason:
 RIPR-SPEC-0090: the all-no-path note no longer calls related tests typed no-call-path "statically linked" (#15051)
 
 Command:

@@ -85,12 +85,13 @@ impl RepairRoute {
 
 /// `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`: the
 /// one commit spelling every repair route prints before its start (#10698,
-/// #13636). `None` for an empty file list.
+/// #13636), and the editor's blocked repair start (#13636). `None` for an
+/// empty file list.
 ///
 /// The command runs from any directory: `git -C <root>` anchors it at the
 /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
 /// literal, and the files are shell-quoted and spelled relative to that root.
-fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
+pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
     if files.is_empty() {
         return None;
     }
@@ -179,6 +180,13 @@ pub(crate) enum RepairRouteRefusal {
     NoBindingSeam {
         seams_in_file: usize,
     },
+    /// Several same-kind spots sit on this finding's changed line (one per
+    /// comparison in `a < b && c == d`) and none is more specific than the
+    /// others, so no single spot binds the finding (#15157). `spots` holds
+    /// each tied spot's code, in file order.
+    SeveralSpotsOnChangedLine {
+        spots: Vec<String>,
+    },
     /// The finding itself is `exposed`: the related tests already notice the
     /// change, so there is nothing to repair whatever the seam view says
     /// (#10702).
@@ -203,6 +211,22 @@ pub(crate) enum RepairRouteRefusal {
         /// only its oracle is weak (#10622).
         boundary_input_observed: bool,
     },
+}
+
+/// Longest tied-spot snippet the repair-start note quotes (#15157).
+const TIED_SPOT_CHARS: usize = 80;
+
+/// One tied spot's code on one bounded line: a seam's expression keeps its
+/// source line breaks (a multi-line string or call), and the refusal is one
+/// advisory line, so collapse whitespace and cut a long snippet with `…`.
+fn one_line_spot(spot: &str) -> String {
+    let collapsed = spot.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= TIED_SPOT_CHARS {
+        return collapsed;
+    }
+    let mut bounded: String = collapsed.chars().take(TIED_SPOT_CHARS).collect();
+    bounded.push('…');
+    bounded
 }
 
 impl RepairRouteRefusal {
@@ -263,6 +287,23 @@ impl RepairRouteRefusal {
                  for you; `ripr pilot` lists them, or follow the Next step above",
                 if *seams_in_file == 1 { "spot" } else { "spots" }
             ),
+            Self::SeveralSpotsOnChangedLine { spots } => {
+                const NAMED: usize = 3;
+                let mut named = spots
+                    .iter()
+                    .take(NAMED)
+                    .map(|spot| format!("`{}`", one_line_spot(spot)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if spots.len() > NAMED {
+                    named.push_str(&format!(" and {} more", spots.len() - NAMED));
+                }
+                format!(
+                    "no repair start offered: this finding's changed line holds {} spots \
+                     ({named}) and ripr will not pick one for you; follow the Next step above",
+                    spots.len()
+                )
+            }
             Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
                  the related tests already notice this change (exposed)"
                 .to_string(),
@@ -1178,6 +1219,41 @@ mod tests {
             "no repair start offered: ripr found 1 spot in this finding's file, but could not \
              tie one to this finding's changed line, so it cannot pick one for you; `ripr \
              pilot` lists them, or follow the Next step above"
+        );
+        // #15157: a tie on the changed line names the tied spots, not "could
+        // not tie one", and caps the list.
+        let tied = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: vec!["min_bound < j".to_string(), "a_elem == b_elem".to_string()],
+        }
+        .advisory(gate);
+        assert_eq!(
+            tied,
+            "no repair start offered: this finding's changed line holds 2 spots \
+             (`min_bound < j`, `a_elem == b_elem`) and ripr will not pick one for you; \
+             follow the Next step above"
+        );
+        let many = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: ["a", "b", "c", "d", "e"].map(str::to_string).to_vec(),
+        }
+        .advisory(gate);
+        assert!(
+            many.contains("holds 5 spots (`a`, `b`, `c` and 2 more)")
+                && !many.contains("`d`")
+                && !many.contains("could not tie"),
+            "{many}"
+        );
+        // A multi-line or long spot stays on the one advisory line.
+        let long = "x".repeat(120);
+        let bounded = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: vec!["a ==\n    \"two\nlines\"".to_string(), long.clone()],
+        }
+        .advisory(gate);
+        assert!(!bounded.contains('\n'), "{bounded}");
+        assert!(
+            bounded.contains("holds 2 spots (`a == \"two lines\"`, `")
+                && bounded.contains(&format!("{}…`", "x".repeat(80)))
+                && !bounded.contains(&"x".repeat(81)),
+            "{bounded}"
         );
         let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
         assert_eq!(

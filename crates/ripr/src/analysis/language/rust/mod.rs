@@ -1828,7 +1828,9 @@ fn apply_probe_and_oracle_limits(
         owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
-    oracles::apply_wrapper_error_binding_limit(finding, probe);
+    let literal_only_related = finding.class == ExposureClass::ReachableUnrevealed
+        && related_tests_assert_only_dropped_literals(finding, index);
+    oracles::apply_wrapper_error_binding_limit(finding, probe, literal_only_related);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
     // #14951: after every reach-witness limit (an uncalled owner has none) and
     // after the RIPR-SPEC-0150 binding disclosure, which keeps its finding
@@ -1881,6 +1883,9 @@ fn apply_probe_and_oracle_limits(
     classify::withhold_mixed_refusal_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
+    // #15237: after every limit and gap decision, so the rewritten row miss
+    // never feeds one; it only withdraws a false "has no assertion" claim.
+    oracles::name_unread_assertion_macro_rows(finding, index);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a
@@ -2129,7 +2134,13 @@ fn apply_rust_proximity_reach_limit(
     // or defining its own function of the owner's name). A test that reaches
     // the owner through a wrapper crate has no helper-transfer chain, so the
     // name-token relation alone must not read as an actionable gap (#10127).
-    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
+    // #14968: a finding whose every related test asserts only literals
+    // (`assert!(true)`) read `weakly_exposed` from that literal alone, and
+    // that reading admitted any witness. Dropping the literal's credit
+    // lowers the class, never the limitation it named, so such a finding
+    // keeps the weak reading's admission.
+    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed
+        && !related_tests_assert_only_dropped_literals(finding, index);
     // The owner as the index spells it, the same form a witness's test file
     // has (the probe's own path may carry the checkout root).
     let owner = probe
@@ -2187,6 +2198,29 @@ fn apply_rust_proximity_reach_limit(
             &owner_name,
         );
     }
+}
+
+/// Whether every related test of `finding` supplied no oracle row and is an
+/// indexed test whose assertions are all dropped literal-only assertions
+/// (#14968). A row the index cannot match, an oracle row, or a list at the
+/// render cap (which may hide rows) answers `false`.
+fn related_tests_assert_only_dropped_literals(finding: &Finding, index: &RustIndex) -> bool {
+    !finding.related_tests.is_empty()
+        && finding.related_tests.len() < classify::RELATED_TESTS_RENDER_CAP
+        && finding.related_tests.iter().all(|related| {
+            let mut matching = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.name == related.name
+                        && test.start_line == related.line
+                        && (test.file == related.file || related.file.ends_with(&test.file))
+                })
+                .peekable();
+            related.oracle.is_none()
+                && matching.peek().is_some()
+                && matching.all(classify::asserts_only_dropped_literals)
+        })
 }
 
 /// Shared transitive limitation projection (RIPR-SPEC-0114), for a witness
@@ -3291,11 +3325,9 @@ impl RustAdapter {
                             // lexical test keeps a file the index could not
                             // parse, which then reads as unreadable.
                             !facts.module_declarations.is_empty()
-                                || facts.source.lines().any(|line| {
-                                    line.contains("mod ") && line.trim_end().ends_with(';')
-                                })
+                                || crate::analysis::diff::may_declare_module(&facts.source)
                         })
-                        .map(|(_, facts)| facts.data().source.as_ref()),
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
                     changed_files.iter().map(|changed| {
                         (
                             changed,
@@ -3720,7 +3752,10 @@ impl RustAdapter {
                 .count(),
             limitations: limitations
                 .into_iter()
-                .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(limitations_for_absent_changed_files(
+                    &options.root,
+                    &absent_changed_files,
+                )?)
                 .chain(workspace::limitations_for_unreadable_unchanged_paths(
                     &unreadable_unchanged_paths,
                 )?)
@@ -4915,7 +4950,10 @@ mod tests {
                 > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
             "fixture must exceed the detail budget when the path is interpolated"
         );
-        let limitations = limitations_for_absent_changed_files(&[std::path::PathBuf::from(&deep)])?;
+        let limitations = limitations_for_absent_changed_files(
+            std::path::Path::new("/nonexistent-ripr-root"),
+            &[std::path::PathBuf::from(&deep)],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some(deep.as_str()));
         let detail = limitations[0].bounded_detail.as_deref().unwrap_or_default();
@@ -10319,7 +10357,7 @@ fn absent_delimiter_boundary_returns_head() {
                 context.production_like_targets.insert(file.clone());
             }
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10345,7 +10383,7 @@ fn absent_delimiter_boundary_returns_head() {
         ] {
             let loaded = vec![(file.clone(), source.to_vec())];
             let remaining = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10378,7 +10416,7 @@ fn absent_delimiter_boundary_returns_head() {
                 Vec::new()
             };
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &harnesses,

@@ -525,6 +525,17 @@ Updated:
 ## Pending — rust_uncalled_owner_same_file_tests (44)
 
 Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (45)
+
+Reason:
 RIPR-SPEC-0090: the all-no-path note no longer calls related tests typed no-call-path "statically linked" (#15051)
 
 Command:

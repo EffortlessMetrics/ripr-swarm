@@ -117,7 +117,7 @@ unchanged.
 all proximity-only; RIPR-SPEC-0117 states the rule. The class stays
 `weakly_exposed`.
 
-#10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). A witness counts only when its package (attributed through the discovered manifests, so a declared `[lib] path` root is not misread as foreign) directly declares the owner's package as a dependency, the path-dependency graph is complete, and that package defines no other function of the owner's name. Same-package, unrelated, transitive-dependent, unattributable and shadowing witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit.
+#10127 extends it to `reachable_unrevealed` findings, but only when a witness test lives in a different workspace package than the owner (a cross-crate wrapper). A witness counts only when its package (attributed through the discovered manifests, so a declared `[lib] path` root is not misread as foreign) directly declares the owner's package as a dependency, the path-dependency graph is complete, and that package defines no other function of the owner's name. Same-package, unrelated, transitive-dependent, unattributable and shadowing witnesses keep the existing reading. The class stays `reachable_unrevealed`; the finding gains the named limit. One exception (#14968, RIPR-SPEC-0094): a finding that reads `reachable_unrevealed` only because every related test asserts nothing but dropped literal-only assertions keeps the `weakly_exposed` admission it had with that credit.
 
 #11481 extends it to `infection_unknown` findings with `weak` reach whose related tests are all proximity-only or related only by an owner-named test (`owner_named_test`, which never has to call the owner). A private helper reached only through a public entry (the `numeric_identifier` -> `Version::from_str` -> `Version::parse` shape) now names the same limit. The class stays `infection_unknown`; reach stays `weak`; the witness is a candidate path, not a related test. No witness leaves the finding unchanged. RIPR-SPEC-0117 ("`infection_unknown` with an owner-named test") states the admission rule. `weakly_exposed` with only `owner_named_test` is deliberately not limited (decided under #11481: its credited weak assertion is a real gap the repo-wide witness cannot replace), and a mixed set holding a non-proximity relation stays unlimited. Known limit: the witness walk is name-only, so a same-named function in another module can name the limit (advisory only).
 
@@ -214,7 +214,7 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    `test → outer → inner`. Result: `no_static_path` + `static_limit_kind: rust_transitive_reach_unresolved`.
    Fixture: `fixtures/rust_transitive_reach_positive/`.
 
-2. **Test-helper public API chain (limitation fires)**: a semver-shaped integration test calls
+2. [abstain] **Test-helper public API chain (limitation fires)**: a semver-shaped integration test calls
    a test helper (`assert_public_api_accepts`), the helper calls a public API function, and the
    API flows through internal helpers to the changed owner (`matches_greater`). Result:
    `no_static_path` + `static_limit_kind: rust_transitive_reach_unresolved`, with a witness naming
@@ -224,10 +224,12 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    candidate path. Result: bare `no_static_path`, no `static_limit_kind`. Classification unchanged.
    Fixture: `fixtures/rust_transitive_reach_negative/`.
 
-4. **Fail-closed on macros**: test calls `my_macro!()` which calls the owner — BFS stops at macro.
-   No limitation fires (no candidate path found through macros). Classification stays bare `no_static_path`.
+4. [abstain] **Fail-closed on macros**: test calls `my_macro!()` which calls the owner — BFS stops at macro.
+   No transitive-reach limitation fires (no candidate path found through macros), and
+   the finding stays `no_static_path`; RIPR-SPEC-0119 example 1 names the macro-wrapped
+   test call limit on that finding.
 
-5. **Depth boundary**: test → fn_a → fn_b → fn_c → fn_d → fn_e → fn_f → owner (6 hops) —
+5. [abstain] **Depth boundary**: test → fn_a → fn_b → fn_c → fn_d → fn_e → fn_f → owner (6 hops) —
    exceeds the 5-hop witness walk, so the walk continues past it and finds the
    test entering the chain at `fn_a` (#8047). Result: the same limitation as
    example 1, naming that test. Classification unchanged (`no_static_path`, or

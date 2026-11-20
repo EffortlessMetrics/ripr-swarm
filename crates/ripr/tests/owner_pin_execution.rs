@@ -596,7 +596,9 @@ fn owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle() -> Result<()
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert_eq!(2 + 2, 4);",
             false,
-            "strong",
+            // #14968: a literal-only assertion reads no value, so it supplies
+            // no oracle strength either.
+            "none",
         ),
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert!(weight(input) > 0);",
@@ -2369,6 +2371,16 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
             "let_bound_results",
             "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit);\n        assert!(!miss);",
             true,
+        ),
+        (
+            "let_bound_results_named_in_messages",
+            "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            true,
+        ),
+        (
+            "let_bound_far_results_named_in_messages",
+            "let hit = gate(50);\n        let miss = gate(3);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            false,
         ),
         (
             "shadowed_owner",

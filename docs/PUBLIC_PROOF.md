@@ -51,7 +51,7 @@ By board, so the weak areas show before the full table:
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
 | Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 862 cases: 0.0%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
-| Trust | Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for) | **37.1%** | <= 21.0% | below the bar | no earlier measurement (observed at 2af3f38) |
+| Trust | Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for) | **37.1%** | <= 24.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain | **35.9%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
@@ -580,7 +580,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `semver-display-val-le` | upstream | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `semver-greater-patch-guard-ge` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
 | `semver-greater-patch` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
-| `semver-leading-zero` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
+| `semver-leading-zero` | upstream | discriminated | credited | limited | static_unknown | abstained | none |
 | `semver-less-pre` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
 | `semver-max-comparators` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | none |
 | `semver-op-ge-reads-greater` | upstream | discriminated | credited | limited | static_unknown | abstained | none |

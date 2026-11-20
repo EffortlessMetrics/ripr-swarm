@@ -136,7 +136,7 @@ or receipt files, and prints one next command:
 | A seam whose attempt failed, went stale, or was prepared at a `HEAD` the current one does not descend from | `ripr agent repair --seam-id <seam-id> --phase before`, which starts a new attempt; for rewritten history the reason first names the `git reset --soft <prepared-head>` recovery that resumes the attempt |
 | A seam whose finished attempt's receipt shows grip `unchanged`, `changed`, or `regressed` | `ripr agent repair --seam-id <seam-id> --phase before`: the gap is still open, so start a new attempt and strengthen the test |
 | A finished attempt whose receipt is `invalid` or `incomplete`, or whose evidence was recorded at another `HEAD` | none; status is `warning` and the warning says which |
-| Every artifact present, and any finished attempt's receipt is `advisory` with grip `improved` at the current `HEAD` | none; status is `complete`, and `test_run.status` is `not_recorded`: run the focused test yourself and keep it only if it passes |
+| Every artifact present, and any finished attempt's receipt is `advisory` with grip `improved` at the current `HEAD` | none; status is `complete`, and `test_run.status` is `not_recorded`: run the focused test yourself and keep it only if it passes. After a finish given `--test-result`, it is `caller_reported` with the reported `passed` and `failed` counts; a nonzero `failed` means the test is not yet a keeper, whatever the grip says |
 | Otherwise | the first missing artifact's command below |
 
 When picking would mean guessing (two waiting attempts, several open seams, an
@@ -437,6 +437,9 @@ ripr agent verify-execute \
   a failing verify command), `3` a typed refusal (read the stdout JSON), and
   `2` that the result could not be written.
 
+The packet must carry `verification_commands`: a Rust seam packet from
+`ripr agent packet --seam-id` does not, and is refused with
+`verification_rejected_policy` (`packet verification_commands is required`).
 The packet chooses which provenance-validated producer artifacts to compare;
 it never authors the command. Route authority is layered: the typed
 `command_specs.verify` must be reproducible from the packet's own
@@ -458,7 +461,9 @@ mutation-execution, or model-provider authority (ADR 0022): a prepared repair
 transaction is in-memory and authorizes nothing, and the client owns the edit,
 the verification and the receipt. The workspace root is resolved once at
 process startup; analysis runs only on an explicit `ripr_refresh`, over the
-committed default-branch diff. See [MCP workspace session server](interop/mcp.md).
+default-branch (or `base`) diff: saved tracked edits when any exist, else the
+committed diff, unless `source` forces one. See
+[MCP workspace session server](interop/mcp.md).
 
 ## CI Path
 

@@ -224,10 +224,10 @@ bare clone as `origin`:
   acknowledge a gap for one pull request. The gap stays visible in the report.
 - Large workspaces: `review-comments` refuses with `review_guidance_oversized`
   (exit `2`, so the gate also exits `2`) when its index input passes about
-  1,200 files (the workspace corpus plus changed files it reads for
+  5,000 files (the workspace corpus plus changed files it reads for
   attribution). Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner with
-  enough memory; the limit is an input cap, not a memory bound, and its memory
-  cost on large workspaces is not measured here. Separately, `ripr check`
+  enough memory; the limit is an input cap, not a memory bound. On a
+  2,646-file workspace it peaked under 2 GB. Separately, `ripr check`
   can return a partial result when the diff exceeds the 200-file or
   1,000-changed-line budget. Raise `RIPR_PARTIAL_DIFF_FILE_BUDGET` and/or
   `RIPR_PARTIAL_DIFF_LINE_BUDGET` as needed. The effective line budget is
@@ -316,28 +316,21 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   `no_static_path`; the gate, `pilot` and calibration describe the same
   evidence as seams that are `weakly_gripped` / `ungripped`
   ([mapping](OUTPUT_SCHEMA.md)).
-- **Gate gaps being fixed.** Known cases where the gate is more lenient than
-  `check`: an untested changed function can be left out of review guidance
-  ([#13892](https://github.com/EffortlessMetrics/ripr-swarm/issues/13892));
-  a changed test anywhere in the same file keeps a gap advisory
-  ([#13893](https://github.com/EffortlessMetrics/ripr-swarm/issues/13893)).
-  Until those land, read `missed-txt` alongside the gate decision.
-  Separately, `--suppression-policy` does not reach the gate
-  ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)),
-  so a finding suppressed by `check` can still block. In `acknowledgeable`
-  mode, use `--label ripr-waive` to acknowledge a policy-eligible gap for the
-  run; it remains visible in the reports. The bare label acknowledges every
-  blocking candidate without a matching scoped acknowledgement, not just a
-  finding you already checked, and applies to later workflow runs until
-  removed. Review every affected gap in `gate-decision.md`, then remove the
-  label when review is complete.
-- **Exclusions read as incomplete.** A changed file left out of the analysis
-  currently marks the run `partial_with_limitations`, so `missed-txt` prints a
-  `# ripr:` comment even on a clean change. That happens when a
-  `--path`/`--exclude` scope leaves it out, and also when ripr skips it as
-  generated (`generated_file_patterns`, or names such as `generated.rs` or
-  `src/gen/`), even with no flags
-  ([#13894](https://github.com/EffortlessMetrics/ripr-swarm/issues/13894)).
+- **Waiver label.** In `acknowledgeable` mode, `--label ripr-waive`
+  acknowledges a policy-eligible gap for the run; it remains visible in the
+  reports. The bare label acknowledges every blocking candidate without a
+  matching scoped acknowledgement, not just a finding you already checked, and
+  applies to later workflow runs until removed. Review every affected gap in
+  `gate-decision.md`, then remove the label when review is complete.
+  `--suppression-policy` reaches the gate through `gate check`: a suppressed
+  gap gets the decision `suppressed` and exits `0`; see
+  [Suppressing in CI](#suppressing-in-ci).
+- **Generated files still read as incomplete.** A changed file you leave out on
+  purpose with `--path`/`--exclude` or a configured `generated_file_patterns` is
+  requested scope and does not mark the run incomplete. A changed file ripr
+  skips on its own because of a generated-file name such as `generated.rs` or
+  `src/gen/` still marks the run `partial_with_limitations`, so `missed-txt`
+  prints a `# ripr:` comment even on a clean change.
 - **Mutation operators.** ripr's probe families are not cargo-mutants' operator
   list, so counts will not line up one to one. [Mutation operators ripr
   models](MUTATION_OPERATORS.md) maps each cargo-mutants genre (and mutmut and

@@ -353,9 +353,10 @@ fn loaders_pin_canonical_side_prefixes_against_ambient_diff_config() -> io::Resu
     // fixed `a/`/`b/` side prefix, so either setting rewrites identity:
     // `diff.noprefix` drops the prefixes, after which the parser's `b/` strip
     // eats a real `b/` directory component and `b/identity.rs` collapses onto
-    // `identity.rs`; `diff.mnemonicPrefix` re-labels the sides `c/`/`w/`,
-    // which that strip does not recognise, so the side prefix leaks into the
-    // parsed path. Both are demonstrated on every loader.
+    // `identity.rs`; `diff.mnemonicPrefix` re-labels the sides `c/`/`w/`.
+    // Since #15103 the parser reads that mnemonic pair as the canonical one,
+    // so its raw control keeps parsed identity and the pin is shown by the
+    // boundary spelling alone. Both are demonstrated on every loader.
     //
     // `diff.mnemonicPrefix` only rewrites the base-tree-to-worktree
     // comparison that `load_worktree_diff` issues. It does not touch the
@@ -369,16 +370,18 @@ fn loaders_pin_canonical_side_prefixes_against_ambient_diff_config() -> io::Resu
         PathBuf::from("src/lib.rs"),
     ];
 
-    for (setting, value, mutated_boundary) in [
+    for (setting, value, mutated_boundary, raw_loses_identity) in [
         (
             "diff.noprefix",
             "true",
             "diff --git identity.rs identity.rs",
+            true,
         ),
         (
             "diff.mnemonicPrefix",
             "true",
             "diff --git c/identity.rs w/identity.rs",
+            false,
         ),
     ] {
         repo.config(setting, value)?;
@@ -402,9 +405,10 @@ fn loaders_pin_canonical_side_prefixes_against_ambient_diff_config() -> io::Resu
             .map(|file| file.path.clone())
             .collect();
         raw_paths.sort();
-        assert_ne!(
-            raw_paths, canonical_paths,
-            "{setting} raw control kept parsed identity, so the fixture does not discriminate: {raw_paths:?}"
+        assert_eq!(
+            raw_paths != canonical_paths,
+            raw_loses_identity,
+            "{setting} raw control parsed to an unexpected identity: {raw_paths:?}"
         );
 
         let [committed, range, worktree] = repo.patches()?;

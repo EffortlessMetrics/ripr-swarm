@@ -602,6 +602,28 @@ Updated:
 ## Pending — error_variant_wrapper_callee_only_pin (46)
 
 Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (47)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (48)
+
+Reason:
 RIPR-SPEC-0090: the all-no-path note no longer calls related tests typed no-call-path "statically linked" (#15051)
 
 Command:
