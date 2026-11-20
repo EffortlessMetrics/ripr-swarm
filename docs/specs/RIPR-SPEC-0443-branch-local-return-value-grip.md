@@ -114,8 +114,10 @@ answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
   numbers must fit that type. A diff can also read a directly resolved
   `Add::add` this way, including `let a = Money(2); let b = Money(3);`
   followed by `assert_eq!(a + b, Money(0))`. Every related call must skip
-  the edited arm before the diff loses credit. A taken arm, a shadow, an
-  unsupported field, or an unreadable call preserves the prior reading (#15770).
+  the edited arm before the diff loses credit. The assertion must compare
+  like-typed values, with derived value equality for the returned newtype.
+  A destructor that can run user code, a taken arm, a shadow, an unsupported
+  field, or an unreadable call preserves the prior reading (#15770).
 - The owner body is parsed. Every parameter must be a plain identifier and
   the argument count must match, or the answer is `None`.
 - If the owner body rebinds a parameter (`let name = ..`), assigns one

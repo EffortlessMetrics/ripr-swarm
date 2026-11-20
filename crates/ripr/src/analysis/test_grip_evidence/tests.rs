@@ -24366,9 +24366,27 @@ fn tuple_field_guard_agrees_with_the_per_test_oracle_grade() -> Result<(), Strin
         "f(Money(2), Money(3)), Money(0)",
         "f(Money(102), Money(3)), Money(105)",
     );
+    let custom_eq = missed.replace(", PartialEq", "")
+        + r#"
+impl PartialEq for crate::Money {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && f(Money(102), Money(3)).0 == 105
+    }
+}
+"#;
+    let custom_drop = missed.replace("Clone, Copy, ", "")
+        + r#"
+impl Drop for crate::Money {
+    fn drop(&mut self) {
+        if self.0 == 2 { assert_eq!(f(Money(102), Money(3)).0, 105); }
+    }
+}
+"#;
     for (source, expected) in [
         (missed, OracleStrength::Weak),
         (taken.as_str(), OracleStrength::Strong),
+        (custom_eq.as_str(), OracleStrength::Strong),
+        (custom_drop.as_str(), OracleStrength::Strong),
     ] {
         let index = index_from_files(&[(path.clone(), source)])?;
         let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);

@@ -5,7 +5,10 @@ use super::{
     branch_index, equality_assertion_arguments, fold_condition, integer_literal_in_type,
     owner_call_arguments, whole_integer_literal,
 };
-use crate::analysis::classify::{callee_is_unique, macro_names_rebound, single_tuple_field_type};
+use crate::analysis::classify::{
+    callee_is_unique, derived_fields_compare_by_value, drop_is_plain, macro_names_rebound,
+    single_tuple_field_type,
+};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::syntax::parse_clean_source_file_memoized;
 use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
@@ -87,17 +90,38 @@ pub(in crate::analysis) fn tuple_branch_reached(
         branch.then_branch()?
     };
     let tail = sibling.tail_expr()?.syntax().text().to_string();
-    if sibling.statements().next().is_some()
-        || read_field(&tail)
-            .or_else(|| whole_integer_literal(&tail))
-            .is_none()
-    {
+    if sibling.statements().next().is_some() {
         return None;
     }
+    // Equality and destruction may run user code, including another call to
+    // this owner. Only read like-typed assertions with value equality.
+    let returns_tuple = read_field(&tail).is_some();
+    if returns_tuple {
+        if !derived_fields_compare_by_value(constructor, index) {
+            return None;
+        }
+    } else {
+        whole_integer_literal(&tail)?;
+    }
+    let expected_is_literal = |expected: &str| {
+        if returns_tuple {
+            read_field(expected).is_some()
+        } else {
+            whole_integer_literal(expected).is_some()
+        }
+    };
     let bound =
         integer_literal_in_type(&comparison.rhs()?.syntax().text().to_string(), &field_type)?;
     let op = comparison.op_token()?;
-    let inputs = test_inputs(test, owner, &signature, at, constructor, read_field)?;
+    let inputs = test_inputs(
+        test,
+        owner,
+        &signature,
+        at,
+        constructor,
+        read_field,
+        expected_is_literal,
+    )?;
     let mut reaches = None;
     for value in inputs {
         let selected = fold_condition(&format!("{value} {op} {bound}"), &BTreeMap::new())?;
@@ -192,10 +216,7 @@ fn constructor_is_clear(index: &RustIndex, owner: &FunctionSummary, name: &str, 
                     .and_then(|alias| alias.name())
                     .is_some_and(|n| n.text() == ty)
         })
-        && !index.functions().iter().any(|f| {
-            matches!(&f.item.container, FunctionContainer::TraitImpl { self_ty, .. }
-            if self_ty == name && matches!(f.name.as_str(), "drop" | "eq"))
-        })
+        && drop_is_plain(index, name)
 }
 
 fn test_inputs(
@@ -205,6 +226,7 @@ fn test_inputs(
     position: usize,
     constructor: &str,
     read_field: impl Fn(&str) -> Option<i128>,
+    expected_is_literal: impl Fn(&str) -> bool,
 ) -> Option<Vec<i128>> {
     let parse = parse_clean_source_file_memoized(test.body.as_str())?;
     let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
@@ -252,7 +274,9 @@ fn test_inputs(
         let [actual, expected] = sides.as_slice() else {
             return None;
         };
-        read_field(expected).or_else(|| whole_integer_literal(expected))?;
+        if !expected_is_literal(expected) {
+            return None;
+        }
         let args = match owner.item.container {
             FunctionContainer::TraitImpl { .. } => {
                 let (left, right) = actual.split_once('+')?;
