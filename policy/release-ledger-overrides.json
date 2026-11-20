@@ -97,6 +97,18 @@
       "disposition": "included_accepted_product",
       "owner": "ledger-v1-review",
       "note": "#13109: effective native Muse package and skills outside the v1 path classes; bounded 0.1.0 package accepted under #13106. No marketplace distribution, effectiveness, broad evaluation or source-sync authority is established."
+    },
+    {
+      "commit_sha": "14e6e6dd818d832b12573a453a672d1d5f1f25fd",
+      "disposition": "included_test_or_evidence",
+      "owner": "ledger-v1-review",
+      "note": "#14286: the Rust, Python and TypeScript starter fixtures retain examples tree 52488f1491da0238d1901b9d0338187b6950d49c at the rehearsal revision. Each demonstrates the weak-to-exposed boundary with its strengthened test. Language support tiers are unchanged."
+    },
+    {
+      "commit_sha": "40631fc14a9a10ff7272ff61f6cb2e44a27309d5",
+      "disposition": "included_accepted_release_or_control",
+      "owner": "ledger-v1-review",
+      "note": "#14664: the root excludes the separately registered Tier 2 evaluation workspace. Its retained evals tree 3674c0e0202d0b572b07cc6f6160e03515823c65 contains the smoke harness. This records repository infrastructure only."
     }
   ]
 }

@@ -673,40 +673,50 @@ fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(),
         "../../../../policy/release-ledger-overrides.json"
     ))
     .map_err(|error| error.to_string())?;
-    let reviewed = [
-        ("264db5967022a0aeaec26cc2827d432d3cdb62a5", false),
-        ("bafadaf7986e9056cb9fbc8819d0158bb712baca", false),
-        ("c44d0f6ccef88cad1059f994e69831632e90fb5e", false),
-        ("af3818be37ed9907209d426c803a4135e62505b1", true),
-        ("1b7f3740ab49a345f091e95a2b61f4e47bd8a9e4", false),
-        ("8e74baf93e5c34bcd08944db07989dafa332aa97", false),
+    let historical = "included_historical_reachable_only";
+    let reviewed: [(&str, &str, &[&str]); 8] = [
+        ("264db5967022a0aeaec26cc2827d432d3cdb62a5", historical, &[]),
+        ("bafadaf7986e9056cb9fbc8819d0158bb712baca", historical, &[]),
+        ("c44d0f6ccef88cad1059f994e69831632e90fb5e", historical, &[]),
+        (
+            "af3818be37ed9907209d426c803a4135e62505b1",
+            "included_accepted_product",
+            &["plugins/muse/ripr/.muse-plugin/plugin.json"],
+        ),
+        ("1b7f3740ab49a345f091e95a2b61f4e47bd8a9e4", historical, &[]),
+        ("8e74baf93e5c34bcd08944db07989dafa332aa97", historical, &[]),
+        (
+            "14e6e6dd818d832b12573a453a672d1d5f1f25fd",
+            "included_test_or_evidence",
+            &["examples/rust-discount-threshold/project/src/lib.rs"],
+        ),
+        (
+            "40631fc14a9a10ff7272ff61f6cb2e44a27309d5",
+            "included_accepted_release_or_control",
+            &["evals/ripr-eval-smoke/src/lib.rs"],
+        ),
     ];
     let mut commits = Vec::new();
-    for (index, (id, product)) in reviewed.iter().enumerate() {
-        let mut row = if *product {
-            commit(
-                10 + index as u8,
-                Some(index as u64 + 1),
-                "present_effective",
-                &["plugins/muse/ripr/.muse-plugin/plugin.json"],
-            )
+    let mut controls = Vec::new();
+    for (index, (id, _, paths)) in reviewed.iter().enumerate() {
+        let number = 10 + index as u8;
+        let effect = if paths.is_empty() {
+            "history_reachable_no_final_blob_effect"
         } else {
-            commit(
-                10 + index as u8,
-                Some(index as u64 + 1),
-                "history_reachable_no_final_blob_effect",
-                &[],
-            )
+            "present_effective"
         };
+        let mut row = commit(number, Some(index as u64 + 1), effect, paths);
         row.commit_sha = (*id).to_string();
         commits.push(row);
+        if !paths.is_empty() {
+            // Identical paths under another commit must still require review.
+            let number = 30 + controls.len() as u8;
+            let position = (reviewed.len() + controls.len() + 1) as u64;
+            controls.push(commit(number, Some(position), effect, paths));
+        }
     }
-    commits.push(commit(
-        20,
-        Some(reviewed.len() as u64 + 1),
-        "present_effective",
-        &["plugins/other/plugin.json"],
-    ));
+    let control_shas: Vec<_> = controls.iter().map(|row| row.commit_sha.clone()).collect();
+    commits.extend(controls);
     let input = facts(commits);
     let relevant = Overrides {
         schema_version: policy.schema_version,
@@ -714,7 +724,7 @@ fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(),
         overrides: policy
             .overrides
             .into_iter()
-            .filter(|item| reviewed.iter().any(|(id, _)| *id == item.commit_sha))
+            .filter(|item| reviewed.iter().any(|(id, _, _)| *id == item.commit_sha))
             .collect(),
     };
     require(
@@ -728,17 +738,12 @@ fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(),
         stage: "dry_run",
         audit: None,
     })?;
-    for (id, product) in reviewed {
+    for (id, expected, _) in reviewed {
         let row = ledger
             .records
             .iter()
             .find(|row| row.commit_sha == id)
             .ok_or_else(|| format!("missing reviewed commit {id}"))?;
-        let expected = if product {
-            "included_accepted_product"
-        } else {
-            "included_historical_reachable_only"
-        };
         require(
             row.release_disposition == expected
                 && row.override_ref.is_some()
@@ -746,14 +751,16 @@ fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(),
             "reviewed row disposition or source authority changed",
         )?;
     }
-    let control_sha = sha(20);
-    let control = ledger
-        .records
-        .iter()
-        .find(|row| row.commit_sha == control_sha)
-        .ok_or("missing unrelated plugin control")?;
-    require(
-        control.release_disposition == "blocking_unresolved" && control.override_ref.is_none(),
-        "an unrelated unclassified plugin must remain blocked",
-    )
+    for id in control_shas {
+        let control = ledger
+            .records
+            .iter()
+            .find(|row| row.commit_sha == id)
+            .ok_or_else(|| format!("missing unreviewed control {id}"))?;
+        require(
+            control.release_disposition == "blocking_unresolved" && control.override_ref.is_none(),
+            "an unreviewed commit with the same paths must remain blocked",
+        )?;
+    }
+    Ok(())
 }
