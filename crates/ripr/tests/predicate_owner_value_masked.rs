@@ -44,11 +44,15 @@ impl Drop for Scratch {
 /// The predicate finding for `qty > 10` changed to `qty >= 10`, with `body`
 /// as the body of the one unit test beside the owner.
 fn predicate_finding(body: &str) -> Result<Value, String> {
+    predicate_finding_with_root_items(body, "")
+}
+
+fn predicate_finding_with_root_items(body: &str, root_items: &str) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     let manifest =
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
     let lib = format!(
-        "pub fn over(qty: u32) -> bool {{\n    qty >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn first(a: bool, _b: bool) -> bool {{\n        a\n    }}\n\n    #[test]\n    fn t() {{\n        let _ = first(true, true);\n        {body}\n    }}\n}}\n"
+        "pub fn over(qty: u32) -> bool {{\n    qty >= 10\n}}\n{root_items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn first(a: bool, _b: bool) -> bool {{\n        a\n    }}\n\n    #[test]\n    fn t() {{\n        let _ = first(true, true);\n        {body}\n    }}\n}}\n"
     );
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    qty > 10\n+    qty >= 10\n";
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
@@ -337,6 +341,10 @@ fn all_tuple_and_scalar_assertions_must_allow_the_same_version() -> Result<(), S
 #[test]
 fn option_equality_requires_a_bound_payload_and_a_shared_passing_version() -> Result<(), String> {
     for (body, expected) in [
+        (
+            "mod other { pub fn Some(_: bool) -> u8 { 7 } } use other::*; assert_eq!(Some(over(10)), Some(true));",
+            "static_unknown",
+        ),
         ("assert_eq!(Some(over(10)), Some(true));", "exposed"),
         ("assert_eq!(Some(false), Some(over(10)));", "exposed"),
         (
@@ -373,6 +381,20 @@ fn option_equality_requires_a_bound_payload_and_a_shared_passing_version() -> Re
         if class != Some(expected) {
             return Err(format!("{body}: expected {expected}, got {class:?}"));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn sibling_module_glob_cannot_rebind_the_tests_option_constructor() -> Result<(), String> {
+    let finding = predicate_finding_with_root_items(
+        "assert_eq!(Some(over(10)), Some(true));",
+        "mod unrelated { use std::fmt::*; fn f() -> usize { 0 } }",
+    )?;
+    if finding.get("classification").and_then(Value::as_str) != Some("exposed") {
+        return Err(format!(
+            "sibling module glob withdrew Option payload discrimination: {finding}"
+        ));
     }
     Ok(())
 }

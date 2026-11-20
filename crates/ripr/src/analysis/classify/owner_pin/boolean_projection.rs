@@ -38,13 +38,7 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         {
             // Standard Some(T) equality compares its payload. A rebound
             // constructor need not carry the argument into equality.
-            if super::wrapper_may_be_rebound("Some", index)
-                || syntax.macro_may_declare("Some", index)
-                || index.files().values().any(|file| {
-                    file.used_lexical_fallback
-                        || super::source_binds_value_name(&file.source, "Some")
-                })
-            {
+            if !standard_some_in_scope(test, assertion, index, syntax) {
                 return None;
             }
             let [left, right] = compared;
@@ -88,6 +82,66 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         after_matches &= after == expected;
     }
     Some((before_matches != unequal, after_matches != unequal))
+}
+
+fn standard_some_in_scope(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if test.generated.is_some()
+        || syntax.macro_may_declare("Some", index)
+        || !syntax
+            .option_prelude_available
+            .get_or_init(|| option_prelude_available(index))
+    {
+        return false;
+    }
+    let Some(scopes) = index
+        .source_syntax
+        .get(index, &test.file)
+        .and_then(|source| source.name_scopes(test))
+    else {
+        return false;
+    };
+    scopes.scopes.iter().all(|scope| {
+        !scope.defines.contains("Some")
+            && !scope.block_binds("Some")
+            && scope.imports_of("Some").next().is_none()
+            && !scope.local_bindings.get("Some").is_some_and(|sites| sites.iter().any(|site| {
+                site.line <= assertion.line && site.end_line.is_none_or(|end| end >= assertion.line)
+            }))
+            && scope.globs.iter().all(|glob| {
+                glob.as_ref().is_some_and(|path| matches!(path.as_slice(), [part] if part == "super" && !scope.modules.is_empty()))
+            })
+    })
+}
+
+fn option_prelude_available(index: &RustIndex) -> bool {
+    index.files().iter().all(|(path, file)| {
+        if file.used_lexical_fallback {
+            return false;
+        }
+        if !file.source.contains("no_implicit_prelude") {
+            return true;
+        }
+        let Some(tree) = index
+            .source_syntax
+            .get(index, path)
+            .and_then(|source| source.tree())
+        else {
+            return false;
+        };
+        !tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attr| {
+                attr.path()
+                    .is_some_and(|path| path.syntax().text() == "no_implicit_prelude")
+            })
+    })
 }
 
 fn some_payload(operand: &str) -> Option<&str> {

@@ -519,6 +519,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     iteration_closed: OnceLock<bool>,
     /// The same closed-field premise without the array iteration restriction.
     field_projection_workspace_closed: OnceLock<bool>,
+    /// A prelude constructor requires a parsed workspace with the implicit prelude.
+    option_prelude_available: OnceLock<bool>,
     /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
     /// type under, `None` when any name may be declared.
     macro_type_names: OnceLock<Option<BTreeSet<String>>>,
