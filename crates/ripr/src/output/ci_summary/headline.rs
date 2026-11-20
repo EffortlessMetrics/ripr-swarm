@@ -37,7 +37,7 @@ pub(super) fn headline_lines(report: &Value) -> Vec<String> {
         if complete && rows.is_some() {
             lines.push("No changed-behavior spot with weak test evidence (static and advisory; not a statement that the tests are sufficient).".to_string());
         } else {
-            lines.push("The analysis did not complete or its report is unreadable for this revision, so this is not a clean result. The sections below say what is missing.".to_string());
+            lines.push("The analysis did not complete or its report is unreadable for this revision, so this is not a clean result.".to_string());
         }
         return lines;
     }
@@ -80,7 +80,7 @@ pub(super) fn headline_lines(report: &Value) -> Vec<String> {
             lines.push(format!("- Next step: {}", code_span(command)));
         }
     } else {
-        lines.push("- The items are in the PR guidance section below.".to_string());
+        lines.push("- The report lists a count without individual spot details.".to_string());
     }
     lines
 }

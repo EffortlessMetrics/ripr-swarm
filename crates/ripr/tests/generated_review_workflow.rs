@@ -263,6 +263,25 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     );
 
     let summary = fs::read_to_string(base.join("step-summary.md"))?;
+    assert!(
+        summary.len() < 4096 && summary.lines().count() <= 32,
+        "{summary}"
+    );
+    assert_eq!(summary.matches(repair_command).count(), 1, "{summary}");
+    for name in [
+        "ripr/reports/start-here.md",
+        "ripr/reports/index.md",
+        "ripr/review/comments.json",
+    ] {
+        assert!(summary.contains(name), "{summary}");
+    }
+    assert!(
+        !summary.contains("<details") && !summary.lines().any(|line| line.starts_with("# ")),
+        "{summary}"
+    );
+    let preview = replay::ripr(&root, &["reports", "ci-summary", "--root", ".", "--full"])?;
+    assert!(preview.status.success());
+    let summary = String::from_utf8(preview.stdout)?;
     let first_block = summary
         .split("#### First-run status\n")
         .nth(1)
@@ -3559,7 +3578,7 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
     )?;
 
     // The generated step runs this command from the checkout root.
-    let run = replay::ripr(&root, &["reports", "ci-summary", "--root", "."])?;
+    let run = replay::ripr(&root, &["reports", "ci-summary", "--root", ".", "--full"])?;
     assert!(
         run.status.success(),
         "summary command failed: {}",

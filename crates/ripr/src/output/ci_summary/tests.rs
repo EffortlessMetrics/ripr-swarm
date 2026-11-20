@@ -138,7 +138,7 @@ impl Fixture {
             comment_mode: comment_mode.to_string(),
             configured_languages: languages.iter().map(|name| (*name).to_string()).collect(),
         };
-        Ok(String::from_utf8(render_ci_summary(&input))?)
+        Ok(String::from_utf8(render_ci_summary(&input, true))?)
     }
 
     /// Every artifact the summary reads, with a carried repair start.
@@ -1288,7 +1288,7 @@ fn an_unproven_clean_report_is_never_clean() -> TestResult {
     let head = block(&stated.render(&[])?, HEADLINE).to_string();
     assert!(head.contains("**2 changed-behavior spots"), "{head}");
     assert!(
-        head.contains("The items are in the PR guidance section below."),
+        head.contains("The report lists a count without individual spot details."),
         "{head}"
     );
     Ok(())
@@ -1312,7 +1312,10 @@ fn a_summary_only_report_names_its_first_spot_from_the_root_array() -> TestResul
         head.contains("- First: `src/pricing.rs:88` in `pricing::discounted_total`"),
         "{head}"
     );
-    assert!(!head.contains("PR guidance section below"), "{head}");
+    assert!(
+        !head.contains("count without individual spot details"),
+        "{head}"
+    );
     // A count with no cards still points at the guidance section.
     let counted = Fixture::new("headline-count-only")?;
     counted.json(
@@ -1321,7 +1324,10 @@ fn a_summary_only_report_names_its_first_spot_from_the_root_array() -> TestResul
     )?;
     let head = block(&counted.render(&[])?, HEADLINE).to_string();
     assert!(head.contains("**2 changed-behavior spots"), "{head}");
-    assert!(head.contains("PR guidance section below"), "{head}");
+    assert!(
+        head.contains("count without individual spot details"),
+        "{head}"
+    );
     Ok(())
 }
 
@@ -1370,7 +1376,7 @@ fn render_gate_mode(
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
-    Ok(String::from_utf8(render_ci_summary(&input))?)
+    Ok(String::from_utf8(render_ci_summary(&input, true))?)
 }
 
 #[test]
@@ -1928,7 +1934,7 @@ fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
-    let summary = String::from_utf8(render_ci_summary(&input))?;
+    let summary = String::from_utf8(render_ci_summary(&input, true))?;
     assert!(
         summary.contains("- Diff SARIF: not generated (pull request runs only)\n"),
         "{summary}"
@@ -1953,7 +1959,7 @@ fn render_event(fixture: &Fixture, event_name: &str) -> Result<String, Box<dyn s
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
-    Ok(String::from_utf8(render_ci_summary(&input))?)
+    Ok(String::from_utf8(render_ci_summary(&input, true))?)
 }
 
 /// The First-run status section: up to any collapsed block or the next heading.
