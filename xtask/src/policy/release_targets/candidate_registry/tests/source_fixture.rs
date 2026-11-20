@@ -2306,7 +2306,7 @@ fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> R
     let captured_mtime = fs::metadata(&slot)
         .and_then(|metadata| metadata.modified())
         .map_err(|error| error.to_string())?;
-    let distinct_mtime = captured_mtime + Duration::from_secs(120);
+    let distinct_mtime = captured_mtime + Duration::from_mins(2);
     // Write `bytes` into the frozen slot, set its mtime, and verify the mtime.
     let rewrite = |bytes: &[u8], mtime: SystemTime| -> Result<(), String> {
         fs::write(&slot, bytes).map_err(|error| error.to_string())?;
