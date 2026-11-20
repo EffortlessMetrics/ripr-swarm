@@ -5575,7 +5575,7 @@ fn the_pull_request_comment_states_a_blocking_gate() -> Result<(), Box<dyn Error
     );
     assert!(!body.contains("does not block merging"), "{body}");
     assert!(
-        body.contains("with `RIPR_GATE_MODE` set to `acknowledgeable`, so it can block merging."),
+        body.contains("Not advisory: `RIPR_GATE_MODE` is set to `acknowledgeable`, so this check can block merging."),
         "{body}"
     );
 

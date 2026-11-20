@@ -196,7 +196,7 @@ fn render_body(
     let sha: String = head_sha.chars().take(7).collect();
     if gate.can_block() {
         body.push_str(&format!(
-            "\n<sub>Static evidence for {}. Not a mutation run and not coverage. This check runs the RIPR gate with `RIPR_GATE_MODE` set to {}, so it can block merging.</sub>\n",
+            "\n<sub>Static evidence for {}. Not a mutation run and not coverage. Not advisory: `RIPR_GATE_MODE` is set to {}, so this check can block merging.</sub>\n",
             code(&sha),
             code(&gate.mode)
         ));
@@ -536,7 +536,7 @@ mod tests {
             );
             assert!(
                 body.contains(&format!(
-                    "with `RIPR_GATE_MODE` set to `{blocking}`, so it can block merging."
+                    "`RIPR_GATE_MODE` is set to `{blocking}`, so this check can block merging."
                 )),
                 "{blocking}: {body}"
             );
@@ -594,7 +594,7 @@ mod tests {
         );
         assert!(body.contains("unset it to stay advisory"), "{body}");
         assert!(
-            body.contains("set to `visible_only`, so it can block merging."),
+            body.contains("is set to `visible_only`, so this check can block merging."),
             "{body}"
         );
         Ok(())
@@ -612,7 +612,10 @@ mod tests {
         );
         let hostile_mode = gate("x`\n@team", None);
         let body = body_for(&guidance(vec![row("a.rs", 1)]), &hostile_mode)?;
-        assert!(body.contains("set to `x' @\u{200b}team`"), "{body}");
+        assert!(
+            body.contains("is set to `x' @\u{200b}team`, so this check"),
+            "{body}"
+        );
         Ok(())
     }
 }
