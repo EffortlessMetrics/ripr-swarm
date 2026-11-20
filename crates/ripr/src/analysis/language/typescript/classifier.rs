@@ -5761,6 +5761,17 @@ fn boundary_literal_reaches_read_argument(
     } else {
         right
     };
+    if let Some((base, field)) = operand.split_once('.') {
+        // A single static member can read an object pin at its base
+        // parameter's position. A standalone scalar cannot pin that field.
+        return oxc_syntax::identifier::is_identifier_name(field)
+            && owner
+                .params
+                .iter()
+                .position(|name| name == base)
+                .and_then(|index| arguments.get(index))
+                .is_some_and(|argument| object_argument_pins_literal(argument, field, literal));
+    }
     if !can_read_positional_argument(operand, owner) {
         return false;
     }

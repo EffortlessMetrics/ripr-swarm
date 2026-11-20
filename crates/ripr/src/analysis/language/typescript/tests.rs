@@ -17117,11 +17117,11 @@ fn e4104_const_result_local_binding_witnesses_predicate_boundary() -> Result<(),
 fn e4104_optional_chaining_predicate_witnesses_boundary() -> Result<(), String> {
     let mut owner = boundary_witness_owner();
     owner.name = "userIsAdmin".to_string();
-    owner.params = vec!["order".to_string()];
-    owner.arity = Some(1);
+    owner.params = vec!["order".to_string(), "other".to_string()];
+    owner.arity = Some(2);
     owner.source_text = Some(
         concat!(
-            "export function userIsAdmin(order: Order): boolean {\n",
+            "export function userIsAdmin(order: Order, other?: Order): boolean {\n",
             "    if (order?.role === \"admin\") {\n",
             "        return true;\n",
             "    }\n",
@@ -17142,6 +17142,18 @@ fn e4104_optional_chaining_predicate_witnesses_boundary() -> Result<(), String> 
         ExposureClass::Exposed,
         "an optional-chaining predicate normalizes to a comparable boundary and witnesses via the object pin"
     );
+    for call in [
+        r#"userIsAdmin({}, { role: "admin" })"#,
+        r#"userIsAdmin("admin", {})"#,
+    ] {
+        let test = exact_value_test("userIsAdmin", call, "false");
+        let finding = classify_boundary_line_for_owner(
+            &owner,
+            "    if (order?.role === \"admin\") {",
+            &[test],
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{call}");
+    }
     Ok(())
 }
 
