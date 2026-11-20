@@ -235,3 +235,122 @@ fn root_level_project_keeps_the_root_relative_route_without_a_cwd() -> Result<()
     assert!(verify.contains(&format!("&& {command})")), "{verify}");
     Ok(())
 }
+
+/// A minimal POSIX venv at `<dir>/.venv`, with or without pytest installed.
+fn venv_files(dir: &str, with_pytest: bool) -> Vec<(String, String)> {
+    let at = |file: &str| {
+        if dir.is_empty() {
+            file.to_string()
+        } else {
+            format!("{dir}/{file}")
+        }
+    };
+    let site = at(".venv/lib/python3.13/site-packages");
+    let mut files = vec![
+        (at(".venv/bin/python"), String::new()),
+        (at(".venv/pyvenv.cfg"), "version = 3.13.1\n".to_string()),
+        (format!("{site}/six.py"), String::new()),
+    ];
+    if with_pytest {
+        files.push((
+            format!("{site}/pytest-9.2.0.dist-info/METADATA"),
+            String::new(),
+        ));
+        files.push((format!("{site}/pytest/__init__.py"), String::new()));
+    }
+    files
+}
+
+fn materialize_with(
+    project: &str,
+    extra: &[(String, String)],
+) -> Result<(TempDirGuard, PathBuf), String> {
+    let borrowed: Vec<(&str, &str)> = extra
+        .iter()
+        .map(|(file, text)| (file.as_str(), text.as_str()))
+        .collect();
+    materialize(project, &borrowed)
+}
+
+/// Two environments: the checkout root's venv has pytest, the nested project
+/// has none. The route runs from `py/`, so the root venv is not the
+/// interpreter; PATH `python` may lack pytest, so the route is not `high`.
+#[cfg(not(windows))]
+#[test]
+fn nested_project_without_a_venv_does_not_inherit_the_root_venv_or_its_confidence()
+-> Result<(), String> {
+    let (_guard, root) = materialize_with("py", &venv_files("", true))?;
+    let json = check(&root, "json")?;
+    let finding = weak_python_finding(&json)?;
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_command: "),
+        Some("python -m pytest tests/test_price.py::test_discount"),
+        "{json}"
+    );
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_cwd: "),
+        Some("py")
+    );
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_command_confidence: "),
+        Some("medium"),
+        "{json}"
+    );
+    Ok(())
+}
+
+/// Negative control for the interpreter/confidence pairing: the root venv has
+/// pytest but the nested project's own venv does not. The project's venv is
+/// the interpreter, and its missing pytest (not the root's) sets confidence.
+#[cfg(not(windows))]
+#[test]
+fn nested_project_venv_without_pytest_lowers_confidence_despite_a_root_venv_with_pytest()
+-> Result<(), String> {
+    let mut extra = venv_files("", true);
+    extra.extend(venv_files("py", false));
+    let (_guard, root) = materialize_with("py", &extra)?;
+    let json = check(&root, "json")?;
+    let finding = weak_python_finding(&json)?;
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_command: "),
+        Some(".venv/bin/python -m pytest tests/test_price.py::test_discount"),
+        "{json}"
+    );
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_cwd: "),
+        Some("py")
+    );
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_venv_pytest: "),
+        Some("missing")
+    );
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_command_confidence: "),
+        Some("low"),
+        "{json}"
+    );
+    Ok(())
+}
+
+/// SARIF carries the same card, so the cwd and project-relative command reach
+/// code-scanning consumers too.
+#[cfg(not(windows))]
+#[test]
+fn nested_project_sarif_card_names_the_project_cwd() -> Result<(), String> {
+    let (_guard, root) = materialize("py", &[])?;
+    let sarif = check(&root, "sarif")?;
+    let document: serde_json::Value =
+        serde_json::from_str(&sarif).map_err(|error| format!("sarif JSON: {error}"))?;
+    let card = document["runs"][0]["results"]
+        .as_array()
+        .ok_or_else(|| format!("no results:\n{sarif}"))?
+        .iter()
+        .find_map(|result| result["properties"].get("python_repair_card"))
+        .ok_or_else(|| format!("no python repair card:\n{sarif}"))?;
+    assert_eq!(card["verify"]["cwd"], "py", "{card}");
+    assert_eq!(
+        card["verify"]["command"],
+        "python -m pytest tests/test_price.py::test_discount"
+    );
+    Ok(())
+}

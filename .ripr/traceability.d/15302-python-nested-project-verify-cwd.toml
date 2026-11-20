@@ -1,0 +1,21 @@
+# A nested Python project's pytest verify route runs from that project's
+# directory, with interpreter and confidence from the same directory (#15302).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_verify_runs_from_the_project_directory_on_every_surface",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_resolves_its_own_venv_relative_to_the_project_directory",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::root_level_project_keeps_the_root_relative_route_without_a_cwd",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_without_a_venv_does_not_inherit_the_root_venv_or_its_confidence",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_venv_without_pytest_lowers_confidence_despite_a_root_venv_with_pytest",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_sarif_card_names_the_project_cwd",
+  "crates/ripr/src/output/markdown.rs::python_verify_cwd_roots_verify_or_withholds_it",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs",
+  "crates/ripr/src/output/python_repair_card.rs",
+  "crates/ripr/src/output/markdown.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/github.rs",
+  "crates/ripr/src/output/json/report.rs",
+]

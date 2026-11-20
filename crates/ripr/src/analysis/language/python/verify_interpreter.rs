@@ -80,22 +80,56 @@ fn nested_project_dir(root: &Path, test_file: &str) -> Option<String> {
 /// Rewrite the Python findings of one analysis root: choose each finding's
 /// project directory, then the interpreter and confidence from that
 /// directory's static facts.
+///
+/// The cwd and the interpreter always come from the same directory: a finding
+/// whose commands cannot be moved into its nested project keeps the root
+/// decision and the root-relative route. A `test_verify_command:` line for a
+/// test outside the nested project stays root-relative with PATH `python`,
+/// never this project's venv. When the nested project has no venv but the root
+/// has one, PATH `python` may not hold pytest, so the route drops to `medium`.
 pub(super) fn apply_at(root: &Path, findings: &mut [Finding]) {
     let mut decisions: BTreeMap<Option<String>, PytestVerifyInterpreter> = BTreeMap::new();
+    let root_decision = PytestVerifyInterpreter::at(root);
     for finding in findings
         .iter_mut()
         .filter(|finding| finding.language == Some(LanguageId::Python))
     {
-        let dir = finding
+        let nested = finding
             .evidence
             .iter()
             .find_map(|line| line.strip_prefix(TEST_FILE))
-            .and_then(|file| nested_project_dir(root, file));
-        let decision = decisions.entry(dir.clone()).or_insert_with(|| match &dir {
-            Some(dir) => PytestVerifyInterpreter::at(&root.join(dir)),
-            None => PytestVerifyInterpreter::at(root),
-        });
-        decision.rewrite_evidence_in(dir.as_deref(), &mut finding.evidence);
+            .and_then(|file| nested_project_dir(root, file))
+            .and_then(|dir| {
+                let foreign = relativize_to_project(&dir, &mut finding.evidence)?;
+                Some((dir, foreign))
+            });
+        let Some((dir, foreign)) = nested else {
+            root_decision.rewrite_evidence(&mut finding.evidence, &[]);
+            continue;
+        };
+        let decision = decisions
+            .entry(Some(dir.clone()))
+            .or_insert_with(|| PytestVerifyInterpreter::at(&root.join(&dir)));
+        decision.rewrite_evidence(&mut finding.evidence, &foreign);
+        if decision.venv_python.is_none() && root_decision.venv_python.is_some() {
+            cap_confidence(&mut finding.evidence, "medium");
+        }
+    }
+}
+
+/// Lower the route confidence to `cap` unless it is already at or below it.
+fn cap_confidence(evidence: &mut [String], cap: &'static str) {
+    let rank = |value: &str| match value {
+        "high" => 2,
+        "medium" => 1,
+        _ => 0,
+    };
+    for line in evidence.iter_mut() {
+        if let Some(current) = line.strip_prefix(CONFIDENCE)
+            && rank(current) > rank(cap)
+        {
+            *line = format!("{CONFIDENCE}{cap}");
+        }
     }
 }
 
@@ -156,25 +190,18 @@ impl PytestVerifyInterpreter {
         }
     }
 
-    /// [`Self::rewrite_evidence`] for a finding whose test file is owned by
-    /// the nested project `dir` (root-relative): the commands first become
-    /// relative to `dir` and the cwd line names it. Idempotent: a finding that
-    /// already names its cwd keeps its commands.
-    fn rewrite_evidence_in(&self, dir: Option<&str>, evidence: &mut Vec<String>) {
-        if let Some(dir) = dir {
-            relativize_to_project(dir, evidence);
-        }
-        self.rewrite_evidence(evidence);
-    }
-
-    /// Rewrite one Python finding's evidence lines. Idempotent: an
-    /// already-rewritten command no longer starts with PATH `python`.
-    fn rewrite_evidence(&self, evidence: &mut Vec<String>) {
+    /// Rewrite one Python finding's evidence lines, leaving the lines at the
+    /// `foreign` indices (tests outside the nested project) alone. Idempotent:
+    /// an already-rewritten command no longer starts with PATH `python`.
+    fn rewrite_evidence(&self, evidence: &mut Vec<String>, foreign: &[usize]) {
         let Some(venv_python) = self.venv_python else {
             return;
         };
         let mut suggested = false;
-        for line in evidence.iter_mut() {
+        for (index, line) in evidence.iter_mut().enumerate() {
+            if foreign.contains(&index) {
+                continue;
+            }
             for prefix in [SUGGESTED, PER_TEST] {
                 let Some(selector) = line
                     .strip_prefix(prefix)
@@ -208,11 +235,25 @@ impl PytestVerifyInterpreter {
 }
 
 /// Move the PATH pytest commands of `evidence` into the project `dir` and name
-/// it. A finding without a pytest suggestion, or one already carrying a cwd,
-/// is left alone.
-fn relativize_to_project(dir: &str, evidence: &mut Vec<String>) {
+/// it. Returns the indices of `test_verify_command:` lines left root-relative
+/// because their test lies outside `dir`, or `None` (evidence untouched) when
+/// the suggested command cannot be moved, so the caller keeps the root route.
+/// A finding already carrying a cwd was moved before and returns `Some`.
+fn relativize_to_project(dir: &str, evidence: &mut Vec<String>) -> Option<Vec<usize>> {
     if evidence.iter().any(|line| line.starts_with(VERIFY_CWD)) {
-        return;
+        // Already moved: a per-test line still spelled with PATH `python`
+        // either names a test outside `dir` or there is no venv to apply.
+        return Some(
+            evidence
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| {
+                    line.strip_prefix(PER_TEST)
+                        .is_some_and(|command| command.starts_with(PATH_PYTEST))
+                })
+                .map(|(index, _)| index)
+                .collect(),
+        );
     }
     let value = |prefix: &str| {
         evidence
@@ -220,9 +261,7 @@ fn relativize_to_project(dir: &str, evidence: &mut Vec<String>) {
             .find_map(|line| line.strip_prefix(prefix))
             .map(str::to_string)
     };
-    let Some(suggested) = value(SUGGESTED).filter(|c| c.starts_with(PATH_PYTEST)) else {
-        return;
-    };
+    let suggested = value(SUGGESTED).filter(|c| c.starts_with(PATH_PYTEST))?;
     let relative_suggested = {
         let exact = value(TEST_FILE)
             .zip(value(TEST_NODE))
@@ -237,28 +276,33 @@ fn relativize_to_project(dir: &str, evidence: &mut Vec<String>) {
                 let selector = suggested.strip_prefix(PATH_PYTEST).unwrap_or_default();
                 match strip_dir_from_selector(selector, dir) {
                     Some(rest) => format!("{PATH_PYTEST}{rest}"),
-                    None => return,
+                    None => return None,
                 }
             }
         }
     };
-    for line in evidence.iter_mut() {
-        if let Some(command) = line.strip_prefix(SUGGESTED) {
-            if command == suggested {
-                *line = format!("{SUGGESTED}{relative_suggested}");
-            }
-        } else if let Some(command) = line.strip_prefix(PER_TEST)
-            && let Some(selector) = command.strip_prefix(PATH_PYTEST)
-            && let Some(rest) = strip_dir_from_selector(selector, dir)
-        {
-            *line = format!("{PER_TEST}{PATH_PYTEST}{rest}");
-        }
-    }
     let at = evidence
         .iter()
         .position(|line| line.starts_with(CONFIDENCE))
         .map_or(evidence.len(), |at| at + 1);
     evidence.insert(at, format!("{VERIFY_CWD}{dir}"));
+    let mut foreign = Vec::new();
+    for (index, line) in evidence.iter_mut().enumerate() {
+        if let Some(command) = line.strip_prefix(SUGGESTED) {
+            if command == suggested {
+                *line = format!("{SUGGESTED}{relative_suggested}");
+            }
+        } else if let Some(selector) = line
+            .strip_prefix(PER_TEST)
+            .and_then(|command| command.strip_prefix(PATH_PYTEST))
+        {
+            match strip_dir_from_selector(selector, dir) {
+                Some(rest) => *line = format!("{PER_TEST}{PATH_PYTEST}{rest}"),
+                None => foreign.push(index),
+            }
+        }
+    }
+    Some(foreign)
 }
 
 #[cfg(test)]
@@ -301,10 +345,10 @@ mod tests {
     fn applied(venv: Option<&'static str>, pytest: VenvPytest) -> Vec<String> {
         let mut lines = evidence(&ROUTE);
         let decision = PytestVerifyInterpreter::from_facts(venv, pytest);
-        decision.rewrite_evidence(&mut lines);
+        decision.rewrite_evidence(&mut lines, &[]);
         // Idempotent: a second pass changes nothing.
         let once = lines.clone();
-        decision.rewrite_evidence(&mut lines);
+        decision.rewrite_evidence(&mut lines, &[]);
         assert_eq!(lines, once);
         once
     }
@@ -361,14 +405,14 @@ mod tests {
             &[][..],
         ] {
             let mut rewritten = evidence(lines);
-            decision.rewrite_evidence(&mut rewritten);
+            decision.rewrite_evidence(&mut rewritten, &[]);
             assert_eq!(rewritten, lines);
         }
         // Per-test commands follow the venv without capping a confidence
         // that no suggested route carries.
         let mut per_test =
             evidence(&["test_verify_command: python -m pytest t.py::test_a (test_a)"]);
-        decision.rewrite_evidence(&mut per_test);
+        decision.rewrite_evidence(&mut per_test, &[]);
         assert_eq!(
             per_test,
             ["test_verify_command: .venv/bin/python -m pytest t.py::test_a (test_a)"]
@@ -404,7 +448,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".venv/bin"))?;
         std::fs::write(dir.path().join(".venv/bin/python"), "")?;
         let mut lines = evidence(&ROUTE);
-        PytestVerifyInterpreter::at(dir.path()).rewrite_evidence(&mut lines);
+        PytestVerifyInterpreter::at(dir.path()).rewrite_evidence(&mut lines, &[]);
         assert_eq!(lines, ROUTE);
         Ok(())
     }
