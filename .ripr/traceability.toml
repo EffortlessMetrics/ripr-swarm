@@ -22236,7 +22236,7 @@ tests = [
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::crate_root_unit_test_skip_follows_metadata_test_flags",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_reviving_cargo_test_skipped_tests_matches_fresh",
 ]
-fixtures = []
+fixtures = ["fixtures/rust_bench_rejected_workspace"]
 code = [
   "crates/ripr/src/analysis/facts/stray_files.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",
