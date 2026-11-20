@@ -359,11 +359,12 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
 
 /// The empty tree is the only "before" a first commit has. `git hash-object`
 /// derives it for the repository's object format (SHA-1 or SHA-256) instead of
-/// hardcoding either id.
+/// hardcoding either id. It hashes the spawn's empty (null) stdin rather than
+/// `/dev/null`, so no platform-specific path is involved.
 fn empty_tree_id(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     let output = crate::git::run_git_output_with_deadline(
         root,
-        &["hash-object", "-t", "tree", "--", "/dev/null"],
+        &["hash-object", "-t", "tree", "--stdin"],
         git_timeout,
     )
     .ok()
