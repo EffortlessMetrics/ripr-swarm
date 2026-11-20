@@ -6717,9 +6717,16 @@ mod tests {
                 "{rendered}"
             );
             // The `limitation:` row uses the same scope-qualified reason.
+            // #15325: a JavaScript finding's human text names JavaScript; the
+            // producer string (checked above) stays TypeScript-worded.
+            let shown = if language == LanguageId::JavaScript {
+                specific.replace("TypeScript", "JavaScript")
+            } else {
+                specific.to_string()
+            };
             let card = render_finding(&repo);
             assert!(
-                card.contains(&format!("limitation: {scope_reason}; {specific}")),
+                card.contains(&format!("limitation: {scope_reason}; {shown}")),
                 "{card}"
             );
             assert!(!render_finding(&diff).contains("repo-mode findings"));
