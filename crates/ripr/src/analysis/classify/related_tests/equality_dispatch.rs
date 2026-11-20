@@ -423,12 +423,22 @@ pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
             Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
             _ => before,
         };
+        // `let Name(..)` and `let Name { .. }` (also under `if let` or
+        // `while let`) are destructuring patterns that bind nothing named
+        // `Name`.
+        let after = masked[at + name.len()..].trim_start();
+        let destructures = after.starts_with('(') || after.starts_with('{');
         VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
+            if *keyword == "let" && destructures {
+                return false;
+            }
             before.strip_suffix(keyword).is_some_and(|head| {
+                // A head ending in `'` is the lifetime `'static`, as in
+                // `&'static Name`, not a `static` item.
                 !head
                     .bytes()
                     .last()
-                    .is_some_and(|byte| is_ident_byte(byte) || byte == b'#')
+                    .is_some_and(|byte| is_ident_byte(byte) || byte == b'#' || byte == b'\'')
             })
         })
     })
@@ -1097,6 +1107,16 @@ mod tests {
         assert!(declares_value_named("let mut Key = make;", "Key"));
         assert!(may_declare_value_named("let Key = make;", "Key"));
         assert!(!declares_value_named("letKey = 1;", "Key"));
+        // A destructuring pattern binds nothing named `Key`, and `'static`
+        // is a lifetime, not a `static` item.
+        assert!(!declares_value_named("let Key(v) = k;", "Key"));
+        assert!(!declares_value_named("if let Key(v) = k {}", "Key"));
+        assert!(!declares_value_named("let Key { v } = k;", "Key"));
+        assert!(!declares_value_named("let r: &'static Key = &K;", "Key"));
+        assert!(declares_value_named(
+            "let Key: fn(i32) -> Other = mk;",
+            "Key"
+        ));
         // A type item, a call, a longer name or another keyword is no value
         // item of that name.
         assert!(!declares_value_named("pub struct Key(pub i32);", "Key"));
