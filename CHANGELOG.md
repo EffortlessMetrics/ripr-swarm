@@ -7846,20 +7846,21 @@ entries below are the complete record.
   classification. The seam evidence-path honesty check judges stage, state,
   confidence and summary rows against regeneration, and analyzer children use
   one-worker Rayon pools (#12766, #13657, #14555, #14586).
-- Typed corpus and contract plumbing: the corpus summary envelope and
-  evidence assertions, external launch metadata, dialect/schema/migration/pgTAP
-  evidence contracts and the optional verification-allocation adapter became
-  typed, shared path helpers moved into `ripr-contract`, and empty-scope
-  honesty cases were added. A real stdio journey pins the gap-list
-  not-analyzed contract (#1348, #1349, #1350, #1368, #12662, #5736,
-  #12402, #4707, #12726, #13280).
+- Typed corpus and contract plumbing: a typed corpus summary envelope and typed
+  evidence corpus assertions were added, external launch metadata is projected,
+  dialect/schema/migration/pgTAP evidence contracts and the optional
+  verification-allocation adapter were added, shared path helpers moved into
+  `ripr-contract`, and empty-scope honesty cases were pinned. A real stdio
+  journey pins the gap-list not-analyzed contract (#1348, #1349, #1350, #1368,
+  #12662, #5736, #12402, #4707, #12726, #13280).
 - Internal refactors with no behavior change: borrowing instead of owning in
   owner extraction and module-graph keys, allocation-free setter naming, review
   comment output split into placement, publish plan and render, repo grip
   evidence projected into a test evidence summary, hop receiver binding with
   local-receiver helper fixtures, and a single parse per file in the
-  embed-macro shadow check. A failed seam-evidence pass now carries its
-  producer-failure limitation into scoped and full-inventory results (#10096,
+  embed-macro shadow check. A seam-evidence pass that fails closed carries its
+  producer-failure limitation into scoped and cold full seam-inventory results;
+  the uncached full walk and targeted rerun are not plumbed yet (#10096,
   #10137, #12047, #12355, #2954, #12410, #13411, #13340, #13570, #13847).
 - Mutation spot check: `cargo xtask mutation-spot-check` scores Python and
   TypeScript verdicts against real cosmic-ray, Stryker and mutmut outcomes
@@ -7919,14 +7920,15 @@ entries below are the complete record.
   appends a Pending block when output matches, refuses changed Windows output,
   and gains an opt-in Windows-to-Linux qualification path. Trace comparison uses
   private cache locations, the human fixture normalizer keeps source-text
-  backslashes, and `owner_return_pin_json` golden checks parse with serde_json
-  (#14498, #14509, #14510, #14546, #11178, #11317, #12605).
+  backslashes, and serde_json was prepared for `owner_return_pin_json` golden
+  checks (#14498, #14509, #14510, #14546, #11178, #11317, #12605).
 - Test reliability: process-control tests use FIFO witnesses, bounded `/proc`
   polling and quiescence waits, concurrent schema sweeps get exclusive temp
-  roots, and procfs disappearance and Windows separator cases are tolerated.
-  The contract language test works with default features off, and QuickCheck
-  fixtures were added (#10593, #13113,
-  #13443, #13424, #13474, #12672, #10613, #13897, #14522, #13285).
+  roots, and procfs disappearance and Windows separator cases are tolerated. The
+  contract language test works with default features off, and QuickCheck
+  generator fixtures run their assertions in bounded children with explicit
+  compiler environments (#10593, #13113, #13443, #13424, #13474, #12672, #10613,
+  #13897, #14522, #13285).
 - xtask policy checks: `check-lint-policy` covers table-form lint levels and
   workspace inheritance, `check-file-policy` shares its preparation build and
   `check-local-context` searches drive separators directly, the LSP no-stderr
