@@ -33,8 +33,8 @@
 
 use super::assertion_selection::PythonAssertionFocus;
 use super::exception_variant::{
-    builtin_exception_parent, expected_classes, known_not_subclass, old_class_outside,
-    owner_scope_leaves_unbound, raised_type_name,
+    builtin_exception_parent, builtin_new_outside_local_old, expected_classes, known_not_subclass,
+    old_class_outside, owner_scope_leaves_unbound, raised_type_name,
 };
 use super::related_tests::{
     PythonRelatedCandidate, exception_body_observes_token, import_source_module_matches_owner,
@@ -227,19 +227,42 @@ pub(super) fn python_raised_type_pin_gap(
             }
             // An exact old-class expectation the new class is statically known
             // not to satisfy fails against the new raise, which the edit does
-            // notice (RIPR-SPEC-0238 example 14). The old name must not be bound
-            // or imported by the test module (no star import either).
+            // notice (RIPR-SPEC-0238 example 14). The old name must resolve in
+            // the test module to the owner's class: an untouched builtin (not
+            // bound or imported there, no star import), or a class the owner
+            // module defines and the test imports plainly from it (a narrowing
+            // `raise Sub(..)` -> `raise Base(..)` under `pytest.raises(Sub)`).
+            let old_resolves = if builtin_exception_parent(&old_type).is_some() {
+                !rebinding.module_bound.contains(&old_type)
+                    && test
+                        .imports
+                        .iter()
+                        .all(|import| import.alias != old_type && import.imported != "*")
+            } else {
+                !rebinding.module_opaque
+                    && !rebinding.rebinds(&old_type)
+                    && owner.imports.iter().all(|import| import.alias != old_type)
+                    && test
+                        .imports
+                        .iter()
+                        .filter(|import| import.alias == old_type)
+                        .count()
+                        == 1
+                    && test.imports.iter().any(|import| {
+                        import.alias == old_type
+                            && import.imported == old_type
+                            && import_source_module_matches_owner(import, owner, &test.file)
+                    })
+            };
             let stale = runs_owner
                 && expected_classes(&assertion.text)
                     .is_some_and(|classes| classes.iter().all(|class| *class == old_type))
-                && !rebinding.module_bound.contains(&old_type)
-                && test
-                    .imports
-                    .iter()
-                    .all(|import| import.alias != old_type && import.imported != "*")
-                && builtin_exception_parent(&old_type).is_some()
-                && owner_source.and_then(|source| known_not_subclass(source, &new_type, &old_type))
-                    == Some(true);
+                && old_resolves
+                && owner_source.is_some_and(|source| {
+                    known_not_subclass(source, &new_type, &old_type) == Some(true)
+                        || (builtin_exception_parent(&old_type).is_none()
+                            && builtin_new_outside_local_old(source, &new_type, &old_type))
+                });
             if stale {
                 return None;
             }

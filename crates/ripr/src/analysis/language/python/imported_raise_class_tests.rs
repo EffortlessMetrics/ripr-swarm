@@ -540,3 +540,36 @@ fn a_local_alias_of_a_raised_name_credits_nothing() -> Check {
     );
     Ok(())
 }
+
+#[test]
+fn narrowing_a_local_subclass_to_its_base_is_credited_by_the_subclass_assertion() -> Check {
+    // `pytest.raises(InvalidVersion)` fails once the owner raises the base
+    // `ValueError`, so it notices the narrowing (verdict corpus
+    // py-raise-subclass-swap-subclass-control).
+    let source = "class InvalidVersion(ValueError):\n    pass\n\n\ndef parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise ValueError(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
+    let old = "        raise InvalidVersion(\"invalid version\")";
+    let new = "        raise ValueError(\"invalid version\")";
+    let imports = "from verlib.version import InvalidVersion, parse_release\n";
+    let finding = classify(
+        source,
+        &matching_tests(imports, "InvalidVersion"),
+        Some(old),
+        new,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The same name imported from another module is not the owner's class.
+    let foreign =
+        "from other.errors import InvalidVersion\nfrom verlib.version import parse_release\n";
+    let finding = classify(
+        source,
+        &matching_tests(foreign, "InvalidVersion"),
+        Some(old),
+        new,
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "foreign: {finding:?}"
+    );
+    Ok(())
+}

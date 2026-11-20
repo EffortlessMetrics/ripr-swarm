@@ -522,6 +522,34 @@ pub(super) fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<b
     Some(!ancestry.iter().any(|name| name == old))
 }
 
+/// `true` only when `new` is an untouched builtin exception and `old` a class
+/// the module defines once, so the builtin's fixed ancestry cannot contain it
+/// (a narrowing `raise Sub(..)` -> `raise Base(..)`; #15356 review).
+/// [`known_not_subclass`] refuses here because the builtin is spelled in the
+/// subclass's header; a `global` statement naming it refuses, and the
+/// caller checks the owner's own scope.
+pub(super) fn builtin_new_outside_local_old(source: &str, new: &str, old: &str) -> bool {
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<module>"), source) else {
+        return false;
+    };
+    let facts = ModuleBindingFacts::of(source, &module.body);
+    let global_names_new = source.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix("global ")
+            .is_some_and(|names| mentions_identifier(names, new))
+    });
+    !global_names_new
+        && facts.unbound(new)
+        && facts.bound_once(old)
+        && exception_ancestry(&module.body, &facts, old, 0).is_some()
+        && builtin_chain(new).is_some_and(|chain| {
+            !chain.contains(&old)
+                && !chain
+                    .iter()
+                    .any(|name| CONSTRUCTOR_CHECKED_EXCEPTIONS.contains(name))
+        })
+}
+
 /// Builtin exceptions whose constructor maps or validates its arguments, so a
 /// raise of one (or of a class derived from one) may raise another class.
 const CONSTRUCTOR_CHECKED_EXCEPTIONS: [&str; 6] = [
