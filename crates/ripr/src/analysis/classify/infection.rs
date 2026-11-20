@@ -705,7 +705,17 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) unary_tail: Option<&'a super::UnaryTailChange>,
 }
 
-pub(super) const RSTEST_FIXTURE_INPUT: &str = "A related test passes the rstest fixture";
+const RSTEST_FIXTURE_INPUT: &str = "A related test passes the rstest fixture";
+const UNREAD_BOUNDARY_LITERAL: &str = "A related test passes the changed boundary literal [";
+
+/// Whether `infect` is an [`opaque_boundary_input`] reading (#15343,
+/// #15344): its summary already names why the input is unknown, so a
+/// generic "no detected boundary input" line would contradict it.
+pub(super) fn is_opaque_boundary_input(infect: &StageEvidence) -> bool {
+    infect.state == StageState::Unknown
+        && (infect.summary.starts_with(RSTEST_FIXTURE_INPUT)
+            || infect.summary.starts_with(UNREAD_BOUNDARY_LITERAL))
+}
 
 /// Why a related test's input to `owner` is unreadable when no boundary
 /// input was found: a boundary literal passed to a macro whose expansion
@@ -732,7 +742,7 @@ fn opaque_boundary_input(
                 .find(|literal| literals.contains(literal))
             {
                 return Some(format!(
-                    "A related test passes the changed boundary literal [{boundary}] to `{name}!`, whose expansion ripr does not read, so whether it reaches the changed owner as an input is unknown"
+                    "{UNREAD_BOUNDARY_LITERAL}{boundary}] to `{name}!`, whose expansion ripr does not read, so whether it reaches the changed owner as an input is unknown"
                 ));
             }
         }
@@ -777,7 +787,7 @@ fn opaque_boundary_input(
             .find(|literal| probe_literals.contains(literal))
         {
             return Some(format!(
-                "A related test passes the changed boundary literal [{boundary}] to `{owner}` in a form ripr does not read as an owner input (for example a wrapper macro's expansion), so whether it activates the change is unknown"
+                "{UNREAD_BOUNDARY_LITERAL}{boundary}] to `{owner}` in a form ripr does not read as an owner input (for example a wrapper macro's expansion), so whether it activates the change is unknown"
             ));
         }
         let fixtures = crate::analysis::value_resolution::rstest_fixture_parameters(test);

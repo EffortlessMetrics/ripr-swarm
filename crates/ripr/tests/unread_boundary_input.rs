@@ -125,6 +125,8 @@ fn boundary_findings(test: &str) -> Result<Vec<Finding>, String> {
     Ok(findings)
 }
 
+const ABSENT_INPUT: &str = "No detected boundary input for the changed predicate";
+
 fn infection_states(findings: &[Finding]) -> Vec<StageState> {
     findings
         .iter()
@@ -170,6 +172,12 @@ fn a_test_local_macro_calling_the_owner_reads_infection_unknown() -> Result<(), 
         infection_states(&findings),
         vec![StageState::Unknown],
         "{findings:?}"
+    );
+    // The unknown reading names its cause; no absent-input line beside it.
+    assert!(
+        !findings[0].missing.iter().any(|line| line == ABSENT_INPUT),
+        "{:?}",
+        findings[0].missing
     );
     Ok(())
 }
