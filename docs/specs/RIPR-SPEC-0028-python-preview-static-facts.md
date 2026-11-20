@@ -2182,7 +2182,7 @@ adapter contributes:
 
 For a changed adjacent relational comparison in the closed iterator and
 accumulator selection shape (either `best = next(it)` followed by `for x in it`,
-or `best = xs[0]` followed by `for x in xs[1:]`, both with conditional
+or `best = xs[0]` followed by `for x in xs[1:]` or `for x in xs`, both with conditional
 `best = x` and `return best`), an unresolved boundary is
 `infection_unknown` when each oracle-eligible test has one or more assertions
 and each has a strong direct comparison of the owner call on an integer list
