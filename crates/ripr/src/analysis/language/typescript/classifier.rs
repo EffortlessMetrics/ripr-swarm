@@ -8545,7 +8545,25 @@ pub(crate) fn classify_resolved_owner(
         && has_owner_call_evidence
         && static_limit.is_none()
     {
-        typescript_missing_discriminators(&probe_shape, line, boundary_text, flow_sink.as_ref())
+        let mut facts = typescript_missing_discriminators(
+            &probe_shape,
+            line,
+            boundary_text,
+            flow_sink.as_ref(),
+        );
+        if facts.is_empty() {
+            facts.extend(ts_unexercised_default_discriminator(
+                owner,
+                old_line_text,
+                line_text,
+                line,
+                related_candidates,
+                alias_map,
+                workspace_root,
+                flow_sink.as_ref(),
+            ));
+        }
+        facts
     } else {
         Vec::new()
     };
@@ -9766,6 +9784,41 @@ pub(crate) fn ts_spread_override_unseen(
         ),
         (false, false) => None,
     }
+}
+
+/// #15357: the missing check for a changed `??` default (`const x = o.p ?? 1;`
+/// edited to another literal) when the source shows that every observed owner
+/// call passes `p` explicitly, so none reaches the default: call the owner
+/// without `p`. Fail-closed through `ts_nullish_operand_unreached`, which
+/// refuses unreadable arguments, calls that omit or may drop `p`, and owners
+/// whose parameter has a non-empty default.
+pub(crate) fn ts_unexercised_default_discriminator(
+    owner: &TypeScriptOwner,
+    old_line_text: Option<&str>,
+    line_text: &str,
+    line: usize,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    flow_sink: Option<&FlowSinkFact>,
+) -> Option<MissingDiscriminatorFact> {
+    let change = NullishChainChange::read(old_line_text?, line_text, &owner.params)?;
+    let (prop, default) = change.changed_default()?;
+    if !ts_nullish_operand_unreached(&change, owner, candidates, alias_map, workspace_root) {
+        return None;
+    }
+    Some(MissingDiscriminatorFact {
+        value: format!(
+            "call `{}` without `{prop}` and assert the result of the `{default}` default",
+            owner.name
+        ),
+        reason: format!(
+            "every related call passes `{prop}`, so the changed default at line {line} is never used"
+        ),
+        flow_sink: flow_sink.cloned(),
+        shape: crate::domain::DiscriminatorShape::Other,
+        drafted_boundary: None,
+    })
 }
 
 /// RIPR-SPEC-0246 rule 5: `true` when at least one owner call has its whole

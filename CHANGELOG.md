@@ -18,6 +18,15 @@ entries below are the complete record.
 
 ### Changed
 
+- Python and TypeScript weakly exposed rows now name a concrete missing check
+  where the source shows one, so `check --format agent` prints the gap row
+  instead of only a header count (#15357). A changed entry of a multi-line
+  Python `return {` literal names an exact read of that key
+  (`result["Accept-Encoding"] == "gzip, deflate, br"`); a changed TypeScript
+  `const x = options.p ?? <literal>` default names the call that omits `p`
+  when every observed call passes it. Both stay `weakly_exposed`; the
+  `??` reader also accepts plain `const`/`let` declarations and an
+  `options = {}` parameter default, which still reads nullish.
 - `ripr cache status|export|clear --help` now open with the command's catalog
   summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
   <leaf> --help` lead with that leaf's catalog summary (the sentence

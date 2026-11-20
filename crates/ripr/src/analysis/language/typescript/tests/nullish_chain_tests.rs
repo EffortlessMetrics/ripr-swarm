@@ -246,7 +246,16 @@ fn inherited_member_is_not_absent() -> Result<(), String> {
 
 #[test]
 fn default_parameter_reader() {
-    assert!(parameter_may_have_default("function f(p = {}) {}", "p"));
+    assert!(parameter_may_have_default(
+        "function f(p = { a: 1 }) {}",
+        "p"
+    ));
+    // An empty-object default leaves a property read nullish (#15357).
+    assert!(!parameter_may_have_default("function f(p = {}) {}", "p"));
+    assert!(!parameter_may_have_default(
+        "function f(p: Opts = {}) {}",
+        "p"
+    ));
     assert!(parameter_may_have_default(
         "const f = (a, p: T = x) => p",
         "p"
@@ -281,4 +290,122 @@ fn default_reader_skips_a_generic_list() {
         "function f<T = {}>(p: T) {}",
         "p"
     ));
+}
+
+// #15357: a changed `const x = options.p ?? <literal>` default names the call
+// that omits `p` when every observed call passes it.
+const SLUG_OWNER: &str = "export function slugify(text: string, options: Opts = {}): string {\n  const lowercase = options.lowercase ?? true;\n  return lowercase ? text.toLowerCase() : text;\n}\n";
+const SLUG_LINE: &str = "  const lowercase = options.lowercase ?? true;";
+const SLUG_OLD: &str = "  const lowercase = options.lowercase ?? false;";
+
+fn slug_finding(label: &str, owner: &str, line: &str, body: &str) -> Result<Finding, String> {
+    let test = format!(
+        "import {{ slugify }} from \"../src/settings\";\ntest(\"slug\", () => {{\n  {body}\n}});\n"
+    );
+    nested_callback_tests::settings_finding_in(label, owner, (2, line), &test, SLUG_OLD)
+}
+
+fn omission_facts(finding: &Finding) -> Vec<&str> {
+    finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|fact| fact.value.as_str())
+        .filter(|value| value.contains("without"))
+        .collect()
+}
+
+#[test]
+fn changed_default_names_the_call_that_omits_the_option() -> Result<(), String> {
+    let finding = slug_finding(
+        "default-explicit",
+        SLUG_OWNER,
+        SLUG_LINE,
+        "expect(slugify(\"Hello World\", { lowercase: true })).toBe(\"hello world\");\n  expect(slugify(\"a\", { lowercase: false })).toBe(\"a\");",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        omission_facts(&finding),
+        vec!["call `slugify` without `lowercase` and assert the result of the `true` default"]
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_default_names_nothing_when_a_call_may_reach_it() -> Result<(), String> {
+    for (label, owner, body) in [
+        // A call that omits the option reaches the default.
+        (
+            "default-omitted",
+            SLUG_OWNER,
+            "expect(slugify(\"Hello World\")).toBe(\"hello world\");",
+        ),
+        // One call among several omits it.
+        (
+            "default-mixed",
+            SLUG_OWNER,
+            "expect(slugify(\"a\", { lowercase: true })).toBe(\"a\");\n  expect(slugify(\"B\")).toBe(\"b\");",
+        ),
+        // `undefined` is not shown to be a readable object.
+        (
+            "default-undefined",
+            SLUG_OWNER,
+            "expect(slugify(\"a\", undefined)).toBe(\"a\");",
+        ),
+        // The option object is not readable at the call.
+        (
+            "default-opaque",
+            SLUG_OWNER,
+            "const o = load();\n  expect(slugify(\"a\", o)).toBe(\"a\");",
+        ),
+        // A non-empty default object can supply the property.
+        (
+            "default-nonempty",
+            "export function slugify(text: string, options: Opts = { lowercase: false }): string {\n  const lowercase = options.lowercase ?? true;\n  return lowercase ? text.toLowerCase() : text;\n}\n",
+            "expect(slugify(\"a\", { lowercase: true })).toBe(\"a\");",
+        ),
+    ] {
+        let finding = slug_finding(label, owner, SLUG_LINE, body)?;
+        assert!(omission_facts(&finding).is_empty(), "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_default_reader_is_closed() {
+    let params = vec!["options".to_string()];
+    let read = |old: &str, new: &str| NullishChainChange::read(old, new, &params);
+    let default = |old: &str, new: &str| {
+        read(old, new).and_then(|change| change.changed_default().map(|(p, v)| (p.to_string(), v)))
+    };
+    assert_eq!(
+        default(SLUG_OLD, SLUG_LINE),
+        Some(("lowercase".to_string(), "true".to_string()))
+    );
+    assert_eq!(
+        default(
+            "const sep = options.sep ?? \"-\";",
+            "const sep = options.sep ?? \"_\";"
+        ),
+        Some(("sep".to_string(), "\"_\"".to_string()))
+    );
+    // A renamed local, another keyword or a typed declaration is not read.
+    assert!(read(SLUG_OLD, "  const lower = options.lowercase ?? true;").is_none());
+    assert!(read(SLUG_OLD, "  var lowercase = options.lowercase ?? true;").is_none());
+    assert!(
+        read(
+            "const x: boolean = options.a ?? false;",
+            "const x: boolean = options.a ?? true;"
+        )
+        .is_none()
+    );
+    // A non-literal default names no value; a longer chain is not a default.
+    assert!(default(SLUG_OLD, "  const lowercase = options.lowercase ?? other;").is_none());
+    assert!(
+        default(
+            "const x = options.a ?? options.b ?? 1;",
+            "const x = options.a ?? options.b ?? 2;"
+        )
+        .is_none()
+    );
 }
