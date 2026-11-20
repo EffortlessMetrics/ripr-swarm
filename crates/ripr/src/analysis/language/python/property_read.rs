@@ -60,8 +60,11 @@ const TEST_REFUSAL_MARKERS: [&str; 15] = [
 ];
 
 /// Owner-module markers that can replace or intercept an attribute read
-/// without naming the class or the property.
-const MODULE_REFUSAL_MARKERS: [&str; 14] = [
+/// without naming the class or the property. Code that runs at class
+/// definition (a method default such as `marker=exec("total = 6")`) can rebind
+/// a class-body name without an attribute store, so namespace-evaluating
+/// builtins and frame access refuse too (#15638 review).
+const MODULE_REFUSAL_MARKERS: [&str; 21] = [
     "__getattr",
     "__setattr",
     "__delattr",
@@ -76,6 +79,13 @@ const MODULE_REFUSAL_MARKERS: [&str; 14] = [
     "metaclass",
     "builtins",
     "import *",
+    "exec",
+    "eval",
+    "compile",
+    "globals",
+    "locals",
+    "_getframe",
+    "sys.modules",
 ];
 
 /// The strong property-read assertion credited for a changed getter line.

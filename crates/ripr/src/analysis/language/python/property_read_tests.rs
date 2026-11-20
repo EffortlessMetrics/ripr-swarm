@@ -151,6 +151,14 @@ fn an_owner_that_may_not_be_a_plain_builtin_property_keeps_the_limit() -> Result
     let spaced_setattr_write = format!(
         "class Box:\n    def __init__(self, items):\n        self.items = items\n        setattr (self, 'total', 6)\n\n{GETTER}"
     );
+    // A method default runs at class definition and can rebind the getter's
+    // name in the class namespace without an attribute store.
+    let definition_time_exec = format!(
+        "{HEAD}{GETTER}\n    def unused(self, marker=exec(\"total = 6\")):\n        pass\n"
+    );
+    let definition_time_locals = format!(
+        "{HEAD}{GETTER}\n    def unused(self, marker=locals().update(total=6)):\n        pass\n"
+    );
     let instance_store = format!("{HEAD}    def reset(self):\n        self.total = 0\n\n{GETTER}");
     let instance_del = format!("{HEAD}    def reset(self):\n        del self.total\n\n{GETTER}");
     for (case, source) in [
@@ -163,6 +171,8 @@ fn an_owner_that_may_not_be_a_plain_builtin_property_keeps_the_limit() -> Result
         ("__class__ write", dunder_class_write.as_str()),
         ("setattr write", setattr_write.as_str()),
         ("spaced setattr write", spaced_setattr_write.as_str()),
+        ("definition-time exec", definition_time_exec.as_str()),
+        ("definition-time locals", definition_time_locals.as_str()),
         ("instance store of the property", instance_store.as_str()),
         ("instance del of the property", instance_del.as_str()),
     ] {
