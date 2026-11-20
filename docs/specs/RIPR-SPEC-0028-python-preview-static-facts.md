@@ -216,7 +216,9 @@ Test discovery:
   With no project venv the command keeps PATH `python` at its existing
   confidence: a static producer cannot know whether system Python has pytest,
   and a runtime probe would make reports and goldens host-dependent, so
-  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  `ripr doctor` checks PATH `python -m pytest` instead when there is no
+  project venv; with a venv, doctor reads the same static venv facts
+  (RIPR-SPEC-0007). The
   unittest route is unchanged. JSON (`evidence`, `repair_placement`,
   `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
   carry this one decision; renderers never read the filesystem, and the
