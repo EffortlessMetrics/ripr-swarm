@@ -743,27 +743,48 @@ fn is_windows_root_form(spelling: &str) -> bool {
     drive || spelling.starts_with("\\\\") || spelling.starts_with("//?/")
 }
 
+/// One matchable spelling of the repository root. `windows` is classified
+/// once from the raw spelling it was derived from, so a forward-slash twin of
+/// a UNC or verbatim root (`//server/share`) still treats a backslash as a
+/// separator, while a Unix root (even `//x/y`) never does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RootSpelling {
+    text: String,
+    windows: bool,
+}
+
 /// Normalize root spellings: add the forward-slash form, trim trailing
 /// separators, drop empty or filesystem-root spellings (rewriting those would
 /// corrupt every path), dedupe, and order longest first. Backslashes are
 /// trimmed and normalized only for Windows-form roots; a non-Windows root
 /// keeps them literal.
-fn root_spellings(raw: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut push = |candidate: &str| {
-        if !out.iter().any(|existing| existing == candidate) {
-            out.push(candidate.to_string());
+fn root_spellings(raw: &[String]) -> Vec<RootSpelling> {
+    let mut out: Vec<RootSpelling> = Vec::new();
+    let mut push = |candidate: &str, windows: bool| {
+        if !out.iter().any(|existing| existing.text == candidate) {
+            out.push(RootSpelling {
+                text: candidate.to_string(),
+                windows,
+            });
         }
     };
     for spelling in raw {
         let windows = is_windows_root_form(spelling);
         let separators: &[char] = if windows { &['/', '\\'] } else { &['/'] };
-        // Windows verbatim roots also appear without their prefix.
+        // Windows verbatim roots also appear without their prefix; a verbatim
+        // UNC root (`\\?\UNC\server\share`) appears as `\\server\share`.
         let mut forms = vec![spelling.clone()];
         if windows {
             for verbatim in ["\\\\?\\", "//?/"] {
                 if let Some(stripped) = spelling.strip_prefix(verbatim) {
-                    forms.push(stripped.to_string());
+                    if let Some(share) = stripped
+                        .strip_prefix("UNC\\")
+                        .or_else(|| stripped.strip_prefix("UNC/"))
+                    {
+                        forms.push(format!("\\\\{share}"));
+                    } else {
+                        forms.push(stripped.to_string());
+                    }
                 }
             }
         }
@@ -784,10 +805,16 @@ fn root_spellings(raw: &[String]) -> Vec<String> {
                     && bytes[0].is_ascii_alphabetic()
                     && bytes[1] == b':'
                     && matches!(bytes[2], b'/' | b'\\');
-                if !(body.starts_with('/') || drive) || body.ends_with(':') {
+                let unc = windows && body.len() > 2 && body.starts_with("\\\\");
+                // The verbatim UNC spelling itself (`\\?\UNC\server\share`).
+                let verbatim_unc = windows
+                    && body.len() < trimmed.len()
+                    && body.len() > 4
+                    && (body.starts_with("UNC\\") || body.starts_with("UNC/"));
+                if !(body.starts_with('/') || drive || unc || verbatim_unc) || body.ends_with(':') {
                     continue;
                 }
-                push(trimmed);
+                push(trimmed, windows);
                 if drive {
                     // Drive letters compare case-insensitively.
                     let mut swapped = trimmed.to_string();
@@ -799,12 +826,12 @@ fn root_spellings(raw: &[String]) -> Vec<String> {
                         letter.to_ascii_uppercase()
                     };
                     swapped.replace_range(offset..=offset, &other.to_string());
-                    push(&swapped);
+                    push(&swapped, windows);
                 }
             }
         }
     }
-    out.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
+    out.sort_by_key(|spelling| std::cmp::Reverse(spelling.text.len()));
     out
 }
 
@@ -812,12 +839,13 @@ fn is_path_char(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '/' | '\\')
 }
 
-fn project_root_text(text: &str, spelling: &str) -> String {
+fn project_root_text(text: &str, root: &RootSpelling) -> String {
+    let spelling = root.text.as_str();
     if text == spelling {
         return ".".to_string();
     }
     // A backslash separates components only after a Windows-form root.
-    let windows = is_windows_root_form(spelling);
+    let windows = root.windows;
     let is_separator = |c: char| c == '/' || (windows && c == '\\');
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -875,25 +903,30 @@ fn project_root_text(text: &str, spelling: &str) -> String {
             out.truncate(token_len);
         }
         if next.is_some_and(is_separator) {
-            rest = &after_root[1..];
+            // Skip the whole separator run: `<root>//x` names `x`, never the
+            // absolute `/x`.
+            rest = after_root.trim_start_matches(is_separator);
             previous = None;
-            // `<root>/` starts a relative path: drop only the separator and
-            // never insert anything before a child name, even one that begins
-            // with whitespace or punctuation (` artifacts/x`, `;x`, `,x`).
-            // The one exception is a trailing `<root>/` that names the root
-            // itself in prose (`see <root>/, then`): it becomes `.` only when
-            // nothing path-like follows, meaning end of string, or a single
-            // whitespace or prose punctuation character that is itself followed
-            // by whitespace or end. Anything longer is kept as a child name.
+            // A root that starts the string value makes the value a path, so
+            // the remainder is a relative path kept verbatim, even a child name
+            // that begins with whitespace or punctuation (` artifacts/x`,
+            // `;x`, `,x`); only an empty remainder is the root itself, `.`.
+            // Mid-string (prose or a command), `<root>/` names the root when
+            // nothing path-like follows: end of string, whitespace, or a prose
+            // punctuation character followed by whitespace or end. So
+            // `--root <root>/ check` stays runnable as `--root . check`.
+            let at_value_start = out.is_empty();
             let mut chars = rest.chars();
-            let prose_root = match chars.next() {
+            let names_root = match chars.next() {
                 None => true,
+                Some(_) if at_value_start => false,
+                Some(c) if c.is_whitespace() => true,
                 Some(c) => {
-                    (c.is_whitespace() || matches!(c, ',' | ';' | ':' | ')' | '"' | '\'' | '`'))
+                    matches!(c, ',' | ';' | ':' | ')' | '"' | '\'' | '`')
                         && chars.next().is_none_or(char::is_whitespace)
                 }
             };
-            if prose_root {
+            if names_root {
                 out.push('.');
             }
         } else {
@@ -908,10 +941,10 @@ fn project_root_text(text: &str, spelling: &str) -> String {
     out
 }
 
-fn project_root_string(text: &str, spellings: &[String]) -> String {
+fn project_root_string(text: &str, spellings: &[RootSpelling]) -> String {
     let mut text = text.to_string();
     for spelling in spellings {
-        if text.contains(spelling.as_str()) {
+        if text.contains(spelling.text.as_str()) {
             text = project_root_text(&text, spelling);
         }
     }
@@ -919,7 +952,7 @@ fn project_root_string(text: &str, spellings: &[String]) -> String {
 }
 
 /// Walk strings and object keys alike.
-fn project_root_relative_with(value: &mut Value, spellings: &[String]) {
+fn project_root_relative_with(value: &mut Value, spellings: &[RootSpelling]) {
     match value {
         Value::String(text) => *text = project_root_string(text, spellings),
         Value::Array(items) => {
@@ -1603,7 +1636,13 @@ pub(super) mod tests {
         // On Unix a backslash is a legal name character, so a root ending in
         // one keeps it, and a backslash after a Unix root is not a separator.
         let unix_root = "/w/repo\\";
-        assert_eq!(root_spellings(&[unix_root.to_string()]), vec![unix_root]);
+        assert_eq!(
+            root_spellings(&[unix_root.to_string()]),
+            vec![RootSpelling {
+                text: unix_root.to_string(),
+                windows: false,
+            }]
+        );
         assert_eq!(
             projected("/w/repo\\/target/result.json", &[unix_root]),
             "target/result.json"
@@ -1639,10 +1678,70 @@ pub(super) mod tests {
             ";x/after.json"
         );
         assert_eq!(projected("/w/repo/,x.json", &["/w/repo"]), ",x.json");
+    }
+
+    #[test]
+    fn root_projection_skips_every_consecutive_separator() {
+        // `<root>//x` names `x`, never the absolute `/x` or `\\x`.
+        assert_eq!(projected("/w/repo//x", &["/w/repo"]), "x");
         assert_eq!(
-            projected("open /w/repo/ artifacts/after.json", &["/w/repo"]),
-            "open  artifacts/after.json"
+            projected("see /w/repo///x/y.rs", &["/w/repo"]),
+            "see x/y.rs"
         );
+        assert_eq!(projected("/w/repo//", &["/w/repo"]), ".");
+        let up = 'C';
+        let root = format!("{up}:\\w\\repo");
+        assert_eq!(projected(&format!("{root}\\\\x"), &[root.as_str()]), "x");
+        assert_eq!(projected(&format!("{root}\\/x"), &[root.as_str()]), "x");
+        // A Unix root skips only `/`; a following backslash is a literal name.
+        assert_eq!(projected("/w/repo/\\x", &["/w/repo"]), "\\x");
+    }
+
+    #[test]
+    fn root_projection_matches_unc_and_verbatim_unc_roots() {
+        let unc = "\\\\server\\share";
+        let forward = "//server/share";
+        for text in [
+            format!("{unc}\\a.json"),
+            format!("{forward}\\a.json"),
+            format!("{forward}/a.json"),
+            format!("{unc}/a.json"),
+        ] {
+            assert_eq!(projected(&text, &[unc]), "a.json", "{text}");
+        }
+        let spellings = root_spellings(&[unc.to_string()]);
+        assert!(
+            spellings.iter().all(|spelling| spelling.windows),
+            "{spellings:?}"
+        );
+        assert!(
+            spellings.iter().any(|spelling| spelling.text == unc),
+            "{spellings:?}"
+        );
+
+        let verbatim = "\\\\?\\UNC\\server\\share";
+        for text in [
+            format!("{verbatim}\\a.json"),
+            format!("{unc}\\a.json"),
+            format!("{forward}\\a.json"),
+            format!("{forward}/a.json"),
+        ] {
+            assert_eq!(projected(&text, &[verbatim]), "a.json", "{text}");
+        }
+    }
+
+    #[test]
+    fn root_projection_keeps_backslashes_literal_on_a_double_slash_unix_root() {
+        let root = "//x/y";
+        assert_eq!(
+            root_spellings(&[root.to_string()]),
+            vec![RootSpelling {
+                text: root.to_string(),
+                windows: false,
+            }]
+        );
+        assert_eq!(projected("//x/y/a.json", &[root]), "a.json");
+        assert_eq!(projected("//x/y\\a.json", &[root]), "//x/y\\a.json");
     }
 
     #[test]
@@ -1651,8 +1750,21 @@ pub(super) mod tests {
         assert_eq!(projected("see /w/repo/, then", &["/w/repo"]), "see ., then");
         assert_eq!(projected("at /w/repo/; done", &["/w/repo"]), "at .; done");
         assert_eq!(projected("(in /w/repo/)", &["/w/repo"]), "(in .)");
-        // Conservative: ` now` could be a real child name, so it is kept.
-        assert_eq!(projected("in /w/repo/ now", &["/w/repo"]), "in  now");
+        // Mid-string, `<root>/` before whitespace names the root, so prose
+        // and command routes stay runnable from the repository root.
+        assert_eq!(projected("in /w/repo/ now", &["/w/repo"]), "in . now");
+        assert_eq!(
+            projected("cd /w/repo/ && make", &["/w/repo"]),
+            "cd . && make"
+        );
+        assert_eq!(
+            projected("ripr check --root /w/repo/ check", &["/w/repo"]),
+            "ripr check --root . check"
+        );
+        assert_eq!(
+            projected("open /w/repo/ artifacts/after.json", &["/w/repo"]),
+            "open . artifacts/after.json"
+        );
         assert_eq!(projected("in /w/repo/ ", &["/w/repo"]), "in . ");
         assert_eq!(projected("see /w/repo, then", &["/w/repo"]), "see ., then");
         assert_eq!(projected("see /w/repo; x", &["/w/repo"]), "see .; x");
