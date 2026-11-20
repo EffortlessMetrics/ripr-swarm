@@ -38667,3 +38667,53 @@ fn check_clean_default_branch_with_remote_base_says_comparison_base() -> Result<
     }
     Ok(())
 }
+
+/// #15326 / #7644: a feature-branch clone whose `origin/HEAD` tracks the
+/// feature branch resolves the base to `origin/feature` at HEAD's commit, the
+/// same shape as a default-branch clone, but the real base is elsewhere. It
+/// must keep the probed `--base` advice, not claim to be on the comparison base.
+#[test]
+fn check_feature_branch_clone_with_remote_base_keeps_base_candidate_advice() -> Result<(), String> {
+    let up = unique_temp_workspace("remote-base-up-feature-clone");
+    std::fs::create_dir_all(up.join("src")).map_err(|e| format!("create src: {e}"))?;
+    run_git(&up, &["init", "-b", "trunk"])?;
+    run_git(&up, &["config", "user.email", "test@test.com"])?;
+    run_git(&up, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        up.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|e| format!("write lib.rs: {e}"))?;
+    std::fs::write(
+        up.join("Cargo.toml"),
+        "[package]\nname = \"remote-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    run_git(&up, &["add", "."])?;
+    run_git(&up, &["commit", "-m", "initial"])?;
+    run_git(&up, &["checkout", "-q", "-b", "feature"])?;
+    std::fs::write(
+        up.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a - b }\n",
+    )
+    .map_err(|e| format!("write lib.rs: {e}"))?;
+    run_git(&up, &["commit", "-am", "feature change"])?;
+    let up_str = up.to_string_lossy().into_owned();
+    let cl = unique_temp_workspace("remote-base-cl-feature-clone");
+    let cl_str = cl.to_string_lossy().into_owned();
+    run_git(&up, &["clone", "-q", &up_str, &cl_str])?;
+    let output = run_ripr(&["check", "--root", &cl_str]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !stdout.contains("`origin/feature`") {
+        return Err(format!(
+            "fixture precondition: the default base must resolve to origin/feature; got:\n{stdout}"
+        ));
+    }
+    if stdout.contains("which is the comparison base") || !stdout.contains("--base origin/trunk") {
+        return Err(format!(
+            "a feature-branch clone must keep the probed --base advice; got:\n{stdout}"
+        ));
+    }
+    Ok(())
+}

@@ -1,0 +1,7 @@
+# Empty-diff Start-here wording for a default-branch clone at origin/<name> (#15326).
+[[extend]]
+id = "RIPR-SPEC-0083"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::check_clean_default_branch_with_remote_base_says_comparison_base",
+  "crates/ripr/tests/cli_smoke.rs::check_feature_branch_clone_with_remote_base_keeps_base_candidate_advice",
+]

@@ -1704,11 +1704,13 @@ fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
     .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == base)
 }
 
-/// True when the analyzed base is the remote-tracking ref of the checked-out
-/// branch (`origin/master` while on `master`, whatever the default branch is
-/// called) and both resolved to the same commit. The decision uses the
-/// already-resolved revision identity; it adds no git probe beyond the branch
-/// name `head_is_on_branch` already reads.
+/// True when the analyzed base is `origin/<branch>` for the checked-out
+/// `<branch>` (a clone of `master` or `trunk`, whatever the default branch is
+/// called) and both resolved to the same commit. A feature-branch clone whose
+/// `origin/HEAD` tracks the feature branch has the same shape while the real
+/// base is elsewhere (#7644), so, like `base_is_checked_out_head_with_parent`,
+/// only a conventional default name or the absence of any other base
+/// candidate counts; otherwise the probed `--base` arm names the real base.
 fn head_is_on_remote_tracking_base(output: &CheckOutput, base: &str) -> bool {
     let at_base = output.analyzed_revisions.as_ref().is_some_and(|revisions| {
         match (&revisions.base_commit, &revisions.head_commit) {
@@ -1719,19 +1721,18 @@ fn head_is_on_remote_tracking_base(output: &CheckOutput, base: &str) -> bool {
     if !at_base {
         return false;
     }
-    crate::git::run_git_output_with_deadline(
+    let on_tracking_ref = crate::git::run_git_output_with_deadline(
         &output.root,
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
         Some(std::time::Duration::from_secs(5)),
     )
     .ok()
     .filter(|git| git.status.success())
-    .is_some_and(|git| {
-        let branch = String::from_utf8_lossy(&git.stdout).trim().to_string();
-        !branch.is_empty()
-            && base
-                .strip_suffix(branch.as_str())
-                .is_some_and(|prefix| prefix.ends_with('/'))
+    .map(|git| String::from_utf8_lossy(&git.stdout).trim().to_string())
+    .filter(|branch| !branch.is_empty() && base.strip_prefix("origin/") == Some(branch.as_str()));
+    on_tracking_ref.is_some_and(|branch| {
+        matches!(branch.as_str(), "main" | "master")
+            || crate::analysis::another_base_candidate(&output.root, None).is_none()
     })
 }
 
