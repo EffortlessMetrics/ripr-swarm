@@ -351,6 +351,17 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             candidate_index.module_declarations(),
         )
     });
+    // #14816: an `if` condition forced to a literal `true`/`false`, read
+    // from the diff so the base-side owner is established.
+    context.literal_condition = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        super::classify::literal_condition_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
     context.owner_sole_change = changed_file
         .zip(owner_fn)
         .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
