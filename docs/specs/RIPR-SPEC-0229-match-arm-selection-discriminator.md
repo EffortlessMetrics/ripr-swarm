@@ -547,7 +547,13 @@ implies but does not spell out:
   this refusal, unlike the others, does not keep the activation stage as it
   was (#15233): the inputs it read sit inside a macro whose expansion is not
   read, so the stage reads `unknown` (`activation_unknown`), never the
-  generic `yes` that observed values alone would give. The scan ignores
+  generic `yes` that observed values alone would give. It is asked as soon
+  as every visible input selects another arm, before the re-entry,
+  unread-helper and outside-mention refusals, which keep the stage: a
+  rebinding inside an inline test module also reads as a mention of the
+  owner outside the related tests' calls, and would otherwise keep that
+  `yes`. The summary names only the invoked read macros that are rebound.
+  The scan ignores
   definition order, so a `macro_rules! assert_eq` defined after every
   assertion also refuses; that costs the arm its name, never credit.
 
@@ -669,7 +675,11 @@ the diff changes `None => 1` to `None => 0`.
   while the standard macro reads `weak` with the arm named;
   `the_rebound_refusal_names_only_the_rebound_read_macro`: the refusal
   summary names a rebound `assert_eq!` and not a standard `println!`
-  invoked beside it.
+  invoked beside it;
+  `an_inline_test_module_rebinding_reads_activation_unknown`: the same
+  rebinding inside the owner file's inline `mod tests` reads `unknown`.
+  Honesty corpus case
+  `rust_repo_exposure_rebound_read_macro_unselected_arm_not_promoted`.
 - `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus

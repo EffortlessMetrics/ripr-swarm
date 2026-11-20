@@ -639,6 +639,46 @@ fn small_and_large_prices() {{\n{body}    }}\n}}\n"
     Ok(())
 }
 
+/// #15233 corpus capture: the rebinding inside the owner file's inline test
+/// module (the issue's shape) also reads as a mention of the owner outside
+/// the related tests' calls, a refusal that kept the generic `yes`. The
+/// rebound check is asked before it, so the arm reads unknown there too. The
+/// control without the rebinding names the arm.
+#[test]
+fn an_inline_test_module_rebinding_reads_activation_unknown() -> Result<(), String> {
+    let rebind = "    macro_rules! assert_eq {\n        \
+($f:ident ( $($arg:tt)* ), $expected:expr) => {\n            \
+let _ = $f(Size::Medium);\n        };\n    }\n";
+    for (prelude, rebound) in [(rebind, true), ("", false)] {
+        let source = format!(
+            "{PRICES}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{prelude}\n    \
+#[test]\n    fn small_and_large_prices() {{\n        \
+assert_eq!(price_cents(Size::Small), 300);\n        \
+assert_eq!(price_cents(Size::Large), 500);\n    }}\n}}\n"
+        );
+        // Fixture premise: the test sits in the owner's file, before or
+        // without a rebinding, and never passes `Size::Medium` itself.
+        assert!(source.contains("mod tests {\n    use super::*;"));
+        assert!(!source.contains("price_cents(Size::Medium)"));
+        assert_eq!(source.contains("macro_rules! assert_eq"), rebound);
+        let (full, compact, class) =
+            arm_evidence_with_tests(&source, "// no out-of-line tests\n", "Size::Medium")?;
+        for (evidence, class) in [(&full, class[0]), (&compact, class[1])] {
+            let summary = evidence.activate.summary.as_str();
+            if rebound {
+                assert_eq!(evidence.activate.state, StageState::Unknown, "{summary}");
+                assert_eq!(class, SeamGripClass::ActivationUnknown, "{summary}");
+                assert!(summary.starts_with("A read macro"), "{summary}");
+            } else {
+                assert_eq!(evidence.activate.state, StageState::Weak, "{summary}");
+                assert_eq!(class, SeamGripClass::WeaklyGripped, "{summary}");
+                assert_eq!(missing_values(evidence), ["Size::Medium"]);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// #15233 review: the refusal summary names only the read macros that are
 /// rebound. The test invokes a rebound `assert_eq!` and the standard
 /// `println!`; only `assert_eq!` is named. The control, with the standard

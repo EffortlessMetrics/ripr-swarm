@@ -4743,21 +4743,6 @@ fn unselected_match_arm(
             .or_default()
             .push(function);
     }
-    if related_tests
-        .iter()
-        .any(|test| may_reach_owner_unread(test, &owner.name, &functions_by_name))
-    {
-        return None;
-    }
-    // A call's input names the first arm it enters, not every arm it runs
-    // (#12078 review): an owner that may run again from inside its own call
-    // (`Size::Small => price_cents(Size::Medium)`, a helper or function value
-    // that calls it back, an operator or `Display` impl that names it) can
-    // run the arm from a call that selects another one. Read after every
-    // test, so a test that selects the arm skips the workspace scan.
-    if owner_may_call_itself(owner, &functions_by_name, index, related_tests) {
-        return None;
-    }
     inputs.sort();
     inputs.dedup();
     let pattern = selector.pattern_text();
@@ -4773,8 +4758,12 @@ fn unselected_match_arm(
     // the call it wraps at all. Only the names the owner, its callees, the
     // related tests and their helpers invoke are asked about, so an
     // unrelated `macro_rules! assert` elsewhere leaves an `assert_eq!`-only
-    // arm readable. Asked after every refusal that keeps the stage, so it
-    // never lowers a stage an earlier refusal left as it was (#15233).
+    // arm readable. Asked before the refusals below (#15233): every visible
+    // input selects another arm, and those inputs were read through the
+    // rebound macro, so they establish no activation whatever else holds. A
+    // later refusal would keep the generic `yes` they produced. A rebinding
+    // inside an inline test module, for one, also reads as a mention of the
+    // owner outside the related tests' calls.
     let rebound = invoked_read_macros_rebound(owner, &functions_by_name, index, related_tests);
     if !rebound.is_empty() {
         return Some(UnselectedArm::ReadMacroRebound(format!(
@@ -4786,6 +4775,21 @@ fn unselected_match_arm(
                 .join(", "),
             selector.scrutinee(),
         )));
+    }
+    if related_tests
+        .iter()
+        .any(|test| may_reach_owner_unread(test, &owner.name, &functions_by_name))
+    {
+        return None;
+    }
+    // A call's input names the first arm it enters, not every arm it runs
+    // (#12078 review): an owner that may run again from inside its own call
+    // (`Size::Small => price_cents(Size::Medium)`, a helper or function value
+    // that calls it back, an operator or `Display` impl that names it) can
+    // run the arm from a call that selects another one. Read after every
+    // test, so a test that selects the arm skips the workspace scan.
+    if owner_may_call_itself(owner, &functions_by_name, index, related_tests) {
+        return None;
     }
     Some(UnselectedArm::Named(MissingDiscriminatorFact {
         value: pattern.to_string(),
