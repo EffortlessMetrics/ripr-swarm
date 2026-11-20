@@ -1,7 +1,7 @@
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -2,7 +2,7 @@
+@@ -2,6 +2,6 @@
      fn step(&self) -> u32;
  
      fn advance(&self) -> u32 {
@@ -9,4 +9,3 @@ diff --git a/src/lib.rs b/src/lib.rs
 +        self.step() + 2
      }
  }
- 

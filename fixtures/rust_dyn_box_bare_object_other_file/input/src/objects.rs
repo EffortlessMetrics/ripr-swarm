@@ -11,4 +11,3 @@ impl Iterator for Shape {
 }
 
 impl ExactSizeIterator for Shape {}
-

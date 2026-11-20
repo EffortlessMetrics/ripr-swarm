@@ -480,6 +480,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     glob_chain_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
     /// Files that may import from an ancestor beyond their immediate parent.
     glob_jump_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
+    /// #15277: per trait name, whether the workspace leaves a
+    /// `Box<dyn Trait>` receiver only the boxed value's vtable (see
+    /// `dyn_box`). Each verdict scans every file, once per run.
+    dyn_box_traits: SyncMemo<BTreeMap<String, bool>>,
     /// #8255 test witness: full-index macro-site passes this run paid.
     #[cfg(test)]
     workspace_scan_passes: SyncMemo<u32>,
@@ -7741,10 +7745,20 @@ impl OwnerReturnPin {
                                 return false;
                             }
                             // #15277: a `Box<dyn Trait>` binding calls the
-                            // owner's trait method on the boxed value.
-                            let dyn_trait = trait_scope.as_ref().and_then(|scope| {
-                                dyn_box::dyn_box_trait(&scope.trait_name, &self.name, index, syntax)
-                            });
+                            // owner's trait method on the boxed value. The
+                            // workspace gates scan every file, so they run
+                            // only for a test that spells `dyn` at all.
+                            let dyn_trait = trait_scope
+                                .as_ref()
+                                .filter(|_| contains_as_whole_word(&masked_body, "dyn"))
+                                .and_then(|scope| {
+                                    dyn_box::dyn_box_trait(
+                                        &scope.trait_name,
+                                        &self.name,
+                                        index,
+                                        syntax,
+                                    )
+                                });
                             test_receiver_type(
                                 test,
                                 receiver,

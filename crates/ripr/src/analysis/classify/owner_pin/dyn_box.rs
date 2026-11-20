@@ -82,11 +82,8 @@ pub(super) fn dyn_box_trait<'t>(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<&'t str> {
-    (!BOX_RECEIVER_METHODS.contains(&method)
-        && trait_declared_once_bare(trait_name, index)
-        && !workspace_may_extend_dyn_or_box(trait_name, index)
-        && builtin_type_unshadowed("Box", index, syntax))
-    .then_some(trait_name)
+    (!BOX_RECEIVER_METHODS.contains(&method) && workspace_admits(trait_name, index, syntax))
+        .then_some(trait_name)
 }
 
 /// The relation-side reading (#15277): whether some `recv.method(..)` call
@@ -134,9 +131,28 @@ pub(in crate::analysis::classify) fn boxed_receiver_calls_impl(
             })
     });
     found
-        && trait_declared_once_bare(trait_name, index)
+        && workspace_admits(
+            trait_name,
+            index,
+            &index.call_identity_memos.receiver_pin_syntax,
+        )
+}
+
+/// The workspace-wide gates for `trait_name`, memoized per run in
+/// `syntax`: one bare declaration, nothing that extends the trait object or
+/// the box, and the std `Box`.
+fn workspace_admits(trait_name: &str, index: &RustIndex, syntax: &OwnerPinSyntax) -> bool {
+    if let Some(known) = syntax.dyn_box_traits.borrow().get(trait_name) {
+        return *known;
+    }
+    let admits = trait_declared_once_bare(trait_name, index)
         && !workspace_may_extend_dyn_or_box(trait_name, index)
-        && builtin_type_unshadowed("Box", index, &OwnerPinSyntax::default())
+        && builtin_type_unshadowed("Box", index, syntax);
+    syntax
+        .dyn_box_traits
+        .borrow_mut()
+        .insert(trait_name.to_string(), admits);
+    admits
 }
 
 /// Whether the masked test body spells `mut receiver` anywhere (`let mut s`,

@@ -1,7 +1,7 @@
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -6,7 +6,7 @@
+@@ -6,6 +6,6 @@
  
  impl Shape for Square {
      fn len(&self) -> usize {
@@ -9,4 +9,3 @@ diff --git a/src/lib.rs b/src/lib.rs
 +        self.0 + 1
      }
  }
- 
