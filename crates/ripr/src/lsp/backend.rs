@@ -1748,13 +1748,6 @@ impl Backend {
             .unwrap_or_default()
     }
 
-    /// Signature of the marker payload a pending URI currently carries
-    /// (#8732 review): session restore and repeated blocked-state refreshes
-    /// can call the publisher back-to-back for the same URI, and republishing
-    /// an identical marker is N² traffic on a large session for zero client
-    /// effect. The signature folds in the recovery route and the withdrawn
-    /// flag so a genuinely changed marker (for example configuration breaking
-    /// after a snapshot committed) still republishes.
     /// The route a push marker serves when the caller knows an attempt is
     /// starting: the cold-start route and a recorded failure's route both
     /// give way to "running" (#14447; #15461 review), so a save that retries
@@ -1774,6 +1767,13 @@ impl Backend {
         }
     }
 
+    /// Signature of the marker payload a pending URI currently carries
+    /// (#8732 review): session restore and repeated blocked-state refreshes
+    /// can call the publisher back-to-back for the same URI, and republishing
+    /// an identical marker is N² traffic on a large session for zero client
+    /// effect. The signature folds in the recovery route and the withdrawn
+    /// flag so a genuinely changed marker (for example configuration breaking
+    /// after a snapshot committed) still republishes.
     fn pending_push_marker_signature(
         recovery: &AnalysisPendingRecovery,
         withdrawn: bool,
