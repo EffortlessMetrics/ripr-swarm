@@ -1,6 +1,7 @@
 //! #15309: human output is plain words. An internal analyzer route
 //! identifier (`analysis/<slug>`) stays in structured JSON fields and never
-//! reaches the default human next step or the full human report.
+//! reaches the default human report. The full human report may name it only
+//! on its labeled `analyzer route:` diagnostic line, never in next-step prose.
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +22,12 @@ fn committed_human_goldens_name_no_internal_analyzer_route() -> Result<(), Strin
             checked += 1;
             // Wrapped lines can split the phrase, so test the joined text.
             let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            for needle in ["Route analyzer work to", " `analysis/"] {
+            let mut needles = vec!["Route analyzer work to", " `analysis/"];
+            if name == "human.txt" {
+                // The default report names no route identifier at all.
+                needles.push(" analysis/");
+            }
+            for needle in needles {
                 if joined.contains(needle) {
                     leaks.push(format!("{}: {needle}", expected.join(name).display()));
                 }
