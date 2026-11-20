@@ -575,6 +575,45 @@ pub(crate) fn probes_for_file_with_relations(
             })
             .cloned()
             .collect::<Vec<_>>();
+        // #15529: an edit wholly inside an inline branch value (`if n > 5 { 1 }`
+        // to `if n > 5 { 3 }`) left the `if`'s condition untouched, so its
+        // predicate is not changed behavior: a boundary pairing for `n > 5`
+        // is the wrong discriminator, and a test pinning the returned value
+        // is the right one. The line then reads as that value's return_value
+        // probe. Only a line whose shapes are predicates, all outside the
+        // edit, qualifies, so every other line keeps its reading (#7626).
+        let inline_value = removed_counterpart.as_deref().and_then(|removed| {
+            let removed = removed.trim();
+            let predicates = canonical_shapes
+                .iter()
+                .filter(|shape| shape.family == ProbeFamily::Predicate)
+                .collect::<Vec<_>>();
+            let anchor = predicates.first()?;
+            if canonical_shapes.len() != predicates.len()
+                || !predicates.iter().all(|shape| {
+                    shape_outside_edit(text, &canonical_probe_text(text, shape.text), removed)
+                })
+            {
+                return None;
+            }
+            let (start, end) = inline_branch_value_span(text, removed)?;
+            // The predicate occurs once on the line (`shape_outside_edit`),
+            // so its offset there anchors the value's byte in the file.
+            let anchor_at = text.find(canonical_probe_text(text, anchor.text).as_str())?;
+            let start_byte = (anchor.start_byte + start).checked_sub(anchor_at)?;
+            Some(super::classify::ParserProbeShape {
+                family: ProbeFamily::ReturnValue,
+                start_line: added.new_side_line,
+                start_byte,
+                text: text.get(start..end)?,
+                standalone_call: false,
+                unsafe_boundary: false,
+            })
+        });
+        let canonical_shapes = match inline_value {
+            Some(value) => vec![value],
+            None => canonical_shapes,
+        };
         if !canonical_shapes.is_empty() {
             // #7074: a return value that the edit left untouched (`Ok(Level::Warn)`
             // after a changed arm head `"warning" | "warn" =>`) is not changed
@@ -3192,6 +3231,82 @@ fn shape_outside_edit(added_line: &str, shape_text: &str, removed_line: &str) ->
     let end = start + shape_text.len();
     let (prefix, suffix) = common_prefix_suffix(added_line, removed_line);
     end <= prefix || start >= added_line.len() - suffix
+}
+
+/// #15529: the byte range, on the added line, of an inline `if`/`else`
+/// branch value that holds the whole edit between the lines
+/// (`if n > 5 { 1 } else { 2 }` to `if n > 5 { 3 } else { 2 }`). The value
+/// is the whole tail of a brace block on the line that an `else` follows or
+/// precedes, after an `if` on the same line, with no statement (`;`) or
+/// brace inside it. The edit must lie inside the value itself, not in its
+/// braces or the space around it. Strings and comments are masked, so a
+/// brace in a literal does not open a block.
+fn inline_branch_value_span(added_line: &str, removed_line: &str) -> Option<(usize, usize)> {
+    if added_line == removed_line {
+        return None;
+    }
+    let masked = mask_comments_and_strings(added_line);
+    if masked.len() != added_line.len() {
+        return None;
+    }
+    let bytes = masked.as_bytes();
+    let (prefix, suffix) = common_prefix_suffix(added_line, removed_line);
+    let edit_end = added_line.len() - suffix;
+    let open = masked[..prefix].rfind('{')?;
+    let close = edit_end + masked[edit_end..].find('}')?;
+    if masked[open + 1..close].contains(['{', '}', ';']) {
+        return None;
+    }
+    // Trimmed on the source text: masking blanks a string value's quotes.
+    let inner = added_line.get(open + 1..close)?;
+    let lead = inner.len() - inner.trim_start().len();
+    let start = open + 1 + lead;
+    let end = close - (inner.len() - inner.trim_end().len());
+    if start >= end || start > prefix || edit_end > end {
+        return None;
+    }
+    let value = added_line.get(start..end)?;
+    // The old value sits between the same unchanged text; a respaced value
+    // (`{ 2 }` to `{2}`) is not a changed one.
+    let old_value =
+        removed_line.get(start..removed_line.len().checked_sub(added_line.len() - end)?)?;
+    // A respelled constant (`1` to `0x1`, `1.0` to `1e0`) is the same value.
+    if old_value.is_empty()
+        || old_value.trim() != old_value
+        || old_value == value
+        || is_integer_respelling(value, old_value)
+        || crate::analysis::classify::is_equal_constant_respelling(old_value, value)
+    {
+        return None;
+    }
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let word_at = |at: usize, word: &str| {
+        // `get` refuses an index inside a multibyte character in code.
+        masked.get(at..).is_some_and(|rest| rest.starts_with(word))
+            && (at == 0 || !is_word(bytes[at - 1]))
+            && bytes
+                .get(at + word.len())
+                .is_none_or(|&next| !is_word(next))
+    };
+    let after = masked[close + 1..].trim_start();
+    let after_at = masked.len() - after.len();
+    let before = masked[..open].trim_end();
+    let then_branch = word_at(after_at, "else");
+    let else_branch = before.len() >= 4 && word_at(before.len() - 4, "else");
+    // The `if` returns its value: it opens the line, a block, an `else` or
+    // a `return`, and the line is not a discarded statement (`..};`). A
+    // bound value (`let missing = if ..`) is not the owner's return.
+    let first_if = (0..open).find(|&at| word_at(at, "if"))?;
+    let lead_in = masked[..first_if].trim_end();
+    let returned = lead_in.is_empty()
+        || lead_in.ends_with('{')
+        || lead_in.ends_with('}')
+        || (lead_in.len() >= 4 && word_at(lead_in.len() - 4, "else"))
+        || (lead_in.len() >= 6 && word_at(lead_in.len() - 6, "return"));
+    let discarded = masked.trim_end().ends_with(';')
+        && !(lead_in.len() >= 6 && word_at(lead_in.len() - 6, "return"));
+    (!value.starts_with("return") && (then_branch || else_branch) && returned && !discarded)
+        .then_some((start, end))
 }
 
 /// A probe's `before` text: the positional counterpart when the replacement
@@ -5961,6 +6076,185 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(families.contains(&ProbeFamily::Predicate), "{probes:?}");
         assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// #15529: an inline branch value edit leaves the `if`'s condition
+    /// untouched, so the line names the changed value instead of the
+    /// unchanged predicate, even when the value's text repeats on the line
+    /// (`3` inside `u32`).
+    #[test]
+    fn an_inline_branch_value_edit_reads_as_the_value() {
+        let probes = shapes_probes(
+            "pub fn f(n: u32) -> u32 { if n > 5 { 3 } else { 2 } }",
+            "pub fn f(n: u32) -> u32 { if n > 5 { 1 } else { 2 } }",
+            &[(ProbeShapeKind::Predicate, "n > 5")],
+            "",
+        );
+
+        let rows = probes
+            .iter()
+            .map(|probe| (probe.family.clone(), probe.expression.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(rows, [(ProbeFamily::ReturnValue, "3")], "{probes:?}");
+    }
+
+    /// Controls: an edit beside the value (`let a = 0;` to `let a = 1;` next
+    /// to `{ 1 } else`), across both branch values, in the condition, or on
+    /// a line that also has another shape keeps the line's earlier reading.
+    #[test]
+    fn other_inline_if_edits_keep_their_reading() {
+        let families = |added: &str, removed: &str, shapes: &[(ProbeShapeKind, &str)]| {
+            shapes_probes(added, removed, shapes, "")
+                .into_iter()
+                .map(|probe| probe.family)
+                .collect::<Vec<_>>()
+        };
+        let predicate = [(ProbeShapeKind::Predicate, "n > 5")];
+        assert_eq!(
+            families(
+                "let a = 1; if n > 5 { 1 } else { 2 }",
+                "let a = 0; if n > 5 { 1 } else { 2 }",
+                &predicate,
+            ),
+            [ProbeFamily::Predicate]
+        );
+        assert_eq!(
+            families(
+                "if n > 5 { 3 } else { 4 }",
+                "if n > 5 { 1 } else { 2 }",
+                &predicate,
+            ),
+            [ProbeFamily::Predicate]
+        );
+        assert_eq!(
+            families(
+                "if n >= 5 { 1 } else { 2 }",
+                "if n > 5 { 1 } else { 2 }",
+                &[(ProbeShapeKind::Predicate, "n >= 5")],
+            ),
+            [ProbeFamily::Predicate]
+        );
+        let with_value = families(
+            "if n > 5 { Some(3) } else { None }",
+            "if n > 5 { Some(1) } else { None }",
+            &[
+                (ProbeShapeKind::Predicate, "n > 5"),
+                (ProbeShapeKind::ReturnValue, "Some(3)"),
+            ],
+        );
+        assert!(
+            with_value.contains(&ProbeFamily::ReturnValue),
+            "{with_value:?}"
+        );
+        assert!(
+            with_value.contains(&ProbeFamily::Predicate),
+            "{with_value:?}"
+        );
+    }
+
+    /// Only an edit inside the whole tail of an inline `if`/`else` branch
+    /// block names a value: not a match arm, a `return`, a statement `if`
+    /// without `else`, a block with a statement, a brace or space edit, a
+    /// string brace, or a block with no `if` before it.
+    #[test]
+    fn inline_branch_value_span_reads_only_if_else_block_tails() {
+        fn span<'a>(added: &'a str, removed: &str) -> Option<&'a str> {
+            inline_branch_value_span(added, removed).map(|(start, end)| &added[start..end])
+        }
+        assert_eq!(
+            span(
+                "fn f() -> u32 { if n > 5 { 3 } else { 2 } }",
+                "fn f() -> u32 { if n > 5 { 1 } else { 2 } }"
+            ),
+            Some("3")
+        );
+        assert_eq!(
+            span("if n > 5 { 1 } else { 4 }", "if n > 5 { 1 } else { 2 }"),
+            Some("4")
+        );
+        assert_eq!(
+            span(
+                "if a > b { \"bulk\" } else if a > c { \"crate\" } else { \"each\" }",
+                "if a > b { \"bulk\" } else if a > c { \"pack\" } else { \"each\" }"
+            ),
+            Some("\"crate\"")
+        );
+        assert_eq!(
+            span("x if x > 0 => Some(2),", "x if x > 0 => Some(1),"),
+            None
+        );
+        assert_eq!(
+            span(
+                "if a > b { return 2 } else { 3 }",
+                "if a > b { return 1 } else { 3 }"
+            ),
+            None
+        );
+        assert_eq!(span("if a > b { log(b) }", "if a > b { log(a) }"), None);
+        assert_eq!(
+            span(
+                "if a > b { g(a); 2 } else { 3 }",
+                "if a > b { g(a); 1 } else { 3 }"
+            ),
+            None
+        );
+        assert_eq!(
+            span("if a > b { 1 } else {2}", "if a > b { 1 } else { 2 }"),
+            None
+        );
+        assert_eq!(span("} else { 1 }", "} else { 0 }"), None);
+        assert_eq!(span("gift { 2 } else { 3 }", "gift { 1 } else { 3 }"), None);
+        assert_eq!(
+            span("if a > b { 0x1 } else { 3 }", "if a > b { 1 } else { 3 }"),
+            None
+        );
+        assert_eq!(
+            span(
+                "if a > b { 1e0 } else { 3.0 }",
+                "if a > b { 1.0 } else { 3.0 }"
+            ),
+            None
+        );
+        assert_eq!(
+            span(
+                "pub fn café(é: u32) -> u32 { if é > 5 { 3 } else { 2 } }",
+                "pub fn café(é: u32) -> u32 { if é > 5 { 1 } else { 2 } }"
+            ),
+            Some("3")
+        );
+        assert_eq!(span("éaaa { 3 } else { 2 }", "éaaa { 1 } else { 2 }"), None);
+        assert_eq!(
+            span(
+                "let missing = if a.is_none() { 1 } else { 0 };",
+                "let missing = if a.is_none() { 0 } else { 0 };"
+            ),
+            None
+        );
+        assert_eq!(
+            span("if a > b { 2 } else { 3 };", "if a > b { 1 } else { 3 };"),
+            None
+        );
+        assert_eq!(
+            span(
+                "return if a > b { 2 } else { 3 };",
+                "return if a > b { 1 } else { 3 };"
+            ),
+            Some("2")
+        );
+        assert_eq!(
+            span(
+                "} else if a > b { 2 } else { 3 }",
+                "} else if a > b { 1 } else { 3 }"
+            ),
+            Some("2")
+        );
+        assert_eq!(
+            span(
+                "if a > b { s(\"{\") } else { 2 }",
+                "if a > b { t(\"{\") } else { 2 }"
+            ),
+            Some("s(\"{\")")
+        );
     }
 
     /// A respelled integer literal in an arm's value holds the same value, so

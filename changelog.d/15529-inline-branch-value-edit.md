@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust: an edit to a branch value written on its `if`'s condition line (for example `if n > 5 { 1 } else { 2 }` to `if n > 5 { 3 } else { 2 }`) now reads as a `return_value` finding for the changed value. It no longer asks for boundary tests on the unchanged `n > 5`, and a test pinning the returned value exposes it. A condition edit or a newly added line keeps its single predicate finding (#15529).

@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_line_call_inputs (4)
+
+Reason:
+RIPR-SPEC-0197: the edit changes the inline branch value 50 to 60 and leaves weight > 100 untouched, so the finding is the return value 60, which the same-line pin shipping(101) == 50 exposes (#15529)
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

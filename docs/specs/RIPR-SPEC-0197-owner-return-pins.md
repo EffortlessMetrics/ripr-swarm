@@ -2157,7 +2157,14 @@ nested `if` branch tails recurse. Exclusions:
 - a branch tail that is itself `if`, `match` or a loop gets no shape, decided
   by AST kind (so `if` or `match` alone on its line is still excluded);
 - a value on any line of its `if`'s condition gets no shape, because an inline
-  branch already flows to the return through that line's predicate (#7626);
+  branch already flows to the return through that line's predicate (#7626).
+  One edit is read at diff time instead (#15529): when the edit lies wholly
+  inside an inline branch value (`if n > 5 { 1 }` to `if n > 5 { 3 }`), the
+  line's only shapes are predicates, and every one lies outside the edit, the
+  line reads as a `return_value` probe for that value, not as the unchanged
+  predicate. A condition edit, an edit across both values, a respacing or
+  respelled constant (`1` to `0x1`), an added line, and a line with any
+  other shape keep the predicate's reading;
 - a branch value that is a comparison or boolean expression
   (`input.len() > 3`, also inside parentheses or under `!`) keeps only its
   predicate probe, so a weaker second row

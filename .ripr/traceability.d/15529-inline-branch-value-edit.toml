@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+code = ["crates/ripr/src/analysis/probes/diff.rs"]
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::an_inline_branch_value_edit_reads_as_the_value",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::other_inline_if_edits_keep_their_reading",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::inline_branch_value_span_reads_only_if_else_block_tails",
+  "crates/ripr/tests/inline_branch_value_edit.rs::an_inline_branch_value_edit_is_a_return_value_not_a_boundary",
+  "crates/ripr/tests/inline_branch_value_edit.rs::an_inline_condition_edit_stays_the_predicate",
+  "crates/ripr/tests/inline_branch_value_edit.rs::an_added_inline_if_keeps_its_single_predicate",
+]

@@ -20,8 +20,12 @@ cargo xtask fixtures same_line_call_inputs
 
 ## Then
 
-Both `weight = 101` and `weight = 100` are activation evidence. The predicate must
-not claim that no related test supplies `weight == 100`.
+The edit changes only the inline branch value (`50` to `60`); `weight > 100`
+is unchanged, so the finding is the `return_value` probe for `60`, and the
+same-line pin `shipping(101) == 50` exposes it (#15529). No boundary row asks
+for `weight == 100`. Reading every same-line call as a boundary input for a
+changed predicate stays pinned by `crates/ripr/tests/same_line_call_inputs.rs`,
+on the analogous owner `band` whose condition `n >= 10` becomes `n > 9`.
 
 ## Must Not
 
