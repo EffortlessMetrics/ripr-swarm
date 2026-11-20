@@ -11,6 +11,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_literal_in_another_parameters_position_does_not_witness",
   "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_local_that_transforms_the_parameter_does_not_witness",
   "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_destructured_parameter_binding_keeps_the_object_pin",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_signature_mention_that_binds_nothing_does_not_witness",
 ]
 fixtures = [
   "fixtures/typescript_boundary_literal_in_other_parameter",

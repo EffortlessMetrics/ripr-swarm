@@ -5832,9 +5832,25 @@ fn bound_in_signature(name: &str, owner: &TypeScriptOwner) -> bool {
         return false;
     };
     let end = signature_end(source);
-    source
-        .get(..end)
-        .is_some_and(|signature| identifier_occurrences(signature, name).next().is_some())
+    // A binding position only: after `{`, `,`, `(` or `...`, and before `}`,
+    // `,`, `)` or a default `=`. A property key or type member
+    // (`{ name: T }`), a rename target, a default expression (`= name`) or a
+    // comment does not bind the name.
+    source.get(..end).is_some_and(|signature| {
+        identifier_occurrences(signature, name).any(|(before, after)| {
+            let before = before.trim_end();
+            let after = after.trim_start();
+            let opens = before.ends_with('{')
+                || before.ends_with(',')
+                || before.ends_with('(')
+                || before.ends_with("...");
+            let closes = after.starts_with('}')
+                || after.starts_with(',')
+                || after.starts_with(')')
+                || (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"));
+            opens && closes
+        })
+    })
 }
 
 /// The byte offset where the owner's parameter list ends: the `)` matching

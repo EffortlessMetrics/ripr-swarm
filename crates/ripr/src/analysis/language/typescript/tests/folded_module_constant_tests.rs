@@ -290,3 +290,28 @@ fn a_destructured_parameter_binding_keeps_the_object_pin() -> Result<(), String>
     );
     Ok(())
 }
+
+/// A name that the signature mentions without binding it (a default
+/// expression or a type member) is still a body local (#15358 review).
+#[test]
+fn a_signature_mention_that_binds_nothing_does_not_witness() -> Result<(), String> {
+    let cases = [
+        ("default-expression", "ms: number, cap = msAbs"),
+        (
+            "type-member",
+            "ms: number, o: { msAbs: number } = { msAbs: 0 }",
+        ),
+        ("comment", "ms: number /* msAbs */"),
+    ];
+    for (label, signature) in cases {
+        let source = duration_source_with(CHAIN, signature, "const msAbs = ms / 2;");
+        let finding = folded_finding(label, &source, "3_600_000")?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
