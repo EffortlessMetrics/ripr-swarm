@@ -421,14 +421,6 @@ pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     })
 }
 
-/// A dunder method owner (`Cache.__setitem__`) with no related test, in a
-/// workspace whose tests import the owner class or module. Python calls these
-/// methods through syntax (`cache[key] = value`, `Cache(...)`) on instances the
-/// adapter cannot always bind to the class — a unittest mixin's `self.Cache`
-/// attribute or a test-local subclass — so "no static test path" is not a safe
-/// claim. Returns `None` when a test relates, or when no test imports the
-/// owner's class or module and none names the class (such a class keeps
-/// `no_static_path`).
 /// Whether `limit` is the implicit-dunder `dynamic_dispatch` limit: the one
 /// that states ripr "does not claim that no test reaches the owner". Its reach
 /// stage must read `unknown`, never `no` (#15339).
@@ -437,8 +429,18 @@ pub(super) fn is_implicit_dunder_dispatch_limit(limit: &PythonStaticLimit) -> bo
         && limit.evidence.contains(IMPLICIT_DUNDER_EVIDENCE_MARKER)
 }
 
+/// Shared by both producers in `implicit_dunder_dispatch_limit` so the
+/// predicate above cannot drift from their evidence wording.
 const IMPLICIT_DUNDER_EVIDENCE_MARKER: &str = "implicitly by";
 
+/// A dunder method owner (`Cache.__setitem__`) with no related test, in a
+/// workspace whose tests import the owner class or module. Python calls these
+/// methods through syntax (`cache[key] = value`, `Cache(...)`) on instances the
+/// adapter cannot always bind to the class — a unittest mixin's `self.Cache`
+/// attribute or a test-local subclass — so "no static test path" is not a safe
+/// claim. Returns `None` when a test relates, or when no test imports the
+/// owner's class or module and none names the class (such a class keeps
+/// `no_static_path`).
 pub(super) fn implicit_dunder_dispatch_limit(
     owner: &PythonOwner,
     all_tests: &[PythonTest],
@@ -454,7 +456,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
             .then(|| PythonStaticLimit {
                 kind: StaticLimitKind::DynamicDispatch,
                 evidence: format!(
-                    "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
+                    "static_limit dynamic_dispatch: dunder method `{}` is invoked {IMPLICIT_DUNDER_EVIDENCE_MARKER} Python syntax",
                     owner.qualified_name
                 ),
                 missing: format!(
@@ -496,7 +498,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
     Some(PythonStaticLimit {
         kind: StaticLimitKind::DynamicDispatch,
         evidence: format!(
-            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes implicitly by syntax",
+            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes {IMPLICIT_DUNDER_EVIDENCE_MARKER} syntax",
             owner.qualified_name
         ),
         missing: format!(

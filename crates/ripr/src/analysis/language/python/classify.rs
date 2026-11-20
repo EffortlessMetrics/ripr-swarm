@@ -1838,7 +1838,7 @@ fn classify_change_for_owner_inner<'a>(
     };
     let reach_summary = if unbound_dunder_reach {
         format!(
-            "Python invokes `{}` through syntax; the preview adapter cannot bind a test instance to its class, so test reach is not established.",
+            "`{}` is reached through a dunder method Python invokes by syntax; the preview adapter cannot bind a test instance to its class, so test reach is not established.",
             owner.name
         )
     } else if module_constant.unresolved_string_read {
