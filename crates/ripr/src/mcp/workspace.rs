@@ -1388,6 +1388,9 @@ impl WorkspaceSession {
             // Fail closed: an overflowed budget omits items this list cannot
             // see, and a narrowed list says nothing about the rest.
             && selection.omitted.is_empty()
+            // An owner opt-out withholds a finding no item serves and no test
+            // was shown to grip, so the snapshot is not all-clear.
+            && snapshot.withheld.is_empty()
             && snapshot.items.len() == selection.selected.len()
             && scope.filter.file.is_none()
             && scope.filter.language.is_none()
@@ -3771,6 +3774,7 @@ mod tests {
         let list_with = |all_exposed: bool,
                          budget_omission: bool,
                          ineligibility: &'static str,
+                         withheld: bool,
                          filter: GapListFilter|
          -> Result<Value, String> {
             let mut session = session_with_findings(2)?;
@@ -3795,6 +3799,13 @@ mod tests {
                         crate::lsp::diagnostic_budget::OmittedDiagnosticReason::DocumentItemLimit,
                 });
             }
+            if withheld {
+                snapshot.withheld.push(WithheldItem {
+                    canonical_id: "gap:test:owner-opted-out".to_string(),
+                    finding_id: "finding:test:owner-opted-out".to_string(),
+                    owner: Some("skipped_owner".to_string()),
+                });
+            }
             session
                 .list_gaps(
                     None,
@@ -3809,6 +3820,7 @@ mod tests {
                 all_exposed,
                 budget_omission,
                 crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+                false,
                 filter,
             )
         };
@@ -3832,6 +3844,7 @@ mod tests {
             true,
             false,
             crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+            false,
             GapListFilter::default(),
         )?;
         assert!(keeps_label(&truncated), "{truncated}");
@@ -3844,6 +3857,22 @@ mod tests {
         let overflow = list(true, true, GapListFilter::default())?;
         assert_eq!(overflow["exposed_omitted"], json!(2), "{overflow}");
         assert!(keeps_label(&overflow), "{overflow}");
+        // An owner opt-out withholds a finding the list never serves: every
+        // served item closed is still not an all-clear, and the disclosure stays.
+        let opted_out = list_with(
+            true,
+            false,
+            crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            true,
+            GapListFilter::default(),
+        )?;
+        assert_eq!(opted_out["items"], json!([]), "{opted_out}");
+        assert_eq!(opted_out["exposed_omitted"], json!(2), "{opted_out}");
+        assert!(keeps_label(&opted_out), "{opted_out}");
+        assert!(
+            opted_out.to_string().contains("\"withheld\":1"),
+            "owner opt-out disclosure must stay: {opted_out}"
+        );
         // A narrowed list says nothing about the rest of the snapshot.
         let by_file = list(
             true,
