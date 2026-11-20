@@ -453,3 +453,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (38)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -123,3 +123,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — fixture_receiver_extension_iter (11)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless fixture_receiver_extension_iter --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

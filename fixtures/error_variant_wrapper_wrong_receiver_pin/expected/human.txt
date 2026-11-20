@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:impl ParserA::parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
   Missing check: No strong assertion was detected
-  Related test (1 of 2 matched rows): tests/errors.rs:4 parse_summary_callee_witness_pins_variant (ripr could not confirm that this assertion observes the changed behavior)
+  No discriminating test identified: only name or file matches were retained, with no established test path (2 matched before the display limit).
   Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach weak · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

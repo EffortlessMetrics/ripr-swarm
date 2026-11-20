@@ -127,3 +127,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (11)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

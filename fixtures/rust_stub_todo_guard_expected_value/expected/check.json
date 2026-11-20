@@ -117,7 +117,7 @@
       ],
       "stop_reasons": [],
       "oracle_kind": "unknown",
-      "oracle_strength": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
       "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
       "language": "rust",

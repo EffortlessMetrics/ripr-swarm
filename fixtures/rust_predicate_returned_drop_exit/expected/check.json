@@ -148,8 +148,8 @@
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "whole_object_equality",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
       "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
       "language": "rust",

@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18
   Changed behavior: age >= 18
   Missing check: No detected boundary input for the changed predicate
-  Related test (1 of 2 matched rows): src/lib.rs:28 clamps_above_high (no established call path to the changed code; linked by file location only)
+  No discriminating test identified: only name or file matches were retained, with no established test path (2 matched before the display limit).
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and

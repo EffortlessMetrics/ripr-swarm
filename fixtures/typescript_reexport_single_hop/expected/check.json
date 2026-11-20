@@ -143,8 +143,8 @@
         "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
       },
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
       "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
       "language": "typescript",

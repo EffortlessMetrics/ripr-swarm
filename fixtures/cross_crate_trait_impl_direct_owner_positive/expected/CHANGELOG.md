@@ -268,3 +268,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (21)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

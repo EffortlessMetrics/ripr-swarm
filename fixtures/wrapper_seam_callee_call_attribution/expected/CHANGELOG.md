@@ -565,3 +565,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — wrapper_seam_callee_call_attribution (43)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless wrapper_seam_callee_call_attribution --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -620,3 +620,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (48)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

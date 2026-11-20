@@ -81,8 +81,8 @@
         }
       ],
       "stop_reasons": ["gap_evidence_unresolved"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "`square_area` (src/lib.rs:25) names `Square` and calls a method named `area` on a receiver whose type ripr does not infer, and ripr does not follow that call to `area`, so it does not report a gap. Check that an assertion in that test would fail if `area` returned the wrong value; add a test only if none does.",
       "suggested_next_action": "`square_area` (src/lib.rs:25) names `Square` and calls a method named `area` on a receiver whose type ripr does not infer, and ripr does not follow that call to `area`, so it does not report a gap. Check that an assertion in that test would fail if `area` returned the wrong value; add a test only if none does.",
       "language": "rust",

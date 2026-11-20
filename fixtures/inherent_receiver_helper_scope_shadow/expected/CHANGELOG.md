@@ -154,3 +154,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_helper_scope_shadow (14)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless inherent_receiver_helper_scope_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

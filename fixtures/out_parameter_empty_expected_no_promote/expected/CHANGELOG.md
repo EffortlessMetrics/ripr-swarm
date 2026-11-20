@@ -213,3 +213,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — out_parameter_empty_expected_no_promote (18)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless out_parameter_empty_expected_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

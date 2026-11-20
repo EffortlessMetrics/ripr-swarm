@@ -295,3 +295,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_competing_reverse_effect_oracle (23)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_competing_reverse_effect_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

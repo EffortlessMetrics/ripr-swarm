@@ -191,3 +191,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (16)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

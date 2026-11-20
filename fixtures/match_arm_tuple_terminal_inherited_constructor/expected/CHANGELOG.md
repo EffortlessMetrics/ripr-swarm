@@ -358,3 +358,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_tuple_terminal_inherited_constructor (28)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_inherited_constructor --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -19,7 +19,7 @@ Start here:
     ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that
     call to the changed method. ripr does not claim a gap; this is a named limitation, not a
     coverage claim
-  Related test: src/lib.rs:25 square_area (no established call path to the changed code; linked by name only)
+  No discriminating test identified: only name or file matches were retained, with no established test path (1 matched before the display limit).
   Next step: `square_area` (src/lib.rs:25) names `Square` and calls a method named `area` on a
     receiver whose type ripr does not infer, and ripr does not follow that call to `area`, so it
     does not report a gap. Check that an assertion in that test would fail if `area` returned the

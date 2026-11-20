@@ -34,3 +34,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_module_constant_boundary_rival_src (4)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless python_module_constant_boundary_rival_src --reason "..."`
+
+Updated:
+- `expected/human.txt`

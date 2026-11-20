@@ -210,3 +210,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_cfg_binding (18)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_cfg_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

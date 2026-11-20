@@ -360,3 +360,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_slice_table_boundary (29)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -414,3 +414,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_cfg_false_module (33)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless owner_return_pin_cfg_false_module --reason "..."`
+
+Updated:
+- `expected/human.txt`

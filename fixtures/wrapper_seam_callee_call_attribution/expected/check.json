@@ -115,8 +115,8 @@
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
@@ -248,8 +248,8 @@
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",

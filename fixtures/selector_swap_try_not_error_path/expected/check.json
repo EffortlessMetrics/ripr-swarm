@@ -125,7 +125,7 @@
         }
       ],
       "stop_reasons": ["static_probe_unknown"],
-      "oracle_kind": "exact_value",
+      "oracle_kind": "smoke_only",
       "oracle_strength": "unknown",
       "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",

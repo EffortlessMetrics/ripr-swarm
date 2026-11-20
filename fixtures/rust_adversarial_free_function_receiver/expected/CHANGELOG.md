@@ -400,3 +400,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_free_function_receiver (30)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_adversarial_free_function_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

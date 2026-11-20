@@ -25,7 +25,7 @@ Start here:
     place a related test input at the changed predicate boundary. Some strong related calls have
     unresolved inputs, so static evidence cannot determine whether they reach the changed boundary
     of `amount >= DISCOUNT_THRESHOLD`
-  Related test (1 of 3 matched rows): svc/a/tests/test_pricing.py:9 test_above (no test input reaches the changed boundary)
+  Related test (1 of 3 matched rows): svc/a/tests/test_pricing.py:13 test_at
   Suggested test file: svc/a/tests/test_pricing.py
   Suggested test: test_above
   Test node: svc/a/tests/test_pricing.py::test_above

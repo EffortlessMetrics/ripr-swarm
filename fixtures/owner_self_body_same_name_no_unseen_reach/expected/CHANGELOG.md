@@ -210,3 +210,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (18)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
