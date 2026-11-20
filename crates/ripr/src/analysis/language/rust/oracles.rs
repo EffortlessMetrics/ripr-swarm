@@ -351,7 +351,7 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
     {
         find_unresolved_assertion_macro_witness(finding, index, None)
     } else if let Some(owner_name) = owner_name
-        && only_proximity_tests_supply_an_oracle(finding)
+        && only_proximity_tests_supply_an_oracle(finding, index)
     {
         // #7089: a weak oracle from a test that only shares the owner's file
         // made the finding `weakly_exposed`, while every test that calls the
@@ -359,7 +359,7 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
         // owner inside an assertion-like macro ripr cannot read, that macro
         // is the likely discriminator, so name the limit instead of a gap.
         find_unresolved_assertion_macro_witness(finding, index, Some(owner_name))
-    } else if only_credited_local_macros_supply_an_oracle(finding) {
+    } else if only_credited_local_macros_supply_an_oracle(finding, index) {
         // #9122: a same-file macro earns an unknown-grade fact, never a
         // graded oracle. It must not turn the macro limit into a gap: the
         // named limit stays, because the macro's discrimination is unresolved.
@@ -528,7 +528,7 @@ fn is_direct_relation(reason: Option<crate::domain::RelationReason>) -> bool {
 /// related only by proximity or name, while at least one directly related
 /// test exists and none has an oracle. A truncated related-test window may
 /// hide a direct test's oracle, so it never qualifies.
-fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
+fn only_proximity_tests_supply_an_oracle(finding: &Finding, index: &RustIndex) -> bool {
     if finding.class != ExposureClass::WeaklyExposed
         || finding
             .related_tests_matched_total
@@ -536,14 +536,66 @@ fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
     {
         return false;
     }
-    crate::analysis::classify::only_proximity_oracles(&finding.related_tests)
+    if !finding
+        .related_tests
+        .iter()
+        .any(|related| is_unclassified_assertion_macro_row(finding, index, related))
+    {
+        return crate::analysis::classify::only_proximity_oracles(&finding.related_tests);
+    }
+    let rows: Vec<_> = finding
+        .related_tests
+        .iter()
+        .map(|related| {
+            let mut row = related.clone();
+            if is_unclassified_assertion_macro_row(finding, index, related) {
+                row.miss = Some(crate::domain::RelatedTestMiss::NoAssertion);
+            }
+            row
+        })
+        .collect();
+    crate::analysis::classify::only_proximity_oracles(&rows)
+}
+
+/// #15237 rewrites a `no_assertion` row whose test invokes an assertion-like
+/// macro ripr does not classify to `assertion_admission_unproven`. That
+/// withdraws a false absence claim; it is not an assertion ripr judged, so
+/// the #7089 gates read the row as the `no_assertion` row it was and the
+/// macro limit fires exactly as before. A row qualifies only when the same
+/// producer predicate still names a macro for its test and the finding
+/// carries that producer's exact evidence line.
+fn is_unclassified_assertion_macro_row(
+    finding: &Finding,
+    index: &RustIndex,
+    related: &crate::domain::RelatedTest,
+) -> bool {
+    related.oracle.is_none()
+        && related.miss == Some(crate::domain::RelatedTestMiss::AssertionAdmissionUnproven)
+        && index
+            .tests()
+            .iter()
+            .find(|test| {
+                test.file == related.file
+                    && test.start_line == related.line
+                    && test.name == related.name
+            })
+            .and_then(|test| {
+                crate::analysis::classify::unclassified_assertion_macro_of(index, test)
+            })
+            .is_some_and(|macro_name| {
+                let line = crate::analysis::classify::unclassified_assertion_macro_line(
+                    &related.name,
+                    &macro_name,
+                );
+                finding.evidence.contains(&line)
+            })
 }
 
 /// A `weakly_exposed` finding whose every recognized oracle on a directly
 /// related test is a same-file macro call credited at unknown grade (#9122):
 /// `name!(..)` text with kind and strength both unknown. Oracles of tests
 /// related only by proximity are ignored (#7089). A truncated related-test window never qualifies.
-fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
+fn only_credited_local_macros_supply_an_oracle(finding: &Finding, index: &RustIndex) -> bool {
     if finding.class != ExposureClass::WeaklyExposed
         || finding
             .related_tests_matched_total
@@ -555,10 +607,12 @@ fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
     for related in finding.oracle_related_tests() {
         let Some(oracle) = related.oracle.as_deref() else {
             // A refused assertion on a directly related test is still an
-            // assertion ripr judged (#7089).
+            // assertion ripr judged (#7089). A #15237 row is not one: it
+            // reads as the `no_assertion` row it was.
             if related
                 .miss
                 .is_some_and(crate::domain::RelatedTestMiss::is_assertion_refusal_miss)
+                && !is_unclassified_assertion_macro_row(finding, index, related)
                 && (related.relation_reason.is_none()
                     || is_direct_relation(related.relation_reason))
             {
@@ -660,7 +714,7 @@ fn generated_assertion_witness(
     // directly related test is still the likely discriminator.
     let unobserved = finding.class == ExposureClass::ReachableUnrevealed
         && finding.ripr.reveal.observe.state == crate::domain::StageState::No;
-    if !(unobserved || only_proximity_tests_supply_an_oracle(finding))
+    if !(unobserved || only_proximity_tests_supply_an_oracle(finding, index))
         || finding
             .related_tests_matched_total
             .is_some_and(|total| total > finding.related_tests.len())

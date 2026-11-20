@@ -232,7 +232,8 @@ pub(in crate::analysis) use receiver_unestablished::{
 };
 pub(in crate::analysis) use refusal_miss::{
     assertion_refusal_counts_as_analyzer_limit, name_forwarded_callback_limits,
-    split_assertion_not_credited_misses,
+    split_assertion_not_credited_misses, unclassified_assertion_macro_line,
+    unclassified_assertion_macro_of,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,

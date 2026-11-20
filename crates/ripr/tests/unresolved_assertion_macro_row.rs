@@ -155,6 +155,98 @@ fn other_bodies_keep_the_absence_claim() -> Result<(), String> {
     Ok(())
 }
 
+/// The #7089 shape: the directly related `rate_triples` checks the owner only
+/// through an unclassified local macro, and a proximity-only test holds a
+/// recognized `assert!` oracle on another function, so the finding is
+/// `weakly_exposed`.
+const RATE_SOURCE: &str = "pub fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+pub fn other(x: i64) -> i64 {
+    x + 1
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    macro_rules! assert_rate {
+        ($actual:expr, $expected:expr) => {
+            if $actual != $expected {
+                panic!(\"rate mismatch\");
+            }
+        };
+    }
+    #[test]
+    fn rate_triples() {
+        assert_rate!(inner_rate(4), 12);
+    }
+    #[test]
+    fn other_is_positive() {
+        assert!(other(1) > 0);
+    }
+}
+";
+
+const RATE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn inner_rate(x: i64) -> i64 {
+-    x * 3
++    3 * x
+ }
+";
+
+/// #15237 review: rewriting `rate_triples`'s row must not hide the #7089
+/// macro limit. The row reads `assertion_admission_unproven`, and the finding
+/// still carries `rust_macro_wrapped_assertion_unresolved` naming the macro,
+/// so a proximity oracle cannot turn it into an actionable gap.
+#[test]
+fn the_rewritten_row_keeps_the_macro_limit_over_a_proximity_oracle() -> Result<(), String> {
+    let repo = TempRepo::create(PLAIN)?;
+    std::fs::write(repo.root.join("src/lib.rs"), RATE_SOURCE)
+        .map_err(|error| format!("write src/lib.rs failed: {error}"))?;
+    std::fs::write(repo.root.join("diff.patch"), RATE_DIFF)
+        .map_err(|error| format!("write diff failed: {error}"))?;
+    let finding = repo.finding()?;
+    // Fixture construction: the direct test has no oracle, and the only
+    // recognized one comes from the proximity-only test.
+    let direct = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "rate_triples")
+        .ok_or_else(|| format!("premise: `rate_triples` is related {finding:?}"))?;
+    assert_eq!(direct.oracle, None, "{direct:?}");
+    let proximity = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "other_is_positive")
+        .ok_or_else(|| format!("premise: `other_is_positive` is related {finding:?}"))?;
+    assert!(proximity.oracle.is_some(), "{proximity:?}");
+    assert_eq!(finding.class.as_str(), "weakly_exposed");
+    // The #15237 rewrite applies to the direct row.
+    assert_eq!(
+        direct.miss.map(|miss| miss.as_str()),
+        Some("assertion_admission_unproven")
+    );
+    // The #7089 limit still fires.
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(ripr::domain::StaticLimitKind::RustMacroWrappedAssertionUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("`rate_triples`") && line.contains("`assert_rate!`")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
 #[test]
 fn a_std_assertion_is_an_oracle_and_never_names_the_limit() -> Result<(), String> {
     let (miss, named, _, _) = read("        assert_eq!(bump(1.0), 3.0);")?;

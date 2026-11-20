@@ -279,17 +279,14 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
                 "{QUICKCHECK_PROPERTY_PREFIX}`{}` reports failure through the value it returns; ripr does not read that returned check",
                 row.name
             )
-        } else if let Some(macro_name) = row_test.and_then(|test| {
-            crate::analysis::language::first_unresolved_assertion_like_macro(&test.body)
-        }) {
+        } else if let Some(macro_name) =
+            row_test.and_then(|test| unclassified_assertion_macro_of(context.index, test))
+        {
             // #15237: the row is rewritten, but the test's check is not a
             // forwarded or returned one, so the stage summaries keep their
             // no-assertion wording (`only_limits` is not widened).
             rows_clear = false;
-            format!(
-                "{UNRESOLVED_ASSERTION_MACRO_PREFIX}test `{}` invokes `{macro_name}!`, an assertion-like macro ripr does not classify; whether it checks the changed behavior is not established statically",
-                row.name
-            )
+            unclassified_assertion_macro_line(&row.name, &macro_name)
         } else {
             rows_clear = false;
             continue;
@@ -320,6 +317,36 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
                         || is_returned_quickcheck_property(test))
             });
     named
+}
+
+/// #15237: the assertion-like macro ripr does not classify for which
+/// [`name_forwarded_callback_limits`] rewrites `test`'s `no_assertion` row,
+/// when no forwarded-callback or returned-QuickCheck reading takes the row
+/// first. Shared with the #7089 macro-limit gates, which read such a row as
+/// the `no_assertion` row it was: the rewrite withdraws a false absence
+/// claim; it is not an assertion ripr judged.
+pub(in crate::analysis) fn unclassified_assertion_macro_of(
+    index: &RustIndex,
+    test: &TestSummary,
+) -> Option<String> {
+    if index
+        .forwarded_callback_limit(&test.file, test.start_line, &test.name)
+        .is_some()
+        || is_returned_quickcheck_property(test)
+    {
+        return None;
+    }
+    crate::analysis::language::first_unresolved_assertion_like_macro(&test.body)
+}
+
+/// The one evidence line the #15237 rewrite adds for `test_name`.
+pub(in crate::analysis) fn unclassified_assertion_macro_line(
+    test_name: &str,
+    macro_name: &str,
+) -> String {
+    format!(
+        "{UNRESOLVED_ASSERTION_MACRO_PREFIX}test `{test_name}` invokes `{macro_name}!`, an assertion-like macro ripr does not classify; whether it checks the changed behavior is not established statically"
+    )
 }
 
 /// #6643: a `#[quickcheck]` property returning `bool` or `TestResult` fails
