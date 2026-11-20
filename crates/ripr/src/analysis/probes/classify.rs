@@ -463,7 +463,7 @@ fn unsafe_boundary_for_line(
     line: usize,
     removed: Option<&str>,
 ) -> Option<UnsafeBoundary> {
-    let (boundary, body_start) = unsafe_boundary_syntax_range(facts, shape)?;
+    let (boundary, body) = unsafe_boundary_syntax(facts, shape)?;
     let line_range = source_line_byte_range(&facts.source, line)?;
     let boundary_start = u32::from(boundary.start()) as usize;
     let boundary_end = u32::from(boundary.end()) as usize;
@@ -487,8 +487,12 @@ fn unsafe_boundary_for_line(
     }
     // A body edit can share its line with the opening brace. Only call the
     // opener unchanged if the removed line preserves the prefix through it.
-    let in_body = body_start.is_some_and(|start| {
-        let start = usize::from(start);
+    let opening_brace = body
+        .and_then(|block| block.stmt_list())
+        .and_then(|statements| statements.syntax().first_token())
+        .filter(|token| token.text() == "{");
+    let in_body = opening_brace.is_some_and(|brace| {
+        let start = usize::from(brace.text_range().end());
         line_range.start >= start
             || (start <= line_range.end
                 && facts
@@ -504,10 +508,10 @@ fn unsafe_boundary_for_line(
     })
 }
 
-fn unsafe_boundary_syntax_range(
+fn unsafe_boundary_syntax(
     facts: &FileData,
     shape: &ProbeShapeFact,
-) -> Option<(ra_ap_syntax::TextRange, Option<ra_ap_syntax::TextSize>)> {
+) -> Option<(ra_ap_syntax::TextRange, Option<ast::BlockExpr>)> {
     let parse = parse_clean_source_file(&facts.source)?;
     let root = parse.tree();
     for function in root.syntax().descendants().filter_map(ast::Fn::cast) {
@@ -515,12 +519,7 @@ fn unsafe_boundary_syntax_range(
             continue;
         };
         if u32::from(token.text_range().start()) == shape.start_byte {
-            let body_start = function
-                .body()
-                .and_then(|body| body.stmt_list())
-                .and_then(|body| body.l_curly_token())
-                .map(|brace| brace.text_range().end());
-            return Some((function.syntax().text_range(), body_start));
+            return Some((function.syntax().text_range(), function.body()));
         }
     }
     for block in root.syntax().descendants().filter_map(ast::BlockExpr::cast) {
@@ -528,11 +527,7 @@ fn unsafe_boundary_syntax_range(
             continue;
         };
         if u32::from(token.text_range().start()) == shape.start_byte {
-            let body_start = block
-                .stmt_list()
-                .and_then(|body| body.l_curly_token())
-                .map(|brace| brace.text_range().end());
-            return Some((block.syntax().text_range(), body_start));
+            return Some((block.syntax().text_range(), Some(block)));
         }
     }
     None
