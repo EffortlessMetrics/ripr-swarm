@@ -1471,9 +1471,19 @@ fn related_candidates_have_log_membership_limit(
                     // snapshot is the evaluator's question, not a reason to
                     // report a gap (#10151).
                     let gate_text = substitute_caplog_aliases(candidate.test, &assertion.gate_text);
+                    // The gate keeps only the strongest conjuncts, so a strong
+                    // result pin beside a caplog read (`f(5) is False and "x" in
+                    // caplog.text`) leaves the read in the full text only (#15250).
+                    let mut literals = caplog_membership_literals(&gate_text);
+                    if literals.is_empty() {
+                        literals = caplog_membership_literals(&substitute_caplog_aliases(
+                            candidate.test,
+                            &assertion.text,
+                        ));
+                    }
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    caplog_membership_literals(&gate_text)
+                    literals
                         .iter()
                         .any(|checked| {
                             words(&checked.literal)

@@ -286,7 +286,7 @@ struct Evaluation {
 /// Whether a changed line only adds or rewrites a logging call (#15250): the
 /// new line, and the old line when there is one, is a call of a logging method
 /// (`debug`, `info`, `warning`, `warn`, `error`, `critical`, `fatal`,
-/// `exception`, `log`) on one receiver, and every positional and keyword
+/// `exception`, `log`) on one receiver whose last name segment contains `log`, and every positional and keyword
 /// argument is built from literals and names (attributes, subscripts,
 /// arithmetic, tuples) without a call, so the line cannot change any value the
 /// owner returns or writes. An assertion on the owner's result cannot observe
@@ -316,11 +316,19 @@ pub(super) fn is_message_only_log_call_edit(old_line: Option<&str>, new_line: &s
         let method = attribute.attr.as_str();
         let logging_method =
             level_number(method).is_some() || matches!(method, "exception" | "fatal" | "log");
+        let receiver = expr_full_name(attribute.value.as_ref())?;
+        // A logger by name (`logging`, `log`, `logger`, `self._log`): an
+        // `error` or `log` method on another object (`parser.error`,
+        // `math.log`) can raise or return what the owner uses.
+        let logger_name = receiver
+            .rsplit('.')
+            .next()
+            .is_some_and(|last| last.to_ascii_lowercase().contains("log"));
         (logging_method
+            && logger_name
             && call.args.iter().all(inert)
             && call.keywords.iter().all(|keyword| inert(&keyword.value)))
-        .then(|| expr_full_name(attribute.value.as_ref()))
-        .flatten()
+        .then_some(receiver)
     }
     let Some(receiver) = inert_log_receiver(new_line) else {
         return false;
