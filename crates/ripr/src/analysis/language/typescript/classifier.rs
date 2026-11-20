@@ -8839,7 +8839,11 @@ pub(crate) fn classify_resolved_owner(
             && !input_free_field_update
             && !removed_call_change =>
         {
-            crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
+            if old_line_text.is_some_and(|old| ts_comparison_edit(old, line_text).is_some()) {
+                crate::domain::TERNARY_COMPARISON_NEXT_STEP.to_string()
+            } else {
+                crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
+            }
         }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()

@@ -317,7 +317,9 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     let changed = crate::output::flow_sink_line::with_arm_result(finding, changed);
-    out.push_str(&format!("  Changed behavior: {}\n", one_line(&changed)));
+    let changed = evidence_value(finding, crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX)
+        .unwrap_or(&changed);
+    out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
     if let Some((label, value)) = &digest_missing {
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {

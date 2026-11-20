@@ -1391,6 +1391,7 @@ impl TypeScriptAdapter {
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
+            let exact_replacements = std::cell::OnceCell::new();
             let mut multiline_lines: Option<Option<MultilineRanges>> = None;
             // #11250: one facts lookup and one line-table build per
             // changed file, not per added line. `file_facts_cached`
@@ -1637,6 +1638,26 @@ impl TypeScriptAdapter {
                             "typescript_package_limitation: typescript_test_runner_unresolved"
                                 .to_string(),
                         );
+                    }
+                    // The diff supplies both values. Take the binding only from the
+                    // parsed head whose line matches the diff, never a renderer reread.
+                    if let Some((lines, facts)) = &ast_probe_facts
+                        && let Some(binding) = facts.phase_two.default_bindings.get(&added.line)
+                        && lines
+                            .get(added.line.saturating_sub(1))
+                            .map(|line| line.trim())
+                            == Some(added.text.trim())
+                        && let Some(new) = standalone_decimal(&added.text)
+                        && let Some(old) = exact_replacements
+                            .get_or_init(|| changed.replacement_counterparts())
+                            .get(&added.line)
+                            .and_then(|removed| standalone_decimal(&removed.text))
+                        && old != new
+                    {
+                        finding.evidence.push(format!(
+                            "{}{binding} = {new} (default was {old})",
+                            crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX
+                        ));
                     }
                     findings.push(finding);
                 } else if let Some(identity) = enum_member_lines.get(&added.line) {
@@ -2372,4 +2393,12 @@ fn consulted_credit_gaps<'a>(
     gaps.iter()
         .filter(|gap| consulted_test_files.contains(&normalized_path(&gap.file)))
         .collect()
+}
+
+/// A whole decimal on a continuation line, optionally terminated as a
+/// declaration or parameter. A larger changed expression keeps its own text.
+fn standalone_decimal(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let value = text.strip_suffix([';', ',']).unwrap_or(text).trim_end();
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())).then_some(value)
 }

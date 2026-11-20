@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::changed_default_digest_names_the_committed_binding",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::unrelated_numeric_tail_keeps_its_own_text",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::ternary_advice_asks_whether_the_boundary_is_observable",
+]

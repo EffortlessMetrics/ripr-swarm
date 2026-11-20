@@ -6022,3 +6022,133 @@ fn negated_typeof_guard_credits_only_as_the_first_body_statement() -> Result<(),
     }
     Ok(())
 }
+
+/// A committed TypeScript edit, plus an optional dirty declaration at the same
+/// line. Both formats see precisely the same base and head through the real CLI.
+#[cfg(feature = "lang-typescript")]
+fn committed_typescript_edit(
+    before: &str,
+    after: &str,
+    dirty: &str,
+) -> Result<(String, serde_json::Value), String> {
+    let guard = temp_dir("ts-change-digest")?;
+    let root = &guard.0;
+    fixture_git_ok(root, &["init", "-q"])?;
+    fixture_git_ok(root, &["config", "user.name", "fixture"])?;
+    fixture_git_ok(root, &["config", "user.email", "fixture@example.invalid"])?;
+    let write =
+        |path: &str, body: &str| std::fs::write(root.join(path), body).map_err(|e| e.to_string());
+    write("package.json", r#"{"devDependencies":{"vitest":"1.0.0"}}"#)?;
+    write("ripr.toml", "[languages]\nenabled = [\"typescript\"]\n")?;
+    write(
+        "week.test.ts",
+        "import { expect, test } from 'vitest';\nimport { startOfWeek } from './week';\ntest('ordinary input', () => { expect(startOfWeek(1)).toBe(1); });\n",
+    )?;
+    write("week.ts", before)?;
+    fixture_git_ok(root, &["add", "."])?;
+    fixture_git_ok(root, &["commit", "-qm", "base"])?;
+    write("week.ts", after)?;
+    fixture_git_ok(root, &["commit", "-qam", "head"])?;
+    write("week.ts", dirty)?;
+    let check = |format: &str| -> Result<String, String> {
+        let output = ripr_output(
+            root,
+            &[
+                "check",
+                "--root",
+                ".",
+                "--base",
+                "HEAD~1",
+                "--committed",
+                "--format",
+                format,
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "check {format}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        String::from_utf8(output.stdout).map_err(|e| e.to_string())
+    };
+    Ok((
+        check("human")?,
+        serde_json::from_str(&check("json")?).map_err(|e| e.to_string())?,
+    ))
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn changed_default_digest_names_the_committed_binding() -> Result<(), String> {
+    for (source, changed_line, id) in [
+        (
+            "export function startOfWeek(input?: number) {\n  const weekStartsOn =\n    input ??\n    0;\n  return weekStartsOn;\n}\n",
+            "    1;",
+            "probe:week.ts:typescript_preview:a269513e",
+        ),
+        (
+            "export function startOfWeek(\n  weekStartsOn =\n    0,\n) {\n  return weekStartsOn;\n}\n",
+            "    1,",
+            "probe:week.ts:typescript_preview:f9916062",
+        ),
+    ] {
+        let after = source.replace('0', "1");
+        let (human, data) = committed_typescript_edit(
+            source,
+            &after,
+            &after.replace("weekStartsOn", "dirtyBinding"),
+        )?;
+        let findings = data["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{data}");
+        assert_eq!(findings[0]["id"], id);
+        assert_eq!(findings[0]["probe"]["expression"], changed_line);
+        assert_eq!(findings[0]["related_tests"][0]["name"], "ordinary input");
+        assert_eq!(
+            findings[0]["probe"]["owner"],
+            "typescript:week.ts::startOfWeek"
+        );
+        assert!(
+            human
+                .lines()
+                .any(|line| line == "  Changed behavior: weekStartsOn = 1 (default was 0)"),
+            "{human}"
+        );
+        assert!(!human.contains("dirtyBinding"), "{human}");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn unrelated_numeric_tail_keeps_its_own_text() -> Result<(), String> {
+    let before = "export function startOfWeek(input: number) {\n  const nearby = input ?? 4;\n  return nearby +\n    0;\n}\n";
+    let after = before.replace("0;", "1;");
+    let (human, _) = committed_typescript_edit(before, &after, &after)?;
+    assert!(
+        human.lines().any(|line| line == "  Changed behavior: 1;"),
+        "{human}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn ternary_advice_asks_whether_the_boundary_is_observable() -> Result<(), String> {
+    // At zero the sign flips in both edits. Only the first use masks it.
+    for result in ["amount === 0 ? 0 : sign", "sign"] {
+        let before = format!(
+            "export function startOfWeek(amount: number) {{\n  const sign = amount < 0 ? -1 : 1;\n  return {result};\n}}\n"
+        );
+        let after = before.replace("< 0", "<= 0");
+        let (_, data) = committed_typescript_edit(&before, &after, &after)?;
+        let findings = data["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{data}");
+        let advice = findings[0]["recommended_next_step"]
+            .as_str()
+            .ok_or("missing next step")?;
+        assert!(advice.contains("may be behavior-preserving"), "{advice}");
+        assert!(advice.contains("assert that difference"), "{advice}");
+    }
+    Ok(())
+}
