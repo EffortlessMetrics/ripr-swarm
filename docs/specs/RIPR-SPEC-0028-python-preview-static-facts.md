@@ -495,13 +495,16 @@ its decorators build a command that runs the body; an `async def` caller is
 allowed (#4568, #9226).
 A test is also related with the weak `helper_owner_call` relation when its
 body bare-calls a same-file value helper whose own body calls the owner by the
-direct-call rules, read with the test's imports plus the helper's own
+direct-call rules, read with the test's imports plus the helper's own, where a
+helper-local import replaces the module's import of the same name
 (`def parse(text): from pkg import parse_lines; return parse_lines(text)`,
 #15350). The helper must be a module-level, undecorated, synchronous `def` not
 named `test*`, the only binding of its name in the file, with a straight-line
-body (imports, assignments and expression statements, no `yield` or lambda)
-ending in `return <value>`; a test that binds the helper's name itself (a
-fixture parameter or a local) does not reach it. The relation carries no
+body (imports, assignments and expression statements) ending in
+`return <value>`, and no `yield`, `lambda` or `:=` spelled anywhere in its
+body. A helper whose parameter or assignment target rebinds the owner's name,
+or the alias the owner is imported as, does not relate; a test that binds the
+helper's name itself (a fixture parameter or a local) does not reach it. The relation carries no
 oracle, so such a test turns a `no_static_path` reading weak, never `exposed`.
 A top-level `click.command` or `click.group` function that no test calls is
 related, with the weak `cli_runner_invoke` relation, to a test that passes it

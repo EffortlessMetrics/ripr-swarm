@@ -18,22 +18,26 @@
 //! the test through the helper's body as a reach-only `helper_owner_call`.
 //! The relation never carries an oracle: the assertion compares what the
 //! helper returns, which is the owner's result only when the helper passes it
-//! through unchanged, and that is not proven here. So this pass can turn a
+//! through unchanged, and nothing here establishes that. So this pass can turn a
 //! false `no_static_path` into a weak reading, never into `exposed`.
 //!
 //! A helper qualifies only when it is a module-level, undecorated, synchronous
 //! `def` not named `test*`, the only binding of its name anywhere in the file,
 //! whose body (after an optional docstring) is straight-line: imports,
 //! assignments and expression statements, ending in `return <value>`. Nested
-//! scopes, branches, loops, `with`, `try`, `yield` and `global` refuse. A test
-//! that binds the helper's name itself (a fixture or a local) does not reach
-//! it.
+//! scopes, branches, loops, `with`, `try` and `global` refuse, and so does any
+//! `yield`, `lambda` or `:=` spelled anywhere in the body text (a deferred or
+//! generator call never runs on the helper's return). A test that binds the
+//! helper's name itself (a fixture or a local) does not reach it. The helper's
+//! parameters and assignment targets are kept as `local_names`, so a relation
+//! never reads `owner(` in the helper as the owner when the helper binds that
+//! name itself (`def run(total): return total(1)`).
 
 use super::owners_tests::collect_imports_from_statements;
 use super::related_tests::{contains_call_name, text_binds_name};
 use super::source_utils::text_for_range;
 use super::{PythonImport, PythonTest};
-use rustpython_parser::ast::{Expr, Ranged, Stmt};
+use rustpython_parser::ast::{Expr, Ranged, Stmt, StmtFunctionDef};
 use rustpython_parser::text_size::TextRange;
 use std::path::Path;
 
@@ -44,6 +48,8 @@ pub(super) struct PythonValueHelper {
     pub(super) name: String,
     pub(super) body_text: String,
     pub(super) imports: Vec<PythonImport>,
+    /// Every name the helper binds itself: parameters and assignment targets.
+    pub(super) local_names: Vec<String>,
 }
 
 /// Attach to each test the value helpers its body calls by bare name.
@@ -98,11 +104,18 @@ fn collect_value_helpers(file: &Path, source: &str, module: &[Stmt]) -> Vec<Pyth
                     )
                 })
                 .unwrap_or_default();
-            PythonValueHelper {
-                name: function.name.to_string(),
-                body_text,
-                imports: collect_imports_from_statements(file, &function.body),
-            }
+            (function, body_text)
+        })
+        .filter(|(_, body_text)| {
+            !body_text.contains("yield")
+                && !body_text.contains("lambda")
+                && !body_text.contains(":=")
+        })
+        .map(|(function, body_text)| PythonValueHelper {
+            name: function.name.to_string(),
+            body_text,
+            imports: collect_imports_from_statements(file, &function.body),
+            local_names: local_names(function),
         })
         .collect()
 }
@@ -112,29 +125,51 @@ fn straight_line_return(body: &[Stmt]) -> bool {
     let Some((Stmt::Return(ret), rest)) = body.split_last() else {
         return false;
     };
-    ret.value.as_deref().is_some_and(|value| !yields(value))
-        && rest.iter().all(|stmt| match stmt {
-            Stmt::Import(_) | Stmt::ImportFrom(_) => true,
-            Stmt::Assign(assign) => !yields(&assign.value),
-            Stmt::AnnAssign(assign) => assign.value.as_deref().is_none_or(|value| !yields(value)),
-            Stmt::Expr(expr) => !yields(&expr.value),
-            _ => false,
+    ret.value.is_some()
+        && rest.iter().all(|stmt| {
+            matches!(
+                stmt,
+                Stmt::Import(_)
+                    | Stmt::ImportFrom(_)
+                    | Stmt::Assign(_)
+                    | Stmt::AnnAssign(_)
+                    | Stmt::Expr(_)
+            )
         })
 }
 
-/// A `yield` or lambda anywhere in an expression makes it no plain value.
-fn yields(expr: &Expr) -> bool {
-    match expr {
-        Expr::Yield(_) | Expr::YieldFrom(_) | Expr::Lambda(_) => true,
-        Expr::Call(call) => {
-            yields(&call.func)
-                || call.args.iter().any(yields)
-                || call.keywords.iter().any(|keyword| yields(&keyword.value))
+/// The helper's parameters and the names its assignments bind.
+fn local_names(function: &StmtFunctionDef) -> Vec<String> {
+    let args = &function.args;
+    let mut names: Vec<String> = args
+        .posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .chain(args.kwonlyargs.iter())
+        .map(|arg| arg.def.arg.to_string())
+        .chain(args.vararg.iter().map(|arg| arg.arg.to_string()))
+        .chain(args.kwarg.iter().map(|arg| arg.arg.to_string()))
+        .collect();
+    for stmt in &function.body {
+        match stmt {
+            Stmt::Assign(assign) => {
+                for target in &assign.targets {
+                    target_names(target, &mut names);
+                }
+            }
+            Stmt::AnnAssign(assign) => target_names(&assign.target, &mut names),
+            _ => {}
         }
-        Expr::Attribute(attribute) => yields(&attribute.value),
-        Expr::BinOp(binop) => yields(&binop.left) || yields(&binop.right),
-        Expr::Tuple(tuple) => tuple.elts.iter().any(yields),
-        Expr::List(list) => list.elts.iter().any(yields),
-        _ => false,
+    }
+    names
+}
+
+fn target_names(target: &Expr, names: &mut Vec<String>) {
+    match target {
+        Expr::Name(name) => names.push(name.id.to_string()),
+        Expr::Tuple(tuple) => tuple.elts.iter().for_each(|elt| target_names(elt, names)),
+        Expr::List(list) => list.elts.iter().for_each(|elt| target_names(elt, names)),
+        Expr::Starred(starred) => target_names(&starred.value, names),
+        _ => {}
     }
 }

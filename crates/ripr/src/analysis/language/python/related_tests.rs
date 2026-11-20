@@ -1097,13 +1097,30 @@ fn related_test_relation_scan(
 
 /// Whether a same-file value helper the test calls (`value_helpers.rs`,
 /// #15350) calls the owner by the direct-call rules, read as a test whose body
-/// is the helper's and whose imports are the test's plus the helper's own.
+/// is the helper's and whose imports are the test's plus the helper's own (a
+/// helper-local import replaces the module's import of the same alias). A
+/// helper that binds the owner's name as a parameter or local never relates.
 /// Reach only: the helper's return is not shown to be the owner's result.
 fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     test.value_helpers.iter().any(|helper| {
         let mut view = test.clone();
         view.body_text.clone_from(&helper.body_text);
+        // A helper-local import shadows the module's import of the same name.
+        view.imports
+            .retain(|import| !helper.imports.iter().any(|own| own.alias == import.alias));
         view.imports.extend(helper.imports.iter().cloned());
+        // A parameter or local that rebinds the owner's name (or an alias the
+        // view imports it as) is not the owner.
+        let rebinds_owner = helper.local_names.iter().any(|local| {
+            *local == owner.name
+                || view
+                    .imports
+                    .iter()
+                    .any(|import| import.alias == *local && import.imported.ends_with(&owner.name))
+        });
+        if rebinds_owner {
+            return false;
+        }
         view.assertions.clear();
         view.fixtures.clear();
         view.fixture_defs.clear();
