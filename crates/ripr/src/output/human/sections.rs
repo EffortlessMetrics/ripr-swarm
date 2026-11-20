@@ -2023,6 +2023,18 @@ mod classification_hint_tests {
             classification_hint(&ExposureClass::WeaklyExposed, &evidence).as_deref(),
             Some(super::UNESTABLISHED_REACH_HINT)
         );
+        // The marker alone is not enough: a ruled-out (`No`) reach keeps the
+        // bare hint, and callee-only reach keeps its own.
+        evidence.reach.state = StageState::No;
+        assert_eq!(
+            classification_hint(&ExposureClass::ReachableUnrevealed, &evidence).as_deref(),
+            Some(super::UNESTABLISHED_REACH_HINT)
+        );
+        evidence.reach = callee_only_reach();
+        assert_eq!(
+            classification_hint(&ExposureClass::ReachableUnrevealed, &evidence).as_deref(),
+            Some(super::NO_CALLING_TEST_HINT)
+        );
     }
 
     // #7330: generic weak reach must not produce a "reaches this change" hint
