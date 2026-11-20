@@ -14,6 +14,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: repro-15600
+      - name: Prepare locked owner-return fixture dependencies
+        run: |
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
       - name: Install nextest
         run: |
           set -euo pipefail
@@ -21,13 +26,15 @@ jobs:
           cargo nextest --version
       - name: Three nextest passes of the lib suite
         run: |
+          set +e
           set -uo pipefail
           for pass in 1 2 3; do
             cargo nextest run -p ripr --lib --no-fail-fast > "pass-$pass.log" 2>&1
-            echo "pass=$pass exit=$?"
-            grep -n "switch_literal_return_controls" "pass-$pass.log" | head -3 || true
-            grep -n "DIAG" "pass-$pass.log" | head -3 || true
-            grep -n "Summary" "pass-$pass.log" | tail -1 || true
+            status=$?
+            echo "pass=$pass exit=$status"
+            grep -n "switch_literal_return_controls" "pass-$pass.log" | head -3
+            grep -n "DIAG" "pass-$pass.log" | head -3
+            grep -n "Summary" "pass-$pass.log" | tail -1
           done
           exit 0
       - uses: actions/upload-artifact@v4
