@@ -344,6 +344,9 @@ even though the `check --json` render caps related tests at 8.
 
 ## Test Mapping
 
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_identity_uses_native_separators`
+  checks Unix literal backslashes, Windows separator equivalence, and case preservation in the config hash.
+
 - `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report`
   — unsupported-input report parity, new and sentinel destinations, absent
   parent preservation, and downstream refusal of the absent artifact.
