@@ -5724,10 +5724,15 @@ fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosit
     // identity alias of exactly one (`const a = p;`, `const a = Math.abs(p);`).
     // Any other initializer (`Math.abs(p) / 2`, `-p`, `p + other`) can move
     // the value away from the argument, so no position is credited.
-    // Only a name the owner's own text declares as a `const`/`let`/`var`
-    // local is a derived local; any other bare name (a destructured or rest
-    // parameter binding, a module name) keeps the legacy position reading.
-    if is_bare_identifier(operand.trim()) && declared_as_local(operand.trim(), owner) {
+    // A bare name the owner's signature binds (a destructured or rest
+    // parameter binding) keeps the legacy position reading; any other bare
+    // name (a body local in any declaration form, a module or captured name)
+    // is credited only as an identity alias. An owner with no recorded text
+    // keeps the legacy reading.
+    if is_bare_identifier(operand.trim())
+        && owner.source_text.is_some()
+        && !bound_in_signature(operand.trim(), owner)
+    {
         return match identity_alias_parameter(operand.trim(), owner) {
             Some(idx) => ReadPosition::Index(idx),
             None => ReadPosition::Unknown,
@@ -5819,55 +5824,47 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
     (declarations == 1 && !parameter_written && !nested_function).then_some(idx)
 }
 
-/// `true` when the owner's own body declares `name` as a local: on a line
-/// that opens with `const`, `let` or `var` before that line's first `=`
-/// (plain, later-declarator and destructured bindings alike), or anywhere in
-/// the body with an initializer (`name = x` continuing a declaration). The
-/// signature is skipped, so a destructured parameter, even with a default
-/// (`{ name = 0 }`), stays a parameter binding (#15358 review).
-fn declared_as_local(name: &str, owner: &TypeScriptOwner) -> bool {
+/// `true` when `name` occurs in the owner's parameter list, so a bare operand
+/// of that name is a parameter binding (`{ name }`, `{ name = 0 }`,
+/// `...name`) rather than a body local (#15358 review).
+fn bound_in_signature(name: &str, owner: &TypeScriptOwner) -> bool {
     let Some(source) = owner.source_text.as_deref() else {
         return false;
     };
-    let body_start = signature_end(source);
-    identifier_occurrences(source, name).any(|(before, after)| {
-        if before.len() < body_start {
-            return false;
-        }
-        if declaration_initializer(after).is_some() {
-            return true;
-        }
-        let line_start = before.rfind('\n').map_or(0, |at| at + 1);
-        let line_head = before.get(line_start..).unwrap_or_default().trim_start();
-        let declares = ["const", "let", "var"].iter().any(|keyword| {
-            line_head.strip_prefix(keyword).is_some_and(|rest| {
-                rest.starts_with(|ch: char| ch.is_whitespace() || ch == '{' || ch == '[')
-            })
-        });
-        declares && !line_head.contains('=')
-    })
+    let end = signature_end(source);
+    source
+        .get(..end)
+        .is_some_and(|signature| identifier_occurrences(signature, name).next().is_some())
 }
 
-/// The byte offset just past the owner's parameter list: the `)` matching
-/// the first `(` in its text, or 0 when none closes.
+/// The byte offset where the owner's parameter list ends: the `)` matching
+/// the first `(`, or the first `=>` when that comes earlier (a paren-less
+/// arrow `x => ...`, or an arrow default that truncates the list, which only
+/// loses credit). 0 when neither is found, so nothing reads as a parameter.
 fn signature_end(source: &str) -> usize {
-    let Some(open) = source.find('(') else {
-        return 0;
-    };
-    let mut depth = 0usize;
-    for (at, ch) in source.char_indices().skip_while(|(at, _)| *at < open) {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return at + 1;
+    let arrow = source.find("=>");
+    let paren = source.find('(').and_then(|open| {
+        let mut depth = 0usize;
+        source
+            .char_indices()
+            .skip_while(|(at, _)| *at < open)
+            .find_map(|(at, ch)| match ch {
+                '(' => {
+                    depth += 1;
+                    None
                 }
-            }
-            _ => {}
-        }
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    (depth == 0).then_some(at + 1)
+                }
+                _ => None,
+            })
+    });
+    match (arrow, paren) {
+        (Some(arrow), Some(paren)) => arrow.min(paren),
+        (Some(at), None) | (None, Some(at)) => at,
+        (None, None) => 0,
     }
-    0
 }
 
 /// The initializer of a declaration whose binding name was just consumed:

@@ -239,6 +239,20 @@ fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String
         ),
         ("destructured-local", "const { msAbs } = { msAbs: ms / 2 };"),
         ("destructured-array-local", "const [msAbs] = [ms / 2];"),
+        (
+            "multiline-destructured-local",
+            "const {\n    a,\n    msAbs,\n  } = { a: 1, msAbs: ms / 2 };",
+        ),
+        (
+            "defaulted-destructured-local",
+            "const { a = 1, msAbs } = { msAbs: ms / 2 };",
+        ),
+        ("rest-local", "const [a, ...msAbs] = [ms, ms / 2];"),
+        (
+            "same-line-local",
+            "const a = 1; const { msAbs } = { msAbs: ms / 2 };",
+        ),
+        ("loop-local", "for (const msAbs of [ms / 2]) {}"),
     ];
     for (label, local) in cases {
         let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);
