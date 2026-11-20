@@ -699,7 +699,16 @@ fn selected_library_roots(read_root: &Path) -> Option<BTreeSet<PathBuf>> {
 fn rust_files_indexed(directory: &Path, indexed: &std::collections::BTreeSet<PathBuf>) -> bool {
     let mut pending = vec![directory.to_path_buf()];
     while let Some(current) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&current) else {
+        // #15753: a relative `--root .` makes the root package directory the
+        // empty path, which `read_dir` refuses. Read it as `.`, the way
+        // `snapshot_root` does; entry paths stay root-relative after
+        // `lexical`, matching the indexed set.
+        let readable = if current.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            current.as_path()
+        };
+        let Ok(entries) = std::fs::read_dir(readable) else {
             return false;
         };
         for entry in entries {
