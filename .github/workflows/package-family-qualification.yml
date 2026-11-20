@@ -95,10 +95,16 @@ jobs:
           name: ripr-platform-packages
           path: ${{ runner.temp }}/packages
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-final-native-payload-${{ matrix.target }}
+          path: ${{ runner.temp }}/qualified-payload
+
       - name: Install offline through pip and npm, then start ripr
         env:
           VERSION: ${{ inputs.version }}
           CANDIDATE_SHA: ${{ github.sha }}
+          TARGET: ${{ matrix.target }}
           WHEEL_TAG: ${{ matrix.wheel_tag }}
           NPM_PACKAGE: ${{ matrix.npm_package }}
           MACOS_MIN: ${{ matrix.macos_min }}
@@ -112,6 +118,39 @@ jobs:
           chosen=$("$bindir/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["install"][0]["download_info"]["url"])' "$RUNNER_TEMP/pip-report.json")
           echo "pip chose $chosen"
           case "$chosen" in *"-py3-none-$WHEEL_TAG.whl") ;; *) echo "::error::pip chose $chosen, not the $WHEEL_TAG wheel"; exit 1 ;; esac
+          # Compare the installed executable with this target's qualified archive before executing it.
+          "$bindir/python" - <<'PY'
+          import hashlib, json, os, sysconfig
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          identities = list((root / "qualified-payload").rglob("payload-identity.json"))
+          if len(identities) != 1:
+              raise SystemExit(f"expected one qualified payload identity, found {len(identities)}")
+          identity = json.loads(identities[0].read_bytes())
+          target = os.environ["TARGET"]
+          version = os.environ["VERSION"].removeprefix("v")
+          executable = "ripr.exe" if target == "x86_64-pc-windows-msvc" else "ripr"
+          if (identity["kind"], identity["schema_version"], identity["source"]["commit_sha"],
+              identity["target"], identity["version"], identity["executable"]) != (
+              "ripr_final_native_payload", 1, os.environ["CANDIDATE_SHA"], target, version, executable):
+              raise SystemExit(f"qualified payload identity does not match requested {target} {version}")
+          rows = [row for row in identity["files"] if row["role"] == "executable"]
+          if len(rows) != 1 or rows[0]["path"] != executable:
+              raise SystemExit(f"expected one qualified {executable} for {target}")
+          installed = Path(sysconfig.get_path("scripts")) / executable
+          if installed.is_symlink() or not installed.is_file():
+              raise SystemExit(f"missing regular pip-installed executable at {installed}")
+          with installed.open("rb") as binary:
+              actual = hashlib.file_digest(binary, "sha256").hexdigest()
+          if actual != rows[0]["sha256"]:
+              raise SystemExit(f"{target} pip-installed {executable} SHA-256 {actual}, expected {rows[0]['sha256']}")
+          package, = json.loads((root / "pip-report.json").read_bytes())["install"]
+          receipt = dict(kind="ripr_installed_wheel_identity", schema_version=1,
+                         source=identity["source"], target=target, version=version, executable=executable,
+                         executable_sha256=actual, wheel_sha256=package["download_info"]["archive_info"]["hashes"]["sha256"])
+          (root / "installed-wheel-identity.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+          PY
           mkdir "$RUNNER_TEMP/npm-project" && cd "$RUNNER_TEMP/npm-project" && npm init -y > /dev/null
           npm install --offline --ignore-scripts --no-audit --no-fund --cache "$RUNNER_TEMP/npm-cache" \
             "$packages"/npm/effortlessmetrics-ripr-[0-9]*.tgz "$packages"/npm/effortlessmetrics-"$NPM_PACKAGE"-[0-9]*.tgz
@@ -130,6 +169,12 @@ jobs:
               echo "::error::binary needs macOS $minos, above the $WHEEL_TAG claim"; exit 1
             fi
           fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-installed-wheel-identity-${{ matrix.target }}
+          path: ${{ runner.temp }}/installed-wheel-identity.json
+          if-no-files-found: error
 
   npm-journey:
     # #4632: install the launcher through npm's own optional-dependency

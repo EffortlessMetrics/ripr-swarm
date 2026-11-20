@@ -1,0 +1,1 @@
+- The on-demand package rehearsal now compares each pip-installed executable with its qualified server archive before running it and records the wheel and executable hashes separately (#4624).
