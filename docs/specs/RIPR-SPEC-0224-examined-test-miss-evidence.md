@@ -422,7 +422,9 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   supply the headline. When the retained rows identify no representative, the
   human display says so, the JSON summary reports unknown/none and the packet
   keeps its navigation rows. Repair fix sites and test-side weak-assertion
-  navigation retain their own eligibility and ranking.
+  navigation retain their own eligibility and ranking. The TypeScript repair
+  preview can still identify a place to add the missing assertion when no
+  existing assertion supplies a headline.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or

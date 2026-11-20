@@ -127,7 +127,7 @@ impl Finding {
             self.language,
             Some(LanguageId::TypeScript | LanguageId::JavaScript)
         ) {
-            return super::typescript_script_preview_related_test(self);
+            return super::typescript_preview_related_test::typescript_headline_related_test(self);
         }
         python_headline_related_test(self)
     }

@@ -1,15 +1,14 @@
 //! Family-aware TypeScript/JavaScript preview related-test selection (#5505).
 //!
-//! One row identity for the check headline, preview card, packet projection,
-//! JSON oracle summary, verify-command inference, and miss explanation.
+//! The repair preview and the representative headline reuse the same family
+//! and assertion-reference checks within their respective eligibility rules.
 
 use super::{
     Finding, LanguageId, OracleKind, OracleStrength, ProbeFamily, RelatedTest,
     typescript_oracle_seam::ts_oracle_kind_matches_seam,
 };
 
-/// The one TypeScript/JavaScript preview related-test row shared by every
-/// single-row projection surface (#11228 tie-break, #5505 family evidence).
+/// The TypeScript/JavaScript row used by repair previews and command inference (#11228 tie-break, #5505 family evidence).
 ///
 /// Producer `typescript_oracle_evidence_ref` may name a different family-
 /// relevant row than raw strength ranking, but it must not displace a related
@@ -24,6 +23,41 @@ pub fn typescript_script_preview_related_test(finding: &Finding) -> Option<&Rela
     ) {
         return None;
     }
+    let tests = &finding.related_tests;
+    if tests.is_empty() {
+        return None;
+    }
+    let family = &finding.probe.family;
+    let family_ranked = strongest_family_relevant_related_test(tests, family);
+    if let Some(row) = related_test_for_typescript_oracle_evidence_ref(finding)
+        && oracle_ref_row_matches_missing_check_family(finding, row, family_ranked)
+    {
+        return Some(row);
+    }
+    family_ranked.or_else(|| tests.first())
+}
+
+/// Strongest related-test row whose collapsed oracle can observe `family`.
+/// Equal rank keeps the first listed row (#11228).
+fn strongest_family_relevant_related_test<'a>(
+    tests: &'a [RelatedTest],
+    family: &ProbeFamily,
+) -> Option<&'a RelatedTest> {
+    let mut best: Option<&RelatedTest> = None;
+    for test in tests {
+        if !typescript_row_carries_family_oracle(test, family) {
+            continue;
+        }
+        if best.is_none_or(|current| test.oracle_strength.rank() > current.oracle_strength.rank()) {
+            best = Some(test);
+        }
+    }
+    best
+}
+
+/// Diff headlines need a discriminating row. Repair cards may instead use a
+/// family-relevant test as the place to add a missing assertion (#5505).
+pub(super) fn typescript_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
     if let Some(row) = finding.headline_observer() {
         return Some(row);
     }
