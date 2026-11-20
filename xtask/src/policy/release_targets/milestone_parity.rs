@@ -12,6 +12,7 @@ use super::{RELEASE_TARGETS_MANIFEST_PATH, ReleaseGraph, evaluate_release_graph}
 const REPOSITORY: &str = "EffortlessMetrics/ripr-swarm";
 const CANDIDATE_DESCRIPTION: &str = "Candidate qualification in `ripr-swarm`; completion does not authorize or establish source publication.";
 const REPORT_STEM: &str = "release-milestone-fixture";
+const FIXTURE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,9 +20,27 @@ struct Snapshot {
     schema_version: u32,
     repository: String,
     complete: bool,
+    pagination: Pagination,
     milestones: Vec<Milestone>,
     issues: Vec<Issue>,
     pull_requests: Vec<PullRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pagination {
+    milestones: Vec<CapturedPage>,
+    issues: Vec<CapturedPage>,
+    pull_requests: Vec<CapturedPage>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapturedPage {
+    page: usize,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
+    next_page: Option<usize>,
+    ids: Vec<u32>,
 }
 
 #[derive(Deserialize)]
@@ -193,11 +212,11 @@ fn evaluate(manifest: &str, snapshot: &str) -> Report {
         issues: snapshot.issues.len(),
         pull_requests: snapshot.pull_requests.len(),
     });
-    if snapshot.schema_version != 1 {
+    if snapshot.schema_version != FIXTURE_SCHEMA_VERSION {
         report.finding(
             "fixture_schema",
             format!(
-                "expected schema version 1, found {}",
+                "expected schema version {FIXTURE_SCHEMA_VERSION}, found {}",
                 snapshot.schema_version
             ),
         );
@@ -213,6 +232,31 @@ fn evaluate(manifest: &str, snapshot: &str) -> Report {
             "fixture_incomplete",
             "snapshot declares incomplete coverage".to_string(),
         );
+    }
+    for (stream, pages, ids) in [
+        (
+            "milestones",
+            &snapshot.pagination.milestones,
+            snapshot.milestones.iter().map(|row| row.number).collect(),
+        ),
+        (
+            "issues",
+            &snapshot.pagination.issues,
+            snapshot.issues.iter().map(|row| row.number).collect(),
+        ),
+        (
+            "pull_requests",
+            &snapshot.pagination.pull_requests,
+            snapshot
+                .pull_requests
+                .iter()
+                .map(|row| row.number)
+                .collect(),
+        ),
+    ] {
+        if let Err(reason) = validate_pages(pages, ids) {
+            report.finding("fixture_pagination", format!("{stream}: {reason}"));
+        }
     }
 
     let milestones = index(&mut report, "milestone", &snapshot.milestones, |row| {
@@ -271,6 +315,49 @@ fn evaluate(manifest: &str, snapshot: &str) -> Report {
         &mut report,
     );
     report
+}
+
+fn validate_pages(pages: &[CapturedPage], observed_ids: BTreeSet<u32>) -> Result<(), String> {
+    if pages.is_empty() {
+        return Err("missing page 1".to_string());
+    }
+    let ordered: BTreeMap<_, _> = pages.iter().map(|page| (page.page, page)).collect();
+    if ordered.len() != pages.len() {
+        return Err("duplicate page number".to_string());
+    }
+
+    let mut ids = BTreeSet::new();
+    let mut duplicate_id = false;
+    for (index, &page) in ordered.values().enumerate() {
+        let expected = index + 1;
+        if page.page != expected {
+            return Err(format!("expected page {expected}, found {}", page.page));
+        }
+        let next = if expected < pages.len() {
+            Some(expected + 1)
+        } else {
+            None
+        };
+        if page.next_page != next {
+            return Err(match next {
+                Some(next) => format!("page {expected} must point to page {next}"),
+                None => format!("page {expected} has no captured terminal marker"),
+            });
+        }
+        if page.ids.is_empty() && pages.len() > 1 {
+            return Err(format!("page {expected} is empty in a multi-page capture"));
+        }
+        for &id in &page.ids {
+            duplicate_id |= !ids.insert(id);
+        }
+    }
+    if duplicate_id {
+        return Err("duplicate row ID in captured pages".to_string());
+    }
+    if ids != observed_ids {
+        return Err("captured page IDs differ from observed rows".to_string());
+    }
+    Ok(())
 }
 
 fn index<'a, T>(

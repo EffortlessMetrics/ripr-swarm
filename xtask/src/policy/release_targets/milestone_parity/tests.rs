@@ -45,9 +45,21 @@ justification = "rolling control work"
 fn fixture() -> Value {
     let description = "Candidate qualification in `ripr-swarm`; completion does not authorize or establish source publication.";
     json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "repository": "EffortlessMetrics/ripr-swarm",
         "complete": true,
+        "pagination": {
+            "milestones": [{"page": 1, "next_page": null, "ids": [12, 13, 17]}],
+            "issues": [
+                {"page": 1, "next_page": 2, "ids": [100, 101, 102, 104]},
+                {"page": 2, "next_page": 3, "ids": [200, 300, 301, 400]},
+                {"page": 3, "next_page": null, "ids": [500]},
+            ],
+            "pull_requests": [
+                {"page": 1, "next_page": 2, "ids": [501]},
+                {"page": 2, "next_page": null, "ids": [502]},
+            ],
+        },
         "milestones": [
             {"number": 12, "title": "0.12.0 candidate", "description": description},
             {"number": 13, "title": "0.13.0 candidate", "description": description},
@@ -184,6 +196,10 @@ fn comparable_drift_pins_each_role_and_both_renderings() -> Result<(), serde_jso
         }
     }
     snapshot["pull_requests"][1]["closes"] = json!([102, 101]);
+    if let Some(pages) = snapshot["pagination"]["issues"].as_array_mut() {
+        pages.reverse();
+    }
+    snapshot["pagination"]["issues"][2]["ids"] = json!([104, 102, 101, 100]);
     let reordered = compare(&snapshot);
     assert_eq!(json, serde_json::to_string_pretty(&reordered)?);
     assert_eq!(markdown, reordered.markdown());
@@ -201,6 +217,7 @@ fn exact_titles_and_unique_milestone_numbers_define_candidates() {
     if let Some(rows) = snapshot["milestones"].as_array_mut() {
         rows.push(duplicate);
     }
+    snapshot["pagination"]["milestones"][0]["ids"] = json!([12, 13, 17, 29]);
     let report = compare(&snapshot);
     assert_findings(
         &report,
@@ -220,6 +237,106 @@ fn exact_titles_and_unique_milestone_numbers_define_candidates() {
             ),
         ],
     );
+}
+
+#[test]
+fn omitted_tail_page_cannot_hide_rows_outside_the_manifest() {
+    let mut snapshot = fixture();
+    if let Some(issues) = snapshot["issues"].as_array_mut() {
+        assert_eq!(
+            issues.pop().map(|row| row["number"].clone()),
+            Some(json!(500))
+        );
+    }
+    if let Some(pages) = snapshot["pagination"]["issues"].as_array_mut() {
+        assert_eq!(pages.pop().map(|page| page["page"].clone()), Some(json!(3)));
+    }
+    assert_findings(
+        &compare(&snapshot),
+        Status::NotComparable,
+        &[(
+            "fixture_pagination",
+            "issues: page 2 has no captured terminal marker",
+        )],
+    );
+}
+
+#[test]
+fn pagination_requires_a_contiguous_chain_and_exact_row_coverage() {
+    for (pages, reason) in [
+        (json!([]), "missing page 1"),
+        (
+            json!([
+                {"page": 1, "next_page": 2, "ids": [501]},
+                {"page": 3, "next_page": null, "ids": [502]},
+            ]),
+            "expected page 2, found 3",
+        ),
+        (
+            json!([
+                {"page": 1, "next_page": 2, "ids": [501]},
+                {"page": 1, "next_page": null, "ids": [502]},
+            ]),
+            "duplicate page number",
+        ),
+        (
+            json!([
+                {"page": 1, "next_page": null, "ids": [501]},
+                {"page": 2, "next_page": null, "ids": [502]},
+            ]),
+            "page 1 must point to page 2",
+        ),
+        (
+            json!([
+                {"page": 1, "next_page": 2, "ids": [501]},
+                {"page": 2, "next_page": null, "ids": [501, 502]},
+            ]),
+            "duplicate row ID in captured pages",
+        ),
+        (
+            json!([
+                {"page": 1, "next_page": null, "ids": [501, 503]},
+            ]),
+            "captured page IDs differ from observed rows",
+        ),
+    ] {
+        let mut snapshot = fixture();
+        snapshot["pagination"]["pull_requests"] = pages;
+        let detail = format!("pull_requests: {reason}");
+        assert_findings(
+            &compare(&snapshot),
+            Status::NotComparable,
+            &[("fixture_pagination", &detail)],
+        );
+    }
+}
+
+#[test]
+fn boolean_alone_and_implicit_terminal_marker_are_refused() {
+    let mut unwitnessed = fixture();
+    unwitnessed["schema_version"] = json!(1);
+    if let Some(fields) = unwitnessed.as_object_mut() {
+        fields.remove("pagination");
+    }
+    let mut implicit_terminal = fixture();
+    if let Some(fields) = implicit_terminal["pagination"]["milestones"][0].as_object_mut() {
+        fields.remove("next_page");
+    }
+    for (snapshot, field) in [
+        (unwitnessed, "pagination"),
+        (implicit_terminal, "next_page"),
+    ] {
+        let report = compare(&snapshot);
+        assert_eq!(report.status, Status::NotComparable);
+        let missing = format!("missing field `{field}`");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "invalid_fixture"
+                    && finding.detail.contains(&missing))
+        );
+    }
 }
 
 #[test]
@@ -251,13 +368,20 @@ fn incomplete_or_invalid_evidence_cannot_report_parity() {
     assert_findings(
         &compare(&snapshot),
         Status::NotComparable,
-        &[("duplicate_identity", "issue #100 appears more than once")],
+        &[
+            ("duplicate_identity", "issue #100 appears more than once"),
+            (
+                "fixture_pagination",
+                "issues: captured page IDs differ from observed rows",
+            ),
+        ],
     );
 
     let mut snapshot = fixture();
     if let Some(issues) = snapshot["issues"].as_array_mut() {
         issues.remove(1);
     }
+    snapshot["pagination"]["issues"][0]["ids"] = json!([100, 102, 104]);
     assert_findings(
         &compare(&snapshot),
         Status::NotComparable,
