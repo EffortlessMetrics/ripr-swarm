@@ -113,6 +113,7 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
     let mut violations = Vec::new();
     let mut schema_line = None;
     let mut current: Option<PendingSuppression> = None;
+    let mut in_unknown_table = false;
 
     for (index, line) in text.lines().enumerate() {
         let line_number = index + 1;
@@ -120,11 +121,24 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        if trimmed == "[[suppressions]]" {
+        if trimmed.starts_with('[') {
             if let Some(pending) = current.take() {
                 finalize_suppression(pending, &mut entries, &mut violations);
             }
-            current = Some(PendingSuppression::new(line_number));
+            if is_suppressions_entry_header(trimmed) {
+                in_unknown_table = false;
+                current = Some(PendingSuppression::new(line_number));
+            } else {
+                // The header already fails the load. Its keys are not
+                // top-level (TOML scopes them to that table), so reporting
+                // each one as an unsupported top-level field would bury the
+                // one real mistake under a cascade (#15252).
+                in_unknown_table = true;
+                violations.push(format!(
+                    "{SUPPRESSIONS_PATH}:{line_number} unsupported table header `{trimmed}`; each entry starts with `[[suppressions]]`{}",
+                    entry_header_hint(trimmed)
+                ));
+            }
             continue;
         }
         let Some((key, raw)) = trimmed.split_once('=') else {
@@ -133,6 +147,9 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
             ));
             continue;
         };
+        if in_unknown_table {
+            continue;
+        }
         let key = key.trim();
         let raw = raw.trim();
         if let Some(pending) = current.as_mut() {
@@ -195,7 +212,8 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
                     pending.language_status = Some((parsed, line_number));
                 }),
                 _ => violations.push(format!(
-                    "{SUPPRESSIONS_PATH}:{line_number} unsupported `[[suppressions]]` field `{key}`"
+                    "{SUPPRESSIONS_PATH}:{line_number} unsupported `[[suppressions]]` field `{key}`{}",
+                    spelling_hint(key, ENTRY_FIELDS)
                 )),
             }
         } else if key == "schema_version" {
@@ -217,7 +235,8 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
             }
         } else {
             violations.push(format!(
-                "{SUPPRESSIONS_PATH}:{line_number} unsupported top-level field `{key}`"
+                "{SUPPRESSIONS_PATH}:{line_number} unsupported top-level field `{key}`{}",
+                top_level_field_hint(key)
             ));
         }
     }
@@ -326,6 +345,78 @@ impl PendingSuppression {
     }
 }
 
+/// Every field a `[[suppressions]]` entry accepts, for near-miss hints only.
+/// The parser's match arms above are the authority; a test checks that each
+/// name listed here is accepted (an omitted one only loses its hint).
+const ENTRY_FIELDS: &[&str] = &[
+    "kind",
+    "finding_id",
+    "test",
+    "path",
+    "function",
+    "reason",
+    "owner",
+    "expires",
+    "scope",
+    "created_at",
+    "last_seen",
+    "review_by",
+    "expected_visibility",
+    "static_class",
+    "language",
+    "language_status",
+];
+
+/// `[[suppressions]]`, also with TOML's optional inner spaces
+/// (`[[ suppressions ]]`) or a trailing comment.
+fn is_suppressions_entry_header(trimmed: &str) -> bool {
+    table_header_parts(trimmed)
+        .is_some_and(|(array, name, rest)| array && name == "suppressions" && is_comment_tail(rest))
+}
+
+/// `(is_array_header, table_name, text_after_the_closing_brackets)`.
+fn table_header_parts(trimmed: &str) -> Option<(bool, &str, &str)> {
+    if let Some(inner) = trimmed.strip_prefix("[[") {
+        let (name, rest) = inner.split_once("]]")?;
+        return Some((true, name.trim(), rest.trim()));
+    }
+    let inner = trimmed.strip_prefix('[')?;
+    let (name, rest) = inner.split_once(']')?;
+    Some((false, name.trim(), rest.trim()))
+}
+
+fn is_comment_tail(rest: &str) -> bool {
+    rest.is_empty() || rest.starts_with('#')
+}
+
+/// Names the one valid header when the rejected one is a near miss of it:
+/// a single-bracket `[suppressions]`, or a misspelled table name.
+fn entry_header_hint(trimmed: &str) -> &'static str {
+    let near = table_header_parts(trimmed)
+        .is_some_and(|(_, name, _)| crate::config::did_you_mean(name, &["suppressions"]).is_some());
+    if near {
+        " (did you mean `[[suppressions]]`?)"
+    } else {
+        ""
+    }
+}
+
+fn spelling_hint(value: &str, candidates: &[&str]) -> String {
+    crate::config::did_you_mean(value, candidates)
+        .map(|nearest| format!(" (did you mean `{nearest}`?)"))
+        .unwrap_or_default()
+}
+
+/// An entry field written before any `[[suppressions]]` header is a missing
+/// header, not a misspelling.
+fn top_level_field_hint(key: &str) -> String {
+    if ENTRY_FIELDS.contains(&key) {
+        "; it belongs inside a `[[suppressions]]` entry".to_string()
+    } else {
+        spelling_hint(key, &["schema_version"])
+    }
+}
+
 fn assign_field<F>(raw: &str, line_number: usize, violations: &mut Vec<String>, mut assign: F)
 where
     F: FnMut(String),
@@ -358,8 +449,9 @@ fn finalize_suppression(
             Some(kind) => Some(kind),
             None => {
                 violations.push(format!(
-                    "{SUPPRESSIONS_PATH}:{line} unsupported kind `{value}`; supported: {}",
-                    SuppressionKind::supported().join(", ")
+                    "{SUPPRESSIONS_PATH}:{line} unsupported kind `{value}`; supported: {}{}",
+                    SuppressionKind::supported().join(", "),
+                    spelling_hint(&value, SuppressionKind::supported())
                 ));
                 None
             }
@@ -2640,3 +2732,6 @@ mod audit_controls {
         );
     }
 }
+
+#[cfg(test)]
+mod typo_hint_tests;
