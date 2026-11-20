@@ -5757,3 +5757,96 @@ fn changed_range_preserves_integer_types_before_offset_normalization() -> Result
     }
     Ok(())
 }
+
+// #15294: a changed class-attribute string constant is exposed only when a
+// related assertion carries a literal that the old text accepts and the new
+// text rejects.
+const LENGTH_SOURCE: &str = "class ValidationError(Exception):\n    pass\n\n\nclass Length:\n    message_max = \"Longer than the maximum length {max}.\"\n\n    def __init__(self, max=None):\n        self.max = max\n\n    def __call__(self, value):\n        if self.max is not None and len(value) > self.max:\n            raise ValidationError(self.message_max.format(max=self.max))\n        return value\n";
+const LENGTH_OLD_LINE: &str = "    message_max = \"Longer than maximum length {max}.\"";
+const LENGTH_NEW_LINE: &str = "    message_max = \"Longer than the maximum length {max}.\"";
+
+fn classify_length_change(tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, LENGTH_SOURCE);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        6,
+        LENGTH_NEW_LINE,
+        Some(LENGTH_OLD_LINE),
+        &owners,
+        &tests,
+        Some(LENGTH_SOURCE),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())
+}
+
+#[test]
+fn class_attribute_text_change_unobserved_by_related_tests_is_weakly_exposed() -> Result<(), String>
+{
+    for tests in [
+        // The repro: construct and call, never see the message.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_ok():\n    assert Length(max=3)(\"abc\") == \"abc\"\n\ndef test_min():\n    with pytest.raises(ValidationError, match=\"Shorter than minimum length 2\"):\n        Length(max=3)(\"abcd\")\n",
+        // A pattern naming only the unchanged prefix fits both texts.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer than\"):\n        Length(max=1)(\"ab\")\n",
+        // Regex syntax is unreadable and credits nothing.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer.*length\"):\n        Length(max=1)(\"ab\")\n",
+    ] {
+        let finding = classify_length_change(tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{tests}: {finding:?}"
+        );
+        assert!(
+            missing_boundary(
+                &finding,
+                "class attribute `message_max` text \"Longer than the maximum length {max}.\""
+            )
+            .is_some(),
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn class_attribute_text_change_stays_exposed_when_an_assertion_pins_the_old_text()
+-> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer than maximum length 1\"):\n        Length(max=1)(\"ab\")\n",
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError) as exc:\n        Length(max=1)(\"ab\")\n    assert str(exc.value) == \"Longer than maximum length 1.\"\n",
+    ] {
+        let finding = classify_length_change(tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_method_return_change_keeps_exposed_beside_the_class_attribute_gate() -> Result<(), String>
+{
+    let source = "class Length:\n    message_max = \"Longer than maximum length {max}.\"\n\n    def clip(self, value):\n        return value[:2]\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import Length\n\ndef test_clip():\n    assert Length().clip(\"abcd\") == \"ab\"\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        5,
+        "        return value[:2]",
+        Some("        return value[:3]"),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "method change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

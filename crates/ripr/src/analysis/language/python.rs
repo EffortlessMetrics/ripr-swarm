@@ -384,6 +384,7 @@ mod loop_walk;
 // The may-reach graph is built and measured by tests and the corpus report
 // only; no verdict reads it yet (#11425), so it is not part of the shipped
 // build.
+mod class_attr_pin;
 #[cfg(test)]
 mod may_reach;
 mod message_pin;
