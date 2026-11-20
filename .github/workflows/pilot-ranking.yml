@@ -62,6 +62,7 @@ jobs:
           --ingest target/ripr/reports/pilot-ranking.json
           --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json
           --gate
+          --strict-completeness
 
       - name: Upload ranking reports
         if: always()
