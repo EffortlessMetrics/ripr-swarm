@@ -2053,9 +2053,9 @@ fn bare_name_is_std_fmt_trait(source: &str, name: &str) -> bool {
 }
 
 /// Whether a `fmt` path segment in this file can be the `std::fmt` module:
-/// the file declares no `mod fmt` and binds `fmt` (directly or renamed) only
-/// from `std::fmt`, `core::fmt` or `alloc::fmt`. A file that does not parse
-/// cleanly fails closed.
+/// the file declares no `mod fmt` or `extern crate .. as fmt`, and a `use`
+/// binds `fmt` (directly or renamed) only from `std::fmt`, `core::fmt` or
+/// `alloc::fmt`. A file that does not parse cleanly fails closed.
 fn fmt_module_is_std(source: &str) -> bool {
     parse_clean_source_file(source).is_some_and(|parse| fmt_module_is_std_in(&parse.tree()))
 }
@@ -2066,7 +2066,22 @@ fn fmt_module_is_std_in(root: &ast::SourceFile) -> bool {
         .descendants()
         .filter_map(ast::Module::cast)
         .any(|module| module.name().is_some_and(|n| n.text() == "fmt"));
-    if declares {
+    // `extern crate fmt;` or `extern crate other as fmt;` names a crate.
+    let extern_fmt = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::ExternCrate::cast)
+        .any(|krate| {
+            let bound = match krate.rename().and_then(|rename| rename.name()) {
+                Some(alias) => alias.text().to_string(),
+                None => krate
+                    .name_ref()
+                    .map(|name| name.text().to_string())
+                    .unwrap_or_default(),
+            };
+            bound == "fmt"
+        });
+    if declares || extern_fmt {
         return false;
     }
     root.syntax()

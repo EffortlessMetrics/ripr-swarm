@@ -1437,8 +1437,11 @@ impl fmt::Display for Own {
     for source in [
         // `fmt` is a module declared in the file.
         format!("mod fmt {{ {user_trait} }}\n{body}"),
-        // `fmt` is imported from a non-std path.
-        format!("mod mine {{ pub mod fmt {{ {user_trait} }} }}\nuse mine::fmt;\n{body}"),
+        // `fmt` is imported from a non-std path (no `mod fmt` in the file).
+        format!("use mine::fmt;\n{body}"),
+        format!("use mine::bar as fmt;\n{body}"),
+        // `fmt` names an external crate.
+        format!("extern crate mine as fmt;\n{body}"),
         // A bare `Display` imported through a user `fmt` module.
         format!(
             "mod fmt {{ {user_trait} }}\nuse fmt::Display;\n{}",
