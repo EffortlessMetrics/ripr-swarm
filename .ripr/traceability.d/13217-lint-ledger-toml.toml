@@ -1,0 +1,30 @@
+[[behavior]]
+id = "RIPR-SPEC-0451"
+name = "Lint ledger TOML decoding"
+spec = "docs/specs/RIPR-SPEC-0451-lint-ledger-toml-decoding.md"
+tests = [
+  "xtask/src/policy/lint_ledger.rs::tests::commented_planned_header_keeps_overdue_msrv_obligation",
+  "xtask/src/policy/lint_ledger.rs::tests::inline_planned_array_keeps_overdue_msrv_obligation",
+  "xtask/src/policy/lint_ledger.rs::tests::known_field_types_cannot_silently_become_absent",
+  "xtask/src/policy/lint_ledger.rs::tests::invalid_msrv_strings_reach_the_existing_version_check",
+  "xtask/src/policy/lint_ledger.rs::tests::malformed_and_duplicate_key_toml_fail_closed",
+  "xtask/src/policy/lint_ledger.rs::tests::duplicate_identities_across_families_and_states_fail",
+  "xtask/src/policy/lint_ledger.rs::tests::documentary_extension_fields_remain_supported",
+  "xtask/src/policy/lint_ledger.rs::tests::multiline_non_msrv_blocker_remains_valid",
+  "xtask/src/policy/lint_ledger.rs::tests::source_order_and_distinct_namespaces_are_preserved",
+  "xtask/src/policy/lint_ledger.rs::tests::source_spans_report_entry_lines_for_each_toml_form",
+  "xtask/src/policy/lint_ledger.rs::tests::invalid_identities_and_levels_do_not_create_planned_entries",
+  "xtask/src/policy/lint_ledger.rs::tests::equal_bare_names_require_both_namespace_receipts",
+  "xtask/src/policy/lint_ledger.rs::tests::debt_consumer_retains_lint_ledger_parse_errors",
+  "xtask/src/policy/lint_ledger.rs::tests::commented_planned_row_still_collides_with_debt",
+  "xtask/src/policy/lint_ledger.rs::tests::repository_ledger_has_valid_unique_rows",
+]
+code = [
+  "xtask/src/policy/lint_ledger.rs",
+  "xtask/src/policy_root.rs",
+  "xtask/src/main.rs",
+]
+outputs = [
+  "docs/CLIPPY_POLICY.md",
+]
+metrics = ["unit_test_pass_rate"]
