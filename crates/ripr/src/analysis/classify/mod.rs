@@ -44,6 +44,7 @@ mod indirect_owner;
 mod infection;
 mod literal_assertion;
 pub(in crate::analysis) use literal_assertion::asserts_only_dropped_literals;
+mod literal_condition;
 mod literal_length_boundary;
 mod macro_item_names;
 mod mask_pin;
@@ -181,6 +182,7 @@ pub(in crate::analysis) use indirect_owner::{
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
+pub(in crate::analysis) use literal_condition::{LiteralConditionChange, literal_condition_change};
 pub(in crate::analysis) use literal_length_boundary::refine_literal_length_boundary;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
