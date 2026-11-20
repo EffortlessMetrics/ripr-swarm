@@ -4,7 +4,8 @@ use super::actions::{
 };
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
-    refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
+    disclosed_staleness_reason, refresh_completed_log_message, refresh_failed_log_message,
+    workspace_input_path_is_relevant,
 };
 use super::capabilities::{
     ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
@@ -36377,4 +36378,35 @@ fn hover_names_a_head_only_arm_result() -> Result<(), String> {
         return Err(format!("off-line sink was joined:\n{hover}"));
     }
     Ok(())
+}
+
+#[test]
+fn non_file_document_keeps_save_then_refresh_outside_a_root() {
+    let root = std::env::temp_dir().join("ripr-15462-root");
+    let untitled = Path::new("untitled:Untitled-1");
+    assert_eq!(
+        disclosed_staleness_reason(
+            Some(&root),
+            untitled,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent,
+    );
+    let outside = std::env::temp_dir().join("ripr-15462-other").join("lib.rs");
+    assert_eq!(
+        disclosed_staleness_reason(
+            Some(&root),
+            &outside,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        ),
+        DocumentStalenessReason::OutsideAnalyzedRoot,
+    );
+    assert_eq!(
+        disclosed_staleness_reason(
+            None,
+            &outside,
+            DocumentStalenessReason::NoAnalyzedSavedContent
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent,
+    );
 }

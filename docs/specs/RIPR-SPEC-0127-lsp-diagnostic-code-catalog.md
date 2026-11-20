@@ -350,6 +350,10 @@ test-sufficiency claim.
   pins the `outside_analyzed_root` pull marker, result id and workspace-status
   reason for a file outside the root, against an in-root never-saved file
   that keeps `save_then_refresh` (#15462).
+- `lsp/tests.rs::non_file_document_keeps_save_then_refresh_outside_a_root`
+  pins that a buffer with no admitted file path (an `untitled:` document)
+  keeps `no_analyzed_saved_content` while a root is set, and that no root
+  keeps the stored reason (#15462).
 
 ## Implementation Mapping
 

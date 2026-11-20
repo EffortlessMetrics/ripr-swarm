@@ -15595,12 +15595,16 @@ mod disk_bytes_equal_text_tests {
 /// outside the analyzed root can never gain analyzed saved content in this
 /// session, so it reads `outside_analyzed_root` instead of the save-then-
 /// refresh route. Fails closed to the stored reason without a root.
-fn disclosed_staleness_reason(
+pub(super) fn disclosed_staleness_reason(
     root: Option<&Path>,
     path: &Path,
     reason: DocumentStalenessReason,
 ) -> DocumentStalenessReason {
+    // Only an absolute (local file) path can be outside the root. A buffer
+    // with no admitted file path (an `untitled:` document, for example) keeps
+    // the stored reason: saving it into the root can still lift the pause.
     if reason == DocumentStalenessReason::NoAnalyzedSavedContent
+        && path.is_absolute()
         && let Some(root) = root
         && !path_is_within_root(root, path)
     {
