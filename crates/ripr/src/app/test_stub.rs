@@ -2312,7 +2312,7 @@ mod tests {
         // the real stub resolver, and the ambiguous one targets retries.
         let resolve = |seam: &analysis::seams::RepoSeam, family: &str| {
             resolve_test_stub(&root, &config, &stub_selector(Some(&root), seam, family))
-                .map_err(|_| "the printed selector must resolve".to_string())
+                .map_err(|error| format!("the printed selector must resolve: {error:?}"))
         };
         let by_id = resolve(retries, "field_construction")?;
         assert_eq!(by_id.seam_id, retries.id().as_str());
