@@ -11084,6 +11084,44 @@ fn caplog_absence_reads_the_edit_keeps_absent_stay_a_gap() -> Result<(), String>
     Ok(())
 }
 
+// #15250: a message-only logging edit is observed only through the captured
+// output. An exact pin on the owner's result (`== False`, `is False`) passes
+// on both versions, so it never credits the edit nor hides the caplog reading.
+#[test]
+fn caplog_an_exact_return_pin_does_not_credit_a_message_only_log_edit() -> Result<(), String> {
+    for pin in [
+        "assert check_balance(5) is False",
+        "assert check_balance(5) == False",
+    ] {
+        let kept = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {pin}\n    assert \"deprecated warning\" not in caplog.text\n"
+        );
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &kept
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{pin}"
+        );
+        let unread = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {pin}\n"
+        );
+        assert_ne!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &unread
+            )?
+            .0,
+            ExposureClass::Exposed,
+            "{pin}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn caplog_absence_with_a_whole_message_compares_the_whole_message() -> Result<(), String> {
     // `not in caplog.messages` holds the text only when a whole message equals

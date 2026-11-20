@@ -50,6 +50,7 @@
 //! is never credited as evidence, and the test's #5571 admission state stays
 //! the authority on whether the test asserts at all.
 
+use super::caplog_text::is_message_only_log_call_edit;
 use super::sink_alignment::{
     dict_changed_keys_and_values, oracle_is_pure_len_aggregate,
     oracle_observes_changed_dict_element, oracle_text_observes_token,
@@ -67,6 +68,10 @@ pub(super) struct PythonAssertionFocus {
     /// `ErrorPath` change there alters what the handler does — often the value
     /// it returns — so normal-value, mock and output observers apply too.
     error_handler_line: bool,
+    /// The edit only rewrites a logging call's message or level
+    /// (`caplog_text::is_message_only_log_call_edit`, #15250). A value
+    /// assertion on the owner's result cannot notice it, however exact.
+    message_only_log_call: bool,
 }
 
 /// The field a `FieldConstruction` change writes, when the changed line names
@@ -97,10 +102,12 @@ impl PythonAssertionFocus {
             .flatten();
         let error_handler_line =
             matches!(family, ProbeFamily::ErrorPath) && is_error_handler_line(line_text);
+        let message_only_log_call = is_message_only_log_call_edit(old_line_text, line_text);
         Self {
             family,
             changed_field,
             error_handler_line,
+            message_only_log_call,
         }
     }
 
@@ -110,6 +117,7 @@ impl PythonAssertionFocus {
             family,
             changed_field: None,
             error_handler_line: false,
+            message_only_log_call: false,
         }
     }
 
@@ -121,6 +129,25 @@ impl PythonAssertionFocus {
     /// filter). Static-limit suppression reads the selection built on this
     /// filter, so a wrong-family strong assertion never hides a limit.
     pub(super) fn admits(&self, assertion: &PythonAssertion) -> bool {
+        // A value pin on the owner's result passes on both versions of a
+        // message-only logging edit. A relational read (`"x" in msgs` through a
+        // captured-log alias) stays applicable: it is weak, so it never credits
+        // on its own, and the caplog evaluation decides it.
+        // The gate is the observed expression: each conjunct of `assert
+        // f(5) is False and "x" in caplog.text` is its own assertion, so the
+        // pin is withheld while the caplog read stays applicable.
+        if self.message_only_log_call
+            && !assertion.gate_text.contains("caplog")
+            && matches!(
+                assertion.oracle_shape,
+                PythonOracleShape::ExactAssertion
+                    | PythonOracleShape::FieldAssertion
+                    | PythonOracleShape::StatusCodeAssertion
+                    | PythonOracleShape::ExceptionAssertion
+            )
+        {
+            return false;
+        }
         self.error_handler_line || shape_matches_family(assertion.oracle_shape, &self.family)
     }
 

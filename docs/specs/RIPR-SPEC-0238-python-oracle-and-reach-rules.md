@@ -1262,6 +1262,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     `from pytest import fixture as fx`, unless a later import, assignment, `def` or `class`
     rebinds that name before the decorated def); otherwise the reading abstains. An assertion about
     unrelated text keeps its verdict.
+    When the new line, and the old line if there is one, is a logging call
+    (`.exception`, `.fatal`, `.log` and keyword arguments included) on one
+    receiver whose arguments are built from literals and names without a
+    call, the edit cannot change what the owner returns, so an exact, field,
+    status-code or exception assertion on the owner's result that does not
+    itself read `caplog` (`assert f(5) is False`, `== False`) is not
+    applicable to it and never credits it, however exact; relational reads
+    stay applicable for the caplog evaluation (#15250).
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or
