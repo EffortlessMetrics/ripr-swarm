@@ -2075,3 +2075,136 @@ fn every_dynamic_load_callee_records_its_literal_specifier() {
         assert!(specifiers_of(load).is_empty(), "{load}");
     }
 }
+
+fn deno_tests(source: &str) -> Vec<TypeScriptTest> {
+    extract_tests(Path::new("pricing.test.ts"), source)
+}
+
+#[test]
+fn deno_test_registration_forms_each_register_one_test() {
+    let header = "import { assertEquals } from \"jsr:@std/assert\";\n";
+    for (label, body, name) in [
+        (
+            "name and fn",
+            "Deno.test(\"rate\", () => { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+        (
+            "object",
+            "Deno.test({ name: \"rate\", fn() { assertEquals(rate(1), 2); } });",
+            "rate",
+        ),
+        (
+            "object with fn arrow",
+            "Deno.test({ name: \"rate\", fn: async () => { assertEquals(rate(1), 2); } });",
+            "rate",
+        ),
+        (
+            "options then fn",
+            "Deno.test(\"rate\", { permissions: { read: true } }, () => { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+        (
+            "named function",
+            "Deno.test(function rate() { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+        (
+            "t.step",
+            "Deno.test(\"rate\", async (t) => { await t.step(\"inner\", () => { assertEquals(rate(1), 2); }); });",
+            "rate",
+        ),
+        (
+            "only",
+            "Deno.test.only(\"rate\", () => { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+    ] {
+        let tests = deno_tests(&format!("{header}{body}\n"));
+        assert_eq!(tests.len(), 1, "{label}");
+        assert_eq!(tests[0].name, name, "{label}");
+        assert!(tests[0].body_text.contains("rate(1)"), "{label}");
+        if label != "t.step" {
+            assert_eq!(tests[0].assertions.len(), 1, "{label}");
+            assert_eq!(tests[0].assertions[0].matcher, "deepStrictEqual", "{label}");
+        }
+    }
+}
+
+#[test]
+fn ignored_or_unreadable_deno_tests_register_nothing() {
+    for body in [
+        "Deno.test({ name: \"rate\", ignore: true, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test({ name: \"rate\", ...opts, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test(\"rate\", { ignore: Deno.build.os === \"windows\" }, () => { assertEquals(rate(1), 2); });",
+        "Deno.test(\"rate\");",
+        "Deno.other(\"rate\", () => { assertEquals(rate(1), 2); });",
+        "Deno.test(\"rate\", someFunction);",
+    ] {
+        assert!(deno_tests(&format!("{body}\n")).is_empty(), "{body}");
+    }
+}
+
+#[test]
+fn deno_std_assertions_map_to_their_node_counterparts() {
+    use crate::domain::{OracleKind, OracleStrength};
+    for (module, import, call, kind, strength) in [
+        (
+            "@std/assert",
+            "assertEquals",
+            "assertEquals(rate(1), 2)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "jsr:@std/assert@^1",
+            "assertStrictEquals",
+            "assertStrictEquals(rate(1), 2)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "https://deno.land/std@0.224.0/assert/mod.ts",
+            "assertEquals",
+            "assertEquals(rate(1), 2)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "jsr:@std/assert",
+            "assert",
+            "assert(rate(1))",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "jsr:@std/assert",
+            "assertThrows",
+            "assertThrows(() => rate(1))",
+            OracleKind::BroadError,
+            OracleStrength::Weak,
+        ),
+    ] {
+        let source = format!(
+            "import {{ {import} }} from \"{module}\";\nDeno.test(\"t\", () => {{ {call}; }});\n"
+        );
+        let tests = deno_tests(&source);
+        assert_eq!(tests.len(), 1, "{call}");
+        assert_eq!(tests[0].assertions.len(), 1, "{call}");
+        let got = &tests[0].assertions[0];
+        assert_eq!(
+            (&got.oracle_kind, &got.oracle_strength),
+            (&kind, &strength),
+            "{call}"
+        );
+    }
+    // A same-named local helper, or an unrelated module, earns no credit.
+    for source in [
+        "import { assertEquals } from \"./helpers.ts\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "function assertEquals(a, b) {}\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+    ] {
+        let tests = deno_tests(source);
+        assert_eq!(tests.len(), 1);
+        assert!(tests[0].assertions.is_empty(), "{source}");
+    }
+}

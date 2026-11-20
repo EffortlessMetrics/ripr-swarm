@@ -1795,6 +1795,32 @@ const NODE_ASSERT_MODULES: [&str; 4] = [
     "node:assert/strict",
 ];
 
+/// Whether `module` is Deno's standard assertion module: `@std/assert` (an
+/// import-map name), `jsr:@std/assert[@range][/subpath]`, or a
+/// `https://deno.land/std[@version]/assert/...` or `/testing/asserts.ts` URL.
+fn is_deno_std_assert_module(module: &str) -> bool {
+    let name = module.strip_prefix("jsr:").unwrap_or(module);
+    if let Some(rest) = name.strip_prefix("@std/assert") {
+        return rest.is_empty() || rest.starts_with(['@', '/']);
+    }
+    module
+        .strip_prefix("https://deno.land/std")
+        .is_some_and(|rest| rest.contains("/assert/") || rest.ends_with("/testing/asserts.ts"))
+}
+
+/// The `node:assert/strict` method a Deno std assertion reads as. Only the
+/// equality and error assertions with an exact node counterpart are mapped;
+/// every other export stays unbound (fail-closed).
+fn deno_assert_method(export: &str) -> Option<&'static str> {
+    match export {
+        "assertEquals" => Some("deepStrictEqual"),
+        "assertStrictEquals" => Some("strictEqual"),
+        "assertThrows" => Some("throws"),
+        "assertRejects" => Some("rejects"),
+        _ => None,
+    }
+}
+
 /// The chai module specifier.
 const CHAI_MODULE: &str = "chai";
 
@@ -2010,6 +2036,28 @@ impl TypeScriptAssertionBindings {
                         .push((local, method.to_string(), flavor));
                 }
                 Some(_) => {}
+            }
+        } else if is_deno_std_assert_module(module) {
+            // Deno's std assertions read like their `node:assert/strict`
+            // counterparts: `assertEquals` is a deep strict equality,
+            // `assertStrictEquals` an identity-strict one, `assert` a truthy
+            // check and `assertThrows` / `assertRejects` a broad error check.
+            // A namespace import and any other export stay unbound.
+            match imported {
+                Some("assert") if !namespace => {
+                    self.assert_objects
+                        .push((local, true, AssertFlavor::NodeStrict));
+                }
+                Some(name) if !namespace => {
+                    if let Some(method) = deno_assert_method(name) {
+                        self.assert_methods.push((
+                            local,
+                            method.to_string(),
+                            AssertFlavor::NodeStrict,
+                        ));
+                    }
+                }
+                _ => {}
             }
         } else if module == CHAI_MODULE {
             match imported {
