@@ -12405,6 +12405,157 @@ fn ts_fieldconstruction_multi_value_change_nullish_fallback_whole_object_stays_e
     Ok(())
 }
 
+/// #14928: classify the #14857 two-value change (`retries` and `verbose`
+/// move) against a test whose single assertion is `expect(<subject>)…`.
+fn ts_multi_value_change_class_for_subject(
+    subject: &str,
+    matcher: &str,
+) -> Result<ExposureClass, String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number; enabled: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30, enabled: true };\n}\n";
+    let test_src = format!(
+        "import {{ f }} from \"./owner\";\nconst defaults = {{ config: {{ retries: 3, verbose: false, timeout: 30, enabled: true }} }};\nconst limit = 4;\ntest(\"subject\", () => {{ expect({subject}).{matcher}; }});\n"
+    );
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), &test_src);
+    assert_eq!(owners.len(), 1, "expected one owner from live extractor");
+    assert_eq!(tests.len(), 1, "expected one test from live extractor");
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30, enabled: true };",
+        Some("  return { retries: 3, verbose: false, timeout: 30, enabled: true };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| format!("expected a finding for `{subject}`"))?;
+    Ok(finding.class)
+}
+
+/// #14928: the untouched-field guard must apply to every base that is a
+/// plain projection of the owner's result. A postfix non-null assertion and a
+/// prefix negation each still read a field the edit never touched, so neither
+/// may inherit the blanket owner-call credit. A generic call
+/// (`f<string>().timeout`) is covered by the grammar test below: the owner-call
+/// reader does not yet resolve `f<T>(...)`, so end to end it already reads
+/// `weakly_exposed` and cannot discriminate here.
+#[test]
+fn ts_fieldconstruction_multi_value_change_untouched_field_through_plain_chain_downgrades()
+-> Result<(), String> {
+    for (subject, matcher) in [
+        ("f()!.timeout", "toBe(30)"),
+        ("!f().enabled", "toBe(false)"),
+        ("!f()?.enabled", "toBe(false)"),
+        // Review of #15607: bases the earlier operator check already guarded
+        // stay guarded under the grammar.
+        ("void f().timeout", "toBeUndefined()"),
+        ("~f().timeout", "toBe(-31)"),
+        ("delete f().timeout", "toBe(true)"),
+        ("[f()][0].timeout", "toBe(30)"),
+        ("[f()][0]?.timeout", "toBe(30)"),
+    ] {
+        let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
+        assert!(
+            matches!(class, ExposureClass::WeaklyExposed),
+            "`{subject}` reads an untouched field and must be weakly_exposed, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14928 controls: the same plain-chain shapes that read EITHER changed
+/// field, or receive the whole object, keep `exposed`; a compound base
+/// (`??`, a comparison, a ternary) is not a projection and keeps its credit.
+#[test]
+fn ts_fieldconstruction_multi_value_change_plain_chain_changed_or_compound_stays_exposed()
+-> Result<(), String> {
+    for (subject, matcher) in [
+        ("f()!.verbose", "toBe(true)"),
+        ("!f().verbose", "toBe(false)"),
+        (
+            "f() ?? defaults.config",
+            "toEqual({ retries: 5, verbose: true, timeout: 30, enabled: true })",
+        ),
+        (
+            "f()! ?? defaults.config",
+            "toEqual({ retries: 5, verbose: true, timeout: 30, enabled: true })",
+        ),
+        // A comparison and a ternary over an UNTOUCHED field: the base is
+        // compound, so the guard does not apply.
+        ("limit < f().timeout", "toBe(true)"),
+        ("cond ? f().timeout : 0", "toBe(30)"),
+        ("limit < f() > (bounds).minimum", "toBe(true)"),
+    ] {
+        let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
+        assert!(
+            matches!(class, ExposureClass::Exposed),
+            "`{subject}` must stay exposed, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14928: the plain-chain grammar itself, independent of the classifier.
+#[test]
+fn ts_chain_is_plain_projection_accepts_chains_and_rejects_compounds() {
+    use super::classifier::ts_chain_is_plain_projection as plain;
+    for base in [
+        "f()",
+        "a.f()",
+        "this.g()",
+        "f()?",
+        "f()!",
+        "!f()",
+        "!!f()",
+        "f<string>()",
+        "f<Map<string, number[]>>()",
+        "f<() => void>()",
+        "f<A | B>()",
+        "f()?.g<T>()",
+        "f?.()",
+        "f()[0]",
+        "(f())",
+        "new F()",
+        "await f()",
+        // Admitted by the original operator check, kept by the union.
+        "void f()",
+        "~f()",
+        "delete f()",
+        "typeof f()",
+        "[f()][0]",
+        "this.#impl()",
+    ] {
+        assert!(plain(base), "`{base}` is a plain chain");
+    }
+    for base in [
+        "f() ?? defaults",
+        "f() || fallback",
+        "cond ? f() : g()",
+        "a, f()",
+        "x = f()",
+        "a < b",
+        "a < b > c",
+        "f<string>",
+        "f() > 0",
+        "f()! != g()",
+        "f() !== g()",
+        "a + f()",
+        "a ! b",
+        // Devin review: a call inside a would-be type-argument list is a
+        // chained comparison, not a generic call.
+        "limit < f() > (bounds)",
+        "a < g(x) > (y)",
+    ] {
+        assert!(!plain(base), "`{base}` is not a plain chain");
+    }
+    // An empty base holds no operator, so the original reading (kept by the
+    // union) guards it, as it did before #14928: the fail-closed direction.
+    assert!(plain(""), "an empty base stays guarded");
+}
+
 /// #14814 control: the changed field itself, read off the owner's result,
 /// still confirms. `expect(f().retries)` observes `retries`, so the finding
 /// stays `exposed`. A fix that suppressed this too would over-apply.
