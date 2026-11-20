@@ -4825,6 +4825,20 @@ pub(crate) mod tests {
         );
         std::fs::remove_file(damaged).map_err(|error| error.to_string())?;
 
+        // The same input past a lower repair ceiling still returns the
+        // original cap and its canonical prefix.
+        let before_cut = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        let past_ceiling = crate::analysis::inventory_repair_seams_report(
+            &root,
+            &config,
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + 1,
+        )?;
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get() - before_cut,
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+            "cold over-ceiling repair classifies exactly the ordinary prefix"
+        );
+
         // Plain inventory: cut by the default cap.
         let (_, plain) =
             crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?;
@@ -4849,13 +4863,6 @@ pub(crate) mod tests {
             "the status gate must use the widened inventory"
         );
 
-        // The same input past a lower repair ceiling still returns the
-        // original cap and its canonical prefix.
-        let past_ceiling = crate::analysis::inventory_repair_seams_report(
-            &root,
-            &config,
-            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + 1,
-        )?;
         let cut = past_ceiling.limit_info.ok_or("expected the original cut")?;
         assert_eq!(
             (cut.analyzed, cut.total, cut.source),
