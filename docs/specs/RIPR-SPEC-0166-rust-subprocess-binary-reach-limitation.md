@@ -21,6 +21,10 @@ when an integration test contains either a `Command::new` invocation using
 `CARGO_BIN_EXE_*` with `.output()`/`.status()`, or an `assert_cmd`
 `cargo_bin(...)` invocation with an assertion/output/status observation.
 
+When retained manifest identities place the integration test and changed owner
+in different packages, the test cannot supply this limitation or its source
+pointer. Unknown package identity retains the existing unresolved behavior.
+
 The recognizer is source-only and deterministic. It does not spawn a process,
 parse arbitrary shell commands, infer a binary target map, or credit the test as
 reaching any owner.

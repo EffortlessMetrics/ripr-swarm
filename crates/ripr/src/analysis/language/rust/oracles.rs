@@ -260,6 +260,22 @@ impl<'a> PropertyMacroMentionIndex<'a> {
             .or_else(|| probe_file.strip_prefix(self.captured_root?).ok())?;
         self.known_package(relative)
     }
+
+    /// A different known Cargo manifest cannot supply this package's local
+    /// binary invocation witness. Preserve the unresolved hint when either
+    /// identity is missing or comes from the manifestless directory fallback.
+    pub(super) fn subprocess_package_filter(
+        &self,
+        owner: &std::path::Path,
+    ) -> impl Fn(&std::path::Path) -> bool + '_ {
+        let owner = self.owner_package(owner);
+        move |test| match (owner, self.known_package(test)) {
+            (Some(a), Some(b)) if !a.starts_with("directory:") && !b.starts_with("directory:") => {
+                a == b
+            }
+            _ => true,
+        }
+    }
 }
 
 /// A suffix/name match is a possible lexical mention, never resolved reach.

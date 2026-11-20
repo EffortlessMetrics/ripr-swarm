@@ -1984,7 +1984,11 @@ fn apply_rust_no_static_path_limit(
     } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
-    } else if let Some(test) = find_subprocess_binary_test(index, &probe.location.file) {
+    } else if let Some(test) = find_subprocess_binary_test(
+        index,
+        &probe.location.file,
+        property_macro_mentions.subprocess_package_filter(&probe.location.file),
+    ) {
         finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
         finding.evidence.push(
             "An integration test invokes a Cargo-built binary, but ripr cannot yet map that binary back to the changed owner; no subprocess reach or receipt claim is made.".to_string(),
@@ -2311,6 +2315,7 @@ fn replace_unresolved_reach_advice(finding: &mut Finding, next_step: String) {
 fn find_subprocess_binary_test<'a>(
     index: &'a RustIndex,
     owner_file: &Path,
+    eligible_package: impl Fn(&Path) -> bool,
 ) -> Option<&'a crate::analysis::facts::TestFact> {
     if !is_binary_source_path(owner_file) {
         return None;
@@ -2319,7 +2324,7 @@ fn find_subprocess_binary_test<'a>(
         .tests()
         .iter()
         .filter(|test| rust_index::is_test_file(&test.file))
-        .filter(|test| is_cargo_binary_invocation(&test.body))
+        .filter(|test| eligible_package(&test.file) && is_cargo_binary_invocation(&test.body))
         .min_by(|left, right| {
             left.file
                 .cmp(&right.file)
@@ -9144,7 +9149,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     #[test]
-    fn subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests() {
+    fn subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests()
+    -> Result<(), String> {
         let mut index = RustIndex::default();
         index.push_test(TestFact {
             name: "cli_receipt".to_string(),
@@ -9160,11 +9166,40 @@ fn absent_delimiter_boundary_returns_head() {
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         });
+        let root = temp_root("subprocess-package")?;
+        let paths = ["src/main.rs", "tests/cli.rs", "sibling/src/main.rs"].map(PathBuf::from);
+        for path in &paths {
+            write(&root.join(path), "")?;
+        }
+        for (path, name) in [("Cargo.toml", "worker"), ("sibling/Cargo.toml", "sibling")] {
+            write(
+                &root.join(path),
+                &format!("[package]\nname='{name}'\nversion='0.1.0'\n"),
+            )?;
+        }
+        index.workspace_authority = Some(
+            crate::analysis::facts::WorkspaceRootAuthority::from_sources(
+                &root,
+                paths.iter().map(|p| (p, "")),
+            ),
+        );
+        let has_witness = |index: &RustIndex, path: &str| {
+            let owner = root.join(path);
+            let mentions = super::oracles::PropertyMacroMentionIndex::new(index, &root);
+            super::find_subprocess_binary_test(
+                index,
+                &owner,
+                mentions.subprocess_package_filter(&owner),
+            )
+            .is_some()
+        };
         assert!(is_binary_source_path(Path::new("src/main.rs")));
-        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());
-        assert!(super::find_subprocess_binary_test(&index, Path::new("src/lib.rs")).is_none());
+        assert!(has_witness(&index, "src/main.rs"));
+        assert!(!has_witness(&index, "sibling/src/main.rs"));
+        assert!(!has_witness(&index, "src/lib.rs"));
         index.test_at_mut(0).file = PathBuf::from("src/lib.rs");
-        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_none());
+        assert!(!has_witness(&index, "src/main.rs"));
+        fs::remove_dir_all(root).map_err(|err| err.to_string())
     }
 
     fn changed_file(path: &str, added: usize, removed: usize) -> ChangedFile {
