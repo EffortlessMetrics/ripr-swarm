@@ -120,6 +120,16 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr cache export` success stdout. This versions the export report,
+        // not the copied cache layers.
+        "cache-export",
+        &[producer(
+            "crates/ripr/src/analysis/seam_cache/export.rs",
+            "pub(crate) const CACHE_EXPORT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // `ripr capabilities --json` (#5531, #14067). The version constant
         // lives beside the capability table it versions, in the contract
         // crate; `output::language_capabilities` only projects it.
@@ -578,6 +588,17 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["seam_id_unknown", "run_limitations"],
+    },
+    // `ripr cache export` success stdout. The fixture is a capture with the
+    // host's absolute export directory replaced by a portable path; the
+    // producer-byte authority is `cache_export_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/cache-export.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cache-export.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["classified_entries", "logical_file_bytes"],
     },
     // `ripr cache status --json`. The fixture is hand-written with a portable
     // path. The real document carries a host-specific cache path.
