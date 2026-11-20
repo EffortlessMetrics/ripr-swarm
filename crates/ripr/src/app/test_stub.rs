@@ -734,7 +734,7 @@ pub(crate) fn stub_route_location(
     ))
 }
 
-/// Plan one finding from the resolver
+/// The route decision for one finding, from the resolver
 /// `ripr agent stub --at` runs. `None` when the finding gets no route or the
 /// resolver finds no seam there; nothing is printed then.
 fn plan_stub_decision(
@@ -2226,108 +2226,6 @@ mod tests {
         Ok(root)
     }
 
-    #[test]
-    fn ambiguous_rows_share_one_bounded_evaluation_and_match_whole_file_guidance()
-    -> Result<(), String> {
-        let config = RiprConfig::default();
-        let file = Path::new("src/lib.rs");
-        for functions in [8, 32] {
-            let source: String = (0..functions)
-                .map(|index| format!("pub fn enough_{index}(n: i32) -> bool {{ n >= {index} }}\n"))
-                .collect();
-            let root = scratch_stub_crate(&format!("stub-batch-{functions}"), &source)?;
-            let oracle = analysis::inventory_file_guidance_at_with_config(&root, &config, file)?;
-            oracle.require_complete_evidence("stub test oracle")?;
-            if oracle.classified.len() < functions {
-                return Err("fixture must contain unrelated classified seams".into());
-            }
-            let mut actual_ids = oracle
-                .classified
-                .iter()
-                .map(|entry| entry.seam.id().as_str().to_owned());
-            let a = actual_ids.next().ok_or("first fixture seam")?;
-            let b = actual_ids.next().ok_or("second fixture seam")?;
-            let missing = "absent-seam".to_owned();
-            let rows = || -> Vec<PendingStubRoute> {
-                [
-                    ("narrowed", true, vec![a.clone()]),
-                    ("ordered", false, vec![b.clone(), a.clone()]),
-                    ("missing", false, vec![missing.clone()]),
-                    (
-                        "over-cap",
-                        false,
-                        vec!["excluded".to_owned(); AMBIGUOUS_VALIDATION_LIMIT + 1],
-                    ),
-                ]
-                .into_iter()
-                .map(|(id, narrowed, candidates)| PendingStubRoute {
-                    finding_id: id.to_owned(),
-                    hidden: false,
-                    decision: PendingStubDecision::Ambiguous(AmbiguousLine {
-                        file: Some(file.to_owned()),
-                        candidates,
-                        narrowed,
-                        reason: "several seams".to_owned(),
-                    }),
-                })
-                .collect()
-            };
-            // Independent unbatched oracle: search the complete inventory
-            // in each row's original order, as the prior producer did.
-            let expected = rows()
-                .into_iter()
-                .map(|plan: PendingStubRoute| {
-                    let PendingStubDecision::Ambiguous(line) = plan.decision else {
-                        return Err("expected an ambiguous fixture row".to_owned());
-                    };
-                    let decision = if line.candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
-                        withheld_ambiguity(&line.reason)
-                    } else {
-                        let outcomes = line
-                            .candidates
-                            .into_iter()
-                            .map(|id| {
-                                let outcome = oracle
-                                    .classified
-                                    .iter()
-                                    .find(|entry| entry.seam.id().as_str() == id)
-                                    .map(|entry| seam_stub_outcome(&root, &config, entry))
-                                    .unwrap_or(SeamStubOutcome::Missing);
-                                (id, outcome)
-                            })
-                            .collect();
-                        fold_seam_outcomes(outcomes, line.reason, line.narrowed)
-                    };
-                    Ok(StubRoute {
-                        finding_id: plan.finding_id,
-                        decision,
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            let mut preparations = 0;
-            let selected = BTreeSet::from([a.clone(), b.clone(), missing.clone()]);
-            analysis::evaluation_probe::reset();
-            let result = finish_stub_routes(&root, &config, rows(), |path, choices| {
-                preparations += 1;
-                if path != Some(file) || choices != &selected {
-                    return Err("incorrect seam union".into());
-                }
-                classify_stub_choices(&root, &config, path, choices)
-            });
-            if result != expected
-                || preparations != 1
-                || analysis::evaluation_probe::evaluated() != 2
-            {
-                return Err(format!(
-                    "stub routes differed or repeated preparation for {functions} functions: {preparations} preparations, {} evaluated",
-                    analysis::evaluation_probe::evaluated()
-                ));
-            }
-            std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
-        }
-        Ok(())
-    }
-
     /// #10710: the narrowed seam is only offered when `ripr agent stub
     /// --seam-id` itself produces a stub. Here the changed field's seam is
     /// already strongly gripped by a whole-value assertion, so the classified
@@ -3659,6 +3557,108 @@ impl Size {
     /// surface. A free crate-root owner takes the producer-admitted
     /// integration file, so the two independent derivations agree and no
     /// divergence is carried.
+    #[test]
+    fn ambiguous_rows_share_one_bounded_evaluation_and_match_whole_file_guidance()
+    -> Result<(), String> {
+        let config = RiprConfig::default();
+        let file = Path::new("src/lib.rs");
+        for functions in [8, 32] {
+            let source: String = (0..functions)
+                .map(|index| format!("pub fn enough_{index}(n: i32) -> bool {{ n >= {index} }}\n"))
+                .collect();
+            let root = scratch_stub_crate(&format!("stub-batch-{functions}"), &source)?;
+            let oracle = analysis::inventory_file_guidance_at_with_config(&root, &config, file)?;
+            oracle.require_complete_evidence("stub test oracle")?;
+            if oracle.classified.len() < functions {
+                return Err("fixture must contain unrelated classified seams".into());
+            }
+            let mut actual_ids = oracle
+                .classified
+                .iter()
+                .map(|entry| entry.seam.id().as_str().to_owned());
+            let a = actual_ids.next().ok_or("first fixture seam")?;
+            let b = actual_ids.next().ok_or("second fixture seam")?;
+            let missing = "absent-seam".to_owned();
+            let rows = || -> Vec<PendingStubRoute> {
+                [
+                    ("narrowed", true, vec![a.clone()]),
+                    ("ordered", false, vec![b.clone(), a.clone()]),
+                    ("missing", false, vec![missing.clone()]),
+                    (
+                        "over-cap",
+                        false,
+                        vec!["excluded".to_owned(); AMBIGUOUS_VALIDATION_LIMIT + 1],
+                    ),
+                ]
+                .into_iter()
+                .map(|(id, narrowed, candidates)| PendingStubRoute {
+                    finding_id: id.to_owned(),
+                    hidden: false,
+                    decision: PendingStubDecision::Ambiguous(AmbiguousLine {
+                        file: Some(file.to_owned()),
+                        candidates,
+                        narrowed,
+                        reason: "several seams".to_owned(),
+                    }),
+                })
+                .collect()
+            };
+            // Independent unbatched oracle: search the complete inventory
+            // in each row's original order, as the prior producer did.
+            let expected = rows()
+                .into_iter()
+                .map(|plan: PendingStubRoute| {
+                    let PendingStubDecision::Ambiguous(line) = plan.decision else {
+                        return Err("expected an ambiguous fixture row".to_owned());
+                    };
+                    let decision = if line.candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
+                        withheld_ambiguity(&line.reason)
+                    } else {
+                        let outcomes = line
+                            .candidates
+                            .into_iter()
+                            .map(|id| {
+                                let outcome = oracle
+                                    .classified
+                                    .iter()
+                                    .find(|entry| entry.seam.id().as_str() == id)
+                                    .map(|entry| seam_stub_outcome(&root, &config, entry))
+                                    .unwrap_or(SeamStubOutcome::Missing);
+                                (id, outcome)
+                            })
+                            .collect();
+                        fold_seam_outcomes(outcomes, line.reason, line.narrowed)
+                    };
+                    Ok(StubRoute {
+                        finding_id: plan.finding_id,
+                        decision,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let mut preparations = 0;
+            let selected = BTreeSet::from([a.clone(), b.clone(), missing.clone()]);
+            analysis::evaluation_probe::reset();
+            let result = finish_stub_routes(&root, &config, rows(), |path, choices| {
+                preparations += 1;
+                if path != Some(file) || choices != &selected {
+                    return Err("incorrect seam union".into());
+                }
+                classify_stub_choices(&root, &config, path, choices)
+            });
+            if result != expected
+                || preparations != 1
+                || analysis::evaluation_probe::evaluated() != 2
+            {
+                return Err(format!(
+                    "stub routes differed or repeated preparation for {functions} functions: {preparations} preparations, {} evaluated",
+                    analysis::evaluation_probe::evaluated()
+                ));
+            }
+            std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn next_repair_names_the_start_and_the_agreeing_surface() -> Result<(), String> {
         let root = scratch_stub_crate("next-repair-agree", FREE_FN_SOURCE)?;
