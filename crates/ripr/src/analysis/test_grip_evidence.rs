@@ -1028,6 +1028,7 @@ fn credited_related_tests<'a>(
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
     refuse_other_function_oracle: bool,
+    seam_kind: SeamKind,
     claims_pin: Option<&claims_payload_pin::ClaimsPayloadPin<'_>>,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
     let owner_reach = refuse_other_function_oracle
@@ -1042,25 +1043,35 @@ fn credited_related_tests<'a>(
     // A local the assertion reads is the function that bound it, so its
     // initializer joins the text, the same attribution `ripr check` makes
     // (#12056, #12264).
-    let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
-        owner_reach.as_ref().is_some_and(|(_, reach)| {
-            context.other_function_pin_decision(owner, test, oracle, || {
-                let text = super::classifier::assertion_text_with_local_initializers(
-                    context.index,
-                    test,
-                    &oracle.text,
-                    owner,
-                );
-                reach.assertion_pins_other_function(owner, test, oracle, &text)
+    let pins_other_function =
+        |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact, direct: bool| {
+            owner_reach.as_ref().is_some_and(|(_, reach)| {
+                context.other_function_pin_decision(owner, test, oracle, direct, || {
+                    if direct {
+                        return reach.direct_test_asserts_unrelated_constant(owner, test, oracle);
+                    }
+                    let text = super::classifier::assertion_text_with_local_initializers(
+                        context.index,
+                        test,
+                        &oracle.text,
+                        owner,
+                    );
+                    reach.assertion_pins_other_function(owner, test, oracle, &text)
+                })
             })
-        })
-    };
+        };
     related
         .iter()
         .map(|(test, reason)| {
             let mut view = std::borrow::Cow::Borrowed(*test);
+            let direct = *reason == RelationReason::DirectOwnerCall
+                && matches!(
+                    seam_kind,
+                    SeamKind::PredicateBoundary | SeamKind::ReturnValue
+                );
             if let Some((owner, _)) = owner_reach.as_ref()
-                && (reason.is_proximity_only()
+                && (direct
+                    || reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
             {
                 // One decision per oracle: the text it reads is rebuilt from
@@ -1069,7 +1080,7 @@ fn credited_related_tests<'a>(
                 let pins: Vec<bool> = test
                     .assertions
                     .iter()
-                    .map(|oracle| pins_other_function(owner, test, oracle))
+                    .map(|oracle| pins_other_function(owner, test, oracle, direct))
                     .collect();
                 if pins.contains(&true) {
                     let mut position = 0;
@@ -1173,6 +1184,7 @@ fn evidence_for_seam_with_context(
         owner_fn,
         &related_reasons,
         refuse,
+        seam.kind(),
         claims_pin.as_ref(),
     );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
@@ -3049,6 +3061,7 @@ pub(crate) fn compact_evidence_for_seam(
         owner_fn,
         &limited_reasons,
         refuse,
+        seam.kind(),
         claims_pin.as_ref(),
     );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();

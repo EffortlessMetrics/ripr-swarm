@@ -88,6 +88,15 @@ fn commit(root: &Path, message: &str) -> Result<(), String> {
 
 /// Temp git repo whose HEAD commit replaces `from` with `to` in `src/lib.rs`.
 fn build_repo(label: &str, from: &str, to: &str) -> Result<Fixture, String> {
+    build_repo_from_source(label, BASE_SOURCE, from, to)
+}
+
+fn build_repo_from_source(
+    label: &str,
+    source: &str,
+    from: &str,
+    to: &str,
+) -> Result<Fixture, String> {
     let root = unique_root(label)?;
     std::fs::create_dir_all(root.join("src"))
         .map_err(|error| format!("create {}: {error}", root.display()))?;
@@ -98,14 +107,14 @@ fn build_repo(label: &str, from: &str, to: &str) -> Result<Fixture, String> {
         "[package]\nname = \"guidance-parity\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .map_err(|error| format!("write Cargo.toml: {error}"))?;
-    std::fs::write(root.join("src/lib.rs"), BASE_SOURCE)
+    std::fs::write(root.join("src/lib.rs"), source)
         .map_err(|error| format!("write src/lib.rs: {error}"))?;
     fixture_git_ok(root, &["init", "-q"])?;
     fixture_git_ok(root, &["config", "core.autocrlf", "false"])?;
     fixture_git_ok(root, &["add", "Cargo.toml", "src/lib.rs"])?;
     commit(root, "base")?;
-    let changed = BASE_SOURCE.replacen(from, to, 1);
-    if changed == BASE_SOURCE {
+    let changed = source.replacen(from, to, 1);
+    if changed == source {
         return Err(format!("fixture change {from:?} -> {to:?} altered nothing"));
     }
     std::fs::write(root.join("src/lib.rs"), changed)
@@ -559,6 +568,80 @@ fn well_tested_change_lists_nothing_and_the_gate_passes() -> Result<(), String> 
             "well-tested change must not block: {gate:#}\n{}",
             diagnose("gate evaluate", &output)
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn working_set_cards_only_refuse_closed_unrelated_assertions() -> Result<(), String> {
+    let source = r#"pub fn admitted(n: i32) -> bool {
+    n > 4
+}
+pub fn quoted(n: i32) -> i32 { n }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn smoke() {
+        let seen = super::admitted(6);
+        assert_eq!(super::quoted(9), 9);
+    }
+    #[test]
+    fn admitted_is_correct() {
+        assert_eq!(super::quoted(9), 9);
+    }
+}
+"#;
+    let assertion = "assert_eq!(super::quoted(9), 9);";
+    for (label, input, expected_oracle) in [
+        ("discarded", source.to_owned(), None),
+        (
+            "owner-operand",
+            source.replacen(
+                assertion,
+                "assert_eq!(super::quoted(9), if seen { 9 } else { 8 });",
+                1,
+            ),
+            Some("whole_object_equality"),
+        ),
+        (
+            "guarded",
+            source.replacen(assertion, "if seen { assert_eq!(super::quoted(9), 9); }", 1),
+            Some("exact_value"),
+        ),
+        (
+            "unproven-purity",
+            source.replace("i32 { n }", "i32 { std::hint::black_box(n) }"),
+            Some("exact_value"),
+        ),
+    ] {
+        let fixture = build_repo_from_source(label, &input, "n > 4", "n >= 5")?;
+        let review = review_comments(&fixture.0)?;
+        let predicate = "e49f8011f2288c94";
+        let rows = |field: &str| review[field].as_array().into_iter().flatten();
+        let card = rows("comments").find(|row| row["seam_id"] == predicate);
+        match expected_oracle {
+            None => {
+                let withheld = rows("suppressed").any(|row| {
+                    row["seam_id"] == predicate
+                        && row["reason"] == "static_limitation"
+                        && row["class"] == "reachable_unrevealed"
+                });
+                if !withheld || card.is_some() {
+                    return Err(format!(
+                        "unrelated assertion still lends owner credit: {review}"
+                    ));
+                }
+            }
+            Some(kind) => {
+                let card = card.ok_or_else(|| format!("lost {label} card: {review}"))?;
+                if card["oracle_kind"] != kind
+                    || card["oracle_strength"] != "strong"
+                    || card["suggested_test"]["near_test"] != "smoke"
+                {
+                    return Err(format!("{label} changed its original oracle: {card}"));
+                }
+            }
+        }
     }
     Ok(())
 }
