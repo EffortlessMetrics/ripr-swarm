@@ -137,7 +137,7 @@ impl Setup {
     }
 }
 
-fn finding_for(setup: &Setup) -> Result<Finding, String> {
+fn workspace_and_diff(setup: &Setup) -> Result<(PathBuf, String), String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -206,13 +206,19 @@ fn finding_for(setup: &Setup) -> Result<Finding, String> {
         write(&root.join("broken/Cargo.toml"), "[package\nname = ")?;
     }
     let third = format!(" {}", owner.tail.lines().next().unwrap_or_default());
-    let changed_files = diff::parse_unified_diff(&format!(
+    let patch = format!(
         "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -{start},3 +{start},3 @@\n {sig}\n-{old}\n+{new}\n{third}\n",
         path = owner.path,
         sig = owner.signature,
         old = owner.old_body,
         new = owner.new_body,
-    ));
+    );
+    Ok((root, patch))
+}
+
+fn finding_for(setup: &Setup) -> Result<Finding, String> {
+    let (root, patch) = workspace_and_diff(setup)?;
+    let changed_files = diff::parse_unified_diff(&patch);
     let result = RustAdapter.analyze_diff(
         &AnalysisOptions {
             root,
@@ -682,40 +688,70 @@ fn doctest_of_another_module_that_calls_the_owner_stays_related() -> Result<(), 
     Ok(())
 }
 
+/// Compare the stable wire fields of the changed call-deletion probe. The
+/// evidence window pins the new hint and the pre-existing facade pointer.
+fn rendered_host_evidence(setup: &Setup) -> Result<serde_json::Value, String> {
+    let (root, patch) = workspace_and_diff(setup)?;
+    let diff_file = root.join("change.diff");
+    write(&diff_file, &patch)?;
+    let output = crate::app::check_workspace(crate::app::CheckInput {
+        root,
+        diff_file: Some(diff_file),
+        mode: crate::app::Mode::Ready,
+        format: crate::app::OutputFormat::Json,
+        ..Default::default()
+    })?;
+    let rendered = crate::output::json::render(&output);
+    let report: serde_json::Value = serde_json::from_str(&rendered).map_err(|e| e.to_string())?;
+    let finding = report["findings"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["probe"]["family"] == "call_deletion")
+        })
+        .ok_or("missing rendered call-deletion finding")?;
+    let evidence: Vec<_> = finding["evidence"]
+        .as_array()
+        .ok_or("missing rendered evidence")?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|line| {
+            line.contains("hosts indexed tests")
+                || line.starts_with("For example, the test `payload`")
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "classification": finding["classification"],
+        "static_limit_kind": finding["static_limit_kind"],
+        "related_tests": finding["related_tests"],
+        "has_canonical_gap": !finding["canonical_gap"].is_null(),
+        "stop_reasons": finding["stop_reasons"],
+        "host_evidence": evidence,
+    }))
+}
+
 #[test]
 fn dependent_test_host_hint_yields_to_the_facade_witness() -> Result<(), String> {
     let mut setup = Setup::new("dependent-test-host");
     setup.facade_lib = "pub const WRITE: fn(&mut Vec<u8>, u8) -> usize = inner::bump_counter;\n";
     setup.facade_test = "use facade::*;\n\n#[test]\nfn payload() {\n    let mut buf = Vec::new();\n    WRITE(&mut buf, 7);\n    assert_eq!(buf, [7]);\n}\n";
-    let finding = finding_for(&setup)?;
-    assert_unlimited_no_path(&finding);
-    assert!(finding.related_tests.is_empty());
-    assert!(finding.canonical_gap.is_some());
-    let hint = "The directly dependent package at `facade/Cargo.toml` hosts indexed tests.";
-    assert!(finding.evidence.iter().any(|line| line.starts_with(hint)));
+    let dependent = rendered_host_evidence(&setup)?;
 
     setup.facade_lib = "pub use inner::*;\npub const WRITE: fn(&mut Vec<u8>, u8) -> usize = inner::bump_counter;\n";
-    let finding = finding_for(&setup)?;
-    assert_limited(&finding);
-    assert!(finding.related_tests.is_empty());
-    assert!(finding.canonical_gap.is_none());
-    assert!(
-        finding
-            .stop_reasons
-            .contains(&StopReason::TransitiveReachUnresolved)
-    );
-    assert!(
-        finding
-            .evidence
-            .iter()
-            .any(|line| line.contains("`payload`") && line.contains("`pub use` names `inner`"))
-    );
-    assert!(!finding.evidence.iter().any(|line| line.starts_with(hint)));
+    let facade = rendered_host_evidence(&setup)?;
 
     setup.facade_deps = "";
     setup.facade_lib = "pub const WRITE: fn(&mut Vec<u8>, u8) -> usize = |buf, byte| { buf.push(byte); buf.len() };\n";
-    let finding = finding_for(&setup)?;
-    assert_unlimited_no_path(&finding);
-    assert!(!finding.evidence.iter().any(|line| line.starts_with(hint)));
+    let independent = rendered_host_evidence(&setup)?;
+    let actual = serde_json::json!({
+        "dependent": dependent,
+        "facade": facade,
+        "independent": independent,
+    });
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/dependent-test-host.check.json"
+    ))
+    .map_err(|e| e.to_string())?;
+    assert_eq!(actual, expected);
     Ok(())
 }
