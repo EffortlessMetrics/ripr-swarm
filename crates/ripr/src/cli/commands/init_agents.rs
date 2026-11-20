@@ -44,9 +44,10 @@ Loop (max 3 rounds per gap):
            Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
            If it prints `next=ripr context ...`, follow that as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
-3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
-           values: every changed field, branch and boundary (below, equal, above). Not
-           `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
+3. WRITE   One focused test next to the related test. Pin what the changed code does now:
+           ripr reads the changed code, so assert its values, not the pre-change ones. Use
+           assert_eq! on exact values: every changed field, branch and boundary (below, equal,
+           above). Not `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
 4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
            once more on the same root, base and saved source (new files need `git add -N PATH`).
            Check its exit status before reading it; do not change inputs before DONE.
@@ -207,8 +208,9 @@ Loop (max 3 rounds per gap):
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` command as printed, then the
            `ripr context ...` it names, if any (JSON).
-3. WRITE   One focused test next to the related test. Assert exact changed values: every
-           changed field, branch and boundary (below, equal, above). {advice}
+3. WRITE   One focused test next to the related test. Pin what the changed code does now
+           (ripr reads the changed code, so assert its values, not the pre-change ones). Assert
+           exact values: every changed field, branch and boundary (below, equal, above). {advice}
 4. VERIFY  Run {verify}; it must pass.
            Then run `ripr check --quiet --format agent` once on the same root, base and
            saved source (new files need `git add -N PATH`). The new test must be in the

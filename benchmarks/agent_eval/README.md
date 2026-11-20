@@ -157,6 +157,31 @@ routes table measures. One run per cell supports no rate claim. It does show
 where the cost goes and which scenarios need to be harder before a quality
 difference can appear.
 
+### Value-pinning trial (2026-11-19, Haiku 5.5, debug ripr from main `332729ac`)
+
+The #12078 trial saw a ripr-arm agent read `arm_result: "450"` and pin the
+pre-change `400`. This run asks whether saying which side of the diff the
+values describe changes that. Task text, the same in every arm: "The last
+commit (see `git show HEAD`) changed behavior in src/lib.rs. Add tests in a
+new file under tests/ that would catch it if that changed behavior were wrong.
+Do not modify src/ or tests/existing.rs. Make sure `cargo test` passes." The
+ripr arms add one line naming `ripr agent brief --base HEAD~1 --json`.
+
+| arm | 4 scenarios × 3 runs | `match_arm_value`, those 3 runs plus 2 more |
+|---|---:|---:|
+| without ripr | 11/12 | 4/5 |
+| ripr before the wording change | 12/12 | 5/5 |
+| ripr with `value_basis` | 12/12 | 5/5 |
+
+The scenarios are `match_arm_value`, `inclusive_range`, `private_helper` and
+`changed_constant_return`; each run cost about 53k to 57k subagent tokens and
+3 to 6 tool calls. The one miss (counted in both columns) is a without-ripr run that pinned `400` and
+left the suite red, so pinning the old value is a task-reading failure, not
+only a ripr one. The trials reach the ceiling in every ripr arm and do not
+measure an effect of the wording; one ripr-arm agent cited `value_basis` as
+its reason for pinning `450`. A discriminating trial needs a task text or
+scenario where the old value is tempting more often.
+
 ## Baseline (debug build)
 
 Route totals are the `routes` rows at the top of `baseline.json`. What they show:

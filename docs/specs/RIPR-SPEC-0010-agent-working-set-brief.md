@@ -519,6 +519,9 @@ focused next action without reading the full repo report:
   same-line rule (#14683). It is omitted when not read; `expression` stays
   the head;
 - `why_now` reason and confidence;
+- when any seam is named, one top-level `value_basis` note saying
+  `expression` and `arm_result` are read from the changed code, so a new test
+  asserts what that code does now instead of the pre-change value (#15361);
 - RIPR stage evidence summary;
 - recommended test placement when available;
 - nearest strong test to imitate when available;
@@ -654,6 +657,7 @@ Planned tests:
 - `match_arm_seam_result_reads_the_heads_line` (#14683 head-only arm result)
 - `brief_names_a_head_only_arm_seam_result` (#14683)
 - `agent_brief_renders_arm_result_only_when_read` (#14683)
+- `agent_brief_names_seam_values_as_changed_behavior_to_pin` (#12078)
 
 ## Implementation Mapping
 

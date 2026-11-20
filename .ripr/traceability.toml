@@ -2015,6 +2015,7 @@ tests = [
   "crates/ripr/src/app/agent_brief.rs::tests::brief_names_a_head_only_arm_seam_result",
   "crates/ripr/src/analysis/seams.rs::tests::match_arm_seam_result_reads_the_heads_line",
   "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_renders_arm_result_only_when_read",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_names_seam_values_as_changed_behavior_to_pin",
   "crates/ripr/src/analysis/mod.rs::tests::owner_symbols_for_lines_names_containing_function",
   "crates/ripr/src/cli/commands.rs::tests::agent_brief_diff_lines_are_normalized_to_requested_root",
   "crates/ripr/src/cli/commands.rs::tests::agent_brief_owner_lines_are_resolved_from_changed_lines",

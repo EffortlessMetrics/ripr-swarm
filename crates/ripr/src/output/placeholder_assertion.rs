@@ -7,8 +7,7 @@
 
 /// Instruction printed under a placeholder assertion so a newcomer does not
 /// paste the comments as if they were values.
-pub(crate) const FILL_IN_NOTE: &str =
-    "replace each /* ... */ comment with a real value from your test before using it";
+pub(crate) const FILL_IN_NOTE: &str = "replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now, not the pre-change value";
 
 /// Note printed under a drafted concrete assertion: the values come from
 /// ripr's static model of the current behavior, not from a run, so the
@@ -101,7 +100,7 @@ mod tests {
         );
         assert_eq!(
             out,
-            "  assertion shape: assert_eq!(total(/* boundary input where a >= b */), /* expected */)\n    (replace each /* ... */ comment with a real value from your test before using it)\n"
+            "  assertion shape: assert_eq!(total(/* boundary input where a >= b */), /* expected */)\n    (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now, not the pre-change value)\n"
         );
     }
 

@@ -19,6 +19,12 @@ pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = "0.2";
 
 const WORKFLOW_DIR: &str = "target/ripr/workflow";
 
+/// Says which side of the diff the seam values describe. In a real-agent
+/// trial an agent read `arm_result: "450"`, doubted the change and pinned the
+/// pre-change `400`, so its test failed on the changed code (#12078). Stated
+/// once per brief, only when it names a seam.
+pub(crate) const VALUE_BASIS_NOTE: &str = "`expression` and `arm_result` come from the changed code: assert what it does now, not the pre-change value. `candidate_values` are inputs. If the change looks wrong, report it.";
+
 pub(crate) fn render_agent_brief_json(
     root: &Path,
     mode: &Mode,
@@ -91,6 +97,11 @@ pub(crate) fn render_agent_brief_json(
         },
         "warnings": warnings,
     });
+    if !selection.top_seams.is_empty()
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert("value_basis".to_string(), Value::from(VALUE_BASIS_NOTE));
+    }
     if let Some(projection) = causal_projection
         && let Some(object) = value.as_object_mut()
     {
@@ -606,6 +617,56 @@ mod tests {
         let named = render(&selection)?;
         assert_eq!(named["top_seams"][0]["arm_result"], "450", "{named}");
         assert_eq!(named["top_seams"][0]["expression"], expression, "{named}");
+        Ok(())
+    }
+
+    /// #12078 trial: an agent shown `arm_result: "450"` pinned the
+    /// pre-change value. A brief that names a seam says once that its values
+    /// are the changed code's behavior to pin; an empty brief adds nothing.
+    #[test]
+    fn agent_brief_names_seam_values_as_changed_behavior_to_pin() -> Result<(), String> {
+        let named_seams = vec![classified()];
+        let no_seams: Vec<ClassifiedSeam> = Vec::new();
+        let config = RiprConfig::default();
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let render = |seams: &[ClassifiedSeam]| {
+            let selection = select_agent_brief_seams(
+                seams,
+                &working_set,
+                3,
+                AgentBriefPolicy::from_config(&config),
+            );
+            render_agent_brief_json(
+                Path::new("repo"),
+                &Mode::Draft,
+                &config,
+                &working_set,
+                &selection,
+            )
+            .and_then(|rendered| {
+                serde_json::from_str::<Value>(&rendered).map_err(|err| err.to_string())
+            })
+        };
+        let named = render(&named_seams)?;
+        assert_eq!(
+            named["top_seams"].as_array().map(Vec::len),
+            Some(1),
+            "{named}"
+        );
+        assert_eq!(named["value_basis"], VALUE_BASIS_NOTE, "{named}");
+        assert!(VALUE_BASIS_NOTE.contains("assert what it does now"));
+        assert!(VALUE_BASIS_NOTE.contains("not the pre-change value"));
+
+        let empty = render(&no_seams)?;
+        assert_eq!(
+            empty["top_seams"].as_array().map(Vec::len),
+            Some(0),
+            "{empty}"
+        );
+        assert!(empty.get("value_basis").is_none(), "{empty}");
         Ok(())
     }
 }
