@@ -58,12 +58,13 @@ fold inside an ordinary feature PR.
 
 ```bash
 cargo xtask fold-changelog                       # dry run: print the plan, write nothing
-cargo xtask check-changelog-fragments            # must pass before any --write
-cargo xtask fold-changelog --write --limit 150   # fold and delete one batch
+# preflight, then fold and delete one batch; the write runs only if the check passes
+cargo xtask check-changelog-fragments && cargo xtask fold-changelog --write --limit 150
 ```
 
 The default is a dry run. `--limit N` takes the first N fragments in name
-order so each PR stays within 150 files (the candidate-admission size limit);
+order, so a 150-fragment batch plus `CHANGELOG.md` is 151 files, under the
+160-file candidate-admission cap;
 rerun for the next batch. The command refuses, naming the file, any fragment
 with an unknown section, a missing section line or another format violation,
 and any fragment whose whole entry text already appears in `Unreleased`, and
@@ -96,8 +97,8 @@ inputs are already rewritten; the preflight check catches it first:
 
 ```bash
 cargo xtask fold-changelog --release-cut           # dry run: plan only
-cargo xtask check-changelog-fragments              # preflight: must pass first
-cargo xtask fold-changelog --write --release-cut   # fold, delete, verify
+# preflight, then fold, delete, verify; the write runs only if the check passes
+cargo xtask check-changelog-fragments && cargo xtask fold-changelog --write --release-cut
 ```
 
 It prints a warning when the PR (every fragment plus `CHANGELOG.md`) would exceed
