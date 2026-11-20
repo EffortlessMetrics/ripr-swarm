@@ -34,7 +34,7 @@ ripr init --ci github
 ```
 
 Add `--dry-run` to print the workflow without writing it. The generated
-workflow reads two repository variables and leaves both unset, so it is
+workflow reads two gate repository variables and leaves both unset, so it is
 advisory only: it summarizes findings and uploads reports, and the job never
 fails.
 
