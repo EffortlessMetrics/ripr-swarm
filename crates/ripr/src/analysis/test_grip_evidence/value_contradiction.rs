@@ -873,6 +873,12 @@ pub(in crate::analysis) fn every_owner_call_separates(
         if mentions == 0 {
             continue;
         }
+        // As in `owner_change_visibility`: an ignored test never runs, so its
+        // calls reach nothing, and a `should_panic` test passes on either
+        // version by panicking, so neither supplies a reaching call.
+        if crate::analysis::classify::is_ignored(test) || super::is_should_panic(test) {
+            continue;
+        }
         if case_row_bindings(test).is_some()
             || test
                 .let_bindings
