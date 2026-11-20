@@ -1,0 +1,13 @@
+# Registers the folded module-constant boundary and identity-alias tests (#15358) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_literal_chain_folds_through_arithmetic_and_separators",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::every_unrecognised_shape_refuses_to_fold",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_non_module_level_binding_or_second_declaration_refuses",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::an_exact_input_at_the_folded_boundary_witnesses_the_changed_comparison",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_refused_chain_never_witnesses_the_boundary_input",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::an_identity_alias_of_the_parameter_witnesses_at_its_own_position",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_literal_in_another_parameters_position_does_not_witness",
+  "crates/ripr/src/analysis/language/typescript/tests/folded_module_constant_tests.rs::a_local_that_transforms_the_parameter_does_not_witness",
+]
