@@ -238,12 +238,15 @@ Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
 print as one row that names the members' lines, the count, the owner and the
 kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
-when there are at most three runs, so a row never names a line that no member
-is on; more runs print the covering span with the distinct line count
-(`1078-1241 (31 distinct lines)`) (#14682). For example:
+when there are at most three runs, so such a row never names a line that no
+member is on. More runs print the covering span with the count of distinct
+member lines inside it, not the span length (`1078-1241 (5 distinct lines)`
+means 5 member lines somewhere in the 164-line span); that fallback row can
+name lines between members that no member is on (#14682). The fallback shape is
+pinned end to end by `fixtures/hidden_row_span_fallback`. For example:
 
 ```text
-- src/lib.rs:1078-1241 (31 distinct lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (5 distinct lines) (weak, lower-priority candidate); 7 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single
