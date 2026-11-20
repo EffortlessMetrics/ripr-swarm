@@ -8559,8 +8559,8 @@ fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> 
 
     assert_eq!(
         candidate_relations(balance, &tests),
-        vec![("test_balance_property".to_string(), "same_stem")],
-        "`._balance` is not `.balance`; only the property read references the owner"
+        vec![("test_balance_property".to_string(), "property_read")],
+        "`._balance` is not `.balance`; only the property read relates, as a property read (#15490)"
     );
     assert_eq!(
         candidate_relations(close, &tests),

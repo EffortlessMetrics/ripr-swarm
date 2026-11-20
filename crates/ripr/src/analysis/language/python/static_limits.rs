@@ -186,10 +186,24 @@ pub(super) fn static_limit_for_focused_change(
                 .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
         })
         .map(CliSubcommand::decorator);
+    // A plain builtin `@property` stops being an indirection only once a
+    // related test's row-selected strong assertion compares a direct read of
+    // it with a literal (`property_read.rs`, #15490); a bare truthiness read,
+    // any other shape or any doubt about the builtin keeps the limit.
+    let read_property = owner.decorators.iter().any(|name| name == "property")
+        && super::property_read::property_read_credit(
+            owner,
+            owner_source,
+            line_text,
+            focus,
+            related_candidates,
+        )
+        .is_some();
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
             && !is_forwarding_decorator(decorator, owner, owner_source)
             && reached_subcommand_decorator.as_ref() != Some(*decorator)
+            && (!read_property || decorator.as_str() != "property")
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,

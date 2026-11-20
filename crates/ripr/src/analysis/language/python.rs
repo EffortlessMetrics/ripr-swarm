@@ -422,6 +422,7 @@ mod param_fixtures;
 mod parametrize;
 mod parse_budget;
 mod probe_shape;
+mod property_read;
 mod reexports;
 mod related_tests;
 mod repo;
@@ -2712,6 +2713,8 @@ mod helper_owner_call_tests;
 mod imported_literal_tests;
 #[cfg(test)]
 mod owner_result_field_tests;
+#[cfg(test)]
+mod property_read_tests;
 #[cfg(test)]
 mod repo_module_identity_tests;
 #[cfg(test)]

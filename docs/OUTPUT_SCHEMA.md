@@ -2867,7 +2867,9 @@ The evidence-first fields are additive in schema `0.2`:
   (reason `python_unread_owner_result_field_with_bounded_repair_route`,
   RIPR-SPEC-0028); every other orthogonal card stays undelegated. The exact
   repaired read on that binding surfaces `direct` with
-  `strong_oracle_observes_owner_result_field`.
+  `strong_oracle_observes_owner_result_field`. A strong literal comparison
+  of a direct read of a plain builtin `@property` owner surfaces `direct`
+  with `strong_oracle_observes_property_read` (RIPR-SPEC-0238 Decision 10).
 
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:

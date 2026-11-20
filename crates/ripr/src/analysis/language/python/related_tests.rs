@@ -55,6 +55,12 @@ pub(super) enum PythonRelationKind {
     ConstructCall,
     ConstructorCall,
     LocalBinding,
+    /// The test reads a plain builtin `@property` owner as an attribute of a
+    /// construction of its class, or of a local bound once to one
+    /// (`property_read.rs`, #15490). Oracle-eligible, but only the strong
+    /// exact read `property_read_credit` establishes lifts the owner's
+    /// `decorator_indirection` limit.
+    PropertyRead,
     DunderProtocol,
     ProtocolEntryCall,
     /// The test's assertion statically depends on an edited module-level
@@ -95,6 +101,7 @@ impl PythonRelationKind {
             Self::ConstructCall => 4,
             Self::ConstructorCall => 4,
             Self::LocalBinding => 4,
+            Self::PropertyRead => 4,
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
             Self::ModuleValueCall => 4,
@@ -119,6 +126,7 @@ impl PythonRelationKind {
                 | Self::ConstructCall
                 | Self::ConstructorCall
                 | Self::LocalBinding
+                | Self::PropertyRead
                 | Self::ProtocolEntryCall
                 | Self::ModuleValueCall
                 | Self::ModuleValueRead
@@ -138,6 +146,7 @@ impl PythonRelationKind {
             Self::ConstructCall => "construct_call",
             Self::ConstructorCall => "constructor_call",
             Self::LocalBinding => "local_binding",
+            Self::PropertyRead => "property_read",
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
             Self::ModuleValueCall => "module_value_call",
@@ -1057,6 +1066,9 @@ fn related_test_relation_scan(
     }
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
+    }
+    if super::property_read::property_read_relation(test, owner) {
+        return Some(PythonRelationKind::PropertyRead);
     }
     if fixture_owner_call(test, owner) {
         return Some(PythonRelationKind::FixtureOwnerCall);
