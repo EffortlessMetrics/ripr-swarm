@@ -397,7 +397,7 @@ fn stale_pins(
 
 /// `Some(true)` only when `new` is statically known not to be `old` or a
 /// subclass of it; `None` when either hierarchy cannot be read exactly.
-fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
+pub(super) fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
     let Mod::Module(module) = parse_module_result(Path::new("<module>"), source).ok()? else {
         return None;
     };
@@ -537,7 +537,7 @@ fn overrides_construction(class_body: &[Stmt]) -> bool {
 /// The single base of a builtin exception class (CPython 3 hierarchy). Names
 /// with several bases (`ExceptionGroup`) and aliases (`IOError`,
 /// `EnvironmentError`) are absent, so they never resolve.
-fn builtin_exception_parent(name: &str) -> Option<&'static str> {
+pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
     Some(match name {
         "SystemExit" | "KeyboardInterrupt" | "GeneratorExit" | "Exception"
         | "BaseExceptionGroup" => "BaseException",
@@ -580,7 +580,7 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
 /// first positional argument or the `expected_exception=` keyword (never both),
 /// each a plain name or a non-empty tuple of plain names. A dotted name, a
 /// starred or computed element, or a duplicated keyword is unreadable.
-fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
+pub(super) fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
     let Ok(Mod::Module(module)) =
         parse_module_result(Path::new("<expected-class>"), assertion_text.trim())
     else {
@@ -680,7 +680,7 @@ pub(super) fn imported_raised_class_swap(
 /// could alias an ancestor of the other class. The arguments, keywords
 /// and cause do not change which class is raised, so a message built with an
 /// f-string or a variable still names its type (#13622 review).
-fn raised_type_name(line: &str) -> Option<String> {
+pub(super) fn raised_type_name(line: &str) -> Option<String> {
     let Mod::Module(module) = parse_module_result(Path::new("raise.py"), line.trim()).ok()? else {
         return None;
     };

@@ -136,3 +136,99 @@ fn imported_raise_swap_guard_declines_other_shapes() -> Check {
     assert_import_limit("aliased", &classify(&aliased, &tests, Some(OLD), NEW)?);
     Ok(())
 }
+
+fn matching_tests(imports: &str, expected: &str) -> String {
+    format!(
+        "import pytest\n{imports}\n\ndef test_rejects():\n    with pytest.raises({expected}, match=\"invalid version\"):\n        parse_release(\"1.x\")\n"
+    )
+}
+
+const IMPORT_RELEASE: &str = "from verlib.version import parse_release\n";
+
+#[test]
+fn match_pattern_on_a_base_class_does_not_credit_the_class_swap() -> Check {
+    for expected in ["ValueError", "Exception", "(ValueError, InvalidVersion)"] {
+        let tests = matching_tests(
+            &format!("from verlib.errors import InvalidVersion\n{IMPORT_RELEASE}"),
+            expected,
+        );
+        let finding = classify(SOURCE, &tests, Some(OLD), NEW)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{expected}: {finding:?}"
+        );
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{expected}");
+    }
+    Ok(())
+}
+
+#[test]
+fn match_pattern_naming_the_new_imported_class_stays_exposed() -> Check {
+    let tests = matching_tests(
+        &format!("from verlib.errors import InvalidVersion\n{IMPORT_RELEASE}"),
+        "InvalidVersion",
+    );
+    let finding = classify(SOURCE, &tests, Some(OLD), NEW)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The same name bound from another module is not the owner's class.
+    let other = matching_tests(
+        &format!("from verlib.other import InvalidVersion\n{IMPORT_RELEASE}"),
+        "InvalidVersion",
+    );
+    let finding = classify(SOURCE, &other, Some(OLD), NEW)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // An aliased import of another class is not read either.
+    let aliased = matching_tests(
+        &format!("from verlib.errors import Other as InvalidVersion\n{IMPORT_RELEASE}"),
+        "InvalidVersion",
+    );
+    let finding = classify(SOURCE, &aliased, Some(OLD), NEW)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn match_pattern_on_the_old_builtin_does_not_credit_a_builtin_swap() -> Check {
+    let source = "def parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise KeyError(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
+    let old = "        raise ValueError(\"invalid version\")";
+    let new = "        raise KeyError(\"invalid version\")";
+    // An old-class expectation (`ValueError`) fails against the unrelated
+    // `KeyError`, which the edit does notice; only base classes pass both.
+    for expected in ["Exception", "LookupError"] {
+        let tests = matching_tests(IMPORT_RELEASE, expected);
+        let finding = classify(source, &tests, Some(old), new)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{expected}: {finding:?}"
+        );
+    }
+    let tests = matching_tests(IMPORT_RELEASE, "KeyError");
+    let finding = classify(source, &tests, Some(old), new)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn match_pattern_on_a_base_class_does_not_credit_a_local_subclass_swap() -> Check {
+    let source = "class InvalidVersion(ValueError):\n    pass\n\n\ndef parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise InvalidVersion(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
+    let old = "        raise ValueError(\"invalid version\")";
+    let new = "        raise InvalidVersion(\"invalid version\")";
+    let imports = format!("from verlib.version import InvalidVersion, parse_release\n");
+    let finding = classify(
+        source,
+        &matching_tests(&imports, "ValueError"),
+        Some(old),
+        new,
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    let finding = classify(
+        source,
+        &matching_tests(&imports, "InvalidVersion"),
+        Some(old),
+        new,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
