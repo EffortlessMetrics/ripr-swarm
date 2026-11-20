@@ -170,7 +170,6 @@ fn mixed_already_folded_and_new_entries_are_refused_before_writing() -> Result<(
             .iter()
             .map(|(name, _)| fs::read(root.join("changelog.d").join(name)))
             .collect();
-        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
 
         let err = result
             .err()
@@ -185,6 +184,7 @@ fn mixed_already_folded_and_new_entries_are_refused_before_writing() -> Result<(
         for (actual, (_, original)) in fragment_bytes.into_iter().zip(&fragments) {
             assert_eq!(actual.map_err(|e| e.to_string())?, original.as_bytes());
         }
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
