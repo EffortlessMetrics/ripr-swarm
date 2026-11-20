@@ -1,0 +1,8 @@
+[package]
+name = "repo_exposure_rebound_read_macro_unselected_arm_subject"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "repo_exposure_rebound_read_macro_unselected_arm_subject"
+path = "src/lib.rs"

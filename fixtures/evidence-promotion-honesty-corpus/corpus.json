@@ -205,7 +205,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-read-macro-unselected-arm.json"
   ],
   "cases": [
     {
@@ -12400,6 +12401,23 @@
           "file": "src/lib.rs",
           "oracle_strength": "strong",
           "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_rebound_read_macro_unselected_arm_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-read-macro-unselected-arm.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/rebound-read-macro-unselected-arm",
+      "vector": "repo_exposure_inputs_read_through_a_rebound_read_macro_cannot_activate_an_arm_they_do_not_select",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::price_cents",
+          "expression": "Size::Medium =>",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
         }
       ]
     },
