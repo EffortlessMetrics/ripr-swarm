@@ -193,7 +193,7 @@ cargo xtask publish-dry-run   # packages from the publish stage; see Crate tarba
 `ripr` depends on `ripr-contract = "=<version>"` (ADR 0027), so a bare
 `cargo publish -p ripr --dry-run` fails pre-publish until `ripr-contract` exists
 on crates.io. `cargo xtask publish-dry-run` is the canonical lockstep rehearsal
-(`cargo publish -p ripr-contract --dry-run`, vendored `ripr` packaging, and
+(`cargo publish -p ripr-contract --dry-run`, native two-package Cargo rehearsal, and
 unlocked check against the packaged `ripr-contract`).
 
 For the #1609-qualified path, the existing corpus also accepts the complete
