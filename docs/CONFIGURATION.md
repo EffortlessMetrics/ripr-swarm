@@ -74,12 +74,12 @@ working directory does not load the checkout's config by itself.
 resolve to the checkout's `target/`. Create that directory before building with
 a separate output directory, especially in a fresh worktree.
 
-On Windows, if a deep checkout makes a linker temp path too long, use a clone
-or worktree at a short path such as `C:\src\ripr` on a drive with enough space.
-From that checkout root, create `target` if needed and run Cargo there. This
-shortens the forced temp path while keeping scratch under the checkout. See the
-[workspace linker temp notes](agent-context/validation.md#workspace-linker-temp-redirect)
-for the missing-directory failure.
+On Windows, if a deep checkout makes a linker temp path too long, clone or
+add a worktree in a short directory such as `ripr` directly under the root of
+a drive with enough space. From that checkout root, create `target` if needed
+and run Cargo there. This shortens the forced temp path while keeping scratch
+under the checkout. For the missing-directory failure, see the
+[workspace linker temp notes](agent-context/validation.md#workspace-linker-temp-redirect).
 
 ## Defaults-first operator profile
 
