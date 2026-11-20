@@ -9157,11 +9157,18 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     };
     // #15277: a turbofish (`name::<u8>(..)`, `recv.name::<u8>(..)`) names
     // the same function; it only fixes the generic arguments.
-    let opening = call_start + name.len() + turbofish_len(&operand[call_start + name.len()..]);
+    let turbofish = turbofish_len(&operand[call_start + name.len()..]);
+    let opening = call_start + name.len() + turbofish;
     if !operand[opening..].starts_with('(') {
         return None;
     }
     let masked = mask_comments_and_strings(operand);
+    // Argument readers find the call by its literal `name(`, so a turbofish
+    // call whose arguments mention the name again (`f::<u8>(f(15))`) would
+    // lend them the inner call's arguments: refuse it.
+    if turbofish > 0 && whole_word_count(&masked, name) != 1 {
+        return None;
+    }
     let closing = matching_close(&masked, opening, b'(', b')')?;
     if !operand[closing + 1..].trim().is_empty() {
         return None;
@@ -9176,8 +9183,9 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
 }
 
 /// The byte length of a turbofish (`::<u8, Vec<T>>`) opening `text`, or 0
-/// when `text` does not open with one or its brackets do not close. A `->`
-/// inside a fn-pointer argument is not a closing bracket.
+/// when `text` does not open with one, its brackets do not close, or it holds
+/// a parenthesis, brace or `;` (fn-pointer or `Fn()` arguments, const
+/// blocks, array lengths), which this reading refuses.
 fn turbofish_len(text: &str) -> usize {
     let Some(rest) = text.strip_prefix("::<") else {
         return 0;
@@ -9187,7 +9195,6 @@ fn turbofish_len(text: &str) -> usize {
     for (at, byte) in bytes.iter().enumerate() {
         match byte {
             b'<' => depth += 1,
-            b'>' if at > 0 && bytes[at - 1] == b'-' => {}
             b'>' => {
                 depth -= 1;
                 if depth == 0 {

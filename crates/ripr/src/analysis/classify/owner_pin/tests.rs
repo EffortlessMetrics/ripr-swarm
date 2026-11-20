@@ -14982,8 +14982,10 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
 
 /// #15277: a turbofish names the same function, so `doubled::<u8>(5)` and
 /// `s.apply::<u8>(4)` are the owner calls their plain spellings are. An
-/// unclosed turbofish, a path value without a call, or anything chained
-/// after the call is no owner call.
+/// unclosed turbofish, a path value without a call, anything chained after
+/// the call, a turbofish this reading refuses (fn-pointer or const-block
+/// arguments) and a turbofish call that mentions the name again in its
+/// arguments are no owner call.
 #[test]
 fn a_turbofish_call_has_the_plain_call_shape() {
     assert!(matches!(
@@ -14992,10 +14994,6 @@ fn a_turbofish_call_has_the_plain_call_shape() {
     ));
     assert!(matches!(
         owner_call_shape("doubled::<Vec<u8>>(v)", "doubled"),
-        Some(CallShape::Bare)
-    ));
-    assert!(matches!(
-        owner_call_shape("doubled::<fn(u8) -> u8>(f)", "doubled"),
         Some(CallShape::Bare)
     ));
     assert!(matches!(
@@ -15008,6 +15006,9 @@ fn a_turbofish_call_has_the_plain_call_shape() {
         "doubled::<u8>(5).min(3)",
         "doubled::<u8> (5)",
         "doubled::other(5)",
+        "doubled::<fn(u8) -> u8>(f)",
+        "doubled::<{ N + 1 }>(5)",
+        "doubled::<u8>(doubled(5))",
     ] {
         assert!(owner_call_shape(operand, "doubled").is_none(), "{operand}");
     }

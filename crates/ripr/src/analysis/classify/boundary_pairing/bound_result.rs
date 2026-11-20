@@ -75,7 +75,10 @@ pub(super) fn boundary_call<'a>(
     let text = value.syntax().text().to_string();
     // Module/import resolution does not prove that a bare call escaped a
     // local value binding, including a raw-identifier spelling of its name.
-    if super::super::owner_pin::direct_call_name(&text) == Some(owner.name.as_str())
+    // A turbofish call (`name::<u8>(..)`, #15277) is the same bare call, so
+    // it meets the same local-binding refusal.
+    if (super::super::owner_pin::direct_call_name(&text) == Some(owner.name.as_str())
+        || super::super::owner_pin::is_whole_free_owner_call(&text, &owner.name))
         && (fn_name_binding_count(test_body, &owner.name) != Some(0)
             || fn_name_binding_count(test_body, &format!("r#{}", owner.name)) != Some(0))
     {
