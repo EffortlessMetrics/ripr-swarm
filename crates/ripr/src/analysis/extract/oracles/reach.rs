@@ -194,7 +194,7 @@ struct Groups {
     /// Groups that are a macro invocation's input (`name!(..)`, `name! {..}`,
     /// `macro_rules! name {..}`).
     macro_inputs: Vec<(usize, usize)>,
-    /// A local value item's name and the block in which it is visible,
+    /// An unadorned local value item's name and the block in which it is visible,
     /// including uses before its declaration.
     variant_items: Vec<(Option<usize>, &'static str)>,
 }
@@ -225,9 +225,10 @@ impl Groups {
                 }
                 b'c' | b'f' if index == 0 || !is_ident_byte(bytes[index - 1]) => {
                     let end = ident_end(bytes, index);
+                    // An attributed item may be compiled out (e.g. #[cfg(any())]).
                     if matches!(&bytes[index..end], b"const" | b"fn")
                         && last_code_byte_before(bytes, index)
-                            .is_none_or(|at| matches!(bytes[at], b'{' | b';' | b'}' | b']'))
+                            .is_none_or(|at| matches!(bytes[at], b'{' | b';' | b'}'))
                     {
                         let name = skip_whitespace(bytes, end);
                         if let Some(variant) = variant_name(&bytes[name..ident_end(bytes, name)]) {
