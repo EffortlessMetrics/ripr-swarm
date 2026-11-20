@@ -8211,8 +8211,18 @@ fn a_clone_field_pin_refuses_competitors_and_unreadable_shapes() {
     if let Some(pin) = pin {
         assert_eq!(admitted_texts(&index, &pin).len(), 2);
     }
-    let competitor = WINDOW_LIB.to_string()
+    // #15276: a `fn clone` on another named type cannot take a `Window`
+    // receiver, so it no longer competes; an inherent `clone` on `Window`
+    // itself still does.
+    let other_type = WINDOW_LIB.to_string()
         + "pub struct Other;\nimpl Other {\n    pub fn clone(&self) -> u8 {\n        0\n    }\n}\n";
+    let (index, pin) = clone_field_pin(&other_type, WINDOW_TESTS);
+    assert!(pin.is_some(), "a `clone` on another named type does not compete");
+    if let Some(pin) = pin {
+        assert!(!admitted_texts(&index, &pin).is_empty());
+    }
+    let competitor = WINDOW_LIB.to_string()
+        + "impl Window {\n    pub fn clone(&self) -> u8 {\n        0\n    }\n}\n";
     let tried = WINDOW_LIB.replace(
         "            end: self.end,\n        }\n    }\n}\n",
         "            end: check(self.end)?,\n        }\n    }\n}\n",
