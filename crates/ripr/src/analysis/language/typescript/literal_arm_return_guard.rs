@@ -7,7 +7,11 @@
 //! exact assertion whose expected value is another arm's result (`'two'`)
 //! passes on both versions, so reach plus a strong oracle does not
 //! discriminate the change: only an assertion that expects `'one'`, or the
-//! arm's new literal, can.
+//! arm's new literal, can. When another arm also returns the new literal, an
+//! assertion expecting it is that arm's result only when its call's literal
+//! inputs provably leave the changed arm closed (a readable `if` condition or
+//! lone `case` label); a stacked label, `default` or unreadable selector
+//! keeps the verdict.
 //!
 //! The #8569 guard-entry rule withdraws credit only when every call
 //! provably leaves the arm untaken, which a computed discriminant

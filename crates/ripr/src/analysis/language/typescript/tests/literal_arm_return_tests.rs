@@ -337,6 +337,11 @@ fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), Stri
             "    const result = dir('silver');\n    expect(result).toBe(7);\n",
         ),
         ("shared-computed", "    expect(dir(pick())).toBe(7);\n"),
+        ("shared-spread", "    expect(dir(...['gold'])).toBe(7);\n"),
+        (
+            "shared-double-quote",
+            "    expect(dir(\"silver\")).toBe(7);\n",
+        ),
         (
             "shared-gold-and-silver",
             "    expect(dir('gold')).toBe(7);\n    expect(dir('silver')).toBe(7);\n",
@@ -379,6 +384,22 @@ fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), Stri
             finding.missing
         );
     }
+    // A changed `default` arm reads no selecting condition, so a call to
+    // another arm expecting the shared new literal keeps the verdict.
+    let finding = finding_at(
+        "shared-default-arm",
+        PRICE,
+        8,
+        "      return 0;",
+        "      return 7;",
+        &vitest("    expect(dir('gold')).toBe(7);\n"),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
     Ok(())
 }
 
