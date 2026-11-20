@@ -1192,7 +1192,10 @@ cargo xtask release-readiness --version "$release_version"
 ```
 
 `cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
-`ripr-contract`, packages `ripr` against a vendored source tree, then builds
+`ripr-contract`, packages `ripr` from the publish stage (a copy of the
+workspace whose `ripr` source has no inline `#[cfg(test)]` modules, #14198)
+against a vendored source tree, fails when a packaged crate is over the
+crates.io default upload limit, then builds
 the packaged crate the way `cargo install ripr` without `--locked` does: it
 unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
 catches a dependency that only compiles under the committed lock (#3787). A
@@ -3170,6 +3173,15 @@ unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
 one docs-only way to break a `proof_refs` entry).
+
+Markdown contract tests (#14986, #14998): the docs-gate always runs the `xtask`
+test binaries that pin agent/public-guide markdown. When a docs-only PR changes
+`README.md`, a top-level `docs/*.md`, `docs/interop/*.md`, `docs/status/*.md`,
+`docs/how-to/first-rust-test.md` or `docs/ci/coverage.md`, it also runs the
+`ripr` binaries `cli_reference_doc`, `troubleshooting_guide`, `user_journeys`,
+`documented_commands` and `generated_review_workflow` (which pins this file's
+`Run RIPR` step) and the `repo-policy` binary `future_clippy`; other docs-only
+PRs skip those test builds.
 
 ## Changelog Fold
 

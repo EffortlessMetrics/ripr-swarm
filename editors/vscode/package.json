@@ -170,7 +170,7 @@
         "ripr.server.downloadBaseUrl": {
           "type": "string",
           "default": "",
-          "description": "Override the server manifest base URL for internal mirrors. Empty uses GitHub Releases.",
+          "description": "The https:// address of the folder that holds the ripr release files (the manifest and archives), for an internal mirror. Give the folder, not the manifest file. Empty uses GitHub Releases.",
           "scope": "resource"
         },
         "ripr.check.mode": {
