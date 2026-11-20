@@ -327,17 +327,7 @@ const WEAK_ONLY: &[WeakOnly] = &[
 fn conditional_fixture_reimport_requires_the_asyncio_provider() -> Result<(), String> {
     let prefix = "import sys\nimport pytest\nfrom pytest_asyncio import fixture as fx\nfrom src.cart import Cart\n";
     let test = "\n@fx\nasync def cart():\n    return Cart(200)\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert await cart.discounted() == 190\n";
-    for (binding, exposed) in [
-        ("", true),
-        ("if fx is None:\n    pass\n", true),
-        ("if False:\n    from pytest import fixture as fx\n", true),
-        ("from pytest import fixture as fx\n", false),
-        ("if True:\n    from pytest import fixture as fx\n", false),
-        (
-            "if sys.platform == 'win32':\n    from pytest import fixture as fx\n",
-            false,
-        ),
-    ] {
+    let classify = |binding: &str| -> Result<ExposureClass, String> {
         let finding = check_style(
             "conditional fixture provider",
             &[("src/cart.py", ASYNC_CART)],
@@ -348,11 +338,28 @@ fn conditional_fixture_reimport_requires_the_asyncio_provider() -> Result<(), St
             !finding.related_tests.is_empty(),
             "{binding:?}: {finding:?}"
         );
-        assert_eq!(
-            finding.class == ExposureClass::Exposed,
-            exposed,
-            "{binding:?}: {finding:?}"
-        );
+        Ok(finding.class)
+    };
+    let plain = classify("from pytest import fixture as fx\n")?;
+    assert_ne!(plain, ExposureClass::Exposed);
+    for (binding, expected) in [
+        ("", &ExposureClass::Exposed),
+        ("if fx is None:\n    pass\n", &ExposureClass::Exposed),
+        (
+            "if 0:\n    from pytest import fixture as fx\n",
+            &ExposureClass::Exposed,
+        ),
+        ("if True:\n    from pytest import fixture as fx\n", &plain),
+        (
+            "if False:\n    pass\nelse:\n    from pytest import fixture as fx\n",
+            &plain,
+        ),
+        (
+            "if sys.platform == 'win32':\n    from pytest import fixture as fx\n",
+            &plain,
+        ),
+    ] {
+        assert_eq!(&classify(binding)?, expected, "{binding:?}");
     }
     Ok(())
 }

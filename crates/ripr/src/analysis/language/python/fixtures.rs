@@ -11,6 +11,7 @@
 
 use super::admission::PythonAssertionAdmission;
 use super::module_constants::mentions_identifier;
+use super::oracles::constant_truth;
 use super::owners_tests::{decorator_names, test_imports};
 use super::related_tests::{import_source_module_matches_owner, test_body_binds_local};
 use super::source_utils::{SourceText, text_for_range};
@@ -131,13 +132,7 @@ fn update_asyncio_aliases(stmt: &Stmt, aliases: &[String], asyncio_aliases: &mut
     // A conditional re-import can revoke an existing provider. Keep it only
     // when it survives every possible arm. A read of the alias binds nothing.
     if let Stmt::If(branch) = stmt {
-        let condition = match &*branch.test {
-            Expr::Constant(value) => match value.value {
-                Constant::Bool(value) => Some(value),
-                _ => None,
-            },
-            _ => None,
-        };
+        let condition = constant_truth(&branch.test);
         for (suite, reachable) in [
             (&branch.body, condition != Some(false)),
             (&branch.orelse, condition != Some(true)),
