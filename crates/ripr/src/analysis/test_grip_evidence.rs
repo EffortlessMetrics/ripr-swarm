@@ -3515,13 +3515,7 @@ fn weaken_unselected_arm(
     let Some(owner) = owner_fn else {
         return;
     };
-    if let Some(fact) = super::classify::repo_seam_unselected_arm(
-        seam.file(),
-        seam.display_line(),
-        owner,
-        related,
-        index,
-    ) {
+    if let Some(fact) = super::classify::repo_seam_unselected_arm(seam, owner, related, index) {
         *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
         missing.push(fact);
         return;
@@ -3536,13 +3530,7 @@ fn weaken_unselected_arm(
         .next()
         .unwrap_or(seam.expression());
     if seam.expression().trim_end().ends_with("=>")
-        && !super::classify::repo_seam_arm_selected(
-            seam.file(),
-            seam.display_line(),
-            owner,
-            related,
-            index,
-        )
+        && !super::classify::repo_seam_arm_selected(seam, owner, related, index)
     {
         *activate = StageEvidence::new(
             StageState::Unknown,

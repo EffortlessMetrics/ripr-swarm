@@ -561,6 +561,16 @@ implies but does not spell out:
   leaves `static_unknown` names its unselected arm, and none gains `exposed`
   without a selecting call and an exact oracle in one test.
 
+### Same-line repo seams (#15629)
+
+The repo-seam inventory can identify the exact arm when several arms share a
+source line. Read the arm head at its recorded source position and apply
+first-match ordering across all earlier arms, including those on that line.
+A selecting input can establish activation. A distinct readable sibling can
+still be named as missing. When an earlier arm takes an input that could also
+fit the target arm, the target's activation remains unknown. Guards and
+unreadable patterns keep their conservative treatment.
+
 ## Non-Goals
 
 - No guard evaluation.

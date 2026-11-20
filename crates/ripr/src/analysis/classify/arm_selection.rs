@@ -186,6 +186,9 @@ pub(in crate::analysis) struct ArmSelector {
     /// order. `None` for an arm that cannot be read (a guard): such an arm
     /// may take any input first.
     earlier: Vec<Option<Vec<PatternHead>>>,
+    /// A repo seam starts after other syntax on this line. A prior match
+    /// does not name this arm as a missing input when its pattern overlaps.
+    inline_arm: bool,
     pattern_text: String,
     scrutinee: String,
     /// The scrutinee's type name (`Mode` for `mode: Mode`, the impl's self
@@ -397,7 +400,7 @@ pub(in crate::analysis) fn error_path_arm_probe(
     // The arm's result must be the owner's return value: a `let r = match ..;`
     // read later may remap the error (`r.map_err(..)`), and then a pin of the
     // removed variant passes before and after the change.
-    if !enclosing_match(owner, probe.location.line, true)?.match_is_tail {
+    if !enclosing_match(owner, probe.location.line, 1, true)?.match_is_tail {
         return None;
     }
     let mut arm = probe.clone();
@@ -498,6 +501,7 @@ impl ArmSelector {
         } = enclosing_match(
             owner,
             probe.location.line,
+            probe.location.column,
             matches!(changed_from, Some(Some(_))),
         )?;
         let (scrutinee, arithmetic) = match integer_scrutinee(&scrutinee) {
@@ -622,6 +626,7 @@ impl ArmSelector {
         Some(Self {
             alternatives,
             earlier,
+            inline_arm: probe.location.column > 1,
             pattern_text,
             scrutinee,
             scrutinee_type,
@@ -1347,7 +1352,16 @@ impl ArmSelector {
             .flatten()
             .any(|arm| judge_alternatives(arm, input) == ArmSelection::Selects)
         {
-            return ArmSelection::SelectsOther;
+            // The earlier arm can take this input. Do not name the inline
+            // arm as a missing discriminator unless its own pattern also
+            // rules the input out (for example, a different variant).
+            return if self.inline_arm
+                && judge_alternatives(alternatives, input) != ArmSelection::SelectsOther
+            {
+                ArmSelection::Unknown
+            } else {
+                ArmSelection::SelectsOther
+            };
         }
         match judge_alternatives(alternatives, input) {
             ArmSelection::Selects => {}
@@ -2690,10 +2704,10 @@ fn parameter_name(parameter: &str) -> &str {
         .trim()
 }
 
-/// The enclosing `match` of the arm that starts on `arm_line`: its
+/// The enclosing `match` of the arm at `arm_line` and `arm_column`: its
 /// scrutinee and the patterns of the arms before it, in source order.
-/// `None` when the arm's enclosing brace is not a `match`, the line does
-/// not start an arm, or an earlier arm cannot be delimited.
+/// `None` when the enclosing brace is not a `match`, the position does not
+/// start an arm, or an earlier arm cannot be delimited.
 struct EnclosingMatch {
     scrutinee: String,
     earlier_patterns: Vec<String>,
@@ -2716,20 +2730,20 @@ struct EnclosingMatch {
 fn enclosing_match(
     owner: &FunctionSummary,
     arm_line: usize,
+    arm_column: usize,
     with_later_arms: bool,
 ) -> Option<EnclosingMatch> {
     let relative = arm_line.checked_sub(owner.start_line)?;
     let masked = mask_comments_and_strings(&owner.body);
     let source = without_comments(&owner.body)?;
-    let arm_offset = masked
-        .split_inclusive('\n')
-        .take(relative)
-        .map(str::len)
-        .sum::<usize>();
-    if arm_offset == 0 || arm_offset > masked.len() {
-        return None;
-    }
-    let before = &masked[..arm_offset];
+    let mut lines = owner.body.split_inclusive('\n');
+    let line_offset = lines.by_ref().take(relative).map(str::len).sum::<usize>();
+    let (column_offset, _) = lines
+        .next()?
+        .char_indices()
+        .nth(arm_column.checked_sub(1)?)?;
+    let arm_offset = line_offset + column_offset;
+    let before = masked.get(..arm_offset)?;
     let mut depth = 0usize;
     let mut brace = None;
     for (index, byte) in before.bytes().enumerate().rev() {

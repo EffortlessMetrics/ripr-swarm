@@ -6064,11 +6064,9 @@ fn cli_repair_refusal(root: &Path, finding_id: &str) -> Result<Option<String>, S
 
 /// #8717: `ripr_prepare_repair`, the `ripr_list_gaps` summary and
 /// `ripr_get_gap` must not call an item repair-ready when the shared repair
-/// gate behind `ripr repair` refuses its seam. Before the fix MCP returned a
-/// ready packet with an `awaiting_edit` attempt while the CLI refused the
-/// same item. The `price` arms share one line, so the arm reading cannot
-/// show which arm `a`'s input selects (#15359): the gate refuses the arm as
-/// route-not-ready, never as gripped.
+/// gate behind `ripr repair` refuses its seam. The exposed `price` arm is
+/// gripped by `tests/t.rs`; before the fix MCP returned a ready packet with an
+/// `awaiting_edit` attempt while the CLI refused the same item.
 #[cfg(feature = "lang-rust")]
 #[test]
 fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
@@ -6144,35 +6142,33 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
             }
         }
         if id == ARM {
-            let refusal = refusal.ok_or("`ripr repair` must refuse the one-line arm")?;
+            let refusal = refusal.ok_or("`ripr repair` must refuse the gripped arm")?;
             if !refusal.contains("not ready for an automatic repair")
-                || !refusal.contains("cannot show that its input reaches the changed branch")
+                || !refusal.contains("already check it")
             {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
             }
-            // The gate refuses the arm, so the typed next step is a by-hand
-            // test with the worktree re-check, as data rather than a prose
-            // retry hint.
+            // The gripped arm is a weak finding over a gripped seam: the gate
+            // refuses it, so the typed next step is a by-hand test with the
+            // worktree re-check, as data rather than a prose retry hint.
             if prepare["next"]["kind"] != "write_test_by_hand"
-                || prepare["next"]["reason"] != "seam_gate_refused"
+                || prepare["next"]["reason"] != "seam_already_gripped"
                 || prepare["next"]["after_editing_tests"]["mcp"]["arguments"]["source"]
                     != "worktree"
             {
-                return Err(format!(
-                    "one-line arm refusal lost its next step: {prepare}"
-                ));
+                return Err(format!("gripped arm refusal lost its next step: {prepare}"));
             }
-            if item["repair_ineligibility"] != "seam_gate_refused"
-                || prepare["ineligibility"]["reason"] != "seam_gate_refused"
+            if item["repair_ineligibility"] != "seam_already_gripped"
+                || prepare["ineligibility"]["reason"] != "seam_already_gripped"
                 || prepare["repair_packet_ready"] != false
                 || !prepare["attempt"].is_null()
             {
                 return Err(format!(
-                    "the one-line arm must refuse typed with no attempt: {item} {prepare}"
+                    "the gripped arm must refuse typed with no attempt: {item} {prepare}"
                 ));
             }
             let reason = gap["item"]["readiness"]["reason"].as_str().unwrap_or("");
-            if !reason.contains("cannot show that its input reaches the changed branch") {
+            if !reason.contains("already check it") {
                 return Err(format!(
                     "get_gap readiness must carry the shared validator's reason: {reason}"
                 ));
