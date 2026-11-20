@@ -1237,6 +1237,48 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
     !owner_binding_lines(owner_source, owner, name).is_empty()
 }
 
+/// Zero-based index of the first line after the owner's `def` header (#15292).
+/// A multi-line signature spreads parameters over continuation lines
+/// (`    max_age: int | None = None,`) that read like annotated assignments, so
+/// scanning them as body lines would call every such parameter rebound. The
+/// header ends at the line where the bracket depth returns to zero and the
+/// statement ends in `:`. When no such line is found inside the owner the
+/// single-line reading (`owner.start_line`) is kept, which over-refuses and
+/// never awards credit.
+fn def_header_end(owner_source: &str, owner: &PythonOwner) -> usize {
+    let first = owner.start_line.saturating_sub(1);
+    let mut depth = 0_i32;
+    let mut quote: Option<char> = None;
+    for (index, line) in owner_source
+        .lines()
+        .enumerate()
+        .skip(first)
+        .take(owner.end_line.saturating_sub(first))
+    {
+        let mut last = None;
+        for ch in line.chars() {
+            if let Some(open) = quote {
+                if ch == open {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '#' => break,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                c if !c.is_whitespace() => last = Some(c),
+                _ => {}
+            }
+        }
+        if depth <= 0 && last == Some(':') {
+            return index + 1;
+        }
+    }
+    owner.start_line
+}
+
 /// Every owner-body line (zero-based index into `owner_source`, trimmed text)
 /// that binds `name`, by the same over-refusing reading as
 /// [`name_rebound_in_owner`].
@@ -1245,11 +1287,12 @@ pub(super) fn owner_binding_lines<'a>(
     owner: &PythonOwner,
     name: &str,
 ) -> Vec<(usize, &'a str)> {
+    let body_start = owner.start_line.max(def_header_end(owner_source, owner));
     owner_source
         .lines()
         .enumerate()
-        .skip(owner.start_line)
-        .take(owner.end_line.saturating_sub(owner.start_line))
+        .skip(body_start)
+        .take(owner.end_line.saturating_sub(body_start))
         .map(|(index, line)| (index, line.trim()))
         .filter(|(_, line)| {
             // A condition header ends in `:`, which the annotated-assignment
@@ -1479,6 +1522,28 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    /// #15292: parameters of a multi-line `def` header (`max_age: int | None =
+    /// None,`) are not body rebindings, while a real rebinding in the body is.
+    #[test]
+    fn multiline_signature_parameters_are_not_rebinding() -> Result<(), String> {
+        let header = "def quote(\n    self,\n    total: int | None = None,\n    rate: float = 1.0,\n) -> int:\n";
+        let clean = format!("{header}    age = self.now() - 1\n    return age > total\n");
+        let owner = quote_owner(&clean)?;
+        assert!(!name_rebound_in_owner(&clean, &owner, "total"));
+        assert!(!name_rebound_in_owner(&clean, &owner, "rate"));
+        // The body binding of a local is still read, and so is a body rebinding
+        // of a header parameter.
+        assert!(name_rebound_in_owner(&clean, &owner, "age"));
+        let rebound = format!("{header}    total = total or 0\n    return total > 1\n");
+        let owner = quote_owner(&rebound)?;
+        assert!(name_rebound_in_owner(&rebound, &owner, "total"));
+        // A single-line header with a default keeps reading as before.
+        let single = "def quote(total=5):\n    return total > 1\n";
+        let owner = quote_owner(single)?;
+        assert!(!name_rebound_in_owner(single, &owner, "total"));
+        Ok(())
     }
 
     #[test]
