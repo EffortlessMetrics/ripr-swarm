@@ -425,20 +425,33 @@ pub(crate) fn target_manifest_directories(workspace_root: &Path) -> Option<Vec<P
         .then_some(listing.manifest_dirs)
 }
 
-/// Whether the existing bounded path inventory leaves any Rust source outside
-/// the caller's index. A symlink can hide a source or give it another spelling.
-pub(crate) fn rust_source_listing_is_covered(
-    workspace_root: &Path,
+/// Manifest directories in the requested Cargo workspaces when the bounded
+/// path inventory is covered by the caller's index. A symlink can hide a
+/// source or give it another spelling.
+pub(crate) fn covered_rust_source_manifest_dirs(
+    analysis_root: &Path,
+    workspace_dirs: &BTreeSet<PathBuf>,
     indexed: impl Fn(&Path) -> bool,
-) -> bool {
-    let root = lexical(&normalize(workspace_root));
-    list_workspace(workspace_root).is_some_and(|listing| {
-        listing.symlink_targets.is_empty()
-            && listing
-                .rust_files
-                .iter()
-                .all(|file| file.strip_prefix(&root).is_ok_and(&indexed))
-    })
+) -> Option<Vec<PathBuf>> {
+    let root = lexical(&normalize(analysis_root));
+    let in_workspace = |relative: &Path| workspace_dirs.iter().any(|dir| relative.starts_with(dir));
+    let listing = list_workspace(analysis_root)?;
+    if !listing.symlink_targets.is_empty()
+        || !listing.rust_files.iter().all(|file| {
+            file.strip_prefix(&root)
+                .is_ok_and(|relative| !in_workspace(relative) || indexed(relative))
+        })
+    {
+        return None;
+    }
+    Some(
+        listing
+            .manifest_dirs
+            .into_iter()
+            .filter_map(|dir| dir.strip_prefix(&root).ok().map(Path::to_path_buf))
+            .filter(|dir| in_workspace(dir))
+            .collect(),
+    )
 }
 
 /// Lists the workspace, or `None` when the listing is cut short or cannot

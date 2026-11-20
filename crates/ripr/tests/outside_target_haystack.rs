@@ -21,6 +21,7 @@ const ORDINARY_MACRO: &str = "macro_rules! value { ($mod:ident) => { $mod }; }\n
 const TESTS: &str = "use keyed::discount;\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(10), 5);\n}\n";
 const MANIFEST: &str = "[package]\nname = \"keyed\"\nversion = \"0.0.0\"\nedition = \"2024\"\nexclude = [\"/benchmarks\"]\n";
 const LIB: &str = "pub fn discount(q: u32) -> u32 {\n    if q > 9 { 5 } else { 0 }\n}\n";
+const SIBLING_MOUNT: &str = "#[path = \"../../a/benchmarks/hay.rs\"]\nmod mount;\n#[path = \"../../a/src/lib.rs\"]\nmod implementation;\nuse implementation::discount;\n";
 const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
 --- a/src/lib.rs
@@ -242,10 +243,7 @@ fn draft_retains_a_file_mounted_by_an_unselected_workspace_member() -> Result<()
         "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"3\"\n",
     )?;
     scratch.write("b/Cargo.toml", &MANIFEST.replace("\"keyed\"", "\"b\""))?;
-    scratch.write(
-        "b/src/lib.rs",
-        "#[path = \"../../a/benchmarks/hay.rs\"]\nmod mount;\n#[path = \"../../a/src/lib.rs\"]\nmod implementation;\nuse implementation::discount;\n",
-    )?;
+    scratch.write("b/src/lib.rs", SIBLING_MOUNT)?;
     for mode in [Mode::Draft, Mode::Deep] {
         assert_eq!(
             analyze(&scratch, &mode)?.related_files,
@@ -306,5 +304,76 @@ fn an_unreadable_or_malformed_root_manifest_keeps_uncertainty() -> Result<(), St
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn a_nested_governing_workspace_keeps_an_unselected_sibling_mount() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write(
+        "inner/Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"3\"\n",
+    )?;
+    scratch.write("inner/a/Cargo.toml", MANIFEST)?;
+    scratch.write("inner/a/src/lib.rs", LIB)?;
+    scratch.write("inner/a/tests/api.rs", TESTS)?;
+    scratch.write(
+        "inner/a/benchmarks/hay.rs",
+        &HAY_SOURCE.replace("keyed::", "super::"),
+    )?;
+    scratch.write(
+        "inner/b/Cargo.toml",
+        &MANIFEST.replace("\"keyed\"", "\"b\""),
+    )?;
+    scratch.write("inner/b/src/lib.rs", SIBLING_MOUNT)?;
+    scratch.write(
+        "change.diff",
+        &DIFF.replace("src/lib.rs", "inner/a/src/lib.rs"),
+    )?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["inner/a/benchmarks/hay.rs", "inner/a/tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    scratch.write("inner/b/src/lib.rs", "pub fn unrelated() {}\n")?;
+    assert_eq!(
+        analyze(&scratch, &Mode::Deep)?.related_files,
+        ["inner/a/tests/api.rs"]
+    );
+    Ok(())
+}
+
+#[test]
+fn an_explicit_root_in_a_skipped_directory_keeps_mount_uncertainty() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write(
+        "Cargo.toml",
+        &format!("{MANIFEST}\n[[test]]\nname = \"driver\"\npath = \"target/driver.rs\"\n"),
+    )?;
+    scratch.write("src/lib.rs", LIB)?;
+    scratch.write("tests/api.rs", TESTS)?;
+    scratch.write(
+        "benchmarks/hay.rs",
+        &HAY_SOURCE.replace("keyed::", "super::"),
+    )?;
+    scratch.write(
+        "target/driver.rs",
+        "use keyed::discount;\n#[path = \"../benchmarks/hay.rs\"]\nmod allocated;\n",
+    )?;
+    scratch.write("change.diff", DIFF)?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["benchmarks/hay.rs", "tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    scratch.write("Cargo.toml", MANIFEST)?;
+    assert_eq!(
+        analyze(&scratch, &Mode::Deep)?.related_files,
+        ["tests/api.rs"]
+    );
     Ok(())
 }

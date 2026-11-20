@@ -27,10 +27,10 @@ pub(crate) use assertion_dependency::{
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
     CargoHarnessVerdict, ManifestInventory, context_for_files,
-    declared_crate_root_paths_from_manifest,
+    declared_crate_root_paths_from_manifest, explicit_target_roots_are_covered,
 };
 pub(crate) use module_graph::{
-    apply_module_graph_evidence, rust_source_listing_is_covered, target_manifest_directories,
+    apply_module_graph_evidence, covered_rust_source_manifest_dirs, target_manifest_directories,
 };
 pub(crate) use path_dependencies::{
     PathDependencyAdjacency, PathDependencyGraphStatus, reverse_dependent_scope_expansion,

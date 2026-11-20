@@ -15,7 +15,7 @@
 //! manifest, or a package whose crate root is not indexed.
 
 use super::{model::RustIndex, role_composition::may_build_mount_operands};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 /// Directories Cargo autodiscovers or the module tree owns. A file below one
@@ -51,7 +51,7 @@ pub(super) fn never_compiled(
     index: &RustIndex,
     workspace_root: &Path,
     manifest_dirs: &BTreeSet<PathBuf>,
-    candidates: &[PathBuf],
+    candidates: &[(PathBuf, PathBuf)],
 ) -> BTreeSet<PathBuf> {
     let mut out = BTreeSet::new();
     if candidates.is_empty()
@@ -67,7 +67,7 @@ pub(super) fn never_compiled(
     // resolves `#[path]` operands that differ from the file only in case.
     let candidate_names: BTreeSet<String> = candidates
         .iter()
-        .filter_map(|file| file.file_name().and_then(|name| name.to_str()))
+        .filter_map(|(file, _)| file.file_name().and_then(|name| name.to_str()))
         .map(str::to_ascii_lowercase)
         .collect();
     let mut referenced_names: BTreeSet<String> = BTreeSet::new();
@@ -88,17 +88,19 @@ pub(super) fn never_compiled(
         );
         collect_declared_modules(source, &mut declared_modules);
     }
-    let root_manifest = workspace_root.join("Cargo.toml");
-    let mut has_workspace = false;
-    let manifests = manifest_dirs
-        .iter()
-        .map(|dir| workspace_root.join(dir).join("Cargo.toml"))
-        .chain(std::iter::once(root_manifest.clone()))
-        .collect::<BTreeSet<_>>();
-    for path in manifests {
+    // A virtual workspace can govern the package from an intermediate
+    // directory that owns no indexed Rust files.
+    let mut dirs = manifest_dirs.clone();
+    dirs.insert(PathBuf::new());
+    for (_, package) in candidates {
+        dirs.extend(package.ancestors().map(Path::to_path_buf));
+    }
+    let mut manifests = BTreeMap::new();
+    for dir in dirs {
+        let path = workspace_root.join(&dir).join("Cargo.toml");
         match crate::bounded_input::read_metadata_toml(&path) {
             Ok(text) => {
-                let Ok(manifest) = text.parse::<toml::Table>() else {
+                let Ok(manifest) = toml::from_str::<toml::Value>(&text) else {
                     return BTreeSet::new();
                 };
                 if spells_a_path_with_escapes(&text)
@@ -109,28 +111,17 @@ pub(super) fn never_compiled(
                 {
                     return BTreeSet::new();
                 }
-                if path == root_manifest
-                    && let Some(workspace) = manifest.get("workspace")
-                {
-                    if !workspace.is_table()
-                        || workspace
-                            .get("members")
-                            .is_some_and(|members| !local_member_patterns(members))
-                    {
-                        return BTreeSet::new();
-                    }
-                    has_workspace = true;
-                }
                 collect_referenced_file_names(
                     &text.to_ascii_lowercase(),
                     &candidate_names,
                     &mut referenced_names,
                 );
+                manifests.insert(dir, manifest);
             }
-            // A workspace without a root manifest is fine; any other
-            // unreadable manifest is doubt.
+            // An optional ancestor can have no manifest. Any other read
+            // failure leaves its Cargo scope uncertain.
             Err(error)
-                if path == root_manifest
+                if !manifest_dirs.contains(&dir)
                     && error.kind() == std::io::ErrorKind::NotFound
                     && std::fs::symlink_metadata(&path)
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
@@ -139,7 +130,7 @@ pub(super) fn never_compiled(
     }
     // A package's build script is a crate root whose name the manifest may
     // not repeat; its text is already among the indexed sources.
-    for file in candidates {
+    for (file, _) in candidates {
         // A candidate's own unresolved operand cannot be a route into it.
         // An uncertain operand in any other source still keeps it.
         if uncertain_source.is_some_and(|source| source != file) {
@@ -163,18 +154,67 @@ pub(super) fn never_compiled(
             out.insert(file.clone());
         }
     }
-    // A workspace member can mount another member's file without a Cargo
-    // dependency. Check path coverage only when the indexed evidence would
-    // otherwise exclude a file. This reads directory entries, not source text.
-    if has_workspace
-        && !out.is_empty()
-        && !crate::analysis::workspace::rust_source_listing_is_covered(workspace_root, |path| {
-            index.files().get(path).is_some()
-        })
+    if !out.is_empty()
+        && !cargo_scope_is_covered(index, workspace_root, &manifests, candidates, &out)
     {
         out.clear();
     }
     out
+}
+
+fn cargo_scope_is_covered(
+    index: &RustIndex,
+    analysis_root: &Path,
+    manifests: &BTreeMap<PathBuf, toml::Value>,
+    candidates: &[(PathBuf, PathBuf)],
+    outside: &BTreeSet<PathBuf>,
+) -> bool {
+    use crate::analysis::workspace::{
+        covered_rust_source_manifest_dirs, explicit_target_roots_are_covered,
+    };
+
+    let mut packages = BTreeSet::new();
+    let mut workspaces = BTreeSet::new();
+    for (file, package) in candidates {
+        if !outside.contains(file) {
+            continue;
+        }
+        packages.insert(package.clone());
+        if let Some(workspace) = package.ancestors().find(|ancestor| {
+            manifests
+                .get(*ancestor)
+                .is_some_and(|manifest| manifest.get("workspace").is_some())
+        }) {
+            workspaces.insert(workspace.to_path_buf());
+        }
+    }
+    let indexed = |path: &Path| index.files().get(path).is_some();
+    if !workspaces.is_empty() {
+        if !workspaces.iter().all(|dir| {
+            manifests
+                .get(dir)
+                .and_then(|manifest| manifest.get("workspace"))
+                .is_some_and(|workspace| {
+                    workspace.is_table()
+                        && workspace.get("members").is_none_or(local_member_patterns)
+                })
+        }) {
+            return false;
+        }
+        // Sibling mounts need no Cargo dependency edge. Reuse the bounded
+        // path inventory once and require each listed manifest to have been
+        // examined, even for a member with no indexed Rust sources.
+        let Some(dirs) = covered_rust_source_manifest_dirs(analysis_root, &workspaces, indexed)
+        else {
+            return false;
+        };
+        packages.extend(dirs);
+    }
+    packages.iter().all(|dir| {
+        manifests.get(dir).is_some_and(|manifest| {
+            explicit_target_roots_are_covered(manifest, dir, analysis_root, indexed)
+        })
+    })
 }
 
 /// The indexed-member inventory handles literals and a trailing `/*`.

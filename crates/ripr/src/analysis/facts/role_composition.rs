@@ -934,7 +934,7 @@ fn files_outside_module_tree(
         .filter(|(_, facts)| is_poisoning(facts))
         .all(|(file, _)| unlinked.contains(&file));
     let mut outside = BTreeSet::new();
-    let mut stray_candidates: Vec<PathBuf> = Vec::new();
+    let mut stray_candidates = Vec::new();
     let mut manifest_dirs: BTreeSet<PathBuf> = BTreeSet::new();
     for file in unlinked {
         let Some(package_dir) = crate_roots.package_manifest_dir(workspace_root, file) else {
@@ -964,7 +964,7 @@ fn files_outside_module_tree(
                 outside.insert(file.clone());
             }
         } else if poison_only_in_unlinked && stray_files::is_stray_shape(relative) {
-            stray_candidates.push(file.clone());
+            stray_candidates.push((file.clone(), package_dir.clone()));
             manifest_dirs.insert(package_dir);
         }
     }

@@ -81,11 +81,13 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    compiles its own declarations either.
 6. Manifest reads establish the Cargo context. A missing root manifest is
    allowed for a standalone nested package. An unreadable or malformed
-   manifest preserves uncertainty. At a declared workspace root, the bounded
-   path inventory must be covered by the index before the pass withholds
-   evidence. A member can use `#[path]` into another member without a Cargo
-   dependency, so a package-scoped source selection alone cannot establish
-   absence.
+   manifest preserves uncertainty. For a candidate's governing workspace,
+   including one nested beneath the analysis root, the bounded path inventory
+   must be covered by the index and its manifests examined. A member can use
+   `#[path]` into another member without a Cargo dependency. Explicit source
+   roots and build paths in the relevant manifests must also be covered,
+   including roots that discovery skips. The path inventory still skips
+   conventional Cargo build output.
 
 The executable tests registered in such a file are withheld from the index, so
 they are neither related tests nor oracles, and a parser refusal of the file
@@ -227,6 +229,9 @@ running test; no named stop reason is added on this issue.
 - A sibling member outside Draft selection, a literal `mod` forwarded by a
   declared target's macro, and an unreadable or malformed root Cargo manifest
   each preserve the potential test in the shared source-role pass.
+- A nested governing workspace and a declared test root under `target/` also
+  preserve possible mounts. Removing the declared target restores the data-only
+  verdict with the same generated-output directory on disk.
 - Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
   child module, and `[[bin]] test = false` unit tests do not credit a
   discriminator (nor, as before, a `[[test]] test = false` target), while

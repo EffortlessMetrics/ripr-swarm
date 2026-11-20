@@ -22166,6 +22166,8 @@ tests = [
   "crates/ripr/tests/outside_target_haystack.rs::draft_retains_a_file_mounted_by_an_unselected_workspace_member",
   "crates/ripr/tests/outside_target_haystack.rs::a_declared_test_target_can_forward_a_module_keyword",
   "crates/ripr/tests/outside_target_haystack.rs::an_unreadable_or_malformed_root_manifest_keeps_uncertainty",
+  "crates/ripr/tests/outside_target_haystack.rs::a_nested_governing_workspace_keeps_an_unselected_sibling_mount",
+  "crates/ripr/tests/outside_target_haystack.rs::an_explicit_root_in_a_skipped_directory_keeps_mount_uncertainty",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::stray_haystack_tests_are_not_related_test_evidence",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::stray_file_the_parser_refuses_is_still_outside_every_target",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::manifest_bench_path_keeps_the_file_a_target",
