@@ -1461,22 +1461,33 @@ fn explain_agent_keeps_context_pointer_when_the_packet_holds_more() {
 
 #[test]
 fn explain_agent_prints_observed_inputs_only_when_it_drops_the_context_pointer() {
-    let fact = |value: &str| crate::domain::ValueFact {
+    let fact_in = |value: &str, context| crate::domain::ValueFact {
         line: 3,
         text: format!("f({value})"),
         value: value.to_string(),
-        context: crate::domain::ValueContext::FunctionArgument,
+        context,
     };
+    let fact = |value: &str| fact_in(value, crate::domain::ValueContext::FunctionArgument);
     let mut gap = undiscriminated_gap();
     assert!(!explained(&gap).contains("seen="), "no values, no line");
-    gap.activation.observed_values = vec![fact("cents = 7"), fact("12")];
+    // An assertion expectation is labeled apart from an exercised input.
+    gap.activation.observed_values = vec![
+        fact("cents = 7"),
+        fact_in("6", crate::domain::ValueContext::AssertionArgument),
+    ];
     let text = explained(&gap);
-    assert!(text.lines().any(|l| l == "seen=cents = 7; 12"), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l == "seen=cents = 7 (function_argument); 6 (assertion_argument)"),
+        "{text}"
+    );
     assert!(!text.contains("next="), "{text}");
     gap.activation.observed_values = (0..8).map(|n| fact(&n.to_string())).collect();
     let text = explained(&gap);
     assert!(
-        text.lines().any(|l| l == "seen=0; 1; 2; 3; 4; 5 (+2 more)"),
+        text.lines().any(|l| l
+            == "seen=0 (function_argument); 1 (function_argument); 2 (function_argument); \
+                3 (function_argument); 4 (function_argument); 5 (function_argument) (+2 more)"),
         "{text}"
     );
     // When the pointer stays, the packet carries the values; no seen= line.

@@ -557,7 +557,9 @@ pub(super) fn render_finding(
 /// Most observed test inputs a `seen=` line lists before `(+N more)`.
 const MAX_SEEN_VALUES: usize = 6;
 
-/// `seen=V1; V2 (+N more)`: the input values the related tests already use,
+/// `seen=V1 (CONTEXT); V2 (CONTEXT) (+N more)`: the values the related tests
+/// already use, each with its producer context (`function_argument` inputs
+/// apart from `assertion_argument` expectations),
 /// printed only when `next=` is omitted, because the context packet's
 /// `observed_values` is then the one fact this projection would otherwise
 /// drop. Absent when the producer observed no values.
@@ -569,7 +571,7 @@ fn seen_line(finding: &Finding) -> Option<String> {
     let shown: Vec<String> = values
         .iter()
         .take(MAX_SEEN_VALUES)
-        .map(|fact| clip(fact.value.trim()))
+        .map(|fact| format!("{} ({})", clip(fact.value.trim()), fact.context.as_str()))
         .collect();
     let mut line = format!("seen={}", field(&shown.join("; ")));
     if values.len() > MAX_SEEN_VALUES {
