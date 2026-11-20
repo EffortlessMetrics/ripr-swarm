@@ -107,7 +107,10 @@ pub(super) fn parse_ci_summary_options_with(
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--full" => options.full = true,
+            "--full" => {
+                options.full = true;
+                continue;
+            }
             "--root" => {
                 let value = non_empty_string_arg(args, i, flag, COMMAND)?;
                 let reconciled = reconcile_root(&options.root, root_explicit, &value, COMMAND)?;

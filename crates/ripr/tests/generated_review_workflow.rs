@@ -279,7 +279,7 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         !summary.contains("<details") && !summary.lines().any(|line| line.starts_with("# ")),
         "{summary}"
     );
-    let preview = replay::ripr(&root, &["reports", "ci-summary", "--root", ".", "--full"])?;
+    let preview = replay::ripr(&root, &["reports", "ci-summary", "--full", "--root", "."])?;
     assert!(preview.status.success());
     let summary = String::from_utf8(preview.stdout)?;
     let first_block = summary

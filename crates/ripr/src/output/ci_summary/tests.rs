@@ -2061,20 +2061,11 @@ fn a_run_without_a_pull_request_says_so() -> TestResult {
         !pull_request.contains("No pull request in this run"),
         "{pull_request}"
     );
-    // A local run (no event) prints no note either. Like the manual run it
-    // is not a pull request run, which picks the SARIF rows (#14300), so the
-    // note is the only difference between the two.
+    // With readable PR guidance, a local preview uses the PR front page.
     let local = render_event(&fixture, "")?;
-    assert!(!local.contains("No pull request in this run"), "{local}");
-    assert_eq!(
-        manual.replace(
-            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
-             - Next step: open or update a pull request to get changed-behavior findings for it.\n",
-            ""
-        ),
-        local,
-        "the note is the only difference"
-    );
+    assert_eq!(local, pull_request);
+    assert!(local.contains("### Reports in the `ripr-reports` artifact"));
+    assert!(manual.contains("#### First-run status"));
 
     // The event says what kind of run this is, not which stages finished: a
     // manual run that produced no reports gets the same note, and the note
