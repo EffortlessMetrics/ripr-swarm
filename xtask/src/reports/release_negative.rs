@@ -3858,10 +3858,10 @@ mod tests {
             ),
             "FOREIGN_PRODUCER_DRIFT_REASON must match ripr's foreign_producer_refusal_with_schema format"
         );
-        assert!(
-            FOREIGN_PRODUCER_DRIFT_REASON
-                .starts_with("was produced by RIPR 0.0.0-corpus, but this consumer is RIPR"),
-            "FOREIGN_PRODUCER_DRIFT_REASON must pin the mutated 0.0.0-corpus version"
+        assert_eq!(
+            FOREIGN_PRODUCER_DRIFT_REASON,
+            "was produced by RIPR 0.0.0-corpus, but this consumer is RIPR",
+            "FOREIGN_PRODUCER_DRIFT_REASON must match the exact version-independent prefix for 0.0.0-corpus"
         );
         Ok(())
     }
