@@ -17533,6 +17533,7 @@ tests = [
   "crates/ripr/src/output/related_test_role_tests.rs::annotating_an_existing_row_changes_no_decision",
   "crates/ripr/src/output/related_test_role_tests.rs::decision_helpers_never_branch_on_the_miss",
   "crates/ripr/src/analysis/classifier/finding.rs::tests::an_ok_only_pin_does_not_observe_a_changed_error_variant",
+  "crates/ripr/tests/error_path_sibling_variant.rs::an_ok_pattern_and_a_panic_message_observe_different_parts_of_the_result",
   "crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_skips_a_strong_row_that_cannot_observe_the_change",
   "crates/ripr/src/output/human/agent_tests.rs::the_test_row_skips_a_strong_row_that_cannot_observe_the_change",
   "crates/ripr/src/output/human/agent_tests.rs::every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro",

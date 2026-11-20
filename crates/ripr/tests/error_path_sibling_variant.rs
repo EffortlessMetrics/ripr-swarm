@@ -706,3 +706,44 @@ fn spec_0227_uncompared_unwrap_err_reads_broad_error_only_off_the_owner_call() -
     }
     Ok(())
 }
+
+#[test]
+fn an_ok_pattern_and_a_panic_message_observe_different_parts_of_the_result() -> Result<(), String> {
+    let tests = r#"use error_path_sibling_variant::withdraw;
+
+#[test]
+fn matches_ok() {
+    assert!(matches!(withdraw(10, 2), Ok(_)));
+}
+
+#[test]
+#[should_panic(expected = "Limit")]
+fn checks_error_message() {
+    assert_eq!(withdraw(10, 20).unwrap(), 0);
+}
+
+#[test]
+fn propagates_the_error() -> Result<(), error_path_sibling_variant::PayError> {
+    let remaining = withdraw(10, 2)?;
+    assert_eq!(remaining, 8);
+    Ok(())
+}
+"#;
+    let diff = single_line_diff(PAY_SOURCE, PAY_CHANGED_LINE, PAY_OLD_LINE);
+    let repo = TempRepo::create(PAY_SOURCE, tests, &diff)?;
+    let output = repo.check()?;
+    let finding = changed_error_path(&output, PAY_CHANGED_LINE, "PayError::Insufficient")?;
+    for (name, expected) in [
+        ("matches_ok", "assertion_not_observing"),
+        ("checks_error_message", "assertion_inert"),
+        ("propagates_the_error", "missing_exact_assertion"),
+    ] {
+        let row = finding
+            .related_tests
+            .iter()
+            .find(|row| row.name == name)
+            .ok_or_else(|| format!("missing related test {name}"))?;
+        assert_eq!(row.miss.map(|miss| miss.as_str()), Some(expected), "{name}");
+    }
+    Ok(())
+}
