@@ -592,7 +592,9 @@ impl GapItem {
         admission: &SeamAdmission,
     ) -> Result<Self, String> {
         let canonical_id = canonical_id_of(finding);
-        let file = crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
+        let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
+        let served_file =
+            crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
         let language = finding
             .language
@@ -608,7 +610,7 @@ impl GapItem {
             "canonical_id": canonical_id,
             "class": class,
             "language": language,
-            "file": file,
+            "file": served_file,
             "line": line,
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
@@ -1020,6 +1022,7 @@ pub(crate) fn budget_items(
         .iter()
         .map(|item| DiagnosticBudgetItem {
             canonical_id: item.canonical_id.clone(),
+            // Budget buckets keep the shared finding-location spelling.
             document: item.file.clone(),
             payload_bytes: item.list_summary_bytes(),
             inline_detail_bytes: item
@@ -1514,9 +1517,9 @@ mod tests {
         let expected = "./src/main.rs";
 
         let item = GapItem::from_finding(&finding, &root)?;
-        if item.file != "src/main.rs" {
+        if item.file != expected {
             return Err(format!(
-                "MCP item file must be workspace-relative: {}",
+                "MCP diagnostic budget key must keep the shared spelling: {}",
                 item.file
             ));
         }
@@ -3260,7 +3263,10 @@ mod tests {
         ] {
             finding.probe.location.file = file;
             let item = GapItem::from_finding(&finding, root)?;
-            assert_eq!(item.file, "src/lib.rs");
+            let expected =
+                crate::analysis::finding_location_text(root, &finding.probe.location.file);
+            let budget = budget_items(std::slice::from_ref(&item));
+            assert_eq!(budget[0].document, expected);
             assert_eq!(item.list_summary["file"], "src/lib.rs");
             assert_eq!(item.evidence_core["location"]["file"], "src/lib.rs");
             assert_eq!(item.list_summary["canonical_id"], "gap:test:1");
