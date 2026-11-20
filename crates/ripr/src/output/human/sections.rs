@@ -692,11 +692,29 @@ fn condition_only_note(
     if before == after || crate::analysis::mask_comments_and_strings(after).contains('{') {
         return None;
     }
-    if !crate::analysis::mask_comments_and_strings(before).contains('{') {
+    // A block opens at bracket depth zero; a `{` inside parentheses or
+    // brackets is a closure body or struct literal within a cut condition
+    // (`v.iter().any(|x| { x > 1 })`), not a whole line's block.
+    let mut depth = 0_usize;
+    let opens_block = crate::analysis::mask_comments_and_strings(before)
+        .bytes()
+        .any(|byte| match byte {
+            b'(' | b'[' => {
+                depth += 1;
+                false
+            }
+            b')' | b']' => {
+                depth = depth.saturating_sub(1);
+                false
+            }
+            b'{' => depth == 0,
+            _ => false,
+        });
+    if !opens_block {
         return None;
     }
     Some(format!(
-        "          (condition only; the line also changed outside it, so before is the whole old line; open {}:{} to read the new line)\n",
+        "          (condition only; before is the whole old line; open {}:{} to read the new line)\n",
         crate::analysis::finding_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ))

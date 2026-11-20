@@ -8604,9 +8604,7 @@ mod tests {
         assert!(rendered.contains("  before: if total >= 100 { total - 10 } else { total }\n"));
         assert!(rendered.contains("  after:  total > 200\n"));
         assert!(
-            rendered.contains(
-                "(condition only; the line also changed outside it, so before is the whole old line; open "
-            ),
+            rendered.contains("(condition only; before is the whole old line; open "),
             "a condition-only after row over a whole old line must say so; got:\n{rendered}"
         );
         assert!(rendered.contains(":7 to read the new line)"));
@@ -8628,6 +8626,15 @@ mod tests {
         assert!(!predicate("if a { b }", "if a { c }").contains(note));
         assert!(!predicate("s == \"{}\"", "s == \"x\"").contains(note));
         assert!(!predicate("if a { b }", "if a { b }").contains(note));
+        // A closure body or struct literal inside a cut condition is not a
+        // whole line's block (#15584 review).
+        assert!(
+            !predicate("v.iter().any(|x| { *x > 1 })", "v.iter().any(|x| *x > 2)").contains(note)
+        );
+        assert!(!predicate("f(S { a: 1 })", "f(S::new(2))").contains(note));
+        // `while` and `else if` heads over a whole old line get the note.
+        assert!(predicate("while n >= 1 { n -= 1 }", "n > 2").contains(note));
+        assert!(predicate("} else if n >= 1 { a }", "n > 2").contains(note));
 
         let mut arm = sample_finding();
         arm.probe.family = crate::domain::ProbeFamily::MatchArm;
