@@ -129,7 +129,11 @@ pub(super) fn reference_probe_shapes(
     if let Some(tail_expr) = body.as_ref().and_then(|body| body.tail_expr()) {
         let range = tail_expr.syntax().text_range();
         let tail_text = slice_text(text, range.start(), range.end());
-        if is_tail_return_value_text(&tail_text) {
+        // #15459: mirrors the unit statement-block tail refusal.
+        let unit_statement_block = function.ret_type().is_none()
+            && ast::BlockExpr::cast(tail_expr.syntax().clone())
+                .is_some_and(|block| block.tail_expr().is_none());
+        if !unit_statement_block && is_tail_return_value_text(&tail_text) {
             push_probe_shape(
                 &mut shapes,
                 line_index,
@@ -696,5 +700,61 @@ fn probe_walk_full_facts_equal_sort_keys_keep_first_span() -> Result<(), String>
     assert_eq!(calls[0].start_byte(), start);
     assert_eq!(calls[0].end_byte(), start + "notify()".len());
     assert!(!calls[0].value_consumed);
+    Ok(())
+}
+
+// #15459: a unit owner's tail block of `;`-terminated statements is not a
+// returned value; a value-ending tail block or a typed owner keeps it.
+#[test]
+fn probe_walk_unit_tail_statement_block_has_no_return_value() -> Result<(), String> {
+    let text = r#"
+fn unit_unsafe(buf: &mut [u8], p: *const u8) {
+    unsafe {
+        buf[0].write(*p);
+        buf[1].write(*p);
+    }
+}
+fn unit_plain(buf: &mut Vec<u8>) {
+    {
+        buf.push(1);
+        buf.push(2);
+    }
+}
+fn value_unsafe(p: *const u8) {
+    unsafe { *p }
+}
+fn typed_owner(buf: &mut Vec<u8>) -> () {
+    {
+        buf.push(1);
+    }
+}
+"#;
+    let facts = equivalent_file_facts(text)?;
+    let returned: Vec<&str> = facts
+        .probe_shapes
+        .iter()
+        .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+        .map(|shape| shape.text.as_str())
+        .collect();
+    assert_eq!(returned.len(), 2, "{returned:?}");
+    assert!(returned.iter().any(|t| t.contains("*p")), "{returned:?}");
+    assert!(
+        returned.iter().any(|t| t.contains("buf.push(1)")),
+        "{returned:?}"
+    );
+    assert!(
+        !returned.iter().any(|t| t.contains("buf[0].write")),
+        "{returned:?}"
+    );
+    assert!(
+        !returned.iter().any(|t| t.contains("buf.push(2)")),
+        "{returned:?}"
+    );
+    let side_effects = facts
+        .probe_shapes
+        .iter()
+        .filter(|shape| shape.text.as_str().contains("buf[0].write"))
+        .count();
+    assert!(side_effects > 0, "statements keep their own probes");
     Ok(())
 }
