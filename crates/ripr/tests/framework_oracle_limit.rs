@@ -436,6 +436,84 @@ fn an_unredacted_insta_field_is_withheld() -> Result<(), String> {
 }
 
 #[test]
+fn insta_redaction_selectors_survive_unicode_and_nested_values() -> Result<(), String> {
+    let edit = diff(
+        9,
+        "        items: items.len(),",
+        "        items: items.iter().count(),",
+    );
+    for map in [
+        "{\u{0085}\".items\" => \"[n]\" }",
+        "{ \".id\" => \"[id]\",\u{200e}r#\".items\"# => \"[n]\" }",
+        "{ \".id\" => insta::dynamic_redaction(|value, _| value), \".items\" => \"[n]\" }",
+        "{ \".id\" => insta::rounded_redaction(2), \".items\" => \"[n]\" }",
+        "{ \".id\" => choose::<u8, u16>(), \".items\" => \"[n]\" }",
+        "{ /* key */ \".items\" /* arrow */ => /* value */ 0 }",
+        "match /* redactions */ .. { \".items\" => 0 }",
+        "{ \".id\" => -1.5, \".items\" => \"[n]\" }",
+        "{ \".id\" => réponse, \".items\" => \"[n]\" }",
+    ] {
+        let assertion = format!("insta::assert_json_snapshot!(record, {map});");
+        keeps_gap(&insta_source(&assertion), &edit, 9, &assertion)?;
+    }
+    // The map still withholds an unredacted sibling.
+    withheld(
+        &insta_source(
+            "insta::assert_json_snapshot!(record, { \".id\" => insta::rounded_redaction(2) });",
+        ),
+        &edit,
+        9,
+        "unredacted sibling beside an expression value",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn unread_insta_selectors_withhold_changed_fields() -> Result<(), String> {
+    let id = diff(
+        8,
+        "        id: format!(\"{}-0\", prefix),",
+        "        id: format!(\"{}-1\", prefix),",
+    );
+    let items = diff(
+        9,
+        "        items: items.len(),",
+        "        items: items.iter().count(),",
+    );
+    for assertion in [
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, { SELECTOR => \"[id]\" });",
+        "const SELECTOR: &str = \".items\"; insta::assert_json_snapshot!(\"record\", record, { SELECTOR => \"[items]\" });",
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, { \".items\" => \"[items]\", SELECTOR => \"[id]\" });",
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, match .. { SELECTOR => \"[id]\" });",
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, { SELECTOR => \"[id]\" }, @\"Record\");",
+    ] {
+        for (edit, line) in [(&id, 8), (&items, 9)] {
+            withheld(&insta_source(assertion), edit, line, assertion)?;
+            for finding in findings_on(&insta_source(assertion), edit, line)? {
+                assert!(
+                    finding
+                        .recommended_next_step
+                        .as_deref()
+                        .is_some_and(|step| {
+                            step.contains("settings or redactions that ripr does not read")
+                        }),
+                    "unread selectors need accurate advice: {finding:?}"
+                );
+            }
+        }
+    }
+    // Unread configuration still needs a snapshot of the owner's result.
+    keeps_gap(
+        &insta_source(
+            "const SELECTOR: &str = \".items\"; let other = 5; insta::assert_json_snapshot!(other, { SELECTOR => \"[items]\" });",
+        ),
+        &items,
+        9,
+        "unread selector on an unrelated snapshot operand",
+    )
+}
+
+#[test]
 fn an_insta_shape_that_differs_keeps_the_gap() -> Result<(), String> {
     // The redaction names the changed field.
     let items = diff(
@@ -460,6 +538,13 @@ fn an_insta_shape_that_differs_keeps_the_gap() -> Result<(), String> {
         &id,
         8,
         "redacted id",
+    )?;
+    // A raw-string selector names the changed id the same way.
+    keeps_gap(
+        &insta_source("insta::assert_json_snapshot!(record, { r#\".id\"# => \"[id]\" });"),
+        &id,
+        8,
+        "redacted id, raw-string key",
     )?;
     // An inline snapshot is the other insta rules' case.
     keeps_gap(

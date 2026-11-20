@@ -1,0 +1,121 @@
+//! Independent tier and returned-value observation controls.
+const FREE_OVER: u32 = 100;
+
+pub fn direct(weight: u32, order: u32, express: bool) -> u32 {
+    if order >= FREE_OVER && !express {
+        return 0;
+    }
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    if express { base * 2 } else { base }
+}
+
+pub fn wrong_input(weight: u32, order: u32, express: bool) -> u32 {
+    if order >= FREE_OVER && !express {
+        return 0;
+    }
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    if express { base * 2 } else { base }
+}
+
+pub fn transformed(weight: u32, order: u32, express: bool) -> u32 {
+    if order >= FREE_OVER && !express {
+        return 0;
+    }
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    if express { base * 2 } else { base }
+}
+
+pub fn masked(weight: u32, order: u32, express: bool) -> u32 {
+    if order >= FREE_OVER && !express {
+        return 0;
+    }
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    if weight == 4 { 5 } else { base }
+}
+
+pub fn sideways(weight: u32, order: u32, express: bool) -> u32 {
+    if order >= FREE_OVER && !express {
+        return 0;
+    }
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    if express { base } else { let _discarded = base; 7 }
+}
+
+pub fn uncertain(weight: u32, order: u32, express: bool) -> u32 {
+    if order >= FREE_OVER && !express {
+        return 0;
+    }
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    if express { base * 2 } else { base }
+}
+
+pub fn unrelated(weight: u32, order: u32, express: bool) -> u32 {
+    if order >= FREE_OVER && !express {
+        return 0;
+    }
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    if express { base * 2 } else { base }
+}
+
+fn another(value: u32) -> u32 { value + 5 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn direct_pin() {
+        assert_eq!(direct(4, 30, false), 9);
+    }
+    #[test]
+    fn wrong_input_pin() {
+        assert_eq!(wrong_input(11, 30, false), 20);
+    }
+    #[test]
+    fn transformed_pin() {
+        assert_eq!(transformed(4, 30, true), 18);
+    }
+    #[test]
+    fn masked_pin() {
+        assert_eq!(masked(4, 30, false), 5);
+    }
+    #[test]
+    fn sideways_pin() {
+        assert_eq!(sideways(4, 30, false), 7);
+    }
+    #[test]
+    fn uncertain_pin() {
+        assert_eq!(uncertain(std::hint::black_box(4), 30, false), 9);
+    }
+    #[test]
+    fn unrelated_pin() {
+        assert_eq!(another(4), 9);
+    }
+}

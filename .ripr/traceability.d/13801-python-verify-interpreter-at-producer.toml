@@ -1,0 +1,27 @@
+# The Python producer chooses the pytest verify interpreter and confidence
+# once from static venv facts, and every surface carries it (#13801).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::venv_with_pytest_names_the_venv_interpreter_and_keeps_high",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::venv_without_pytest_is_low_and_unreadable_venv_is_medium",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::no_venv_keeps_path_python_and_confidence_byte_for_byte",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::unittest_and_findings_without_a_pytest_route_are_untouched",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::root_with_dot_venv_selects_its_interpreter_from_static_facts",
+  "crates/ripr/src/app/tests/python_project_venv_verify_route.rs::no_project_venv_keeps_path_python_at_high_on_every_surface",
+  "crates/ripr/src/app/tests/python_project_venv_verify_route.rs::dot_venv_with_pytest_routes_its_interpreter_at_high_on_every_surface",
+  "crates/ripr/src/app/tests/python_project_venv_verify_route.rs::plain_venv_without_pytest_is_low_on_every_surface",
+  "crates/ripr/src/app/tests/python_project_venv_verify_route.rs::venv_with_unreadable_pytest_fact_is_medium_on_every_surface",
+  "crates/ripr/src/output/python_repair_card.rs::native_route_runs_the_producer_selected_interpreter_only",
+  "crates/ripr-contract/src/domain/language.rs::pytest_verify_interpreter_names_path_or_project_venv_python_only",
+  "crates/ripr/src/lsp/gap_artifacts.rs::command_payload_accepts_python_test_verify_commands",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs",
+  "crates/ripr/src/analysis/language/python.rs",
+  "crates/ripr/src/analysis/python_env.rs",
+  "crates/ripr/src/output/python_repair_card.rs",
+  "crates/ripr-contract/src/domain/language.rs",
+  "crates/ripr-contract/src/domain/command_spec.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]

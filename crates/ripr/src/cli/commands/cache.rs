@@ -1,15 +1,16 @@
 use crate::analysis::seam_cache::{
-    CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
-    inspect_cache_root,
+    CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, Reclaimable, cache_base_dir_from_env,
+    file_fact_reclaimable, inspect_cache_dir, inspect_cache_root,
 };
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use serde_json::json;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
-const CACHE_STATUS_SCHEMA_VERSION: &str = "0.2";
+const CACHE_STATUS_SCHEMA_VERSION: &str = "0.3";
 
 const CACHE_USAGE: &str = "Inspect, export or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--root PATH] [--json]\n  ripr cache export [--root PATH] --out NEW_DIRECTORY\n  ripr cache clear [--root PATH] [--dry-run] [--force]";
 
@@ -51,6 +52,14 @@ otherwise target/ripr/cache under the Cargo workspace root).
   --json    Print machine-readable status JSON. Its `schema_version` is the
             version of this status report, not of the on-disk cache layers
             (those carry their own version in their directory names).
+
+`reclaimable_entry_count` and `reclaimable_size_bytes` count the per-file
+fact entries (Rust, TypeScript, Python) that the next run writing facts to a
+usable cache removes: entries from older cache schemas, and entries from
+other ripr builds other than the two most recently used and any that served
+a cache hit in the last 7 days. Kept entries, including any newer cache schema an editor server
+on another ripr version still reads, are not counted. They are a subset of
+the recognized-layer totals.
 
 `entry_count` and `total_size_bytes` count only the recognized ripr cache
 layer directories, the same set `ripr cache clear` removes; files anywhere
@@ -119,16 +128,21 @@ fn split_root_arg(
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--root" {
-            if root.is_some() {
-                return Err(format!("{command} repeats --root"));
-            }
             let value = iter
                 .next()
                 .filter(|value| !value.is_empty() && !value.starts_with("--"))
                 .ok_or_else(|| {
                     format!("{command} --root requires a path; pass the path right after --root")
                 })?;
-            root = Some(PathBuf::from(value));
+            // #9008/#10542: a conflicting repeat refuses with both values; an
+            // identical repeat is absorbed for scripted double-root use.
+            let reconciled = reconcile_root(
+                root.as_deref().unwrap_or(Path::new(".")),
+                root.is_some(),
+                value,
+                command,
+            )?;
+            root = Some(reconciled);
         } else {
             rest.push(arg.clone());
         }
@@ -271,15 +285,24 @@ fn render_status(
     cache_dir: &Path,
     real_dir: Option<&Path>,
     status: &CacheStatus,
+    reclaimable: Reclaimable,
     is_json: bool,
 ) -> Result<String, String> {
-    render_status_for_host(cache_dir, real_dir, status, is_json, cfg!(windows))
+    render_status_for_host(
+        cache_dir,
+        real_dir,
+        status,
+        reclaimable,
+        is_json,
+        cfg!(windows),
+    )
 }
 
 fn render_status_for_host(
     cache_dir: &Path,
     real_dir: Option<&Path>,
     status: &CacheStatus,
+    reclaimable: Reclaimable,
     is_json: bool,
     windows: bool,
 ) -> Result<String, String> {
@@ -296,7 +319,9 @@ fn render_status_for_host(
             "total_size_bytes": status.total_size_bytes,
             "entry_count": status.entry_count,
             "foreign_entry_count": status.foreign_entry_count,
-            "foreign_total_size_bytes": status.foreign_total_size_bytes
+            "foreign_total_size_bytes": status.foreign_total_size_bytes,
+            "reclaimable_entry_count": reclaimable.entry_count,
+            "reclaimable_size_bytes": reclaimable.size_bytes
         }))
         .map_err(|error| error.to_string())
     } else {
@@ -308,6 +333,13 @@ fn render_status_for_host(
         ];
         if let Some(real) = real_dir {
             lines.push(real_dir_human_line_for_host(real, windows));
+        }
+        if reclaimable.entry_count > 0 {
+            lines.push(format!(
+                "Reclaimable: {} bytes in {} file-fact entries from older cache schemas or \
+                 unused ripr builds; the next cache write removes them",
+                reclaimable.size_bytes, reclaimable.entry_count
+            ));
         }
         if status.foreign_entry_count > 0 {
             lines.push(format!(
@@ -668,9 +700,23 @@ fn run_status(args: &[String]) -> Result<(), String> {
     let cache_dir = resolve_cache_dir(root.as_deref())?;
     let (inspect_dir, real_dir) = resolve_status_base(&cache_dir);
     let status = inspect_cache_root(&inspect_dir);
+    // Read separately from the status, so a cache created in between could
+    // otherwise report reclaimable entries beside `not_found`; the schema
+    // pins every count to 0 there.
+    let reclaimable = if matches!(status.state, "not_found" | "unavailable") {
+        Reclaimable::default()
+    } else {
+        file_fact_reclaimable(&inspect_dir)
+    };
     println!(
         "{}",
-        render_status(&cache_dir, real_dir.as_deref(), &status, is_json)?
+        render_status(
+            &cache_dir,
+            real_dir.as_deref(),
+            &status,
+            reclaimable,
+            is_json
+        )?
     );
     if !is_json {
         let env_governs = std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty());
@@ -779,8 +825,26 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
     let mut output = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
+        if arg == "--root" {
+            // #9008/#10542: a conflicting repeat refuses with both values;
+            // an identical repeat is absorbed for scripted double-root use.
+            let value = args
+                .next()
+                .filter(|value| !value.is_empty() && !value.starts_with("--"))
+                .ok_or_else(|| {
+                    "cache export --root requires a path; pass the path right after --root"
+                        .to_string()
+                })?;
+            let reconciled = reconcile_root(
+                root.as_deref().unwrap_or(Path::new(".")),
+                root.is_some(),
+                value,
+                "cache export",
+            )?;
+            root = Some(reconciled);
+            continue;
+        }
         let slot = match arg.as_str() {
-            "--root" => &mut root,
             "--out" => &mut output,
             other => return Err(unknown_argument("cache export", other)),
         };
@@ -797,7 +861,7 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
     }
     Ok((
         root,
-        output.ok_or("cache export requires --out NEW_DIRECTORY")?,
+        output.ok_or("cache export requires --out NEW_DIRECTORY; pass a directory that does not exist yet and whose parent does, for example `ripr cache export --out ripr-cache-export`")?,
     ))
 }
 
@@ -884,6 +948,10 @@ mod tests {
     #[test]
     fn export_current_snapshot_through_command_preserves_source_and_bounds_history()
     -> Result<(), String> {
+        // The export input witness reads the effective seam limit twice; hold
+        // the cap mutators off so an in-process pilot or repair test cannot
+        // move the limit between the reads (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let root = temp_dir("export-history");
         fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         let config = crate::config::RiprConfig::default();
@@ -907,8 +975,9 @@ mod tests {
             ])?;
             let exported = crate::analysis::seam_cache::inspect_cache_root(&output);
             assert_eq!(
-                exported.entry_count, 2,
-                "one current classified entry and one current file fact, independent of history"
+                exported.entry_count, 3,
+                "one current classified entry, one current compact entry (#12506 dual \
+                 publication), and one current file fact, independent of history"
             );
             let source_after = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
             assert_eq!(source_before.entry_count, source_after.entry_count);
@@ -959,7 +1028,7 @@ mod tests {
         assert_eq!(source_bytes, cache_contents(&source_cache)?);
         assert_eq!(
             crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
-            2
+            3
         );
         let overlap = source_cache.join("nested-export");
         assert!(
@@ -984,6 +1053,9 @@ mod tests {
         // Hold the cwd lock for the whole test: other tests `chdir` while it
         // runs, which made the relative root vanish (#12989).
         let _cwd = crate::testing::cwd_lock::hold_cwd();
+        // Same double-read of the effective seam limit, same exposure to an
+        // in-process pilot or repair test moving it (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let current = std::env::current_dir().map_err(|error| error.to_string())?;
         let unique = temp_dir("export-relative-root");
         let name = unique
@@ -1011,7 +1083,7 @@ mod tests {
         ])?;
         assert_eq!(
             crate::analysis::seam_cache::inspect_cache_root(&output).entry_count,
-            2
+            3
         );
         fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
@@ -1090,13 +1162,13 @@ mod tests {
             foreign_total_size_bytes: 0,
         };
         let cache_dir = Path::new("target/ripr/cache");
-        let human = render_status(cache_dir, None, &status, false)?;
+        let human = render_status(cache_dir, None, &status, Reclaimable::default(), false)?;
         for expected in ["Status: partial", "Total size: 12 bytes", "Entries: 2"] {
             if !human.contains(expected) {
                 return Err(format!("human output omitted `{expected}`: {human}"));
             }
         }
-        let json = render_status(cache_dir, None, &status, true)?;
+        let json = render_status(cache_dir, None, &status, Reclaimable::default(), true)?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         if value.get("status").and_then(serde_json::Value::as_str) != Some("partial")
@@ -1125,6 +1197,228 @@ mod tests {
         Ok(())
     }
 
+    /// #7047: status reports what the next prune removes, in both renderers,
+    /// and stays silent in human output when nothing is reclaimable.
+    #[test]
+    fn render_status_reports_reclaimable_file_fact_bytes() -> Result<(), String> {
+        let cache_dir = Path::new("/work/repo/target/ripr/cache");
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 900,
+            entry_count: 9,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let reclaimable = Reclaimable {
+            entry_count: 3,
+            size_bytes: 300,
+        };
+        let human = render_status_for_host(cache_dir, None, &status, reclaimable, false, false)?;
+        let json = render_status_for_host(cache_dir, None, &status, reclaimable, true, false)?;
+        let quiet = render_status_for_host(
+            cache_dir,
+            None,
+            &status,
+            Reclaimable::default(),
+            false,
+            false,
+        )?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert!(
+            human.contains(
+                "Reclaimable: 300 bytes in 3 file-fact entries from older cache schemas or unused ripr builds"
+            ),
+            "{human}"
+        );
+        assert!(!quiet.contains("Reclaimable"), "{quiet}");
+        assert_eq!(parsed["reclaimable_entry_count"], 3);
+        assert_eq!(parsed["reclaimable_size_bytes"], 300);
+        assert_eq!(parsed["schema_version"], "0.3");
+        Ok(())
+    }
+
+    /// The status aggregate reads the real store layout: a Rust file-fact
+    /// schema directory older than this build's counts, the current build's
+    /// own entry and the use markers do not.
+    #[test]
+    fn file_fact_reclaimable_counts_stale_rust_schema_entries() -> Result<(), String> {
+        let base = temp_dir("reclaimable");
+        let layer = base.join("repo-file-facts");
+        let stale = layer.join("1.0");
+        let markers = layer.join(".build-use");
+        fs::create_dir_all(&stale).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&markers).map_err(|error| error.to_string())?;
+        fs::write(stale.join("a.json"), b"0123456789").map_err(|error| error.to_string())?;
+        fs::write(markers.join("m"), b"x").map_err(|error| error.to_string())?;
+        let reclaimable = file_fact_reclaimable(&base);
+        let empty = file_fact_reclaimable(&base.join("missing"));
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(
+            reclaimable,
+            Reclaimable {
+                entry_count: 1,
+                size_bytes: 10
+            }
+        );
+        assert_eq!(empty, Reclaimable::default());
+        Ok(())
+    }
+
+    fn cache_args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// `--root` needs a real path: a missing value, an empty value, and a
+    /// following flag are refused instead of being read as the root.
+    #[test]
+    fn cache_root_flag_refuses_a_missing_empty_or_flag_shaped_value() {
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--json"]),
+            cache_args(&["--json", "--root"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Err(
+                    "cache status --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "status {args:?}"
+            );
+        }
+        for args in [
+            cache_args(&["--root"]),
+            cache_args(&["--root", ""]),
+            cache_args(&["--root", "--force"]),
+            cache_args(&["--force", "--root"]),
+        ] {
+            assert_eq!(
+                parse_clear_args(&args),
+                Err(
+                    "cache clear --root requires a path; pass the path right after --root"
+                        .to_string()
+                ),
+                "clear {args:?}"
+            );
+        }
+    }
+
+    /// The root and the flags parse the same in any order, and no flag is
+    /// implied: `cache clear --root PATH` alone never carries `--force`.
+    #[test]
+    fn cache_root_flag_is_order_independent_and_implies_no_other_flag() {
+        assert_eq!(parse_status_args(&[]), Ok((None, false)));
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "ws"])),
+            Ok((Some(PathBuf::from("ws")), false))
+        );
+        for args in [
+            cache_args(&["--root", "ws", "--json"]),
+            cache_args(&["--json", "--root", "ws"]),
+        ] {
+            assert_eq!(
+                parse_status_args(&args),
+                Ok((Some(PathBuf::from("ws")), true)),
+                "status {args:?}"
+            );
+        }
+
+        assert_eq!(parse_clear_args(&[]), Ok((None, ClearOptions::default())));
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "ws", "--dry-run"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: true,
+                    force: false,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "--root", "ws"])),
+            Ok((
+                Some(PathBuf::from("ws")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+    }
+
+    /// A repeated `--root` is absorbed only when it names the same path; two
+    /// different roots refuse and name both, so neither cache is acted on.
+    #[test]
+    fn cache_root_flag_absorbs_an_identical_repeat_and_refuses_a_conflict() {
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--json", "--root", "a"])),
+            Ok((Some(PathBuf::from("a")), true))
+        );
+        assert_eq!(
+            parse_status_args(&cache_args(&["--root", "a", "--root", "b"])),
+            Err("cache status takes --root once (got 'a' and 'b')".to_string())
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "a"])),
+            Ok((
+                Some(PathBuf::from("a")),
+                ClearOptions {
+                    dry_run: false,
+                    force: true,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--root", "a", "--force", "--root", "b"])),
+            Err("cache clear takes --root once (got 'a' and 'b')".to_string())
+        );
+    }
+
+    /// Each subcommand accepts only its own flags, and a stray positional is
+    /// refused rather than read as a root.
+    #[test]
+    fn cache_status_and_clear_refuse_each_others_flags_and_positionals() -> Result<(), String> {
+        assert_eq!(
+            parse_status_args(&cache_args(&["ws"])),
+            Err(
+                "unknown cache status argument \"ws\". Run `ripr cache status --help`.".to_string()
+            )
+        );
+        assert_eq!(
+            parse_clear_args(&cache_args(&["--force", "ws"])),
+            Err("unknown cache clear argument \"ws\". Run `ripr cache clear --help`.".to_string())
+        );
+        for flag in ["--force", "--dry-run"] {
+            let Err(message) = parse_status_args(&cache_args(&[flag])) else {
+                return Err(format!("cache status accepted the clear flag {flag}"));
+            };
+            assert!(
+                message.starts_with(&format!("unknown cache status argument {flag:?}.")),
+                "{message}"
+            );
+        }
+        let Err(message) = parse_clear_args(&cache_args(&["--force", "--json"])) else {
+            return Err("cache clear accepted the status flag --json".to_string());
+        };
+        assert!(
+            message.starts_with("unknown cache clear argument \"--json\"."),
+            "{message}"
+        );
+        Ok(())
+    }
+
     /// #7326: `cache status` / `cache clear` printed `Path::display()` of a
     /// canonical Windows path, leaking the verbatim prefix that `ripr doctor`
     /// already strips through `output::path::human_path`. JSON keeps the raw
@@ -1143,7 +1437,14 @@ mod tests {
             foreign_entry_count: 0,
             foreign_total_size_bytes: 0,
         };
-        let human = render_status_for_host(cache_dir, None, &status, false, true)?;
+        let human = render_status_for_host(
+            cache_dir,
+            None,
+            &status,
+            Reclaimable::default(),
+            false,
+            true,
+        )?;
         let expected = format!("Cache dir: {drive}/code/myrepo/target/ripr/cache");
         let first = human.lines().next().unwrap_or("");
         if first != expected {
@@ -1156,14 +1457,22 @@ mod tests {
                 "Windows human Cache dir still has verbatim prefix: {human}"
             ));
         }
-        let unix = render_status_for_host(cache_dir, None, &status, false, false)?;
+        let unix = render_status_for_host(
+            cache_dir,
+            None,
+            &status,
+            Reclaimable::default(),
+            false,
+            false,
+        )?;
         let unix_first = unix.lines().next().unwrap_or("");
         if unix_first != format!("Cache dir: {verbatim}") {
             return Err(format!(
                 "Unix human Cache dir must keep verbatim text as a filename: {unix}"
             ));
         }
-        let json = render_status_for_host(cache_dir, None, &status, true, true)?;
+        let json =
+            render_status_for_host(cache_dir, None, &status, Reclaimable::default(), true, true)?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         let machine = cache_dir.display().to_string();
@@ -1172,7 +1481,7 @@ mod tests {
                 "JSON cache_dir must keep Path::display identity, got: {json}"
             ));
         }
-        let hosted = render_status(cache_dir, None, &status, false)?;
+        let hosted = render_status(cache_dir, None, &status, Reclaimable::default(), false)?;
         if hosted.lines().next() != Some(cache_dir_human_line(cache_dir).as_str()) {
             return Err(format!(
                 "host render_status Cache dir must use human_path: {hosted}"
@@ -1203,13 +1512,27 @@ mod tests {
             foreign_entry_count: 0,
             foreign_total_size_bytes: 0,
         };
-        let none_human = render_status_for_host(cache_dir, None, &status, false, true)?;
+        let none_human = render_status_for_host(
+            cache_dir,
+            None,
+            &status,
+            Reclaimable::default(),
+            false,
+            true,
+        )?;
         if none_human.lines().any(|line| line.starts_with("Real dir:")) {
             return Err(format!(
                 "Real dir line must appear only when real_dir is Some: {none_human}"
             ));
         }
-        let human = render_status_for_host(cache_dir, Some(real_dir), &status, false, true)?;
+        let human = render_status_for_host(
+            cache_dir,
+            Some(real_dir),
+            &status,
+            Reclaimable::default(),
+            false,
+            true,
+        )?;
         let expected_path = format!("{drive}/code/myrepo/target/ripr/cache");
         let expected = format!(
             "Real dir: {expected_path} (inspected through the symlink/junction alias; \
@@ -1230,7 +1553,14 @@ mod tests {
                 "Windows human Real dir still has verbatim prefix: {human}"
             ));
         }
-        let unix = render_status_for_host(cache_dir, Some(real_dir), &status, false, false)?;
+        let unix = render_status_for_host(
+            cache_dir,
+            Some(real_dir),
+            &status,
+            Reclaimable::default(),
+            false,
+            false,
+        )?;
         let unix_real = unix
             .lines()
             .find(|line| line.starts_with("Real dir:"))
@@ -1240,7 +1570,14 @@ mod tests {
                 "Unix human Real dir must keep verbatim text as a filename: {unix}"
             ));
         }
-        let json = render_status_for_host(cache_dir, Some(real_dir), &status, true, true)?;
+        let json = render_status_for_host(
+            cache_dir,
+            Some(real_dir),
+            &status,
+            Reclaimable::default(),
+            true,
+            true,
+        )?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         let machine = real_dir.display().to_string();
@@ -1773,7 +2110,7 @@ mod tests {
             foreign_total_size_bytes: 8,
         };
         let cache_dir = Path::new("target/ripr/cache");
-        let human = render_status(cache_dir, None, &status, false)?;
+        let human = render_status(cache_dir, None, &status, Reclaimable::default(), false)?;
         if !human.contains("Unrecognized: 2 file(s) (8 bytes)") || !human.contains("preserves them")
         {
             return Err(format!(
@@ -1787,13 +2124,13 @@ mod tests {
             foreign_entry_count: 0,
             foreign_total_size_bytes: 0,
         };
-        let plain = render_status(cache_dir, None, &owned_only, false)?;
+        let plain = render_status(cache_dir, None, &owned_only, Reclaimable::default(), false)?;
         if plain.contains("Unrecognized") {
             return Err(format!(
                 "zero foreign files must not add a disclosure: {plain}"
             ));
         }
-        let json = render_status(cache_dir, None, &status, true)?;
+        let json = render_status(cache_dir, None, &status, Reclaimable::default(), true)?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         if value
@@ -1813,7 +2150,13 @@ mod tests {
             return Err(format!("JSON status fields drifted: {json}"));
         }
         let alias_real = Path::new("resolved-cache-target");
-        let aliased = render_status(cache_dir, Some(alias_real), &owned_only, true)?;
+        let aliased = render_status(
+            cache_dir,
+            Some(alias_real),
+            &owned_only,
+            Reclaimable::default(),
+            true,
+        )?;
         let alias_value: serde_json::Value =
             serde_json::from_str(&aliased).map_err(|error| error.to_string())?;
         if alias_value
@@ -1827,7 +2170,13 @@ mod tests {
         {
             return Err(format!("alias disclosure drifted: {aliased}"));
         }
-        let aliased_human = render_status(cache_dir, Some(alias_real), &owned_only, false)?;
+        let aliased_human = render_status(
+            cache_dir,
+            Some(alias_real),
+            &owned_only,
+            Reclaimable::default(),
+            false,
+        )?;
         if !aliased_human.contains("Real dir: resolved-cache-target") {
             return Err(format!("human alias disclosure drifted: {aliased_human}"));
         }
@@ -1959,7 +2308,13 @@ mod tests {
                 "alias resolution did not name the real directory: {real_dir:?}"
             ));
         }
-        let rendered = render_status(&alias, real_dir.as_deref(), &status, true)?;
+        let rendered = render_status(
+            &alias,
+            real_dir.as_deref(),
+            &status,
+            Reclaimable::default(),
+            true,
+        )?;
         let value: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
         if value

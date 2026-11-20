@@ -11,7 +11,8 @@
 //!
 //! Judged fields are the ones the corpus assertions and the honesty argument
 //! rest on: the set of seams, each seam's `grip_class` and stage states, and
-//! each related test's `oracle_strength` and `relation_reason`. Producer
+//! each related test's `oracle_strength` and `relation_reason`, and each
+//! static limitation's stage, state and category (#13278). Producer
 //! version, cache schema, timestamps and the absolute root are expected to
 //! differ between captures and are not judged here; the cache schema is
 //! checked separately against `CACHE_SCHEMA_VERSION` by `report_cache_schema`
@@ -38,8 +39,11 @@ const REGENERATION_ARGS: [&str; 5] = [
 
 /// Assertion types that judge a repo-exposure report's seams. A case using any
 /// of them reads a stored capture, so each must be regenerable (#12188).
-const REPO_SEAM_ASSERTIONS: [&str; 2] =
-    ["expected_repo_seam_grip", "expected_repo_seam_related_test"];
+const REPO_SEAM_ASSERTIONS: [&str; 3] = [
+    "expected_repo_seam_grip",
+    "expected_repo_seam_related_test",
+    "expected_repo_seam_limitation",
+];
 
 /// A seam's identity within one report: file, line, column and kind. The
 /// `seam_id` hash is deliberately not the key, so a change to how ids are
@@ -55,12 +59,24 @@ struct JudgedSeam {
     expression: String,
     grip_class: String,
     stages: Vec<(String, String)>,
+    /// The per-stage `evidence_record.evidence_path` rows (stage, state,
+    /// confidence, summary). Read from the record, not the flat `evidence`
+    /// map: the two disagree on `discriminate` for weakly gripped seams
+    /// because the flat map is a projection (#14555).
+    evidence_path: Vec<EvidencePathRow>,
     related_tests: Vec<RelatedTest>,
+    static_limitations: Vec<StaticLimitation>,
 }
 
 /// A related test as judged: name, file, line, oracle strength, relation
 /// reason. File and line are kept so a test that moved is a difference.
 type RelatedTest = (String, String, u64, String, String);
+
+/// A named limitation as judged: stage, original state and category.
+type StaticLimitation = (String, String, String);
+
+/// One `evidence_path` stage as judged: stage, state, confidence, summary.
+type EvidencePathRow = (String, String, String, String);
 
 fn string_field(value: &Value, field: &str) -> String {
     value
@@ -70,7 +86,10 @@ fn string_field(value: &Value, field: &str) -> String {
         .to_string()
 }
 
-fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String> {
+fn judged_seams(
+    report: &Value,
+    judge_evidence_path: bool,
+) -> Result<BTreeMap<SeamKey, JudgedSeam>, String> {
     let Some(seams) = report.get("seams").and_then(Value::as_array) else {
         return Err("report has no `seams` array".to_string());
     };
@@ -112,12 +131,24 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
             })
             .unwrap_or_default();
         related_tests.sort();
+        let mut static_limitations = limitation_rows(seam)?.unwrap_or_default();
+        static_limitations.sort();
+        let evidence_path = if judge_evidence_path {
+            evidence_path_rows(seam)?.unwrap_or_default()
+        } else {
+            // A pinned capture is tolerated whole: its rows are not read, so a
+            // shape the current analyzer would reject cannot red a capture the
+            // pin exists to keep (#14555).
+            Vec::new()
+        };
         let entry = JudgedSeam {
             owner: string_field(seam, "owner"),
             expression: string_field(seam, "expression"),
             grip_class: string_field(seam, "grip_class"),
             stages,
+            evidence_path,
             related_tests,
+            static_limitations,
         };
         if judged.insert(key.clone(), entry).is_some() {
             return Err(format!(
@@ -131,12 +162,24 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
 
 /// Judged-field differences between a committed capture and a regeneration of
 /// its subject. Empty means the capture still says what the analyzer says.
+/// `current_generation` decides whether the per-stage `evidence_path` summaries
+/// are judged: that comparison is only meaningful where the capture was taken
+/// at the analyzer's current cache generation, so an intentionally pinned older
+/// capture stays tolerated (#14555). The decision is taken here rather than by
+/// the caller, so a test that supplies a capture at a generation gets the real
+/// switch and not a flag it had to remember to set.
 pub(super) fn compare_reports(
     case_label: &str,
     committed: &Value,
     regenerated: &Value,
+    current_generation: &str,
 ) -> Vec<String> {
-    let (committed, regenerated) = match (judged_seams(committed), judged_seams(regenerated)) {
+    let judge_evidence_path =
+        super::report_cache_schema::judges_evidence_path(committed, current_generation);
+    let (committed, regenerated) = match (
+        judged_seams(committed, judge_evidence_path),
+        judged_seams(regenerated, judge_evidence_path),
+    ) {
         (Ok(committed), Ok(regenerated)) => (committed, regenerated),
         (Err(error), _) => return vec![format!("{case_label}: committed report: {error}")],
         (_, Err(error)) => return vec![format!("{case_label}: regenerated report: {error}")],
@@ -174,10 +217,23 @@ pub(super) fn compare_reports(
                 stored.stages, fresh.stages
             ));
         }
+        if judge_evidence_path && stored.evidence_path != fresh.evidence_path {
+            violations.push(format!(
+                "{case_label}: seam at {location} committed evidence_path (stage, state, confidence, summary) {:?} differ from the current analyzer's {:?}",
+                stored.evidence_path, fresh.evidence_path
+            ));
+        }
         if stored.related_tests != fresh.related_tests {
             violations.push(format!(
                 "{case_label}: seam at {location} committed related tests (name, file, line, oracle_strength, relation_reason) {:?} differ from the current analyzer's {:?}",
                 stored.related_tests, fresh.related_tests
+            ));
+        }
+        if stored.static_limitations != fresh.static_limitations {
+            violations.push(format!(
+                "{case_label}: seam at {location} committed static limitations \
+                 (stage, state, category) {:?} differ from the current analyzer's {:?}",
+                stored.static_limitations, fresh.static_limitations
             ));
         }
     }
@@ -193,7 +249,7 @@ pub(super) fn compare_reports(
 }
 
 /// The cases that must be regenerable: every case that pins a repo seam, by
-/// grip or by related test. A
+/// grip, related test or named limitation. A
 /// case without `report_subject` would be judged from a stored file nothing
 /// can refresh, which is the gap this guard closes, so it fails rather than
 /// being skipped.
@@ -228,11 +284,163 @@ pub(super) fn repo_seam_cases(
                 regenerable.push((id.to_string(), report.to_string(), subject.to_string()));
             }
             _ => violations.push(format!(
-                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip` or `expected_repo_seam_related_test` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
+                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip`, `expected_repo_seam_related_test` or `expected_repo_seam_limitation` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
             )),
         }
     }
     regenerable
+}
+
+/// Judge a typed limitation independently of the seam's unchanged grip class.
+/// A missing selector or malformed evidence is never a successful absence.
+/// Match the whole expression so a field cannot also select its enclosing return.
+pub(super) fn expected_limitation_violations(
+    case_label: &str,
+    report: &Value,
+    owner: &str,
+    expression: &str,
+    category: &str,
+    present: bool,
+) -> Vec<String> {
+    let Some(seams) = report.get("seams").and_then(Value::as_array) else {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires a `seams` array"
+        )];
+    };
+    let expression = normalized_seam_expression(expression);
+    if expression.is_empty() {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires a nonempty expression \
+             after trimming whitespace and one optional comma"
+        )];
+    }
+    let matched: Vec<&Value> = seams
+        .iter()
+        .filter(|seam| {
+            seam.get("owner").and_then(Value::as_str) == Some(owner)
+                && seam
+                    .get("expression")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| normalized_seam_expression(text) == expression)
+        })
+        .collect();
+    if matched.len() != 1 {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires exactly one seam with \
+             owner `{owner}` and expression equal to `{expression}`, matched {}",
+            matched.len()
+        )];
+    }
+    let mut violations = Vec::new();
+    for seam in matched {
+        let seam_label = string_field(seam, "seam_id");
+        let limits = match limitation_rows(seam) {
+            Ok(Some(limits)) => limits,
+            Ok(None) => {
+                violations.push(format!(
+                    "{case_label}: seam `{seam_label}` must carry a static_limitations array"
+                ));
+                continue;
+            }
+            Err(error) => {
+                violations.push(format!("{case_label}: {error}"));
+                continue;
+            }
+        };
+        let count = limits
+            .iter()
+            .filter(|(_, _, actual)| actual == category)
+            .count();
+        let expected = usize::from(present);
+        if count != expected {
+            violations.push(format!(
+                "{case_label}: seam `{seam_label}` has {count} limitation rows for \
+                 `{category}`, but the corpus pins {expected}"
+            ));
+        }
+    }
+    violations
+}
+
+fn normalized_seam_expression(expression: &str) -> &str {
+    let expression = expression.trim();
+    expression
+        .strip_suffix(',')
+        .unwrap_or(expression)
+        .trim_end()
+}
+
+/// Older trimmed captures may omit the evidence record. An explicit malformed
+/// record is different from absence and cannot establish a fresh comparison.
+fn limitation_rows(seam: &Value) -> Result<Option<Vec<StaticLimitation>>, String> {
+    let Some(raw) = seam.pointer("/evidence_record/static_limitations") else {
+        return Ok(None);
+    };
+    let seam_label = string_field(seam, "seam_id");
+    let limits = raw
+        .as_array()
+        .ok_or_else(|| format!("seam `{seam_label}` has a malformed static_limitations array"))?;
+    let mut rows = Vec::new();
+    for (index, limit) in limits.iter().enumerate() {
+        let text = |field: &str| {
+            limit
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    format!(
+                        "seam `{seam_label}` static limitation {index} has no nonempty `{field}`"
+                    )
+                })
+        };
+        rows.push((text("stage")?, text("state")?, text("category")?));
+    }
+    Ok(Some(rows))
+}
+
+/// The per-stage `evidence_record.evidence_path` rows. Absence is tolerated:
+/// trimmed captures and the unit-test helper carry no record, so erroring
+/// there would judge an absence as staleness. A record whose `evidence_path`
+/// is present but not an object cannot establish a fresh comparison and is a
+/// violation - reading it as an array would yield empty on both sides and pass
+/// silently, which is the fail-open class this guard exists to close (#14555).
+/// A stage entry that is not an object, or whose `state`/`confidence`/`summary`
+/// is present but not a string, fails for the same reason one level down: it
+/// would read as empty on both sides and compare equal.
+fn evidence_path_rows(seam: &Value) -> Result<Option<Vec<EvidencePathRow>>, String> {
+    let Some(raw) = seam.pointer("/evidence_record/evidence_path") else {
+        return Ok(None);
+    };
+    let seam_label = string_field(seam, "seam_id");
+    let stages = raw.as_object().ok_or_else(|| {
+        format!("seam `{seam_label}` has a malformed evidence_record.evidence_path object")
+    })?;
+    let mut rows = Vec::new();
+    for (stage, entry) in stages {
+        if !entry.is_object() {
+            return Err(format!(
+                "seam `{seam_label}` has a malformed evidence_path entry for stage `{stage}`"
+            ));
+        }
+        let text = |field: &str| -> Result<String, String> {
+            match entry.get(field) {
+                None => Ok(String::new()),
+                Some(Value::String(state)) => Ok(state.clone()),
+                Some(_) => Err(format!(
+                    "seam `{seam_label}` has a non-string evidence_path `{field}` for stage `{stage}`, so it cannot be compared"
+                )),
+            }
+        };
+        rows.push((
+            stage.clone(),
+            text("state")?,
+            text("confidence")?,
+            text("summary")?,
+        ));
+    }
+    rows.sort();
+    Ok(Some(rows))
 }
 
 /// The producer's `raw_json_placeholder_v1` canonicalization: the digest is the
@@ -552,6 +760,14 @@ pub(super) fn check_regenerated_reports(violations: &mut Vec<String>) -> Result<
         format!("failed to build ripr to regenerate repo-seam reports: {error}")
     })?;
     let binary = ripr_debug_binary();
+    // Resolve the analyzer's cache generation once. A capture recorded at this
+    // generation has its `evidence_path` summaries judged; a capture a pin holds
+    // at an older generation stays tolerated, which leaves the pin's "judged
+    // seams are unchanged" reason unexercised until the corpus is recaptured
+    // (#14555). The exemption cannot widen to an unpinned capture: a capture
+    // older than the current generation that no pin holds is a violation in
+    // `check_report_cache_schemas`, which runs in the same pass.
+    let current_generation = super::report_cache_schema::current_generation()?;
     for (id, report_path, subject_path) in regenerable {
         let case_label = format!("evidence promotion case `{id}`");
         let subject = Path::new(&subject_path);
@@ -567,7 +783,8 @@ pub(super) fn check_regenerated_reports(violations: &mut Vec<String>) -> Result<
             .map_err(|error| format!("{case_label}: {report_path} is not JSON: {error}"))?;
         match regenerate(subject, &binary) {
             Ok(regenerated) => {
-                let found = compare_reports(&case_label, &committed, &regenerated);
+                let found =
+                    compare_reports(&case_label, &committed, &regenerated, &current_generation);
                 if !found.is_empty() {
                     violations.extend(found);
                     violations.push(format!(
@@ -588,6 +805,15 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The generation the test captures record themselves at. The switch under
+    /// test is the real `judges_evidence_path`, so a capture at this generation
+    /// is judged and one at an older generation is tolerated.
+    const CURRENT_GENERATION: &str = "1.999";
+
+    fn at_generation(report: &mut Value, version: &str) {
+        report["source_subject"] = json!({"corpus": {"cache_schema_version": version}});
+    }
+
     fn report(grip: &str, propagate: &str, strength: &str) -> Value {
         json!({
             "seams": [{
@@ -605,6 +831,185 @@ mod tests {
                 ]
             }]
         })
+    }
+
+    fn with_field_limit(report: &mut Value, present: bool) {
+        report["seams"][0]["evidence_record"] = json!({
+            "static_limitations": if present {
+                json!([{
+                    "stage": "discriminate", "state": "weak",
+                    "category": "rust_framework_oracle_unresolved"
+                }])
+            } else {
+                json!([])
+            }
+        });
+    }
+
+    fn field_limit_violations(report: &Value, present: bool) -> Vec<String> {
+        expected_limitation_violations(
+            "field",
+            report,
+            "src/lib.rs::check",
+            "a > b",
+            "rust_framework_oracle_unresolved",
+            present,
+        )
+    }
+
+    #[test]
+    fn named_limitation_assertions_distinguish_identical_class_and_stages() {
+        let mut ordinary = report("weakly_gripped", "yes", "medium");
+        with_field_limit(&mut ordinary, false);
+        let mut marked = ordinary.clone();
+        with_field_limit(&mut marked, true);
+        assert_eq!(
+            ordinary["seams"][0]["grip_class"],
+            marked["seams"][0]["grip_class"]
+        );
+        assert_eq!(
+            ordinary["seams"][0]["evidence"],
+            marked["seams"][0]["evidence"]
+        );
+        assert!(field_limit_violations(&ordinary, false).is_empty());
+        assert!(field_limit_violations(&marked, true).is_empty());
+        assert_eq!(field_limit_violations(&ordinary, true).len(), 1);
+        assert_eq!(field_limit_violations(&marked, false).len(), 1);
+        let stale = compare_reports("field", &marked, &ordinary, CURRENT_GENERATION);
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert!(stale[0].contains("static limitations"), "{stale:?}");
+        // Re-blessing the missing marker satisfies freshness but cannot
+        // satisfy the independent corpus assertion that requires it.
+        assert!(compare_reports("field", &ordinary, &ordinary, CURRENT_GENERATION).is_empty());
+        assert!(!field_limit_violations(&ordinary, true).is_empty());
+    }
+
+    #[test]
+    fn named_limitation_assertions_reject_missing_malformed_and_duplicate_rows() {
+        let mut marked = report("weakly_gripped", "yes", "medium");
+        with_field_limit(&mut marked, true);
+        for bad in [json!({}), json!({"seams": []})] {
+            assert!(!field_limit_violations(&bad, false).is_empty());
+        }
+        let mut wrong_owner = marked.clone();
+        wrong_owner["seams"][0]["owner"] = json!("other");
+        assert!(!field_limit_violations(&wrong_owner, true).is_empty());
+        let ambiguous = json!({"seams": [marked["seams"][0], marked["seams"][0]]});
+        assert!(!field_limit_violations(&ambiguous, true).is_empty());
+        let mut malformed = marked.clone();
+        malformed["seams"][0]["evidence_record"]["static_limitations"] = json!({});
+        assert!(!field_limit_violations(&malformed, false).is_empty());
+        malformed["seams"][0]["evidence_record"]["static_limitations"] = json!([{}]);
+        assert!(!field_limit_violations(&malformed, false).is_empty());
+        let row = marked["seams"][0]["evidence_record"]["static_limitations"][0].clone();
+        marked["seams"][0]["evidence_record"]["static_limitations"] = json!([row, row]);
+        assert!(!field_limit_violations(&marked, true).is_empty());
+    }
+
+    #[test]
+    fn named_limitation_assertions_select_fields_apart_from_enclosing_returns() {
+        let owner = "src/lib.rs::make_record";
+        let field = "items: items.iter().count()";
+        let returned = "Record {\n    items: items.iter().count(),\n}";
+        let category = "rust_framework_oracle_unresolved";
+        let report = json!({
+            "seams": [
+                {
+                    "seam_id": "returned", "owner": owner, "kind": "return_value",
+                    "expression": returned,
+                    "evidence_record": {"static_limitations": []}
+                },
+                {
+                    "seam_id": "field", "owner": owner, "kind": "field_construction",
+                    "expression": field,
+                    "evidence_record": {"static_limitations": [{
+                        "stage": "discriminate", "state": "weak", "category": category
+                    }]}
+                }
+            ]
+        });
+        let judge = |expression: &str, present| {
+            expected_limitation_violations(
+                "nested field",
+                &report,
+                owner,
+                expression,
+                category,
+                present,
+            )
+        };
+        for selector in [field.to_string(), format!("  {field},  ")] {
+            let violations = judge(&selector, true);
+            assert!(violations.is_empty(), "{violations:?}");
+            assert_eq!(judge(&selector, false).len(), 1);
+        }
+        assert!(judge(returned, false).is_empty());
+        assert_eq!(judge(returned, true).len(), 1);
+        assert!(!judge(&format!("{field},,"), true).is_empty());
+        let mut with_comma = report.clone();
+        with_comma["seams"][1]["expression"] = json!(format!("  {field},  "));
+        let violations = expected_limitation_violations(
+            "field with comma",
+            &with_comma,
+            owner,
+            field,
+            category,
+            true,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        let return_only = json!({"seams": [report["seams"][0]]});
+        let missing = expected_limitation_violations(
+            "missing field",
+            &return_only,
+            owner,
+            field,
+            category,
+            false,
+        );
+        assert!(!missing.is_empty());
+        let empty_expression = json!({"seams": [{
+            "seam_id": "empty", "owner": owner, "expression": "",
+            "evidence_record": {"static_limitations": []}
+        }]});
+        for selector in ["", " ", ",", " , "] {
+            let malformed = expected_limitation_violations(
+                "empty expression",
+                &empty_expression,
+                owner,
+                selector,
+                category,
+                false,
+            );
+            assert!(!malformed.is_empty());
+        }
+    }
+
+    #[test]
+    fn named_limitation_cases_require_explicit_presence_and_a_live_subject() -> Result<(), String> {
+        let mut assertion = json!({
+            "type": "expected_repo_seam_limitation",
+            "owner": "src/lib.rs::check", "expression": "a > b",
+            "category": "rust_framework_oracle_unresolved"
+        });
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("missing `present` must be rejected".to_string());
+        }
+        assertion["present"] = json!("true");
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("non-boolean `present` must be rejected".to_string());
+        }
+        assertion["present"] = json!(true);
+        super::super::evidence_promotion_parse_assertion("field", 0, &assertion)?;
+        let mut case = json!({"id": "field", "assertions": [assertion]});
+        let mut missing = Vec::new();
+        assert!(repo_seam_cases(&[case.clone()], &mut missing).is_empty());
+        assert_eq!(missing.len(), 1);
+        case["source_report"] = json!("reports/field.json");
+        case["report_subject"] = json!("subjects/field");
+        let mut valid = Vec::new();
+        assert_eq!(repo_seam_cases(&[case], &mut valid).len(), 1);
+        assert!(valid.is_empty());
+        Ok(())
     }
 
     /// A report whose `content_sha256` is computed the producer's way.
@@ -812,7 +1217,7 @@ mod tests {
         // Fields outside the judged set are free to move between captures.
         regenerated["seams"][0]["seam_id"] = json!("b2");
         regenerated["artifact"] = json!({"generated_at": "unix_ms:2"});
-        assert!(compare_reports("case", &committed, &regenerated).is_empty());
+        assert!(compare_reports("case", &committed, &regenerated, CURRENT_GENERATION).is_empty());
     }
 
     #[test]
@@ -828,7 +1233,7 @@ mod tests {
             // oracle of a related test changes.
             (report("strongly_gripped", "yes", "none"), "related tests"),
         ] {
-            let found = compare_reports("case", &committed, &fresh);
+            let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
             assert_eq!(found.len(), 1, "{needle}: {found:?}");
             assert!(found[0].contains(needle), "{needle}: {found:?}");
         }
@@ -855,7 +1260,7 @@ mod tests {
         for (needle, edit) in edits {
             let mut fresh = committed.clone();
             edit(&mut fresh);
-            let found = compare_reports("case", &committed, &fresh);
+            let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
             assert_eq!(found.len(), 1, "{needle}: {found:?}");
             assert!(found[0].contains(needle), "{needle}: {found:?}");
         }
@@ -865,10 +1270,10 @@ mod tests {
     fn a_seam_present_on_only_one_side_is_a_difference() {
         let committed = report("strongly_gripped", "yes", "strong");
         let empty = json!({"seams": []});
-        let gone = compare_reports("case", &committed, &empty);
+        let gone = compare_reports("case", &committed, &empty, CURRENT_GENERATION);
         assert_eq!(gone.len(), 1, "{gone:?}");
         assert!(gone[0].contains("no longer produces"), "{gone:?}");
-        let added = compare_reports("case", &empty, &committed);
+        let added = compare_reports("case", &empty, &committed, CURRENT_GENERATION);
         assert_eq!(added.len(), 1, "{added:?}");
         assert!(added[0].contains("does not carry"), "{added:?}");
     }
@@ -876,9 +1281,165 @@ mod tests {
     #[test]
     fn a_report_without_seams_is_an_error_not_a_pass() {
         let committed = report("strongly_gripped", "yes", "strong");
-        let found = compare_reports("case", &committed, &json!({"findings": []}));
+        let found = compare_reports(
+            "case",
+            &committed,
+            &json!({"findings": []}),
+            CURRENT_GENERATION,
+        );
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].contains("no `seams` array"), "{found:?}");
+    }
+
+    /// The #14555 shape: the flat `evidence` map is a projection, so a weakly
+    /// gripped seam reads `discriminate: weak` there while the record says
+    /// `yes`. Both sides keep that divergence; only the record's summary moves.
+    fn with_evidence_path(report: &mut Value, summary: &str) {
+        report["seams"][0]["evidence"]["discriminate"] = json!("weak");
+        report["seams"][0]["evidence_record"] = json!({
+            "evidence_path": {
+                "discriminate": {
+                    "state": "yes",
+                    "confidence": "medium",
+                    "summary": summary
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn a_changed_evidence_path_summary_is_a_difference_when_judged() {
+        let mut committed = report("weakly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        with_evidence_path(
+            &mut committed,
+            "Strongest oracle for seam kind `predicate_boundary` is `strong` (kind-match true)",
+        );
+        let mut fresh = committed.clone();
+        with_evidence_path(
+            &mut fresh,
+            "Strongest oracle for seam kind `predicate_boundary` is `weak` (kind-match false)",
+        );
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("evidence_path"), "{found:?}");
+        assert!(found[0].contains("discriminate"), "{found:?}");
+        // The flat map is identical on both sides, so a comparison that read it
+        // instead of the record would find nothing to report.
+        assert_eq!(
+            committed["seams"][0]["evidence"], fresh["seams"][0]["evidence"],
+            "the flat map must not be what moved"
+        );
+    }
+
+    #[test]
+    fn a_changed_evidence_path_summary_is_tolerated_for_a_pinned_capture() {
+        let mut committed = report("weakly_gripped", "yes", "strong");
+        at_generation(&mut committed, "1.176");
+        with_evidence_path(&mut committed, "committed summary");
+        let mut fresh = committed.clone();
+        with_evidence_path(&mut fresh, "regenerated summary");
+        assert!(
+            compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty(),
+            "a capture held at an older generation must stay tolerated"
+        );
+    }
+
+    #[test]
+    fn a_malformed_evidence_path_is_a_violation_not_a_pass() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({
+            "evidence_path": [{"stage": "discriminate", "summary": "an array, not an object"}]
+        });
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].contains("malformed evidence_record.evidence_path"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_string_evidence_path_field_is_a_violation_not_a_pass() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({
+            "evidence_path": {
+                "discriminate": {
+                    "state": "yes",
+                    "confidence": "medium",
+                    "summary": {"nested": "an object, not a string"}
+                }
+            }
+        });
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].contains("non-string evidence_path `summary`"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_pinned_capture_with_a_malformed_evidence_path_stays_tolerated() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, "1.176");
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({
+            "evidence_path": [{"stage": "discriminate", "summary": "an array, not an object"}]
+        });
+        assert!(
+            compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty(),
+            "a pin tolerates the capture whole, including a shape the current analyzer rejects"
+        );
+    }
+
+    #[test]
+    fn an_absent_evidence_path_is_tolerated() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({"static_limitations": []});
+        assert!(
+            compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty(),
+            "absence is not staleness"
+        );
+    }
+
+    /// The switch reads the analyzer's own constant, so a capture recorded at
+    /// the generation in this tree is judged and one recorded at any other is
+    /// not. This is the oracle the caller lacked: forcing the comparison off
+    /// reds `a_changed_evidence_path_summary_is_a_difference_when_judged`.
+    #[test]
+    fn the_generation_switch_follows_the_analyzers_constant() -> Result<(), String> {
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../crates/ripr/src/analysis/seam_cache.rs"
+        ))
+        .map_err(|error| format!("the analyzer source is in this tree: {error}"))?;
+        let current = super::super::report_cache_schema::current_cache_schema_version(&source)?;
+        let mut at_current = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut at_current, &current);
+        assert!(super::super::report_cache_schema::judges_evidence_path(
+            &at_current,
+            &current
+        ));
+        let mut pinned = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut pinned, "1.0");
+        assert!(!super::super::report_cache_schema::judges_evidence_path(
+            &pinned, &current
+        ));
+        assert!(
+            !super::super::report_cache_schema::judges_evidence_path(
+                &report("strongly_gripped", "yes", "strong"),
+                &current
+            ),
+            "a capture with no recorded generation is not judged"
+        );
+        Ok(())
     }
 
     #[test]

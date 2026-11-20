@@ -1,5 +1,5 @@
 use crate::cli::commands_context::ensure_command_root;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,7 @@ pub(super) struct Options {
 
 pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut result = None;
 
     let mut i = 0usize;
@@ -21,15 +22,23 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--root")?;
                 if value.trim().is_empty() {
-                    return Err("swarm ingest --root requires a non-empty path; pass a value right after --root".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--root",
+                        "swarm ingest --root requires a non-empty path; pass a value right after --root",
+                    ));
                 }
-                root = PathBuf::from(value);
+                let reconciled = reconcile_root(&root, root_explicit, value, "swarm ingest")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--result" => {
                 i += 1;
                 let value = expect_value(args, i, "--result")?;
                 if value.trim().is_empty() {
-                    return Err("swarm ingest --result requires a non-empty path; pass a value right after --result".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--result",
+                        "swarm ingest --result requires a non-empty path; pass a value right after --result",
+                    ));
                 }
                 result = Some(PathBuf::from(value));
             }
@@ -49,8 +58,10 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(Options {
         root,
         result: result.ok_or_else(|| {
-            "swarm ingest requires --result <path>; add `--result <path>` to the command"
-                .to_string()
+            crate::cli::usage_refusal::missing_required(
+                "--result",
+                "swarm ingest requires --result <path>; add `--result <path>` to the command",
+            )
         })?,
     })
 }
@@ -79,6 +90,23 @@ pub(super) fn run(options: Options) -> Result<(), String> {
     Ok(())
 }
 
+/// Say in user words why `--result` could not be resolved and what to pass
+/// instead (#14313): the agent result is written by the agent loop, not by
+/// this command, so a missing file usually means a wrong path or root.
+fn result_path_refusal(root: &Path, path: &Path, err: &std::io::Error) -> String {
+    let shown = crate::output::path::human_path(path);
+    if err.kind() == std::io::ErrorKind::NotFound {
+        format!(
+            "swarm ingest --result {shown} was not found (relative paths resolve against --root {}); pass the agent result JSON your agent run wrote, for example `--result target/ripr/workflow/agent-result.json`",
+            crate::output::path::human_path(root)
+        )
+    } else {
+        format!(
+            "swarm ingest --result {shown} could not be resolved: {err}; check the path names a readable file under --root, then rerun"
+        )
+    }
+}
+
 /// `root` must already be canonicalized: the forbidden-edit path comparison
 /// anchors absolute edited-path spellings against it (#5984).
 fn validate_result_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
@@ -87,12 +115,9 @@ fn validate_result_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
     } else {
         root.join(path)
     };
-    let candidate = candidate.canonicalize().map_err(|err| {
-        format!(
-            "canonicalize swarm ingest --result {} failed: {err}",
-            path.display()
-        )
-    })?;
+    let candidate = candidate
+        .canonicalize()
+        .map_err(|err| result_path_refusal(root, path, &err))?;
 
     if !candidate.starts_with(root) {
         return Err(format!(
@@ -174,11 +199,21 @@ mod tests {
     }
 
     #[test]
-    fn later_flag_values_replace_earlier_ones() -> Result<(), String> {
-        let options = parse(&[
-            "--result", "a.json", "--root", "one", "--result", "b.json", "--root", "two",
-        ])?;
-        assert_eq!(options.root, PathBuf::from("two"));
+    fn root_repeats_reconcile_while_other_flags_stay_last_win() -> Result<(), String> {
+        // #9008/#10542: a conflicting repeated `--root` refuses naming both
+        // values; an identical repeat is absorbed for scripted double-root
+        // invocations. `--result` keeps its ordinary last-win behavior.
+        match parse(&["--result", "a.json", "--root", "one", "--root", "two"]) {
+            Err(error) if error == "swarm ingest takes --root once (got 'one' and 'two')" => {}
+            other => {
+                return Err(format!(
+                    "conflicting --root repeat was not refused: {other:?}"
+                ));
+            }
+        }
+        let options = parse(&["--result", "a.json", "--root", "one", "--root", "one"])?;
+        assert_eq!(options.root, PathBuf::from("one"));
+        let options = parse(&["--result", "a.json", "--result", "b.json", "--root", "one"])?;
         assert_eq!(options.result, PathBuf::from("b.json"));
         Ok(())
     }
@@ -322,7 +357,7 @@ mod tests {
             return Err("a missing result must be refused".to_string());
         };
         assert!(
-            message.starts_with("canonicalize swarm ingest --result absent.json failed: "),
+            message.starts_with("swarm ingest --result absent.json was not found (relative paths resolve against --root "),
             "{message}"
         );
         let _ = std::fs::remove_dir_all(&parent);
@@ -363,7 +398,7 @@ mod tests {
             return Err("a missing result must fail".to_string());
         };
         assert!(
-            message.starts_with("canonicalize swarm ingest --result absent.json failed: "),
+            message.starts_with("swarm ingest --result absent.json was not found (relative paths resolve against --root "),
             "{message}"
         );
 

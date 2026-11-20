@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The advisory `cargo xtask rust-conversion-candidates` inventory now derives approved non-Rust runtime retention from the same enforced `non_rust_programming_retention_reason` owner as `check-file-policy` instead of a divergent short list, so approved CI, npm launcher, merge-guard, admission, recovery and activation boundaries report as retained rather than unapproved/high; fixture-input versus external-runtime distinctions and the deterministic JSON/Markdown summaries are unchanged for already-correct rows (#13290).

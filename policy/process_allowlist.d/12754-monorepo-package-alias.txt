@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_monorepo_package_alias.rs|Command::new|1|typescript-preview|#12754: integration test runs the worktree-built ripr binary against isolated temp TypeScript monorepo fixtures to prove per-package tsconfig alias resolution; no shell, network, or user-repository mutation.

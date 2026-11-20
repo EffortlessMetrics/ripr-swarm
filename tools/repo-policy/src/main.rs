@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 fn main() {
-    let command: Option<fn() -> Result<(), String>> = match std::env::args().nth(1).as_deref() {
+    let name = std::env::args().nth(1);
+    let command: Option<fn() -> Result<(), String>> = match name.as_deref() {
         Some("python-wheel-applicability") => Some(repo_policy::python_wheel::command),
         Some("capture-coverage-failure") => Some(repo_policy::coverage_diagnostics::command),
         Some("check-workflows") => Some(|| {
@@ -15,6 +16,13 @@ fn main() {
             repo_policy::verify_executable_identity()
                 .and_then(|()| repo_policy::executable_files::check())
         }),
+        Some("check-user-text") => Some(|| {
+            repo_policy::verify_executable_identity().and_then(|()| {
+                repo_policy::user_text::check_foreign_tree(
+                    &std::env::args().skip(2).collect::<Vec<_>>(),
+                )
+            })
+        }),
         Some("preflight") => Some(repo_policy::preflight),
         Some("verify-preflight") => Some(|| {
             repo_policy::verify_preflight(std::path::Path::new(
@@ -23,12 +31,29 @@ fn main() {
         }),
         _ => None,
     };
-    let result = match command {
-        Some(command) => repo_policy::enter_workspace_root().and_then(|()| command()),
-        None => Err("usage: cargo policy check-workflows | check-agent-skills | check-executable-files | preflight | verify-preflight | python-wheel-applicability <event> <base-sha> <head-sha> | capture-coverage-failure".into()),
+    let result = match (name.as_deref(), command) {
+        (Some("docs-gate"), _) => repo_policy::enter_workspace_root()
+            .and_then(|()| {
+                repo_policy::docs_gate::command(
+                    &std::env::args().skip(2).collect::<Vec<_>>(),
+                )
+            })
+            .map(|()| 0),
+        (Some("run-coverage"), _) => repo_policy::enter_workspace_root()
+            .and_then(|()| repo_policy::coverage_diagnostics::run_coverage()),
+        (_, Some(command)) => repo_policy::enter_workspace_root()
+            .and_then(|()| command())
+            .map(|()| 0),
+        (_, None) => Err("usage: cargo policy check-workflows | check-agent-skills | check-executable-files | check-user-text --tree <path> | preflight | verify-preflight | docs-gate (--changed <path>... or --base <sha> --head <sha>) | python-wheel-applicability <event> <base-sha> <head-sha> | capture-coverage-failure | run-coverage".into()),
     };
-    if let Err(error) = result {
-        eprintln!("xtask: {error}");
-        std::process::exit(1);
+    let code = match result {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("xtask: {error}");
+            1
+        }
+    };
+    if code != 0 {
+        std::process::exit(code);
     }
 }

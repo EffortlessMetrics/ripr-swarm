@@ -1,5 +1,12 @@
 # Golden Output Changes
 
+## Pending — cross-surface annotation conformance (#12925)
+
+Add the existing finding projection as `sarif.json` and `github.txt` under
+RIPR-SPEC-0008 cross-surface conformance. Class, canonical identity,
+configured severity and refusal guidance come from the existing producer;
+the check/human goldens and analyzer behavior are unchanged.
+
 ## Pending — compile_time_marker_test_no_observation (1)
 
 Reason:
@@ -127,3 +134,40 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (11)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (12)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (13)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/human.txt`

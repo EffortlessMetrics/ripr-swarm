@@ -1,6 +1,7 @@
 //! Thin CLI adapter for `ripr first-pr` (#4854 extraction).
 
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::unknown_argument;
 use crate::output::first_pr::{FIRST_PR_HELP, FirstPrOptions, first_pr_with_options};
 
@@ -17,12 +18,21 @@ pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
         preflight: true,
         ..FirstPrOptions::default()
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = non_empty_arg(args, i, "--root")?.to_string();
+                let value = non_empty_arg(args, i, "--root")?.to_string();
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&options.root),
+                    root_explicit,
+                    &value,
+                    "first-pr",
+                )?;
+                options.root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--base" => {
                 i += 1;
@@ -83,14 +93,13 @@ pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
 
 fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
     let Some(value) = args.get(index) else {
-        return Err(format!(
-            "missing value for {flag}; pass a value right after it"
-        ));
+        return Err(crate::cli::parse::missing_value(flag));
     };
     if value.trim().is_empty() {
-        return Err(format!(
-            "first-pr {flag} requires a non-empty value; pass a value right after {flag}"
-        ));
+        let message =
+            format!("first-pr {flag} requires a non-empty value; pass a value right after {flag}");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        return Err(message);
     }
     Ok(value)
 }

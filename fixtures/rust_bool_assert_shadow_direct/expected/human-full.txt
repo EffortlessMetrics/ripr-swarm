@@ -16,7 +16,7 @@ Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach can_ship: ships
   E2 [findings 1, 2]: propagation unknown: Propagation is not statically obvious from syntax-first analysis
   E3 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   E5 [findings 1, 2]: source assertion argument value true at line 11
   E6 [findings 1, 2]: source function argument value in_stock = true at line 11
   E7 [findings 1, 2]: source function argument value paid = true at line 11
@@ -25,6 +25,7 @@ Shared evidence and guidance
   E10 [findings 1, 2]: source function argument value paid = true at line 12
   E11 [findings 1, 2]: source assertion argument value false at line 13
   E12 [findings 1, 2]: source function argument value in_stock = true at line 13
+  E13 [findings 1, 2]: assertion not credited: `assert_eq!` in ships at tests/api.rs:11: tests/api.rs:3 defines a macro named `assert_eq`
 
 Finding 1: WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:349c27df
@@ -46,6 +47,7 @@ Evidence
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12
   - source values (showing 8 of 9 read from related tests; full list in --format json)
+  shared evidence: E13
 Weakness
   - No detected boundary input for the changed predicate
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -55,7 +57,7 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast probe:src_lib.rs:predicate:349c27df
@@ -82,6 +84,7 @@ Evidence
   - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12
   - source values (showing 8 of 9 read from related tests; full list in --format json)
+  shared evidence: E13
 Weakness
   - ripr could not follow the changed value to something a test can check (a return value or side effect)
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -90,7 +93,7 @@ Stop reasons:
   - ripr could not tell whether the changed value flows to something a test observes (propagation_evidence_unknown)
     Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
 Next step
-  - Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast probe:src_lib.rs:return_value:5a8195e8

@@ -77,7 +77,7 @@ fn projection_matrix_has_unique_rows_per_enum_variant() -> Result<(), String> {
     let mut seen = BTreeSet::new();
     for row in &rows {
         let key = (&row.enum_name, &row.variant);
-        if !seen.insert(key.clone()) {
+        if !seen.insert(key) {
             return Err(format!("duplicate matrix row for {key:?}"));
         }
     }

@@ -1,0 +1,7 @@
+# #13239: the `ripr explain` selector-miss e2e control joins the SPEC-0185
+# user-fixable progress contract the `ripr context` fix (#10022) already pins.
+[[extend]]
+id = "RIPR-SPEC-0185"
+tests = [
+  "crates/ripr/tests/cli_progress.rs::explain_selector_miss_prints_error_without_a_failed_progress_line",
+]

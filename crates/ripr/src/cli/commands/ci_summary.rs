@@ -1,6 +1,7 @@
 //! `ripr reports ci-summary`: print the generated workflow's step summary.
 
-use crate::cli::parse::expect_value;
+use crate::cli::commands_context::ensure_command_root;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::{CiSummaryInput, render_ci_summary};
 use std::io::Write;
@@ -26,13 +27,16 @@ pub(super) struct CiSummaryOptions {
 pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
     let settings = super::ci_packet::CiSettings::from_env()?;
     let options = parse_ci_summary_options_with(args, &settings)?;
+    ensure_command_root(std::path::Path::new(&options.root), "reports ci-summary")?;
     let input = CiSummaryInput {
         configured_languages: configured_languages(&options.root),
         root: options.root,
         base_ref: options.base_ref,
         upload_sarif: options.upload_sarif == "true",
+        pull_request: settings.pull_request(),
         gate_baseline: !options.gate_baseline.is_empty(),
         gate_configured: gate_configured(&settings.gate_mode),
+        gate_mode: settings.gate_mode.clone(),
         comment_mode: options.comment_mode,
     };
     let summary = render_ci_summary(&input);
@@ -94,12 +98,18 @@ pub(super) fn parse_ci_summary_options_with(
         gate_baseline: workflow.gate_baseline.clone(),
         comment_mode: workflow.comment_mode.clone(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, COMMAND)?),
+            "--root" => {
+                let value = non_empty_string_arg(args, i, flag, COMMAND)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, COMMAND)?;
+                options.root = reconciled;
+                root_explicit = true;
+            }
             "--base-ref" => options.base_ref = non_empty_string_arg(args, i, flag, COMMAND)?,
             "--upload-sarif" => options.upload_sarif = expect_value(args, i, flag)?.to_string(),
             "--gate-baseline" => options.gate_baseline = expect_value(args, i, flag)?.to_string(),

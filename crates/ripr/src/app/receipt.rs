@@ -188,7 +188,7 @@ pub(crate) fn check_receipt(
     let path = resolve_check_path(opts)?;
     let displayed = crate::output::path::display_path(&path);
 
-    let content = std::fs::read_to_string(&path).map_err(|err| {
+    let content = crate::bounded_input::read_to_string(&path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "receipt at {displayed} not found or unreadable. Write one first with \
@@ -252,7 +252,7 @@ fn cross_reference_receipt(
         return Ok(ReceiptCrossRefResult::NotAvailable);
     };
 
-    let contents = std::fs::read_to_string(path).map_err(|err| {
+    let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
         let displayed = crate::output::path::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
@@ -387,7 +387,7 @@ fn receipt_file_stem(canonical_gap_id: &str) -> String {
 
 fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
     if opts.canonical_gap_id.trim().is_empty() {
-        return Err("receipt write requires a canonical_gap_id; re-run with --gap".to_string());
+        return Err("receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string());
     }
     if opts.verify_command.trim().is_empty() {
         return Err("receipt write requires --verify-command; pass the command you ran to verify, as `--verify-command <cmd>`".to_string());

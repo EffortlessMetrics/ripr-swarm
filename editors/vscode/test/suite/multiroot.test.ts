@@ -61,6 +61,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         sourceContents: 'pub fn alpha_discount(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n',
         testContents: 'use root_alpha::alpha_discount;\n\n#[test]\nfn alpha_below_boundary() {\n    assert_eq!(alpha_discount(50, 100), 50);\n}\n\n#[test]\nfn alpha_far_above_boundary() {\n    assert_eq!(alpha_discount(10_000, 100), 9_990);\n}\n',
         symbol: 'alpha_discount', changedExpression: 'amount >= threshold',
+        suggestedAssertion: 'assert_eq!(alpha_discount(100, 100), 90)',
         relatedTest: 'tests/alpha_contract.rs',
         testNames: ['alpha_below_boundary', 'alpha_far_above_boundary'],
       };
@@ -69,6 +70,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         sourceContents: 'pub fn beta_shipping(weight: i32, cutoff: i32) -> i32 {\n    if weight >= cutoff {\n        weight * 3\n    } else {\n        7\n    }\n}\n',
         testContents: 'use root_beta::beta_shipping;\n\n#[test]\nfn beta_light_parcel() {\n    assert_eq!(beta_shipping(5, 10), 7);\n}\n\n#[test]\nfn beta_heavy_parcel() {\n    assert_eq!(beta_shipping(100, 10), 300);\n}\n',
         symbol: 'beta_shipping', changedExpression: 'weight >= cutoff',
+        suggestedAssertion: 'assert_eq!(beta_shipping(10, 10), /* expected */)',
         relatedTest: 'tests/beta_contract.rs',
         testNames: ['beta_light_parcel', 'beta_heavy_parcel'],
       };
@@ -588,6 +590,19 @@ async function openAndSave(root: RootExpectation): Promise<void> {
   assert.strictEqual(await editor.edit(builder => builder.insert(document.positionAt(document.getText().length), '\n')), true);
   assert.strictEqual(document.isDirty, true);
   assert.strictEqual(await document.save(), true, 'must drive a real saved-workspace event');
+  // #13636: the repair start refuses while production source is uncommitted,
+  // and the server now withholds it with the commit step. The save above
+  // left src uncommitted, so fold it into the fixture's boundary commit:
+  // HEAD~1 (ripr.baseRef) is unchanged, the evidence is the same, and the
+  // committed change keeps the start offered as #13716 asserts. Waiting out
+  // the server's 1s per-root premise memo keeps a code-action request made
+  // before the amend from answering for the clean tree.
+  const cp = require('child_process') as typeof import('child_process');
+  cp.execFileSync('git', ['-C', root.root, 'commit', '--quiet', '--amend', '--no-edit', '--all'],
+    { stdio: 'pipe' });
+  assert.strictEqual(cp.execFileSync('git', ['-C', root.root, 'status', '--porcelain', '--untracked-files=no'],
+    { encoding: 'utf8' }), '', 'the saved fixture change must be committed before the start is asserted');
+  await new Promise(resolve => setTimeout(resolve, 1100));
 }
 
 async function assertReaped(observed: ProcessObservation): Promise<void> {

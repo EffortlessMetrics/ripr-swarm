@@ -342,3 +342,33 @@ fn entry_tests_are_not_admitted_beside_a_direct_owner_test() -> Result<(), Strin
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
 }
+
+#[test]
+fn template_substitution_calls_are_entry_edges() -> Result<(), String> {
+    // A call inside `${...}` runs; only the template's own text is not code
+    // (knitwork `genObjectFromRawEntries`, #13592 follow-up).
+    let template = "function _merge(base: any, defaults: any): any {\n  const out = { ...defaults };\n  for (const key of Object.keys(base)) {\n    out[key] = base[key];\n  }\n  return out;\n}\n\nexport function merge(base: any, defaults: any): string {\n  return `merged: ${JSON.stringify(_merge(base, defaults))}`;\n}\n";
+    assert_eq!(entry_names(template, "_merge"), ["merge"]);
+    assert_entry_related(
+        "template-substitution",
+        template,
+        "import { it, expect } from 'vitest';\nimport { merge } from '../src/merge';\n\nit('merges', () => {\n  expect(merge({ a: 1 }, { b: 2 })).toBe('merged: {\"b\":2,\"a\":1}');\n});\n",
+    )?;
+    // The same call spelled inside the template's text is not a call.
+    let text_only = "function _merge(a: any): any {\n  return a;\n}\nexport function merge(a: any): string {\n  return `call _merge(a) by hand: ${a}`;\n}\n";
+    assert!(entry_names(text_only, "_merge").is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_block_comment_opener_inside_a_line_comment_hides_no_entry_edge() -> Result<(), String> {
+    // `// ... /* ...` opens no block comment, so the call after it is code
+    // (rou3 `regExpToRoute` -> `parseSegments`, #13592 follow-up).
+    let commented = "function _merge(base: any, defaults: any): any {\n  const out = { ...defaults };\n  for (const key of Object.keys(base)) {\n    out[key] = base[key];\n  }\n  return out;\n}\n\nexport function merge(base: any, defaults: any): any {\n  // A trailing `*` after a segment (`/:x/*`) is a wildcard.\n  const separator = \"/*\";\n  return _merge(base, defaults);\n}\n";
+    assert_eq!(entry_names(commented, "_merge"), ["merge"]);
+    assert_entry_related("line-comment-opener", commented, MERGE_TEST)?;
+    // A real, still-open block comment keeps hiding the call.
+    let open = "function _merge(a: any): any {\n  return a;\n}\nexport function merge(a: any): any {\n  /* disabled:\n  return _merge(a);\n  */\n  return a;\n}\n";
+    assert!(entry_names(open, "_merge").is_empty());
+    Ok(())
+}

@@ -913,6 +913,37 @@ pub(crate) fn finding_names_seam_by_location(
         .is_some_and(|gap| producer_candidate_qualifies(entry, finding, gap, candidate_seams))
 }
 
+/// The seams in `candidate_seams` that each name `finding`'s changed line as
+/// its most specific claimant, so the finding binds none of them (#15157): a
+/// changed `a < b && c == d` line holds one predicate seam per comparison, and
+/// the join above refuses to pick between same-line, same-kind twins. The
+/// check screen uses the list only to say that the changed line holds several
+/// spots instead of claiming that no spot could be tied to it; it binds
+/// nothing for repair. Fewer than two means no such tie.
+pub(crate) fn seams_tied_on_finding_line<'a>(
+    finding: &crate::domain::Finding,
+    candidate_seams: &'a [ClassifiedSeam],
+) -> Vec<&'a ClassifiedSeam> {
+    let Some(gap) = finding.canonical_gap.as_ref() else {
+        return Vec::new();
+    };
+    let line = finding.probe.location.line;
+    let naming: Vec<&ClassifiedSeam> = candidate_seams
+        .iter()
+        .filter(|entry| producer_gap_names_seam(gap, &entry.seam, line))
+        .collect();
+    let tied: Vec<&ClassifiedSeam> = naming
+        .iter()
+        .copied()
+        .filter(|entry| {
+            !naming.iter().any(|other| {
+                other.seam.id() != entry.seam.id() && entry.seam.strictly_encloses(&other.seam)
+            })
+        })
+        .collect();
+    if tied.len() < 2 { Vec::new() } else { tied }
+}
+
 /// The canonical gap id of the finding the shared [`finding_for_seam`] join
 /// binds to this seam, as `ripr check` / `ripr_list_gaps` print it. Binding is
 /// not projection: this is present for a bound finding that projects no
@@ -1083,6 +1114,22 @@ fn workspace_identity_naming_route(
     if let RepairTargetSelection::Existing(target) = &readiness.target_selection {
         return Ok(target.workspace_identity().to_string());
     }
+    // #13203 A0: a producer-owned proposal names the portable identity the
+    // producer minted from the workspace authority. The selection must be the
+    // very proposal the seam's admitted evidence carries; a proposal the
+    // evidence does not hold, or one whose producer could not name the
+    // workspace, mints nothing and falls through to the refusal below.
+    if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection
+        && !proposal.workspace_identity.is_empty()
+        && entry
+            .evidence
+            .new_test_target
+            .as_ref()
+            .and_then(|admission| admission.proposal.as_ref())
+            == Some(proposal)
+    {
+        return Ok(proposal.workspace_identity.clone());
+    }
     for test in &entry.evidence.related_tests {
         if let Some(target) = &test.test_target {
             return Ok(target.workspace_identity().to_string());
@@ -1124,6 +1171,7 @@ mod tests {
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
     use crate::analysis::test_grip_evidence::TestGripEvidence;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{Confidence, FixInstructionState, StageEvidence, StageState};
 
     fn stage(state: StageState) -> StageEvidence {
@@ -1147,6 +1195,115 @@ mod tests {
 
     fn weakly_gripped_entry() -> ClassifiedSeam {
         weakly_gripped_entry_for_seam(boundary_seam())
+    }
+
+    fn proposed_readiness(
+        proposal: crate::analysis::new_test_target::NewTestTargetProposal,
+    ) -> RepairRouteReadiness {
+        let mut readiness = repair_packet_eligibility(&weakly_gripped_entry()).readiness;
+        readiness.target_selection = RepairTargetSelection::Proposed(proposal);
+        readiness
+    }
+
+    fn proposal(identity: &str) -> crate::analysis::new_test_target::NewTestTargetProposal {
+        use crate::analysis::new_test_target::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
+        };
+        NewTestTargetProposal {
+            kind: NewTestKind::Integration,
+            file: std::path::PathBuf::from("tests/discounted_total.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: identity.to_string(),
+        }
+    }
+
+    fn entry_admitting(
+        admitted: Option<crate::analysis::new_test_target::NewTestTargetProposal>,
+    ) -> ClassifiedSeam {
+        let mut entry = weakly_gripped_entry();
+        entry.evidence.new_test_target =
+            Some(crate::analysis::new_test_target::NewTestTargetAdmission {
+                proposal: admitted,
+                ..Default::default()
+            });
+        entry
+    }
+
+    fn names_nothing(identity: Result<String, String>) -> bool {
+        identity.is_err()
+    }
+
+    /// #13203 A0: the identity is minted only from the producer's own admitted
+    /// proposal; a proposal without an identity, or one the seam's evidence does
+    /// not hold, names nothing and the start gate keeps refusing.
+    #[test]
+    fn a_proposal_names_the_workspace_only_when_the_evidence_admitted_it() {
+        let named = proposal("ws:demo");
+        let readiness = proposed_readiness(named.clone());
+        assert_eq!(
+            workspace_identity_for(&entry_admitting(Some(named.clone())), &readiness),
+            Ok("ws:demo".to_string())
+        );
+        // The producer could not name the workspace.
+        let unnamed = proposal("");
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(Some(unnamed.clone())),
+            &proposed_readiness(unnamed)
+        )));
+        // The readiness proposal is not the one the evidence admitted.
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(None),
+            &readiness
+        )));
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(Some(proposal("ws:other"))),
+            &readiness
+        )));
+        // No admission at all.
+        assert!(names_nothing(workspace_identity_for(
+            &weakly_gripped_entry(),
+            &readiness
+        )));
+    }
+
+    /// #13203 A0: the start gate's proposal refusal, called directly with a
+    /// hand-built `Proposed` readiness. Each defect names the same
+    /// route-not-ready refusal and text `check` compares against.
+    #[test]
+    fn a_proposal_start_is_refused_without_identity_or_edit_surface() {
+        use super::super::task_first::RefusalKind;
+        use super::super::task_first::{NO_TEST_TARGET_REASON, proposal_start_refusal};
+        let refused = |entry: &ClassifiedSeam, readiness: &RepairRouteReadiness| {
+            proposal_start_refusal(entry, readiness)
+        };
+        let expected = Some((
+            RefusalKind::RouteNotReady,
+            NO_TEST_TARGET_REASON.to_string(),
+        ));
+        // No workspace identity (the producer could not name it).
+        let unnamed = proposal("");
+        assert_eq!(
+            refused(
+                &entry_admitting(Some(unnamed.clone())),
+                &proposed_readiness(unnamed)
+            ),
+            expected
+        );
+        // Identity mismatch: the evidence admitted a different proposal.
+        assert_eq!(
+            refused(
+                &entry_admitting(Some(proposal("ws:other"))),
+                &proposed_readiness(proposal("ws:demo"))
+            ),
+            expected
+        );
+        // Identity is named and admitted, but the packet's edit surface is
+        // not the proposal's file, so no cage can be enforced.
+        let named = proposal("ws:demo");
+        let entry = entry_admitting(Some(named.clone()));
+        assert!(!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(&entry));
+        assert_eq!(refused(&entry, &proposed_readiness(named)), expected);
     }
 
     #[test]
@@ -1311,6 +1468,87 @@ mod tests {
         assert!(!finding_names_seam_by_location(&finding, &twin, &pair));
     }
 
+    /// #15157: same-line same-kind twins that no other seam nests inside are
+    /// the tie the check screen names; a lone claimant, an enclosing outer
+    /// seam, and a seam on another line are not part of it.
+    #[test]
+    fn same_line_twins_are_the_tied_seams_on_the_finding_line() {
+        let span = |line: usize, start_column: usize, end_column: usize| {
+            crate::analysis::seams::SeamSpan {
+                start_line: line,
+                end_line: line,
+                start_column,
+                end_column,
+            }
+        };
+        let mut finding = producer_gap_finding(
+            "finding:tie",
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+        let left = spanned_twin_boundary_entry(10, 88, span(88, 5, 15));
+        let right = spanned_twin_boundary_entry(30, 88, span(88, 20, 30));
+        let elsewhere = spanned_twin_boundary_entry(60, 120, span(120, 5, 15));
+
+        let pair = [left.clone(), right.clone(), elsewhere.clone()];
+        let tied: Vec<_> = seams_tied_on_finding_line(&finding, &pair)
+            .into_iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        assert_eq!(tied, vec![left.seam.id().clone(), right.seam.id().clone()]);
+        // The tie is exactly the binding refusal: neither twin binds.
+        assert!(!finding_names_seam_by_location(&finding, &left, &pair));
+
+        // A lone claimant binds, so it is no tie.
+        let sole = [left.clone(), elsewhere.clone()];
+        assert!(seams_tied_on_finding_line(&finding, &sole).is_empty());
+        assert!(finding_names_seam_by_location(&finding, &left, &sole));
+
+        // An outer seam enclosing one claimant is not a separate tied spot.
+        let outer = spanned_twin_boundary_entry(5, 88, span(88, 1, 40));
+        let nested = [outer.clone(), left.clone()];
+        assert!(seams_tied_on_finding_line(&finding, &nested).is_empty());
+
+        // An outer seam enclosing one claimant beside a disjoint claimant
+        // (`f(|d| d == x) == 0 ... g() == 1` on one line): the outer drops out
+        // and the two minimal seams tie.
+        let outer_left = spanned_twin_boundary_entry(5, 88, span(88, 1, 16));
+        let three = [outer_left.clone(), left.clone(), right.clone()];
+        let tied: Vec<_> = seams_tied_on_finding_line(&finding, &three)
+            .into_iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        assert_eq!(tied, vec![left.seam.id().clone(), right.seam.id().clone()]);
+        assert!(!finding_names_seam_by_location(&finding, &left, &three));
+
+        // A seam without a span encloses nothing, so it ties with a spanned
+        // claimant, matching the join's refusal to bind either.
+        let mut spanless = spanned_twin_boundary_entry(50, 88, span(88, 40, 50));
+        spanless.seam = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            50,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let mixed = [left.clone(), spanless.clone()];
+        assert_eq!(seams_tied_on_finding_line(&finding, &mixed).len(), 2);
+        assert!(!finding_names_seam_by_location(&finding, &left, &mixed));
+        assert!(!finding_names_seam_by_location(&finding, &spanless, &mixed));
+
+        // A finding on another line ties nothing.
+        finding.probe.location.line = 89;
+        assert!(seams_tied_on_finding_line(&finding, &pair).is_empty());
+    }
+
     /// The rendered packet envelope for this seam: `packets` names the seam,
     /// so the canonical packet family projects as current.
     fn packet_for(entry: &ClassifiedSeam) -> String {
@@ -1366,6 +1604,8 @@ mod tests {
                 line: 88,
                 owner: None,
             }),
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),
@@ -2399,6 +2639,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),

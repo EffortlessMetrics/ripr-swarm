@@ -29,6 +29,9 @@ const REQUIRED_POSIX_TESTS = Object.freeze([
 const requiredTests = process.platform === "win32"
   ? REQUIRED_PORTABLE_TESTS
   : [...REQUIRED_PORTABLE_TESTS, ...REQUIRED_POSIX_TESTS];
+if (process.env.RIPR_REQUIRE_INSTALLED_MCP === "1") {
+  requiredTests.push("installed npm launcher preserves a real MCP exchange and EOF");
+}
 
 const TEST_FILES = [
   "exit-status.test.cjs",

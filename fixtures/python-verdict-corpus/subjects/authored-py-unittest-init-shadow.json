@@ -1,0 +1,37 @@
+{
+  "subject_id": "authored-py-unittest-init-shadow",
+  "origin": "authored",
+  "version_label": "authored@12237",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "setup.cfg",
+      "sha256": "b4f2b8cc37e5b93400bc7ca8cb136e8d12ababab2712b57cf4f867f5a3fc6d17"
+    },
+    {
+      "path": "shapes/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "shapes/rates/__init__.py",
+      "sha256": "a12764420f267a373462bfa6e7fe45caea0b9f280283d7939395a820b52bc830"
+    },
+    {
+      "path": "shapes/rates/alternate.py",
+      "sha256": "5c1f27aacc1e6afbeaa8afbbaf172a6db6a7ac3881b3b0082883b3ecf04e16f5"
+    },
+    {
+      "path": "shapes/rates/table.py",
+      "sha256": "952162fa5e8890646b6e80e9c17356a6ee1584fe7bd4977570962928de0c9333"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_rates.py",
+      "sha256": "33f9865444e31e42aa27bdbbad8b0887ea77ec36a4c22c0c523955246512df48"
+    }
+  ]
+}

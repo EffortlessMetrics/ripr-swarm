@@ -127,6 +127,33 @@ Stop at once when a repository identity, owner, version, exact input, receipt,
 expected head, policy state, or publication authorization is ambiguous. Green
 CI, a ship packet, J, or K is evidence only; none authorizes publication.
 
+## Operator discipline during the transaction
+
+The transaction reuses this repository's standing operator contracts. They are
+restated here only as pointers; their semantics stay with their owners:
+
+- Any repair PR created during the transaction, and every queued PR
+  dispositioned in section 1, converges through the ordinary PR qualification
+  route: exactly one required context, earned by a fresh `merge-ready` label
+  event on the exact head, never by an in-place rerun; resolve conflicts
+  before re-firing the label. See
+  [the PR convergence runbook](agent-context/convergence-runbook.md).
+- Several autonomous actors may converge on the same transaction PR. Record
+  one `Converging this PR: <actor id>` claim comment and respect an existing
+  actor's claim ([PR automation](PR_AUTOMATION.md#multi-actor-ownership-signaling));
+  the queue disposition above never closes another owner's live work to make
+  the queue look empty.
+- The section 3 qualification worktree may run on any host, but golden
+  expected-files are arbitrated on Linux. Never bless or hand-edit golden
+  files from a Windows host; route a re-bless through the WSL Ubuntu pinned
+  toolchain
+  ([validation](agent-context/validation.md#golden-fixtures-and-the-blessing-platform)).
+- Between stages, main health is monitored by the scheduled main-health
+  sentinel, not by the cancelled main push runs. Its `main-red` tracker issue
+  is advisory evidence to reconcile before relying on unpinned main state;
+  the sentinel is a probe and holds no branch-protection or ruleset authority
+  ([CI](CI.md#main-health-sentinel)).
+
 ## 1. Reset truth and pre-cut queue observations
 
 Use fresh checkouts. Ordinary source-repository development PRs are drift:
@@ -289,7 +316,9 @@ SELECTED_CLAIMS_PACKET="${SELECTED_CLAIMS_PACKET:?set controller-relative accept
 DENOMINATOR_PACKET="${DENOMINATOR_PACKET:?set controller-relative accepted #2768 packet}"
 AUDIT_PACKET="${AUDIT_PACKET:?set controller-relative accepted #3807 packet}"
 # #2768 supplies the reviewed schema-1.1 projection: topo-order/reverse and
-# first-parent/reverse full-SHA+LF digests from SPEC-0144, not historical JSON hashes.
+# first-parent/reverse full-SHA+LF digests from SPEC-0144, not historical JSON
+# hashes, plus the NUL-framed path-record count/digest/recipe over the same
+# range (#4006 item 6); admission recomputes all of it live.
 DENOMINATOR_RANGE_JSON="${DENOMINATOR_RANGE_JSON:?set accepted #2768 range projection}"
 # References to the selected candidate's exact proof-input bytes, using SPEC-0144 Evidence fields.
 PROOF_INPUTS_JSON="${PROOF_INPUTS_JSON:?set accepted proof-input reference list}"
@@ -345,13 +374,19 @@ recorded SHA and the exact ruleset receipt to remain unchanged. The protected
 candidate tag, not the local verifier ref, is the W membership pin.
 
 The manifest records the accepted #2768 boundary, separately named
-all-reachable and first-parent counts/digests, record-set identity, exact
+all-reachable and first-parent counts/digests, record-set identity, the #2768
+ledger's raw NUL-framed changed-path count/digest/recipe over the same range
+(#4006 item 6), exact
 candidate tree/ref/package, accepted owner packets and claims/non-claims.
 It does not predict SOURCE_PARENT or the later source-specific merge base.
 The schema-1.1 range uses the shared source-promotion recipe in SPEC-0144,
 with the #2768 boundary rather than the later source-specific merge base.
-Admission recomputes both Git ranges/counts/digests; record-set adjudication
-remains with #2768. The retained input budget is 64 proof references, 16 MiB
+Admission recomputes both Git ranges/counts/digests live and compares the
+path-record identity typed against the retained #2768 packet bytes for the
+same base and cut; a substituted digest,
+a copied count, an LF-joined digest, a foreign recipe or a packet that drops
+the inventory refuses the manifest;
+record-set adjudication remains with #2768. The retained input budget is 64 proof references, 16 MiB
 per file and 64 MiB aggregate. Supported origin strings are the exact three
 spellings checked above. Files are observed unlocked snapshots, not atomic
 or authenticated custody. Repin only for a release-invalidating exact-candidate
@@ -593,7 +628,7 @@ add the complete `--controller-root`, `--candidate-source-root`,
 for the candidate from the unqualified form (#2792).
 
 | Surface | Repository/worktree and mode | Proof | Boundary |
-| Crate | source exact release checkout, **[LOCAL-MUTATING]** for package output; **[READ-ONLY]** dry-run query | `(cd "$SOURCE_ROOT" && cargo package -p ripr --list)`; `(cd "$SOURCE_ROOT" && cargo publish -p ripr --dry-run)` | Package/publishability, not publication |
+| Crate | source exact release checkout, **[LOCAL-MUTATING]** for package output; **[READ-ONLY]** dry-run query | `(cd "$SOURCE_ROOT" && cargo package -p ripr --list)`; `(cd "$SOURCE_ROOT" && cargo xtask publish-dry-run)`, which packages both crates from the publish stage (inline `#[cfg(test)]` modules stripped, [`RELEASE.md`](RELEASE.md#crate-tarball-contents)), fails above the crates.io upload limit, and keeps the verified stage at `target/publish-stage` | Package/publishability from the stage that is published, not publication. A bare `cargo publish -p ripr --dry-run` from the checkout packages the unstripped crate, which is over the limit |
 | Installed CLI | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke)` plus version/doctor/fixture smoke | Local installed binary |
 | Readiness/consumer | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-readiness --version <VERSION>)` | Version alignment and journey receipt |
 | Negative corpus | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-negative-corpus --version <VERSION>)` plus the `summary` guard above | Controlled negative injections fail for intended reasons and restoration passes (#2792); smoke unless the qualified group is passed |
@@ -654,10 +689,30 @@ gh api "repos/EffortlessMetrics/ripr/git/ref/tags/v${VERSION}" --jq .object.sha 
 test "$(tr -d '\r\n' < "$PACKET_ROOT/tag-object.sha")" = "$SOURCE_RELEASE_HEAD"
 ```
 
+The crate is published from the publish stage, not from `SOURCE_ROOT`: the
+checkout's `ripr` package is over the crates.io upload limit (#14198). Rehearse
+on the release head immediately before publishing and bind the kept stage to
+it; `ripr-contract` publishes first because `ripr` requires it exactly
+(ADR 0027).
+
 ```bash
 set -euo pipefail
-# [EXTERNAL-PUBLISHING] repo=source; explicit #1470 crate authorization only
-(cd "$SOURCE_ROOT" && cargo publish -p ripr)
+# [LOCAL-MUTATING] repo=source; rehearse and bind the publish stage to the release head
+assert_live_pin_guard
+test "$(git -C "$SOURCE_ROOT" rev-parse HEAD)" = "$SOURCE_RELEASE_HEAD"
+(cd "$SOURCE_ROOT" && cargo xtask publish-dry-run)
+PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
+test "$(git -C "$PUBLISH_STAGE" rev-parse HEAD)" = "$SOURCE_RELEASE_HEAD"
+test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
+```
+
+```bash
+set -euo pipefail
+# [EXTERNAL-PUBLISHING] repo=source publish stage; explicit #1470 crate authorization only
+PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
+test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
+(cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr-contract)
+(cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr)
 ```
 
 ```bash

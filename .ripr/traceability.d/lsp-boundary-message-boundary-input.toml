@@ -1,0 +1,4 @@
+[[extend]]
+id = "RIPR-SPEC-0076"
+tests = ["crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::predicate_boundary_message_names_the_boundary_input_not_a_sibling_check"]
+code = ["crates/ripr/src/lsp/diagnostics.rs"]

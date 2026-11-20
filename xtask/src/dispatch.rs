@@ -5,7 +5,7 @@ mod check_fast_strict;
 #[path = "command/front_door.rs"]
 mod front_door;
 #[path = "precommit_v2.rs"]
-mod precommit_v2;
+pub(crate) mod precommit_v2;
 
 fn print_help_route(args: &[String]) -> Result<(), String> {
     match args {
@@ -33,7 +33,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Commands => super::commands_report(),
         XtaskCommand::PrSummary => super::reports::pr_summary(),
         XtaskCommand::Proof(args) => super::reports::proof(&args),
-        XtaskCommand::PrReady => super::pr_ready(),
+        XtaskCommand::PrReady(args) => super::pr_ready(&args),
         XtaskCommand::Cockpit => super::cockpit(),
         XtaskCommand::PrTriageReport => super::reports::pr_triage_report(),
         XtaskCommand::BranchInventory(args) => super::branch_inventory::run(&args),
@@ -48,6 +48,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WindowsAdvisoryRun(args) => super::windows_advisory_run::run(&args),
         XtaskCommand::WindowsAdvisoryAclEvidence(args) => {
             super::windows_advisory_acl_evidence::run(&args)
+        }
+        XtaskCommand::WindowsAdvisoryFilePolicyEvidence(args) => {
+            super::windows_advisory_file_policy_evidence::run(&args)
         }
         XtaskCommand::VerifyTestShards(args) => super::verify_test_shards::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
@@ -66,6 +69,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RepairCardUsabilityReport => super::reports::repair_card_usability_report(),
         XtaskCommand::RepairFunnelReport => super::reports::repair_funnel_report(),
         XtaskCommand::RepairStartPage(args) => super::outcome_page::run(&args),
+        XtaskCommand::DxTrend(args) => super::dx_trend::run(&args),
         XtaskCommand::BlindJourneyContract => super::reports::blind_journey_contract_report(),
         XtaskCommand::BlindJourneyExecute => super::reports::blind_journey_execute_report(),
         XtaskCommand::OrchestrationScorecard(args) => {
@@ -111,6 +115,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::targeted_rerun_benchmark(&args)
         }
         XtaskCommand::AgenticBench(args) => super::reports::agentic_bench(&args),
+        XtaskCommand::MusePluginSetup(args) => super::reports::muse_plugin_setup(&args),
         XtaskCommand::SeamInventoryScalingBenchmark(args) => {
             super::reports::seam_inventory_scaling_benchmark(&args)
         }
@@ -122,6 +127,8 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
         XtaskCommand::BenchAgentSurfaces(args) => super::reports::bench_agent_surfaces(&args),
         XtaskCommand::TokenCost => super::reports::token_cost(),
+        XtaskCommand::AgentEval(args) => super::reports::agent_eval(&args),
+        XtaskCommand::FvScoreboard => super::reports::fv_scoreboard(),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::CurrentState(args) => super::current_state::current_state_command(&args),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
@@ -185,7 +192,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .ok_or_else(|| "xtask manifest must have a repository parent".to_string())?;
-            ripr::app::run_impacted_evidence_at(repo_root, &args)
+            ripr::cli::run_impacted_evidence_at(repo_root, &args)
         }
         XtaskCommand::RiprPr(args) => super::reports::ripr_pr(&args),
         XtaskCommand::FirstPr(args) => super::reports::first_pr(&args),
@@ -280,6 +287,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDependencies => super::check_dependencies(),
         XtaskCommand::CheckSupplyChain => super::check_supply_chain(),
         XtaskCommand::CheckProcessPolicy => super::check_process_policy(),
+        XtaskCommand::CheckProductRouteParity(rest) => {
+            super::product_route_parity::check_product_route_parity(&rest)
+        }
         XtaskCommand::CheckCliExitContract => super::check_cli_exit_contract(),
         XtaskCommand::CheckNetworkPolicy => super::check_network_policy(),
         XtaskCommand::CheckLintPolicy => super::check_lint_policy(),
@@ -309,9 +319,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Package => {
             super::run("cargo", &["package", "-p", "ripr", "--list"]).map(|_| ())
         }
-        XtaskCommand::PublishDryRun => {
-            super::run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
-        }
+        XtaskCommand::PublishDryRun => super::publish_rehearsal::run(),
         XtaskCommand::IssueIntake(args) => super::reports::issue_intake(&args),
         XtaskCommand::WorkPortfolio(args) => super::work_portfolio::work_portfolio_command(&args),
         XtaskCommand::WorkCandidates(args) => super::work_portfolio::work_candidates_command(&args),

@@ -13,6 +13,30 @@ pub(crate) const ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const ANALYSIS_OUTCOME_CLAIM_BOUNDARY: &str = "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.";
 pub(crate) const MAX_ANALYSIS_LIMITATION_DETAIL_CHARS: usize = 512;
 
+/// Recovery texts of the per-file "this file could not be parsed or read"
+/// limitations (Rust syntax/nesting, Rust non-UTF-8, Python syntax). The
+/// editor keys its parse-failure disclosure on these exact producer-owned
+/// texts, so a different per-file `producer_failure` (an internal
+/// classification error, a missing Python identity context) is not named a
+/// parse failure (#11799).
+pub(crate) const RUST_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Rust, then re-run the analysis.";
+/// Recovery text of the `rust_nesting_budget` static-limit decline. ripr
+/// declined to parse the file over a static limit, so it must not read as a
+/// syntax error; it does not certify the file as valid Rust either, because
+/// the nesting scan runs before parsing and a syntax error can coexist
+/// (#13660). The editor still marks the file (see
+/// `lsp::diagnostics::limitation_is_file_parse_failure`) with this text.
+pub(crate) const RUST_NESTING_BUDGET_RECOVERY: &str = "ripr declined to parse this file because it exceeds the nesting budget; split or flatten the deeply nested expression, long operator chain or `else if` chain, then re-run the analysis.";
+pub(crate) const RUST_NOT_UTF8_RECOVERY: &str = "Save the file as UTF-8, then re-run the analysis.";
+pub(crate) const PYTHON_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Python, then re-run the analysis.";
+/// The TypeScript/JavaScript producer reports a parse failure as a
+/// `language_scope_unsupported` limitation (not a `producer_failure`), so the
+/// editor keys on this text together with that kind (#13371).
+pub(crate) const TYPESCRIPT_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the TypeScript or JavaScript parse error, then re-run the analysis.";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AnalysisOutcomeKind {
@@ -111,7 +135,18 @@ impl AnalysisOutcomeKind {
     /// #12416: the MCP `ripr_refresh` base-widening retry route, verbatim.
     /// MCP-owned surface phrasing housed in the single wording owner so the
     /// hint cannot drift from the shared cause sentence above.
-    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
+    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}";
+
+    /// #13096: concrete retry when the default base resolved to the analyzed
+    /// commit and the change under review is the last commit. Named, never
+    /// inferred: the server does not silently widen the base.
+    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"source\": \"committed\", \"base\": \"HEAD~1\"}; the server does not infer this base";
+
+    /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
+    /// `no_behavioral_candidates`, whose diff was non-empty.
+    pub(crate) const fn is_no_behavioral_candidates(self) -> bool {
+        matches!(self, Self::NoBehavioralCandidates)
+    }
 
     /// #12416: the MCP `ripr_refresh` worktree-source retry route, verbatim.
     /// Same single-owner rationale as `EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE`.
@@ -135,7 +170,19 @@ impl AnalysisLimitationKind {
     /// `VerificationOnlyChange`). Every other kind marks the outcome
     /// incomplete.
     pub(crate) const fn is_advisory_disclosure(self) -> bool {
-        matches!(self, Self::EolOnlyChurn | Self::VerificationOnlyChange)
+        matches!(
+            self,
+            Self::EolOnlyChurn | Self::VerificationOnlyChange | Self::RequestedScopeExcluded
+        )
+    }
+
+    /// #13894: files the operator left out on purpose (`--path`, `--exclude`,
+    /// a configured `generated_file_patterns` or preview `excluded_file_patterns`
+    /// entry). The requested scope was analyzed in full, so this is an
+    /// informational scope note, not a limitation: it rides on a complete
+    /// outcome and the quiet `missed-txt`/`github` streams do not repeat it.
+    pub(crate) const fn is_requested_scope_note(self) -> bool {
+        matches!(self, Self::RequestedScopeExcluded)
     }
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -152,6 +199,7 @@ impl AnalysisLimitationKind {
             Self::EolOnlyChurn => "eol_only_churn",
             Self::VerificationOnlyChange => "verification_only_change",
             Self::UnevaluatedCondition => "unevaluated_condition",
+            Self::RequestedScopeExcluded => "requested_scope_excluded",
         }
     }
 
@@ -163,7 +211,7 @@ impl AnalysisLimitationKind {
             Self::MalformedDiff => "the diff could not be parsed",
             Self::DiffScopeOversized => "the diff is larger than the configured limit",
             Self::LanguageAdapterUnavailable => "no analyzer is available for a changed language",
-            Self::LanguageScopeUnsupported => "some changed files were not analyzed",
+            Self::LanguageScopeUnsupported => "some files were not fully analyzed",
             Self::ChangedFileAbsentFromWorktree => "a changed file is absent from the working tree",
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
@@ -174,6 +222,7 @@ impl AnalysisLimitationKind {
             Self::UnevaluatedCondition => {
                 "a test or credited assertion sits under a condition static analysis cannot evaluate"
             }
+            Self::RequestedScopeExcluded => "files were left out of the analysis at your request",
         }
     }
 }
@@ -281,6 +330,14 @@ pub(crate) enum AnalysisLimitationKind {
     /// runs as partial (#8714 review). Letting it ride a complete outcome is
     /// a separate, consumer-visible design decision.
     UnevaluatedCondition,
+    /// #13894: the operator asked for a narrower scope (`--path`, `--exclude`,
+    /// configured `generated_file_patterns` or preview `excluded_file_patterns`)
+    /// and the files left out are named here. The requested scope was fully
+    /// analyzed, so like `EolOnlyChurn` this is an informational scope note
+    /// that rides on a complete outcome; it is never a limitation. Built-in,
+    /// non-configurable skips and unsupported or failed files keep their own
+    /// incomplete kinds.
+    RequestedScopeExcluded,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -472,6 +529,33 @@ pub(crate) struct AnalysisOutcome {
     /// serialized outcome or its identity.
     #[serde(skip)]
     pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    /// Run-local index of the diff's changed new-side lines (#15039). Read
+    /// only by the `explain`/`context` location-miss diagnosis; never part of
+    /// the serialized outcome or its identity.
+    #[serde(skip)]
+    pub(crate) changed_lines: Option<ChangedLineIndex>,
+}
+
+/// Which new-side lines the analyzed diff added or modified, per changed
+/// file (#15039). Built by the diff pipeline from the same parsed diff the
+/// counts come from, so a consumer never re-derives it from Git. A file the
+/// diff only removed lines from is present with no lines.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ChangedLineIndex {
+    files: std::collections::BTreeMap<String, std::collections::BTreeSet<usize>>,
+}
+
+impl ChangedLineIndex {
+    /// Record one changed file by its stable root-relative path text.
+    pub(crate) fn record(&mut self, path: String, lines: impl IntoIterator<Item = usize>) {
+        self.files.entry(path).or_default().extend(lines);
+    }
+
+    /// The changed new-side lines of `path`, or `None` when the diff does
+    /// not touch that file.
+    pub(crate) fn lines_of(&self, path: &str) -> Option<&std::collections::BTreeSet<usize>> {
+        self.files.get(path)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -537,7 +621,17 @@ impl AnalysisOutcome {
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
             check_findings_inputs: None,
             language_view: None,
+            changed_lines: None,
         })
+    }
+
+    /// Whether any limitation is more than the requested-scope note (#13894).
+    /// Quiet streams (`missed-txt`, `github`) repeat only these; the note
+    /// itself stays in the JSON and human reports.
+    pub(crate) fn has_advisory_limitations(&self) -> bool {
+        self.limitations
+            .iter()
+            .any(|limitation| !limitation.kind.is_requested_scope_note())
     }
 
     /// Stable semantic commitment over the versioned typed outcome. The DTO
@@ -554,7 +648,63 @@ impl AnalysisOutcome {
         }
         Ok(format!("sha256:{hex}"))
     }
+
+    /// The not-all-clear sentence for an incomplete outcome (`partial_with_limitations`,
+    /// `unsupported_input`, `analysis_failed`), `None` for a complete or
+    /// empty-scope one (#13562). It reuses the plain labels and the producer-owned
+    /// recovery text that the human `check` limitation lines print, so an editor
+    /// marker cannot drift from `ripr check`. At most
+    /// [`MAX_INCOMPLETE_SENTENCE_LIMITATIONS`] scoping limitations are named; an
+    /// advisory disclosure (`eol_only_churn`, `verification_only_change`) does not
+    /// scope the analysis down and is not named.
+    pub(crate) fn incomplete_scope_sentence(&self) -> Option<String> {
+        if self.kind.is_complete() {
+            return None;
+        }
+        let scoping = self
+            .limitations
+            .iter()
+            .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+            .collect::<Vec<_>>();
+        let mut sentence = format!(
+            "the analysis is incomplete ({}), so having no findings here does not mean the changed behavior is clean.",
+            self.kind.plain_label()
+        );
+        for limitation in scoping.iter().take(MAX_INCOMPLETE_SENTENCE_LIMITATIONS) {
+            sentence.push_str(&format!(
+                " Limitation: {} during {}",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label()
+            ));
+            if let Some(path) = &limitation.path {
+                sentence.push_str(&format!("; file: {path}"));
+            }
+            if let Some(count) = limitation.affected_items {
+                sentence.push_str(&format!("; affected items: {count}"));
+            }
+            if let Some(detail) = &limitation.bounded_detail {
+                sentence.push_str(&format!("; {}", detail.trim_end_matches('.')));
+            }
+            sentence.push_str(&format!(
+                "; recovery: {} — {}.",
+                limitation.recovery.kind.plain_label(),
+                limitation.recovery.detail.trim_end_matches('.')
+            ));
+        }
+        let unnamed = scoping
+            .len()
+            .saturating_sub(MAX_INCOMPLETE_SENTENCE_LIMITATIONS);
+        if unnamed > 0 {
+            sentence.push_str(&format!(
+                " {unnamed} more limitation(s) are in the full analysis outcome."
+            ));
+        }
+        Some(sentence)
+    }
 }
+
+/// Bound on the limitations one editor marker names (#13562).
+pub(crate) const MAX_INCOMPLETE_SENTENCE_LIMITATIONS: usize = 3;
 
 pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, String> {
     // Paths are filesystem identities, not prose: trimming can name a different
@@ -809,7 +959,7 @@ mod tests {
         assert!(!AnalysisOutcomeKind::CompleteWithFindings.is_empty_scope());
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
-            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}"
+            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}"
         );
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
@@ -947,10 +1097,11 @@ mod tests {
             AnalysisLimitationKind::EolOnlyChurn => "eol_only_churn",
             AnalysisLimitationKind::VerificationOnlyChange => "verification_only_change",
             AnalysisLimitationKind::UnevaluatedCondition => "unevaluated_condition",
+            AnalysisLimitationKind::RequestedScopeExcluded => "requested_scope_excluded",
         }
     }
 
-    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 12] = [
+    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 13] = [
         AnalysisLimitationKind::CombinedHunkUnsupported,
         AnalysisLimitationKind::UnresolvedConflictMarkers,
         AnalysisLimitationKind::MalformedDiff,
@@ -963,6 +1114,7 @@ mod tests {
         AnalysisLimitationKind::EolOnlyChurn,
         AnalysisLimitationKind::VerificationOnlyChange,
         AnalysisLimitationKind::UnevaluatedCondition,
+        AnalysisLimitationKind::RequestedScopeExcluded,
     ];
 
     fn analysis_limitation_kind_ordinal(kind: AnalysisLimitationKind) -> usize {
@@ -979,6 +1131,7 @@ mod tests {
             AnalysisLimitationKind::EolOnlyChurn => 9,
             AnalysisLimitationKind::VerificationOnlyChange => 10,
             AnalysisLimitationKind::UnevaluatedCondition => 11,
+            AnalysisLimitationKind::RequestedScopeExcluded => 12,
         }
     }
 
@@ -986,7 +1139,7 @@ mod tests {
     fn typed_limitation_tokens_match_the_wire_contract() -> Result<(), String> {
         use std::collections::BTreeSet;
 
-        const LIMITATION_KIND_COUNT: usize = 12;
+        const LIMITATION_KIND_COUNT: usize = 13;
         assert_eq!(ALL_ANALYSIS_LIMITATION_KINDS.len(), LIMITATION_KIND_COUNT);
         let ordinals: Vec<usize> = ALL_ANALYSIS_LIMITATION_KINDS
             .iter()
@@ -1054,6 +1207,7 @@ mod tests {
                 kind,
                 AnalysisLimitationKind::EolOnlyChurn
                     | AnalysisLimitationKind::VerificationOnlyChange
+                    | AnalysisLimitationKind::RequestedScopeExcluded
             );
             assert_eq!(kind.is_advisory_disclosure(), advisory, "{kind:?}");
         }

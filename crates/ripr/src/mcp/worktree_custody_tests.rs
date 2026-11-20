@@ -91,6 +91,7 @@ fn session_over(snapshot: super::workspace::Snapshot) -> WorkspaceSession {
     WorkspaceSession {
         last_good: Some(Arc::new(snapshot)),
         desired_source: RefreshSource::Worktree,
+        desired_source_defaulted: false,
         ..Default::default()
     }
 }
@@ -730,6 +731,62 @@ fn committed_refresh_over_untracked_rust_file_withholds_with_a_commit_remedy() -
     Ok(())
 }
 
+/// Workspace discovery does not apply `.gitignore`, so the seam inventory reads
+/// a gitignored Rust file the committed findings carrier records as an
+/// uncaptured observation: the owner refuses with that path named and the card
+/// is withheld (this over-withholds a clean checkout with an ignored vendored
+/// Rust tree). Negative control: a gitignored non-Rust file keeps the card.
+#[test]
+fn committed_refresh_over_gitignored_rust_file_withholds_naming_the_path() -> Result<(), String> {
+    for (tag, relative) in [
+        ("ignored-scratch", "src/scratch/local_mod.rs"),
+        ("ignored-vendor", "vendor/dep/lib.rs"),
+    ] {
+        let fixture = install_fixture(tag)?;
+        write(
+            &fixture.root,
+            ".gitignore",
+            "/target/\n/.ripr/\n/src/scratch/\n/vendor/\n*.log\n",
+        )?;
+        commit(&fixture.root, "ignore local files")?;
+        write(&fixture.root, "build.log", "ignored non-Rust\n")?;
+        assert_serves_card(committed_refresh(&fixture.root)?, &fixture.root)
+            .map_err(|error| format!("{relative}: ignored non-Rust control: {error}"))?;
+        write(
+            &fixture.root,
+            relative,
+            "pub fn ignored_value() -> i32 {\n    1\n}\n",
+        )?;
+        let snapshot = committed_refresh(&fixture.root)?;
+        let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
+            return Err(format!(
+                "{relative}: a gitignored Rust file must withhold: {:?}",
+                snapshot.custody
+            ));
+        };
+        let expected = format!("the findings producer has no captured observation of `{relative}`");
+        if !reason.contains(&expected) {
+            return Err(format!(
+                "{relative}: the cause must name the path: {reason}"
+            ));
+        }
+        if snapshot.card_producers.is_some() {
+            return Err(format!("{relative}: no card producers may bind"));
+        }
+        let detail = snapshot
+            .items
+            .iter()
+            .find_map(|item| item.repair_readiness.seam_detail.clone())
+            .ok_or("a withheld item must explain itself")?;
+        if !detail.contains("git add -f") {
+            return Err(format!(
+                "{relative}: the remedy must mention git add -f: {detail}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A tracked Rust helper outside the findings scope (never part of the diff)
 /// that is dirty on disk is still read by the inventory, so the card is
 /// withheld with its path named. Discriminating control: the same helper
@@ -819,6 +876,7 @@ fn withheld_verdict_keeps_an_earlier_finding_level_reason() {
         fix_site: None,
         ineligibility: Some("missing_discriminator"),
         seam_detail: None,
+        proposed_new_test: None,
     }
     .with_seam_verdict(Some(&withheld));
     assert_eq!(not_ready.ineligibility, Some("missing_discriminator"));

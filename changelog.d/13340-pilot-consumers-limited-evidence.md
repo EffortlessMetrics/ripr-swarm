@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent status` now reads a failed seam-evidence warm in the pilot `repo-exposure.json` (the pass-wide `producer_failure` limitation) and, when pilot withheld every seam, tells the user to rerun pilot after the producer recovers instead of saying a rerun withholds them again; a coexisting seam cap or declined-files limit keeps its own repair step, and healthy output is unchanged (#13340)

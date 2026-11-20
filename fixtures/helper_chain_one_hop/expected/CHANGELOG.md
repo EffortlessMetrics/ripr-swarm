@@ -1,5 +1,12 @@
 # Golden Output Changes
 
+## Pending — cross-surface annotation conformance (#12925)
+
+Add the existing finding projection as `sarif.json` and `github.txt` under
+RIPR-SPEC-0008 cross-surface conformance. Class, canonical identity,
+configured severity and refusal guidance come from the existing producer;
+the check/human goldens and analyzer behavior are unchanged.
+
 ## Pending
 
 Reason:
@@ -493,3 +500,53 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_one_hop (39)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — helper_chain_one_hop (40)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — helper_chain_one_hop (41)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — helper_chain_one_hop (42)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/sarif.json`
+- `expected/github.txt`

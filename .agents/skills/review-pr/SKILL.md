@@ -142,6 +142,19 @@ Retain valid historical reviews with their original subject and scope. Refresh a
 
 Advisory providers such as `ub-review` and other documented bots (see `docs/CI.md`) supply extra evidence, not replacements for substantive owner review or mandatory identity separation. Unavailable output remains missing evidence for that provider, never a pass; it does not create an absent-service prerequisite.
 
+# Context selection
+
+Apply the surface-and-decision table in
+[review guidelines](../../../.factory/skills/review-guidelines/SKILL.md#required-context).
+Read the complete candidate diff and relevant owners, consumers, and contracts;
+locate large reference documents by heading and read the applicable sections
+with their qualifications. Do not recursively load complete catalogs solely
+because they are linked. A source review and a later qualification or merge
+decision can require different sections. Reuse unchanged context, widen on a
+new dependency or finding, and record material reads in the existing inspection
+record. Context selection changes the reading scope, not the review standard,
+required checks, source attestation, or final-review authority.
+
 # Procedure
 
 1. **Bind the review subject.** Record:

@@ -1,6 +1,6 @@
 # RIPR-SPEC-0404: PostgreSQL/pgTAP dialect, schema, migration, transaction, and database-state evidence contracts
 
-Status: proposed
+Status: accepted
 
 Owner: language-adapter / ecosystem (#5602)
 
@@ -252,6 +252,7 @@ Map or emit typed stops (extend only via spec amendment):
 | `sql_cross_language_edge_missing` | Application/ORM/native/procedural call without #5559 edge |
 | `sql_test_activation_unknown` | Registered pgTAP test with unknown activation |
 | `sql_extension_version_unknown` | Extension required but version/availability not evidenced |
+| `sql_planner_or_runtime_behavior_unknown` | Result depends on planner choice, row order without `ORDER BY`, statistics, server settings (GUCs), or PostgreSQL version behavior |
 
 Unknown reach, database state, or policy effect is not `no_static_path`. Object-name
 matching or migration co-membership cannot establish activation, reach, or

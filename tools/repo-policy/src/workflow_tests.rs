@@ -5,11 +5,89 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
     let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
         .map_err(|error| error.to_string())?;
-    assert!(text.contains("id: generate-coverage\n        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info"));
+    assert!(text.contains("id: generate-coverage"));
+    let command = "run: target/debug/repo-policy run-coverage";
+    assert!(text.contains(command));
     assert!(!text.contains("continue-on-error:"));
     assert!(text.contains("failure() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("always() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("name: coverage-failure-diagnostics"));
+    Ok(())
+}
+
+#[test]
+fn coverage_strip_is_generate_only_and_requires_native_controls() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
+        .map_err(|error| error.to_string())?;
+    let generate = concat!(
+        "name: Generate coverage\n",
+        "        id: generate-coverage\n",
+        "        env:\n",
+        "          CARGO_PROFILE_TEST_STRIP: debuginfo\n",
+        "        run: target/debug/repo-policy run-coverage"
+    );
+    let controls = concat!(
+        "name: Check diagnostic capture controls\n",
+        "        run: cargo test -p repo-policy --lib coverage_diagnostics"
+    );
+    let retained = |workflow: &str| {
+        let exact_step = |name: &str, expected: &str| {
+            let mut steps = workflow
+                .split("\n      - ")
+                .filter(|step| step.lines().next() == Some(name))
+                .map(str::trim_end);
+            steps.next() == Some(expected) && steps.next().is_none()
+        };
+        workflow.matches("CARGO_PROFILE_TEST_STRIP").count() == 1
+            && !workflow.contains("continue-on-error:")
+            && exact_step("name: Generate coverage", generate)
+            && exact_step("name: Check diagnostic capture controls", controls)
+            && workflow.find(controls) < workflow.find(generate)
+    };
+    assert!(retained(&text));
+    for replacement in ["symbols", "true", "none"] {
+        assert!(!retained(&text.replace(
+            "CARGO_PROFILE_TEST_STRIP: debuginfo",
+            &format!("CARGO_PROFILE_TEST_STRIP: {replacement}"),
+        )));
+    }
+    let setting = "        env:\n          CARGO_PROFILE_TEST_STRIP: debuginfo\n";
+    let omitted = text.replace(setting, "");
+    assert!(!retained(&omitted));
+    assert!(!retained(&format!(
+        "env:\n  CARGO_PROFILE_TEST_STRIP: debuginfo\n{omitted}"
+    )));
+    assert!(!retained(&format!(
+        "env:\n  CARGO_PROFILE_TEST_STRIP: debuginfo\n{text}"
+    )));
+    assert!(!retained(&omitted.replace(
+        "name: Pre-build spawned binaries\n",
+        &format!("name: Pre-build spawned binaries\n{setting}"),
+    )));
+    for step in ["Generate coverage", "Check diagnostic capture controls"] {
+        assert!(!retained(&text.replace(
+            &format!("name: {step}\n"),
+            &format!("name: {step}\n        if: false\n"),
+        )));
+    }
+    for command in [
+        "cargo llvm-cov -p ripr --lcov --output-path lcov.info",
+        "cargo llvm-cov --workspace --lcov --output-path lcov.info",
+        "true",
+    ] {
+        assert!(!retained(
+            &text.replace("target/debug/repo-policy run-coverage", command)
+        ));
+    }
+    assert!(!retained(&text.replace(
+        "--lib coverage_diagnostics",
+        "--lib coverage_diagnostics::process::tests::fixed_command",
+    )));
+    assert!(!retained(&text.replace(
+        controls,
+        &format!("{controls} -- --skip native_test_profile_strip"),
+    )));
     Ok(())
 }
 
@@ -29,12 +107,9 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             "coverage.yml",
             "cargo test -p repo-policy --lib coverage_diagnostics",
         ),
-        ("ub-review.yml", "uses: EffortlessMetrics/ub-review@"),
     ];
     for (route, command) in routes {
-        let action = if route == "ub-review.yml" {
-            "e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1"
-        } else if matches!(route, "coverage.yml" | "test-analytics.yml") {
+        let action = if matches!(route, "coverage.yml" | "test-analytics.yml") {
             "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master"
         } else {
             "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1"
@@ -76,9 +151,6 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
         ));
         let test_first = format!("{command}\n{text}");
         assert!(!prepared(&test_first, command));
-        if route == "ub-review.yml" {
-            assert!(!prepared(&text.replace(action, "v1"), command));
-        }
         assert!(!prepared(
             &text.replace(
                 "components: llvm-tools-preview",
@@ -1061,7 +1133,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             None,
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
-        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "push",
+            None,
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         (
             "workflow_dispatch",
             None,
@@ -1197,8 +1274,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
         ),
         (
-            "more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha",
@@ -1206,11 +1283,27 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "PR ref to still name the live head",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
+        ),
+        (
+            "constituent from its own changed paths",
+            "if classify_constituent_docs \"$c_files\"",
+        ),
+        (
+            "keep agent-contract markdown on the full-proof lane for merge-group constituents",
+            ".agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;",
+        ),
+        (
+            "tip with its own docs-only classification",
+            "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
+        ),
+        (
+            "constituents with their own docs-only classifications",
+            "while IFS=$'\\t' read -r c_pr c_head c_docs_only; do",
         ),
         (
             "tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "same-head succession read as the last live eligibility check",
@@ -1482,6 +1575,26 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
 }
 
 #[test]
+fn routed_rust_main_replay_retirement_uses_the_actual_event_declaration() {
+    let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
+    assert_eq!(
+        routed_rust_event_route(workflow, "push", None, None),
+        RoutedRustEventRoute::WorkflowNotTriggered
+    );
+    let restored = workflow.replacen("on:\n", "on:\n  push:\n    branches: [main, master]\n", 1);
+    assert_ne!(restored, workflow);
+    assert_eq!(
+        routed_rust_event_route(&restored, "push", None, None),
+        RoutedRustEventRoute::LaunchFullGate
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&restored)
+            .iter()
+            .any(|finding| finding.contains("must not replay ordinary main-push"))
+    );
+}
+
+#[test]
 fn routed_rust_contract_catches_deadline_bypass_with_stray_occurrences() {
     // #2230 review: a global `timeout-minutes:` occurrence count passes even
     // when a named job lost its deadline but stray tokens (comments, other
@@ -1528,78 +1641,6 @@ jobs:
             .any(|violation| violation.contains("job `route` must set an explicit")),
         "a job that kept its deadline must not be flagged: {violations:?}"
     );
-}
-
-#[test]
-fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String> {
-    let root = crate::test_support::workspace_root()?;
-    let text = fs::read_to_string(root.join(".github/workflows/ub-review.yml"))
-        .map_err(|error| error.to_string())?;
-    let header = "name: Prepare locked owner-return fixture dependencies";
-    let fetch = "        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
-    let preparation = format!("      - {header}\n{fetch}\n");
-    let prepared = |source: &str| {
-        let steps = source.split("\n      - ").collect::<Vec<_>>();
-        let preparations = steps
-            .iter()
-            .enumerate()
-            .filter(|(_, step)| step.lines().next() == Some(header))
-            .collect::<Vec<_>>();
-        let [(index, step)] = preparations.as_slice() else {
-            return false;
-        };
-        // The action sanitizes sensor environments. Both commands must use
-        // the runner default Cargo home, with no workflow override.
-        let lines = step
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .collect::<Vec<_>>();
-        !source.lines().any(|line| {
-            let line = line.trim();
-            line.starts_with("CARGO_HOME:") || line.starts_with("HOME:")
-        }) && lines == [header, fetch]
-            && steps[..*index]
-                .iter()
-                .any(|step| step.starts_with("uses: dtolnay/rust-toolchain@"))
-            && steps[*index + 1..].iter().any(|step| {
-                step.lines().any(|line| {
-                    line.trim()
-                        .starts_with("uses: EffortlessMetrics/ub-review@")
-                })
-            })
-    };
-    assert!(
-        prepared(&text),
-        "advisory sensors require locked fixture preparation"
-    );
-    for wrong in [
-        text.replace(&preparation, ""),
-        text.replace(
-            "cargo fetch --locked --manifest-path",
-            "cargo fetch --manifest-path",
-        ),
-        text.replace(fetch, &format!("        if: false\n{fetch}")),
-        text.replace(fetch, &format!("        continue-on-error: true\n{fetch}")),
-        text.replace(fetch, &format!("{fetch} || true")),
-        text.replace(
-            "--manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
-            "--manifest-path Cargo.toml",
-        ),
-        format!("env:\n  CARGO_HOME: other\n{text}"),
-        format!("env:\n  HOME: other\n{text}"),
-        text.replace(
-            fetch,
-            &format!("{fetch}\n        env:\n          CARGO_HOME: other"),
-        ),
-        format!("{}\n{preparation}", text.replace(&preparation, "")),
-        text.replace(&preparation, &format!("{preparation}\n{preparation}")),
-    ] {
-        assert!(
-            !prepared(&wrong),
-            "invalid fixture preparation must be rejected"
-        );
-    }
-    Ok(())
 }
 
 const PINNED_CODECOV: &str =
@@ -1715,7 +1756,6 @@ fn secret_and_write_token_workflows_have_no_unpinned_third_party_actions() -> Re
         "badge-endpoints.yml",
         "coverage.yml",
         "test-analytics.yml",
-        "ub-review.yml",
     ] {
         let path = format!(".github/workflows/{name}");
         assert!(

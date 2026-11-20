@@ -176,9 +176,36 @@ Select additional proof for the changed behavior before requesting qualification
 
 ## Full validation inventory
 
+Before compiling Rust or installing editor dependencies, the explicit Linux
+[provisioning command](../CONTRIBUTING.md#provision-a-linux-cloud-image) can prepare
+the checkout's requirements. Its focused controls run without live downloads:
+
+```bash
+node --test tools/provision-dev.test.cjs
+```
+
+On Unix, `cargo test -p xtask --test developer_provisioning` runs the same
+controls as part of workspace testing. These exercise pin changes, dependency
+reuse and failure boundaries with isolated fixtures. Linux-specific native
+process controls explicitly skip on other hosts. These tests do not establish a
+real SDK installation, editor-host pass or managed-task restoration. The
+provisioner's native editor smoke and the full preset below are separate runs.
+
 The commands below inventory applicable checks. `cargo xtask ci-full` composes
 the complete local review/evidence/package pass; choose the aggregate for the
 intended proof without repeating its constituent commands.
+
+For an explicit prepared Linux source-checkout validation across Rust and the
+editor, use `cd editors/vscode && npm run setup:verify-full` under a supported
+live display (or a provisioned `xvfb-run -a`). The
+[full-development preset](../CONTRIBUTING.md#explicit-full-development-validation)
+checks prerequisites, delegates the existing serial owners, retains the first
+native failure and marks later stages `not_run`. It invokes the canonical editor
+suite once, then packages its compiled output. This on-demand preset is not run
+inside the ordinary editor CI job; its controlled orchestration tests are
+discovered normally and use isolated tool fixtures. Those controls establish
+sequencing and failure handling, not a real SDK, native host, full setup pass,
+saved-environment restoration or measured resource envelope.
 
 ```bash
 cargo xtask shape
@@ -316,18 +343,25 @@ npm run test:e2e
 `npm test` runs the same full end-to-end entry point as `npm run test:e2e`.
 Choose one command per validation pass. The package scripts can build the Rust
 server and compile the extension, so prepare the repository's pinned Rust
-toolchain and Node dependencies first. Those compilation steps precede the Node
-launcher and its host acquisition; the ordering below saves the additional
-genuine queue-producer build when host acquisition fails.
+toolchain and Node dependencies first. Run the
+[explicit setup verification](../CONTRIBUTING.md#explicit-setup-verification)
+before these expensive steps: `npm run setup:verify-editor` uses the installed
+TypeScript compiler directly and needs no RIPR/xtask build. The cheap
+`npm run setup:check -- --json` is read-only and performs no verification.
 
 The host download needs access to the VS Code update/download endpoints and
 their redirects through the environment's configured proxy and CA trust.
 Headless Linux also needs Xvfb and the native libraries required by VS Code;
-provide those before invoking the `xvfb-run` command below. The editor runner
-acquires its host before invoking the genuine actionable-queue producer. If
-host acquisition fails, the runner retains the failure diagnostics without
-starting that producer. Extension compilation or a completed host download
-alone does not establish a completed extension test run.
+provide those before invoking the `xvfb-run` command below. Both explicit setup
+verification and the canonical editor runner use the retained downloader and a
+minimal native extension-host sentinel. The runner awaits that prerequisite
+before invoking the genuine actionable-queue producer. Missing display, a denied
+download or a failed native host stops before the producer and editor suite.
+The sentinel uses a disposable empty extension and profile, records the actual
+VS Code/Electron versions and one smoke case, and is distinct from e2e acceptance.
+Its 60-second deadline/cancellation uses the existing process-tree owner; no
+timeout is accepted as host readiness. Download retry/idle-timeout semantics stay
+with the locked test-electron owner.
 
 The test suite:
 
@@ -379,6 +413,19 @@ test-host failure copies a size-capped, redacted log subset into
 `target/ripr/vscode-test-host-diagnostics/`; CI uploads that folder only when
 the vscode job fails. Success runs do not retain the diagnostics copy, and
 collection cannot change the original test exit status.
+
+The additional setup receipt is `target/ripr/setup-editor-host.json`. Explicit
+`setup:verify-editor` invalidates that receipt and its setup log before the source
+report or installed compiler can fail; direct verifier and canonical runner
+entrypoints use the same narrow reset before display/acquisition checks. Ordinary
+read-only reporting preserves those files. A failed native smoke attempts to
+retain at most a 64-KiB redacted output tail in
+`target/ripr/setup-editor-host.log`; the existing failure-only upload includes
+these files. Each invocation requires a fresh nonce-bound sentinel and native
+status zero; an earlier success receipt cannot discharge a failed attempt.
+Native error reasons remain in the bounded redacted error and diagnostic output.
+If diagnostic writing fails, the original native failure/cause is preserved and
+the report identifies the unavailable log instead of pointing to it as evidence.
 
 After the normal extension compile step, the setup-ordering controls can run
 without a VS Code download or a Rust producer build:
@@ -534,3 +581,39 @@ cargo test --locked -p ripr --test mcp_sdk
 ```
 
 These tests qualify wire behavior, not installation or every protocol version.
+
+## MCP default gap-list exposure omission
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md)
+defines the default `ripr_list_gaps` exclusion (#14327): with no `class`, only
+`exposed` items refused as `seam_already_gripped` are left out and counted in
+`exposed_omitted`. The unit control separates that cause from a
+truncation-refused `exposed` item; the real-stdio parity case proves a gripped
+Rust seam is omitted by default and recovered by `class: "exposed"`; the
+truncation stdio controls keep evidence-limited `exposed` items listed.
+
+```bash
+cargo test --locked -p ripr --lib mcp::workspace::tests::default_gap_list_omits_exposed_and_discloses_the_count -- --exact
+cargo test --locked -p ripr --test mcp_cli_repair_parity already_gripped_seam_is_refused_with_one_cause_on_every_surface -- --exact
+cargo test --locked -p ripr --test mcp_stdio truncated_seam_inventory
+```
+
+## Stub routes past the seam cap
+
+[RIPR-SPEC-0287](specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md)
+and #14369 cover `ripr agent stub --seam-id` on a workspace larger than the
+seam cap. The subprocess controls set `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1`, so a
+small fixture behaves like a capped large repository:
+
+```bash
+cargo test --locked -p ripr --test agent_stub_compiles printed_seam_id_route_yields_its_stub_past_the_seam_cap -- --exact
+cargo test --locked -p ripr --test agent_stub_compiles seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it -- --exact
+```
+
+The first test checks that the route `check` prints yields its stub, after a
+precondition shows that the capped inventory lacks the seam. The second test
+checks that, past the cap, the stub omits the repair start the capped
+`--phase before` refuses, and that inside the cap the start is printed and
+runs. The in-process `app::test_stub` controls pin that the ambiguity
+validator classifies only the finding's file, reuses that inventory across
+findings, and refuses stand-in evidence.

@@ -38,6 +38,13 @@ The Python preview adapter:
 - does **not** emit `python_transitive_reach_unresolved`;
 - does not treat a same-named other-module class as the owner.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_table.py:python_preview:6c6d80d7 -> no_static_path
+```
+
 ## Must Not
 
 - Name a limitation from token coincidence on the class name.

@@ -252,6 +252,10 @@ pub(crate) struct EvidenceRecordMissingDiscriminator {
     pub(crate) value: String,
     pub(crate) reason: String,
     pub(crate) flow_sink: Option<EvidenceRecordFlowSink>,
+    /// The concrete drafted boundary call behind this fact, when the static
+    /// model pinned the equality-boundary input. Rendered only when present,
+    /// so records without a draft keep their shape.
+    pub(crate) drafted_boundary: Option<crate::domain::DraftedBoundaryAssertion>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -473,6 +477,7 @@ pub(crate) fn evidence_record_with_bound_verify_command(
                         line: sink.line,
                         owner: sink.owner.as_ref().map(ToString::to_string),
                     }),
+                drafted_boundary: missing.drafted_boundary.clone(),
             })
             .collect(),
         related_tests_total,
@@ -604,6 +609,11 @@ pub(crate) fn actionability_for(
                 .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
             {
                 "the changed code's role in the expected panic is unresolved"
+            } else if entry
+                .evidence
+                .names_static_limit(StaticLimitKind::RustFrameworkOracleUnresolved)
+            {
+                "whether the framework oracle notices the changed field is unresolved"
             } else {
                 "static evidence is opaque or unknown for this seam"
             },
@@ -1036,6 +1046,9 @@ pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
         || entry
             .evidence
             .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
+        || entry
+            .evidence
+            .names_static_limit(StaticLimitKind::RustFrameworkOracleUnresolved)
         || matches!(entry.class, SeamGripClass::Opaque)
         || [
             &entry.evidence.reach,
@@ -1293,7 +1306,7 @@ pub(crate) fn static_limitations_for(
     if matches!(entry.class, SeamGripClass::Opaque) {
         let reason =
             "seam is classified opaque; inspect static evidence before writing a focused test";
-        let category = static_limitation_category("classification", "opaque", reason);
+        let category = static_limitation_category("classification", "opaque", reason).as_str();
         limitations.push(EvidenceRecordStaticLimitation {
             stage: "classification".to_string(),
             state: "opaque".to_string(),
@@ -1393,10 +1406,17 @@ fn push_stage_limitation(
     evidence: &StageEvidence,
     entry: &ClassifiedSeam,
 ) {
+    let framework_unresolved = stage == "discriminate"
+        && entry
+            .evidence
+            .names_static_limit(StaticLimitKind::RustFrameworkOracleUnresolved);
+    let panic_unresolved = stage == "discriminate"
+        && entry
+            .evidence
+            .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved);
     if matches!(evidence.state, StageState::Unknown | StageState::Opaque)
-        || evidence
-            .summary
-            .contains(StaticLimitKind::RustPanicOutcomeUnresolved.as_str())
+        || panic_unresolved
+        || framework_unresolved
     {
         let state = evidence.state.as_str();
         // RIPR-SPEC-0236 example 23: a reach limitation that already names a
@@ -1405,13 +1425,17 @@ fn push_stage_limitation(
         // "macro" mention as `macro_generated_value` and would otherwise
         // steal this row. Honor the producer token only on the reach stage so
         // examples 21/22 (snapshot/mock/generated name inference) stay out.
-        let category = if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary)
-        {
-            "opaque_static_evidence"
+        let category = if panic_unresolved {
+            StageLimitationCategory::Typed(StaticLimitKind::RustPanicOutcomeUnresolved)
+        } else if framework_unresolved {
+            StageLimitationCategory::Typed(StaticLimitKind::RustFrameworkOracleUnresolved)
+        } else if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary) {
+            StageLimitationCategory::Untyped(UntypedStageLimitation::OpaqueStaticEvidence)
         } else {
             let base_category = static_limitation_category(stage, state, &evidence.summary);
             static_limitation_category_for_entry(base_category, entry)
-        };
+        }
+        .as_str();
         limitations.push(EvidenceRecordStaticLimitation {
             stage: stage.to_string(),
             state: state.to_string(),
@@ -1430,66 +1454,141 @@ fn rust_macro_reach_limitation_reason(reason: &str) -> bool {
         || reason.contains(StaticLimitKind::RustMacroWrappedTestCallUnresolved.as_str())
 }
 
-fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'static str {
+/// Category of a stage static limitation (#14965).
+///
+/// The emitted set is closed by construction: a category is either a typed
+/// [`StaticLimitKind`] token or one of the [`UntypedStageLimitation`] variants, so a new
+/// category cannot appear without a variant in one of the two vocabularies.
+/// `untyped_stage_limitations_do_not_shadow_typed_kinds` keeps the untyped
+/// wire tokens disjoint from every typed token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StageLimitationCategory {
+    Typed(StaticLimitKind),
+    Untyped(UntypedStageLimitation),
+}
+
+impl StageLimitationCategory {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Typed(kind) => kind.as_str(),
+            Self::Untyped(category) => category.as_str(),
+        }
+    }
+}
+
+/// Renderer categories that no producer names with a typed
+/// [`StaticLimitKind`] yet. Most are still read from the stage summary
+/// prose; replacing each with a typed producer is the end state #14965
+/// names. Their wire tokens are pinned by the evidence-audit maps and the
+/// fixture corpora, so a variant keeps its token even where a typed kind
+/// covers similar ground (`unsupported_mock_shape` is not `mocked_module`).
+/// Declares the enum, its `ALL` list and its wire tokens from one table, so a
+/// variant cannot exist without appearing in `ALL` and in the guard tests that
+/// walk it.
+macro_rules! untyped_stage_limitations {
+    ($($variant:ident => $token:literal,)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum UntypedStageLimitation {
+            $($variant,)+
+        }
+
+        impl UntypedStageLimitation {
+            #[cfg(test)]
+            const ALL: &'static [UntypedStageLimitation] = &[$(Self::$variant,)+];
+
+            fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $token,)+
+                }
+            }
+        }
+    };
+}
+
+untyped_stage_limitations! {
+    ConstructorFieldOwnerAmbiguous => "constructor_field_owner_ambiguous",
+    FieldAssignmentValueUnresolved => "field_assignment_value_unresolved",
+    CrossFileConstantUnresolved => "cross_file_constant_unresolved",
+    MacroGeneratedValue => "macro_generated_value",
+    OpaqueHelperCall => "opaque_helper_call",
+    UnsupportedMockShape => "unsupported_mock_shape",
+    SnapshotFieldUnknown => "snapshot_field_unknown",
+    SideEffectSinkUnknown => "side_effect_sink_unknown",
+    ActivationOwnerCallAbsent => "activation_owner_call_absent",
+    ActivationOwnerCallAbsentCallPresenceTargetAffinity => "activation_owner_call_absent_call_presence_target_affinity",
+    ActivationOwnerCallAbsentAssertionTargetAffinity => "activation_owner_call_absent_assertion_target_affinity",
+    ActivationOwnerCallAbsentAffinityOnly => "activation_owner_call_absent_affinity_only",
+    ActivationOwnerCallAbsentSameFileOnly => "activation_owner_call_absent_same_file_only",
+    ActivationOwnerCallUnresolved => "activation_owner_call_unresolved",
+    ActivationValueUnresolved => "activation_value_unresolved",
+    OpaqueStaticEvidence => "opaque_static_evidence",
+    ReachabilityStaticUnknown => "reachability_static_unknown",
+    ActivationStaticUnknown => "activation_static_unknown",
+    PropagationStaticUnknown => "propagation_static_unknown",
+    ObservationStaticUnknown => "observation_static_unknown",
+    DiscriminationStaticUnknown => "discrimination_static_unknown",
+    Unclassified => "static_limitation_unclassified",
+}
+
+fn static_limitation_category(stage: &str, state: &str, reason: &str) -> StageLimitationCategory {
+    use UntypedStageLimitation as U;
     let reason = reason.to_ascii_lowercase();
-    if reason.contains(StaticLimitKind::RustPanicOutcomeUnresolved.as_str()) {
-        StaticLimitKind::RustPanicOutcomeUnresolved.as_str()
-    } else if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
+    let untyped = if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
         // #8600: the producer named the typed call-fact budget limit; the
         // substring classifier below must not rename it from its prose.
-        StaticLimitKind::RustCallFactBudget.as_str()
+        return StageLimitationCategory::Typed(StaticLimitKind::RustCallFactBudget);
+    } else if reason.contains(StaticLimitKind::ActivationBoundaryInputUnresolved.as_str()) {
+        // #14951: the activate-stage producer names the typed boundary-input
+        // limit; its sub-case (iterator / closure / local or computed) stays
+        // in the repair route, not in this category.
+        return StageLimitationCategory::Typed(StaticLimitKind::ActivationBoundaryInputUnresolved);
     } else if reason.contains("constructor_field_owner_ambiguous") {
-        "constructor_field_owner_ambiguous"
+        U::ConstructorFieldOwnerAmbiguous
     } else if reason.contains("field assignment value is unresolved") {
-        "field_assignment_value_unresolved"
+        U::FieldAssignmentValueUnresolved
     } else if reason.contains("cross-file")
         || reason.contains("cross file")
         || reason.contains("unresolved constant")
         || reason.contains("constant boundary")
     {
-        "cross_file_constant_unresolved"
+        U::CrossFileConstantUnresolved
     } else if reason.contains("macro") || reason.contains("generated") {
-        "macro_generated_value"
+        U::MacroGeneratedValue
     } else if reason.contains("opaque helper") || reason.contains("opaque fixture") {
-        "opaque_helper_call"
+        U::OpaqueHelperCall
     } else if reason.contains("dynamic dispatch") || reason.contains("opaque dispatch") {
-        "dynamic_dispatch"
+        // The typed kind already owns this token (#14965).
+        return StageLimitationCategory::Typed(StaticLimitKind::DynamicDispatch);
     } else if reason.contains("mock") {
-        "unsupported_mock_shape"
+        U::UnsupportedMockShape
     } else if reason.contains("snapshot") {
-        "snapshot_field_unknown"
+        U::SnapshotFieldUnknown
     } else if reason.contains("side effect")
         || reason.contains("side-effect")
         || reason.contains("effect sink")
     {
-        "side_effect_sink_unknown"
+        U::SideEffectSinkUnknown
     } else if reason.contains("no direct owner call observed for value-insensitive seam") {
-        "activation_owner_call_absent"
+        U::ActivationOwnerCallAbsent
     } else if reason.contains("owner call") {
-        "activation_owner_call_unresolved"
-    } else if reason.contains("boundary activation operand")
-        && (reason.contains("local")
-            || reason.contains("iterator")
-            || reason.contains("closure")
-            || reason.contains("computed"))
-    {
-        "activation_boundary_input_unresolved"
+        U::ActivationOwnerCallUnresolved
     } else if reason.contains("no concrete activation values observed")
         || reason.contains("no literal activation values")
     {
-        "activation_value_unresolved"
+        U::ActivationValueUnresolved
     } else if stage == "classification" || state == "opaque" {
-        "opaque_static_evidence"
+        U::OpaqueStaticEvidence
     } else {
         match stage {
-            "reach" => "reachability_static_unknown",
-            "activate" => "activation_static_unknown",
-            "propagate" => "propagation_static_unknown",
-            "observe" => "observation_static_unknown",
-            "discriminate" => "discrimination_static_unknown",
-            _ => "static_limitation_unclassified",
+            "reach" => U::ReachabilityStaticUnknown,
+            "activate" => U::ActivationStaticUnknown,
+            "propagate" => U::PropagationStaticUnknown,
+            "observe" => U::ObservationStaticUnknown,
+            "discriminate" => U::DiscriminationStaticUnknown,
+            _ => U::Unclassified,
         }
-    }
+    };
+    StageLimitationCategory::Untyped(untyped)
 }
 
 fn static_limitation_repair_route(category: &str) -> &'static str {
@@ -1519,6 +1618,7 @@ fn static_limitation_repair_route(category: &str) -> &'static str {
         "macro_generated_value" => "analysis/macro-generated-value-fixtures",
         "opaque_helper_call" => "analysis/oracle-semantics-audit-fixes",
         "rust_panic_outcome_unresolved" => "analysis/oracle-semantics-audit-fixes",
+        "rust_framework_oracle_unresolved" => "analysis/oracle-semantics-audit-fixes",
         "dynamic_dispatch" => "calibration/runtime-fixtures-v3",
         "unsupported_mock_shape" => "analysis/oracle-semantics-audit-fixes",
         "snapshot_field_unknown" => "analysis/oracle-semantics-audit-fixes",
@@ -1535,24 +1635,26 @@ fn static_limitation_repair_route(category: &str) -> &'static str {
 }
 
 fn static_limitation_category_for_entry(
-    category: &'static str,
+    category: StageLimitationCategory,
     entry: &ClassifiedSeam,
-) -> &'static str {
-    if category == "activation_owner_call_absent" {
-        if owner_call_absence_has_call_presence_target_affinity(entry) {
-            "activation_owner_call_absent_call_presence_target_affinity"
-        } else if owner_call_absence_has_assertion_target_affinity(entry) {
-            "activation_owner_call_absent_assertion_target_affinity"
-        } else if owner_call_absence_is_same_file_primary(entry) {
-            "activation_owner_call_absent_same_file_only"
-        } else if owner_call_absence_is_affinity_only(entry) {
-            "activation_owner_call_absent_affinity_only"
-        } else {
-            category
-        }
-    } else {
-        category
+) -> StageLimitationCategory {
+    use UntypedStageLimitation as U;
+    if category != StageLimitationCategory::Untyped(U::ActivationOwnerCallAbsent) {
+        return category;
     }
+    StageLimitationCategory::Untyped(
+        if owner_call_absence_has_call_presence_target_affinity(entry) {
+            U::ActivationOwnerCallAbsentCallPresenceTargetAffinity
+        } else if owner_call_absence_has_assertion_target_affinity(entry) {
+            U::ActivationOwnerCallAbsentAssertionTargetAffinity
+        } else if owner_call_absence_is_same_file_primary(entry) {
+            U::ActivationOwnerCallAbsentSameFileOnly
+        } else if owner_call_absence_is_affinity_only(entry) {
+            U::ActivationOwnerCallAbsentAffinityOnly
+        } else {
+            U::ActivationOwnerCallAbsent
+        },
+    )
 }
 
 fn static_limitation_repair_route_for_entry(
@@ -1740,11 +1842,25 @@ fn observed_value_json(value: &EvidenceRecordObservedValue) -> Value {
 }
 
 fn missing_discriminator_json(missing: &EvidenceRecordMissingDiscriminator) -> Value {
-    json!({
+    let mut value = json!({
         "value": missing.value.as_str(),
         "reason": missing.reason.as_str(),
         "flow_sink": missing.flow_sink.as_ref().map(flow_sink_json),
-    })
+    });
+    if let Some(drafted) = missing.drafted_boundary.as_ref() {
+        value["drafted_boundary"] = drafted_boundary_json(drafted);
+    }
+    value
+}
+
+fn drafted_boundary_json(drafted: &crate::domain::DraftedBoundaryAssertion) -> Value {
+    let mut value = json!({
+        "arguments": drafted.arguments,
+    });
+    if let Some(expected) = drafted.expected.as_ref() {
+        value["expected"] = json!(expected);
+    }
+    value
 }
 
 fn flow_sink_json(sink: &EvidenceRecordFlowSink) -> Value {
@@ -1972,6 +2088,7 @@ fn presentation_text_json(presentation_text: &EvidenceRecordPresentationText) ->
 mod tests {
     use super::*;
     use crate::analysis::is_test_surface_path;
+    use crate::domain::DiscriminatorShape;
 
     #[test]
     fn consumer_evidence_state_preserves_wire_values_and_rejects_unknown_words() {
@@ -2075,6 +2192,8 @@ mod tests {
                         line: 88,
                         owner: None,
                     }),
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -2139,6 +2258,8 @@ mod tests {
                     value: "resizable_array_buffer".to_string(),
                     reason: "external TypeScript oracle visibility is unresolved".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -2497,6 +2618,8 @@ mod tests {
                 value: discriminator_value,
                 reason: "exact family evidence".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }];
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
@@ -2515,6 +2638,8 @@ mod tests {
             value: "producer-owned fact".to_string(),
             reason: "exact family evidence".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         entry.class = classify_seam(&entry.seam, &entry.evidence);
@@ -2639,6 +2764,8 @@ mod tests {
             value: "PricingError::Other".to_string(),
             reason: "the changed error variant is not asserted exactly".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.class = classify_seam(&entry.seam, &entry.evidence);
 
@@ -3546,7 +3673,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3585,7 +3712,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operands are local or computed for seam `amount >= threshold`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `amount >= threshold`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3635,7 +3762,7 @@ mod tests {
         );
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operands are local, member-access, or computed for seam `call.name != owner_name`; add analyzer support for member boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operands are local, member-access, or computed for seam `call.name != owner_name`; add analyzer support for member boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3662,7 +3789,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operand is closure-derived for seam `function.id == owner`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operand is closure-derived for seam `function.id == owner`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -4287,6 +4414,70 @@ mod tests {
     }
 
     #[test]
+    fn untyped_stage_limitations_do_not_shadow_typed_kinds() {
+        // #14965: an untyped renderer category must not reuse a typed
+        // `StaticLimitKind` token; a token the enum owns is emitted through
+        // `StageLimitationCategory::Typed`, never as a second literal.
+        let typed: std::collections::HashSet<_> = StaticLimitKind::ALL
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect();
+        let mut untyped = std::collections::HashSet::new();
+        for category in UntypedStageLimitation::ALL.iter().copied() {
+            let token = category.as_str();
+            assert!(
+                !typed.contains(token),
+                "{category:?} shadows the typed StaticLimitKind token `{token}`"
+            );
+            assert!(untyped.insert(token), "duplicate untyped token `{token}`");
+        }
+        // Negative control: the typed arm the classifier takes for dispatch
+        // prose renders the enum's own token.
+        assert_eq!(
+            static_limitation_category("reach", "unknown", "dynamic dispatch hides the callee"),
+            StageLimitationCategory::Typed(StaticLimitKind::DynamicDispatch)
+        );
+        assert!(typed.contains("dynamic_dispatch"));
+    }
+
+    #[test]
+    fn untyped_stage_limitation_wire_tokens_are_pinned() {
+        // The evidence-audit maps and fixture corpora key on these strings;
+        // renaming one is a wire change, not a refactor.
+        let tokens: Vec<&str> = UntypedStageLimitation::ALL
+            .iter()
+            .map(|category| category.as_str())
+            .collect();
+        assert_eq!(
+            tokens,
+            [
+                "constructor_field_owner_ambiguous",
+                "field_assignment_value_unresolved",
+                "cross_file_constant_unresolved",
+                "macro_generated_value",
+                "opaque_helper_call",
+                "unsupported_mock_shape",
+                "snapshot_field_unknown",
+                "side_effect_sink_unknown",
+                "activation_owner_call_absent",
+                "activation_owner_call_absent_call_presence_target_affinity",
+                "activation_owner_call_absent_assertion_target_affinity",
+                "activation_owner_call_absent_affinity_only",
+                "activation_owner_call_absent_same_file_only",
+                "activation_owner_call_unresolved",
+                "activation_value_unresolved",
+                "opaque_static_evidence",
+                "reachability_static_unknown",
+                "activation_static_unknown",
+                "propagation_static_unknown",
+                "observation_static_unknown",
+                "discrimination_static_unknown",
+                "static_limitation_unclassified",
+            ]
+        );
+    }
+
+    #[test]
     fn evidence_record_normalizes_static_limitation_categories() {
         for (stage, state, reason, expected) in [
             (
@@ -4322,7 +4513,7 @@ mod tests {
             (
                 "activate",
                 "unknown",
-                "Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
+                "activation_boundary_input_unresolved: Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
                 "activation_boundary_input_unresolved",
             ),
             (
@@ -4411,7 +4602,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                static_limitation_category(stage, state, reason),
+                static_limitation_category(stage, state, reason).as_str(),
                 expected,
                 "unexpected category for {stage}/{state}: {reason}"
             );

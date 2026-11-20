@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not",
+]
+code = ["crates/ripr/src/lsp/diagnostics.rs", "crates/ripr/src/lsp/backend.rs"]
