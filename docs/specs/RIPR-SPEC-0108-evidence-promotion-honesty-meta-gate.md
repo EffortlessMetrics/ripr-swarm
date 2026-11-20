@@ -826,6 +826,9 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Test | Spec control |
 |---|---|
+| `pre_label_requires_exact_ordered_published_parents` | The published composition has the advertised target and PR head as its ordered parents |
+| `published_composition_checks_all_reports_and_reasoned_pins` | The pre-label command accepts current reports and valid historical pins and refuses stale compositions, stale reports and malformed pins |
+| `batch_binds_each_record_even_for_repeated_oids_and_embedded_newlines` | The Git batch reader checks each blob identity, type, size and terminator |
 | `nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory` | Typed partial outcome and limitation mutations fail despite the retained generic advisory |
 | `partial_analysis_assertion_requires_every_identity_and_count_field` | Missing typed limitation identity or count is rejected |
 | `cargo run -p xtask -- check-evidence-promotion-honesty` | End-to-end gate pass |
@@ -897,6 +900,7 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Component | Location |
 |---|---|
+| Pre-label composition and report checks | `xtask/src/evidence_promotion/pre_label.rs::check` |
 | Corpus manifest | `fixtures/evidence-promotion-honesty-corpus/corpus.json` |
 | First external patch | `fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff` |
 | Gate implementation | `xtask/src/main.rs::check_evidence_promotion_honesty` |
