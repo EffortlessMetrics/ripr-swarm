@@ -2506,6 +2506,19 @@ impl ClassifiedProbeEvidence {
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
 
+        // A file or module link can hide a real call through an entry point.
+        // Report only that reach was not established for this assertion-free row.
+        for test in &mut related_tests {
+            if test.miss == Some(RelatedTestMiss::NoAssertion)
+                && matches!(
+                    test.relation_reason,
+                    Some(RelationReason::SameTestFile | RelationReason::SameModule)
+                )
+                && !implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+            {
+                test.miss = Some(RelatedTestMiss::NoCallPath);
+            }
+        }
         super::super::classify::split_assertion_not_credited_misses(
             context,
             pin_syntax,
