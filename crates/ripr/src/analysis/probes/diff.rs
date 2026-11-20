@@ -1798,7 +1798,7 @@ fn is_slid_function_closer(index: &RustIndex, changed: &ChangedFile, added_index
     };
     let line = added.new_side_line;
     if !is_closers_only(&added.text)
-        || !find_owner_function(index, &changed.path, line).is_some_and(|f| f.end_line == line)
+        || find_owner_function(index, &changed.path, line).is_none_or(|f| f.end_line != line)
     {
         return false;
     }
