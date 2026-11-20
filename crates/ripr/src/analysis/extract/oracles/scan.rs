@@ -6168,6 +6168,10 @@ fn price_boundary_discriminator() {
             (r#"format!("{{expected}}")"#, false),
             (r#"format!(r"{expected}")"#, true),
             (r#"format!("{}", r"{expected}")"#, false),
+            (r#"format!("{}", expected)"#, true),
+            (r#"write!(sink(), r"{expected}")"#, true),
+            (r#"write!(sink(), "{}", r"{expected}")"#, false),
+            (r#"concat!(r"{expected}")"#, false),
         ] {
             let body = format!(
                 "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
