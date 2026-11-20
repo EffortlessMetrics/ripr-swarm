@@ -417,7 +417,8 @@ Options:
                        documents stay in their files under target/ripr/.
   --quiet              Drop the phase's progress narration and `wrote <path>`
                        lines from stderr, like `ripr repair --quiet` and
-                       `RIPR_QUIET`. Results and refusal prose always print.
+                       `RIPR_QUIET`. Results, refusal prose and the warning
+                       to write output outside the repo always print.
   --seam-id ID         Select one visible seam; required for `before` and the
                        compatibility selector for `after`. For `--phase before`,
                        a seam ID, a `ripr check` finding ID (`probe:` /
@@ -3889,9 +3890,10 @@ Options:
                    unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
-                   lines from stderr. Refusal prose, the attempt id and the
-                   next command stay. `RIPR_QUIET` (any value except empty,
-                   `0` or `false`) does the same.
+                   lines from stderr. Refusal prose, the attempt id, the
+                   next command and the warning to write output outside the
+                   repo stay. `RIPR_QUIET` (any value except empty, `0` or
+                   `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded

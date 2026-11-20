@@ -31727,7 +31727,8 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
 
 /// #11598: `RIPR_QUIET` reaches the direct `ripr agent repair` phases: the
 /// narration and `wrote` lines drop, while the result (the attempt command)
-/// still prints. The control run without it narrates.
+/// and the output-location warning still print. The control run without it
+/// narrates.
 #[test]
 fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -31771,6 +31772,13 @@ fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
     assert!(
         quiet.contains("ripr: attempt next command: "),
         "the result must survive quiet: {quiet}"
+    );
+    // #15282 item 8: the output-location warning is not narration. A
+    // redirect into the worktree fails the attempt, and quiet runs are the
+    // agent runs that redirect, so it stays (the help says so).
+    assert!(
+        quiet.contains("ripr: write this command's output outside the repo"),
+        "the output-location warning must survive quiet: {quiet}"
     );
     Ok(())
 }
