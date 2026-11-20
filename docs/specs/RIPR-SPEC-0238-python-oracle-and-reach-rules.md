@@ -1835,6 +1835,31 @@ mutant calibrates the rule; ripr reports only the static shape.
     helper substitution, which keeps its own module-attribute rule, and
     fixture definitions' imports are not rewritten.
 
+34. **An edited member of a literal membership collection needs an input
+    equal to that member** (#15632). When the old and the new changed line
+    each read as `if|elif|while <subject> in|not in <display>:` with the
+    same keyword, subject and operator, where the display is a tuple, list
+    or set of scalar literals (numbers, `True`/`False`, `None`, plain
+    strings without escapes) and at least one member is kept, the altered
+    members are those present on one side only under Python equality
+    (`True == 1`, `False == 0`, `1 == 1.0`): a removed member, an added
+    member, or both for a changed one. The subject must be a bare owner
+    parameter that the owner rebinds only by one case normalization
+    (`val = val.lower()`, `.casefold()`, `.upper()`) before the changed line,
+    outside any loop. A strong related call row hits an altered member when
+    its literal input equals the member and the old and new membership
+    results for that input differ; under a normalization only a string the
+    normalization leaves unchanged counts, and a non-string counts only
+    when each normalization line sits directly under
+    `if isinstance(<subject>, str):`. Every altered member needs a hit, or the change reads
+    `weakly_exposed` with the first unhit member named as the boundary
+    discriminator (`val == "y"`), including when no strong row binds a
+    literal or some strong call goes unread. Removing `1` while `True` stays
+    alters nothing, so a row passing `1` never hits it. A whole-collection
+    replacement, a non-literal display, a subject that is not a parameter,
+    any other rebinding, an unreadable literal and a `match` arm keep the
+    existing verdict. The rule never credits `exposed`.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -2677,6 +2702,9 @@ strong assertions is retained.
   `py-grid-*-property` corpus cases.
 - `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
   pinned by `package_alias_tests.rs`.
+- `crates/ripr/src/analysis/language/python/membership_activation.rs`:
+  rule 34, read by `classify.rs` ahead of the boundary rule and pinned by
+  `membership_activation_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.

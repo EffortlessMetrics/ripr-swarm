@@ -1104,14 +1104,32 @@ fn classify_change_for_owner_inner<'a>(
     // `boundary_activation_unresolved` limitation instead.
     let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
         .then(|| {
-            python_boundary_evidence(
-                line_text,
-                old_line_text,
-                owner,
-                owner_source,
-                &related_candidates,
-                &focus,
-            )
+            // #15632: an edit to the members of a literal collection in a
+            // membership test changes the branch only for an input equal to
+            // an altered member.
+            owner_source
+                .zip(old_line_text)
+                .and_then(|(source, old)| {
+                    super::membership_activation::python_membership_member_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
+                .or_else(|| {
+                    python_boundary_evidence(
+                        line_text,
+                        old_line_text,
+                        owner,
+                        owner_source,
+                        &related_candidates,
+                        &focus,
+                    )
+                })
         })
         .flatten();
     let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
