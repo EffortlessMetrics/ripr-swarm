@@ -136,12 +136,17 @@ pub(in crate::analysis) fn missing_evidence(
         ),
         ExposureClass::WeaklyExposed => {}
     }
+    // #12414: a Predicate finding that already names a missing input — the
+    // equality boundary or an inserted guard's domain — carries no extra
+    // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
-        && !activation
-            .missing_discriminators
-            .iter()
-            .any(|fact| fact.value.contains("=="))
+        && !activation.missing_discriminators.iter().any(|fact| {
+            matches!(
+                fact.shape,
+                DiscriminatorShape::Boundary | DiscriminatorShape::GuardDomain
+            )
+        })
     {
         missing.push("No detected boundary input for the changed predicate".to_string());
     }
@@ -189,7 +194,7 @@ pub(in crate::analysis) fn missing_evidence(
 /// (also `assert_eq!`/`assert_ne!`/`debug_assert!` forms) or the
 /// `static_assertions` `const_assert*!` macros, bare or path-qualified. The
 /// match is on the written text only; anything else keeps its generic reason.
-fn is_compile_time_assertion(expression: &str) -> bool {
+pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
     if let Some(rest) = text.strip_prefix("const _") {
         let Some((_, value)) = rest.split_once('=') else {
@@ -220,6 +225,97 @@ fn is_unsafe_obligation(probe: &Probe) -> bool {
             || probe.expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
 }
 
+/// Typed spellings of the substring heuristics that mark related-test bodies or
+/// probe expressions as opaque before any value on them is read as an input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AssertKind {
+    FixtureMention,
+    BuilderMention,
+    ArbGeneratorMention,
+    AsyncKeyword,
+    SpawnKeyword,
+    AwaitKeyword,
+}
+
+impl AssertKind {
+    const TEST_BODY_SIGNALS: &'static [(Self, &'static str)] = &[
+        (Self::FixtureMention, "fixture"),
+        (Self::BuilderMention, "builder"),
+        (Self::ArbGeneratorMention, "arb_"),
+    ];
+    const EXPRESSION_SIGNALS: &'static [(Self, &'static str)] = &[
+        (Self::AsyncKeyword, "async"),
+        (Self::SpawnKeyword, "spawn"),
+        (Self::AwaitKeyword, "await"),
+    ];
+
+    fn matches_in_test_body(body: &str) -> bool {
+        Self::TEST_BODY_SIGNALS
+            .iter()
+            .any(|(_, needle)| body.contains(needle))
+    }
+
+    /// The expression signals match whole name segments (#14875): an
+    /// identifier is split at `_` and at lower-to-upper case steps, and a
+    /// segment must equal `async`, `await` or `spawn` (or be `asyncio`).
+    /// `async move`, `.await`, `spawn_blocking`, `async_trait`, `spawnSync`
+    /// and `asyncio.run` count; `respawn_limit`, `awaiting_ack`,
+    /// `asynchronous_mode` and a `"async"` string or comment do not.
+    fn matches_in_expression(expression: &str) -> bool {
+        let masked = crate::analysis::extract::mask_comments_and_strings(expression);
+        masked
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .flat_map(name_segments)
+            .any(|segment| {
+                segment.eq_ignore_ascii_case("asyncio")
+                    || Self::EXPRESSION_SIGNALS
+                        .iter()
+                        .any(|(_, needle)| segment.eq_ignore_ascii_case(needle))
+            })
+    }
+}
+
+/// The `_`- and case-separated segments of one identifier:
+/// `spawn_blocking` is `spawn`, `blocking`; `readFileAsync` is `read`,
+/// `File`, `Async`.
+fn name_segments(token: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    for part in token.split('_').filter(|part| !part.is_empty()) {
+        let chars: Vec<(usize, char)> = part.char_indices().collect();
+        let mut begin = 0;
+        for (at, &(index, ch)) in chars.iter().enumerate().skip(1) {
+            let Some(&(_, previous)) = chars.get(at - 1) else {
+                continue;
+            };
+            let next_lower = chars
+                .get(at + 1)
+                .is_some_and(|(_, next)| next.is_lowercase());
+            // `readFile` splits before `F`; `HTTPSpawn` splits before `S`.
+            let step = ch.is_uppercase()
+                && (previous.is_lowercase()
+                    || previous.is_ascii_digit()
+                    || (previous.is_uppercase() && next_lower));
+            if step {
+                segments.extend(part.get(begin..index));
+                begin = index;
+            }
+        }
+        segments.extend(part.get(begin..));
+    }
+    segments
+}
+
+/// #14181: whether file line `line` sits inside a (possibly rustfmt-split)
+/// inline const assertion block in `owner`'s body, whose first body line is
+/// the owner's `start_line`.
+fn in_owner_const_assertion(owner: &FunctionSummary, line: usize) -> bool {
+    line.checked_sub(owner.start_line).is_some_and(|offset| {
+        owner.body.contains("const")
+            && crate::analysis::probes::inline_const_assertion_lines(&owner.body)
+                .contains(&(offset + 1))
+    })
+}
+
 pub(in crate::analysis) fn stop_reasons(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -232,19 +328,29 @@ pub(in crate::analysis) fn stop_reasons(
         } else {
             reasons.push(StopReason::NoChangedRustLine);
         }
+    } else if probe.family == ProbeFamily::StaticUnknown
+        && (crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+            || (probe.after.is_some()
+                && owner_fn
+                    .is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line))))
+    {
+        // #14181: `const { assert!(N <= 249) };` inside a function is checked
+        // when the function is built; a violating edit fails to compile. A
+        // rustfmt-split block is found by its line in the owner's body. Only
+        // an added-side probe sits on its own new-file line; a removed one's
+        // location is where the deletion sits.
+        reasons.push(StopReason::CompileTimeInvariant);
     }
     if is_unsafe_obligation(probe) {
         reasons.push(StopReason::UnsafeObligation);
     }
-    if related_tests.iter().any(|test| {
-        test.body.contains("fixture") || test.body.contains("builder") || test.body.contains("arb_")
-    }) {
+    if related_tests
+        .iter()
+        .any(|test| AssertKind::matches_in_test_body(&test.body))
+    {
         reasons.push(StopReason::FixtureOpaque);
     }
-    if probe.expression.contains("async")
-        || probe.expression.contains("spawn")
-        || probe.expression.contains("await")
-    {
+    if AssertKind::matches_in_expression(&probe.expression) {
         reasons.push(StopReason::AsyncBoundaryOpaque);
     }
     if contains_macro_invocation(&probe.expression) {
@@ -271,6 +377,11 @@ fn contains_macro_invocation(expression: &str) -> bool {
     }
     false
 }
+
+/// #3700: the typed next step for a wrapper error seam. It names what static
+/// analysis cannot establish instead of prescribing an assertion the suite may
+/// already contain.
+pub(in crate::analysis) const WRAPPER_ERROR_BINDING_NEXT_STEP: &str = "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.";
 
 pub(in crate::analysis) fn recommended_next_step(
     probe: &Probe,
@@ -325,7 +436,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
                 // what static analysis cannot establish; discriminating this
                 // seam needs real mutation testing or deeper conversion
                 // modeling (Into/From through Box).
-                "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling."
+                WRAPPER_ERROR_BINDING_NEXT_STEP
             } else if matches!(probe.family, ProbeFamily::ReturnValue)
                 && super::exact_error_variant(&probe.expression).is_some()
             {
@@ -567,7 +678,7 @@ fn uncertainty_next_step(
             added.push(action);
         }
     }
-    step.push_str(" Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.");
+    step.push_str(" Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.");
     step
 }
 
@@ -969,7 +1080,7 @@ mod tests {
                 "{step}"
             );
             assert!(
-                step.contains("original and changed") && step.contains("may remain unknown"),
+                step.contains("old and new code") && step.contains("may remain unknown"),
                 "{step}"
             );
             assert!(
@@ -1275,6 +1386,8 @@ mod tests {
             value: value.to_string(),
             reason: format!("no related test call uses {value}"),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }]
     }
 
@@ -1548,6 +1661,76 @@ mod tests {
             ProbeFamily::StaticUnknown,
             "unsafe block",
         )));
+    }
+
+    #[test]
+    fn assert_kind_matches_exactly_the_former_body_predicate() {
+        fn legacy_test_body(body: &str) -> bool {
+            body.contains("fixture") || body.contains("builder") || body.contains("arb_")
+        }
+        let bodies = [
+            "let input = load_fixture();",
+            "Request::builder().build()",
+            "let n = arb_u32();",
+            "plain test",
+            "async fn helper() {}",
+            "fixture_builder_arb_",
+        ];
+        for body in bodies {
+            assert_eq!(
+                super::AssertKind::matches_in_test_body(body),
+                legacy_test_body(body),
+                "body: {body}"
+            );
+        }
+    }
+
+    /// #14875: an expression marks a task boundary only through a whole
+    /// `async`/`await`/`spawn` name segment, never through a longer word,
+    /// a string or a comment that contains it.
+    #[test]
+    fn async_boundary_signals_match_whole_name_segments() {
+        for expression in [
+            "async fn run() {}",
+            "async move { work() }",
+            "task::spawn(future)",
+            "std::thread::spawn(|| work())",
+            "tokio::task::spawn_blocking(work)",
+            "spawn_local(fut)",
+            "value.await",
+            "load().await?",
+            "#[async_trait]",
+            "asyncio.run(main())",
+            "proc.spawnSync(cmd)",
+            "readFileAsync(path)",
+            "HTTPSpawn::new()",
+            "IOAsync",
+            "r#async",
+            "async spawn await",
+        ] {
+            assert!(
+                super::AssertKind::matches_in_expression(expression),
+                "expression: {expression}"
+            );
+        }
+        for expression in [
+            "plain expression",
+            "s.respawn_limit > n",
+            "self.asynchronous_mode",
+            "awaiting_ack == 0",
+            "spawned_count + 1",
+            "spawner.len()",
+            "respawnLimit > n",
+            "asynchronousMode",
+            "HTTPSpawner",
+            "log(\"async done\")",
+            "x > 1 // await later",
+        ] {
+            assert!(
+                !super::AssertKind::matches_in_expression(expression),
+                "expression: {expression}"
+            );
+        }
     }
 
     // #11547: a changed compile-time assertion names its own stop reason;

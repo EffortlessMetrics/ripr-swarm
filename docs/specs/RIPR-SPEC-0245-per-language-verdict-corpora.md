@@ -95,6 +95,20 @@ false-actionable, false-exposed and false-silent rates from its committed
 rows (`verdict-corpus:` sources), so the scoreboard gate compares the
 committed rates against its baseline; it does not re-run the corpus.
 
+A report also splits its abstained rows by cause (`abstention_by_cause`,
+#13657), overall, per subject origin and (Perl) per fact-packet
+provenance, keyed
+`<side>:<classifications>`. The side comes from the row's ideal verdict:
+`credit_missed` for a credited ideal and `gap_missed` for a gap ideal
+(`no_claim_expected` is kept for a `limited` or `silent` ideal, which the
+truth table does not produce today). The classifications are the row's
+observed classifications joined with `+`, or `none` when it has none. Only
+abstained rows are counted, so each map sums to its abstention numerator.
+Every abstained row is acceptable by its case's own labels; the split exists
+so a promotion is chosen by count, and so `gap_missed:no_static_path` rows,
+whose promotion would turn a no-path finding into a claimed gap, are visible
+as such. It is a report field, not a gate.
+
 ### TypeScript corpus
 
 Subjects are authored packages (`authored-ts-<library>-<name>`), our own code

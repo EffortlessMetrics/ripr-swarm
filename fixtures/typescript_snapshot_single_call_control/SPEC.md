@@ -26,6 +26,13 @@ strong (RIPR-SPEC-0258 rule 1). This is the legitimate single-call control
 that shows the hidden-second-call fixture is refused because of its second
 call, not because the fixture can never promote (#8895).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.ts:typescript_preview:c712a282 -> exposed
+```
+
 ## Must Not
 
 - Refuse the honest single call.

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr init --agents` now writes instructions that fit the repo's language. A Python repo gets `pytest` / `unittest` and exact-assert advice, a TypeScript/JavaScript repo gets `jest` / `vitest` advice, and neither is told to run `cargo` or promised guided `ripr repair` (Rust only); they are pointed to `ripr check --format agent` instead. The Cursor rule's `globs` and description follow the detected languages. Rust repos keep the Rust text unchanged (#13596).

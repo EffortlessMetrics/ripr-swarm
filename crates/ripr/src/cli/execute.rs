@@ -45,7 +45,8 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         }
         CliCommand::FirstPr(args) => commands::first_pr(&args).map_err(CommandError::from),
         CliCommand::FirstAction(args) => commands::first_action(&args).map_err(CommandError::from),
-        CliCommand::Reports(args) => commands::reports(&args).map_err(CommandError::from),
+        // A blocked gate inside `reports ci-packet` keeps the Decision variant (exit 3).
+        CliCommand::Reports(args) => commands::reports_command(&args),
         CliCommand::Calibrate(args) => commands::calibrate(&args).map_err(CommandError::from),
         CliCommand::Receipt(args) => commands::receipt(&args).map_err(CommandError::from),
         CliCommand::Feedback(args) => commands::feedback(&args).map_err(CommandError::from),
@@ -59,6 +60,7 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         // Doctor completed-with-findings carries the Decision variant (exit 3, #5102).
         CliCommand::Doctor(args) => commands::doctor(&args),
         CliCommand::Capabilities(args) => commands::capabilities(&args).map_err(CommandError::from),
+        CliCommand::Completions(args) => commands::completions(&args).map_err(CommandError::from),
         CliCommand::Lsp(args) => commands::lsp(&args).map_err(CommandError::from),
         CliCommand::PrSummary(args) => commands::pr_summary(&args).map_err(CommandError::from),
         CliCommand::Annotations(args) => commands::annotations(&args).map_err(CommandError::from),

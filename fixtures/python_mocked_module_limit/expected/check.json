@@ -37,6 +37,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `mocked_module` prevents a safe Python discriminator claim."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `fetch_total`", "infection unknown: Static limit `mocked_module` prevents a safe Python infection claim.", "propagation unknown: Static limit `mocked_module` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator unknown: Static limit `mocked_module` prevents a safe Python discriminator claim.", "related test tests/test_service.py:7 test_fetch_total_uses_client_total uses strong exact value oracle: assert fetch_total(client) == 10"],
       "flow_sinks": [
       ],

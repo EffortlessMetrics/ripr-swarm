@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/cli-refusal.schema.json",
+  "title": "RIPR CLI Refusal",
+  "description": "The minimal document ripr writes to stdout when an argv usage error (unknown command, argument or value; a value flag missing its value; a required flag left out; two flags that cannot be used together; a malformed value) or a context selector miss occurs under an explicit JSON request (#11584, #6834 decision), and, with a reason code and disposition, when a typed `repair`/`continue`/`status` refusal stops before any check under `--json` (#14931). Exit code (2 for usage errors, 3 for typed refusals) and stderr prose are unchanged. It carries no argv echo and no partial analysis; without a JSON request stdout stays empty.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "status", "error"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "tool": { "const": "ripr" },
+    "status": { "const": "refused" },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "next"],
+      "properties": {
+        "code": {
+          "enum": [
+            "unknown_argument",
+            "unknown_command",
+            "unknown_value",
+            "missing_value",
+            "missing_required",
+            "conflicting_flags",
+            "invalid_value",
+            "selector_miss",
+            "item_names_no_seam",
+            "item_names_several_seams",
+            "seam_not_repair_eligible",
+            "no_eligible_seam",
+            "several_eligible_seams",
+            "repair_needs_item",
+            "start_refused_uncommitted_target",
+            "build_output_not_ignored",
+            "no_test_route",
+            "awaiting_edit",
+            "retry_budget_exhausted",
+            "no_current_attempt",
+            "attempt_baseline_blocked",
+            "unanchored_root",
+            "ambiguous_attempts",
+            "attempt_ended_without_receipt",
+            "attempt_completion_unconfirmed",
+            "edit_cage_violation",
+            "attempt_stale",
+            "attempt_incomparable"
+          ]
+        },
+        "disposition": {
+          "description": "Present only on a typed repair/continue refusal (#14931): what the caller can do next.",
+          "enum": ["retryable", "terminal", "needs_selection", "not_started"]
+        },
+        "choices": {
+          "description": "Present only on a typed selection refusal (`several_eligible_seams`, `ambiguous_attempts`, #14980): one runnable command per listed seam or attempt, composed from its typed id and the bound root (a seam choice is the command stderr prints; an attempt choice fills that id into the stderr retry line), never lifted from prose. `items` may be fewer than `total` when the listing is bounded.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "items"],
+          "properties": {
+            "total": { "type": "integer", "minimum": 1 },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["label", "command"],
+                "properties": {
+                  "label": { "type": "string", "minLength": 1 },
+                  "command": { "type": "string", "minLength": 1 },
+                  "powershell_command": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "token": { "type": "string", "minLength": 1 },
+        "next": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": {
+              "enum": [
+                "follow_stated_step",
+                "list_valid_arguments",
+                "list_valid_commands"
+              ]
+            },
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

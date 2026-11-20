@@ -155,7 +155,8 @@ impl RefusalRemedy {
     /// The primary step is the instructed one, not the first mention: a
     /// conditional fallback (`if it persists, run ...`) or an explanatory
     /// mention (`X is a `ripr check` finding ID`) never becomes the primary
-    /// remedy while an instructed step exists. See [`Role`].
+    /// remedy while an instructed step exists (the private `Role` of each
+    /// mention decides).
     pub fn from_prose(prose: &str) -> Self {
         let commands = stated_mentions(prose, is_ripr_command);
         let tools = stated_tool_mentions(prose);
@@ -502,10 +503,9 @@ fn stated_flags(prose: &str, ranges: &[(usize, usize)], gated: bool) -> Vec<Stri
         let chained = FLAG_JOINERS.contains(&word.trim_end_matches(',')) || before.ends_with(',');
         let continues = chained
             && last_counted_end.is_some_and(|prev| {
-                prose[prev..at]
-                    .chars()
-                    .all(|c| c.is_whitespace() || c == '`' || c == ',' || c.is_alphabetic())
-                    && prose[prev..at].split_whitespace().count() <= 3
+                prose[prev..at].chars().all(|c| {
+                    c.is_whitespace() || c == '`' || c == ',' || c == '&' || c.is_alphabetic()
+                }) && prose[prev..at].split_whitespace().count() <= 3
             });
         if gated && !(verb_ok || continues) {
             continue;
@@ -615,6 +615,37 @@ mod tests {
             list.flags,
             vec!["--before".to_string(), "--after".to_string()]
         );
+    }
+
+    /// Every listed joiner chains, `&` included (#15184).
+    #[test]
+    fn each_listed_flag_joiner_chains_the_next_flag() {
+        for joiner in FLAG_JOINERS {
+            let gap = if *joiner == "," {
+                ", ".to_string()
+            } else {
+                format!(" {joiner} ")
+            };
+            let prose = format!("requires both; pass --before{gap}--after");
+            let remedy = RefusalRemedy::from_prose(&prose);
+            assert_eq!(
+                remedy.flags,
+                vec!["--before".to_string(), "--after".to_string()],
+                "{prose}"
+            );
+        }
+        let quoted = RefusalRemedy::from_prose("requires both; pass `--before` & `--after`");
+        assert_eq!(
+            quoted.flags,
+            vec!["--before".to_string(), "--after".to_string()]
+        );
+    }
+
+    /// A gated flag after a word that is not a joiner still does not count.
+    #[test]
+    fn a_non_joiner_between_gated_flags_does_not_chain() {
+        let remedy = RefusalRemedy::from_prose("requires both; pass --before then --after");
+        assert_eq!(remedy.flags, vec!["--before".to_string()]);
     }
 
     #[test]

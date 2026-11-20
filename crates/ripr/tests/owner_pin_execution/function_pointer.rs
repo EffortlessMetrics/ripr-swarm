@@ -147,7 +147,9 @@ fn function_pointer_pins_only_the_observed_owner_value() -> Result<(), String> {
             changed[0]
         );
         if case == "blind" {
-            assert_eq!(changed[0].class, ExposureClass::WeaklyExposed);
+            // #14968: `assert_eq!(6, 6)` reads no value, so the reached call
+            // stays unrevealed rather than weakly exposed.
+            assert_eq!(changed[0].class, ExposureClass::ReachableUnrevealed);
         }
     }
     Ok(())

@@ -2,6 +2,33 @@ use super::*;
 
 const DEADLINE: Option<Duration> = Some(Duration::from_mins(1));
 
+#[test]
+fn vendored_dependency_paths_are_not_user_sources() {
+    for vendored in [
+        "node_modules/pkg/index.js",
+        "web/node_modules/pkg/index.js",
+        ".venv/lib/site-packages/dep/mod.py",
+        "venv/lib/mod.py",
+        "vendor/dep/lib.rs",
+        "dist/bundle.js",
+        "build/gen.rs",
+    ] {
+        assert!(is_vendored_dependency_path(vendored), "{vendored}");
+    }
+    for owned in [
+        "src/generated.rs",
+        "crates/alpha/src/ignored_gen.rs",
+        "crates/alpha/target/bgen.rs",
+        "pkg/build/gen.rs",
+        "src/distance.rs",
+        "src/my_node_modules_helper.rs",
+        "build.rs",
+        "a/dist/x.rs",
+    ] {
+        assert!(!is_vendored_dependency_path(owned), "{owned}");
+    }
+}
+
 struct RepoGuard(PathBuf);
 
 impl Drop for RepoGuard {
@@ -472,6 +499,13 @@ fn porcelain_parser_pairs_rename_sources_and_rejects_malformed_records() -> Resu
     assert_eq!(parsed.dirty, vec!["src/lib.rs"]);
     assert_eq!(parsed.ignored_files, vec!["tests/local.rs"]);
     assert_eq!(parsed.ignored_directories, vec!["build"]);
+    // #14315: ripr's self-ignoring output tree, at the top or under a nested
+    // root, is not source; a similarly named authored path still counts.
+    let parsed = parse_porcelain_z(
+        b"!! target/ripr/cache/\0!! target/ripr/.gitignore\0!! app/target/ripr/cache/\0!! app/target/ripr/x.rs\0!! target/ripr-notes/\0!! src/target/riprx.rs\0",
+    )?;
+    assert_eq!(parsed.ignored_directories, vec!["target/ripr-notes"]);
+    assert_eq!(parsed.ignored_files, vec!["src/target/riprx.rs"]);
     // #5258: `??` records are untracked. They stay in the dirty set (the
     // overlay reads them absent at HEAD) and are named for the output layer,
     // so the note can distinguish them from the `--worktree`-visible edits.
@@ -753,17 +787,17 @@ fn workspace_authority_confirms_committed_bytes_of_a_dirty_file() -> Result<(), 
 #[test]
 fn ignored_sources_read_absent_unless_tracked() -> Result<(), String> {
     let repo = fixture_root("ignored")?;
-    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\nbuild/\n")?;
+    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\nout/\n")?;
     write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
-    write(&repo.0, "build2/lib.rs", "pub fn two() -> u8 { 2 }\n")?;
+    write(&repo.0, "out2/lib.rs", "pub fn two() -> u8 { 2 }\n")?;
     write(&repo.0, "scratch/kept.rs", "pub fn kept() {}\n")?;
     git(&repo.0, &["add", "-f", "scratch/kept.rs"])?;
     commit_all(&repo.0, "base")?;
     write(&repo.0, "tests/local.rs", "#[test]\nfn local() {}\n")?;
     write(&repo.0, "scratch/probe.rs", "#[test]\nfn probe() {}\n")?;
-    // `build/` holds no tracked file, so status reports it as one `build/`
+    // `out/` holds no tracked file, so status reports it as one `out/`
     // record and the directory-prefix branch decides its files.
-    write(&repo.0, "build/gen/out.rs", "#[test]\nfn generated() {}\n")?;
+    write(&repo.0, "out/gen/out.rs", "#[test]\nfn generated() {}\n")?;
     let overlay = probe(&repo.0, None)?.ok_or("ignored sources need an overlay")?;
     assert_eq!(
         overlay.lookup(&repo.0, Path::new("tests/local.rs")),
@@ -778,12 +812,12 @@ fn ignored_sources_read_absent_unless_tracked() -> Result<(), String> {
         CommittedSourceRead::Worktree
     );
     assert_eq!(
-        overlay.lookup(&repo.0, Path::new("build/gen/out.rs")),
+        overlay.lookup(&repo.0, Path::new("out/gen/out.rs")),
         CommittedSourceRead::AbsentAtHead
     );
     // A sibling that only shares the directory's prefix is not inside it.
     assert_eq!(
-        overlay.lookup(&repo.0, Path::new("build2/lib.rs")),
+        overlay.lookup(&repo.0, Path::new("out2/lib.rs")),
         CommittedSourceRead::Worktree
     );
     assert_eq!(
@@ -803,15 +837,15 @@ fn ignored_sources_read_absent_unless_tracked() -> Result<(), String> {
 fn ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked()
 -> Result<(), String> {
     let repo = fixture_root("ignored-disclosure")?;
-    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\nbuild/\n")?;
+    write(&repo.0, ".gitignore", "tests/local.rs\nscratch/\nout/\n")?;
     write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
-    write(&repo.0, "build2/lib.rs", "pub fn two() -> u8 { 2 }\n")?;
+    write(&repo.0, "out2/lib.rs", "pub fn two() -> u8 { 2 }\n")?;
     write(&repo.0, "scratch/kept.rs", "pub fn kept() {}\n")?;
     git(&repo.0, &["add", "-f", "scratch/kept.rs"])?;
     commit_all(&repo.0, "base")?;
     write(&repo.0, "tests/local.rs", "#[test]\nfn local() {}\n")?;
     write(&repo.0, "scratch/probe.rs", "#[test]\nfn probe() {}\n")?;
-    write(&repo.0, "build/gen/out.rs", "#[test]\nfn generated() {}\n")?;
+    write(&repo.0, "out/gen/out.rs", "#[test]\nfn generated() {}\n")?;
     // A non-ignored untracked file belongs to the untracked half, not the
     // ignored half; an ignored non-source file is not routed at all.
     write(&repo.0, "src/fresh.rs", "pub fn fresh() {}\n")?;
@@ -823,7 +857,7 @@ fn ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked(
     assert_eq!(
         overlay.ignored_source_paths(),
         vec![
-            "build/gen/out.rs".to_string(),
+            "out/gen/out.rs".to_string(),
             "scratch/probe.rs".to_string(),
             "tests/local.rs".to_string(),
         ],
@@ -840,7 +874,7 @@ fn ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked(
     assert_eq!(
         ignored,
         vec![
-            "build/gen/out.rs".to_string(),
+            "out/gen/out.rs".to_string(),
             "scratch/probe.rs".to_string(),
             "tests/local.rs".to_string(),
         ],
@@ -994,5 +1028,43 @@ fn probe_records_ignored_and_deleted_snapshot_inputs() -> Result<(), String> {
             Path::new("test/__snapshots__")
         ));
     });
+    Ok(())
+}
+
+/// #14104: a bare repository resolves a base but has no work tree, so the
+/// status read fails with Git's "must be run in a work tree". That carries
+/// the bare-repository message and its next action (check out a work tree),
+/// not the raw probe failure. The work tree it was cloned from is the control.
+#[test]
+fn bare_repository_reports_its_work_tree_next_action() -> Result<(), String> {
+    let repo = fixture_root("bare-source")?;
+    write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
+    commit_all(&repo.0, "base")?;
+    assert!(probe(&repo.0, DEADLINE)?.is_none(), "control: a work tree");
+
+    let bare = RepoGuard(repo.0.with_extension("bare.git"));
+    let bare_arg = bare.0.to_string_lossy().to_string();
+    git(&repo.0, &["clone", "-q", "--bare", ".", &bare_arg])?;
+    // Fixture check: bare, and the committed base resolves there.
+    assert_eq!(
+        git(&bare.0, &["rev-parse", "--is-bare-repository"])?,
+        "true"
+    );
+    git(&bare.0, &["rev-parse", "--verify", "main^{commit}"])?;
+
+    let Err(error) = probe(&bare.0, DEADLINE) else {
+        return Err("a bare repository has no work tree to probe".to_string());
+    };
+    assert!(
+        matches!(
+            error.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::RepositoryRootUnusable)
+        ),
+        "{error:?}"
+    );
+    let message = error.to_string();
+    assert_eq!(message, crate::analysis::bare_repository_message(&bare.0));
+    assert!(message.contains("git worktree add"), "{message}");
+    assert!(!message.contains("committed-source probe"), "{message}");
     Ok(())
 }

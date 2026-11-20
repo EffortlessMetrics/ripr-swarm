@@ -35,6 +35,12 @@ pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> Stri
 /// (`--sea` means `--seam-id`, not `--base`). Among prefix matches the
 /// shortest completion wins; among typo matches the smallest distance wins.
 /// Ties break on the candidate name so the choice is deterministic.
+///
+/// A flag abbreviated word by word ranks between those two tiers: every
+/// dash-separated word of the input is a prefix of the matching word of the
+/// candidate, with the same number of words (`--out-dir` for `--output-dir`,
+/// the spelling `first-pr` uses, #15162). Only flag-shaped input gets this
+/// rule; enum values keep the stricter compound-value guard below.
 pub(crate) fn closest<'a>(
     input: &str,
     candidates: impl Iterator<Item = &'a str>,
@@ -50,6 +56,8 @@ pub(crate) fn closest<'a>(
         let ranked = if hay.starts_with(needle) {
             // Tier 0: abbreviation. Rank by how much is left to type.
             (0u8, hay.chars().count() - needle.chars().count(), candidate)
+        } else if input.starts_with('-') && abbreviates_word_by_word(needle, hay) {
+            (1u8, hay.chars().count() - needle.chars().count(), candidate)
         } else {
             let distance = edit_distance(needle, hay);
             if distance > budget {
@@ -65,13 +73,31 @@ pub(crate) fn closest<'a>(
             {
                 continue;
             }
-            (1u8, distance, candidate)
+            (2u8, distance, candidate)
         };
         if best.is_none_or(|current| ranked < current) {
             best = Some(ranked);
         }
     }
     best.map(|(_, _, candidate)| candidate)
+}
+
+/// Whether each dash-separated word of `needle` is a prefix of the word in
+/// the same position of `hay`, with the same number of words and at least two
+/// of them. A single word is the whole-name prefix tier already.
+fn abbreviates_word_by_word(needle: &str, hay: &str) -> bool {
+    let mut needle_words = needle.split('-');
+    let mut hay_words = hay.split('-');
+    let mut words = 0usize;
+    loop {
+        match (needle_words.next(), hay_words.next()) {
+            (None, None) => return words >= 2,
+            (Some(short), Some(long)) if !short.is_empty() && long.starts_with(short) => {
+                words += 1;
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// How many edits to tolerate, scaled to the length actually being compared.
@@ -104,4 +130,59 @@ fn edit_distance(left: &str, right: &str) -> usize {
         std::mem::swap(&mut previous, &mut current);
     }
     previous[right_chars.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_flag_abbreviated_word_by_word_is_suggested() {
+        // #15162: `first-pr` spells it `--out-dir`; `check` spells it
+        // `--output-dir`. Edit distance 3 is over the 7-character budget.
+        let candidates = ["--output-dir", "--format", "--base"];
+        assert_eq!(
+            closest("--out-dir", candidates.iter().copied()),
+            Some("--output-dir")
+        );
+    }
+
+    #[test]
+    fn word_by_word_abbreviation_needs_matching_words() {
+        // Different word count, a non-prefix word, an empty word and a
+        // single word each fall through to the other tiers, which reject
+        // these inputs.
+        let candidates = ["--output-dir"];
+        for input in [
+            "--out-dir-x",
+            "--out",
+            "--put-dir",
+            "--out--dir",
+            "--outdir",
+        ] {
+            assert!(
+                !abbreviates_word_by_word(input.trim_start_matches('-'), "output-dir"),
+                "{input}"
+            );
+        }
+        assert_eq!(closest("--put-dir", candidates.iter().copied()), None);
+        assert_eq!(closest("--outdir", candidates.iter().copied()), None);
+    }
+
+    #[test]
+    fn whole_prefix_still_beats_word_by_word_and_values_do_not_use_it() {
+        // `--out-m` is a whole-name prefix of `--out-mode` and a word-by-word
+        // abbreviation of `--output-mode`; the whole-name prefix wins.
+        let flags = ["--output-mode", "--out-mode"];
+        assert_eq!(
+            closest("--out-m", flags.iter().copied()),
+            Some("--out-mode")
+        );
+        // Enum values are not flags: the word-by-word rule is flag-only.
+        assert_eq!(closest("p-s", ["pr-summary"].iter().copied()), None);
+        assert_eq!(
+            closest("--p-s", ["--pr-summary"].iter().copied()),
+            Some("--pr-summary")
+        );
+    }
 }

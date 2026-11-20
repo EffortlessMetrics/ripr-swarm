@@ -1,0 +1,6 @@
+[package]
+name = "rust_generic_trait_sibling_impl_inferred_literal_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

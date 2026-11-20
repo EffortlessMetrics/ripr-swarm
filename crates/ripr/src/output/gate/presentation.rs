@@ -123,6 +123,10 @@ fn exception_policy_json(report: &ExceptionPolicyReport) -> Value {
     })
 }
 
+/// Shown when a visible-only report reads `advisory` with nothing recorded:
+/// the status token then describes the mode, not this run's findings (#7445).
+pub(super) const VISIBLE_ONLY_POSTURE_NOTE: &str = "Visible-only mode never blocks on findings, so a completed run reads `advisory` whatever it found. This run recorded no advisory, suppressed, acknowledged or blocking candidates and no warnings, so the status reflects the mode, not a finding. For an enforcing `pass` or `blocked` result, pass `--mode acknowledgeable`, `--mode baseline-check` or `--mode calibrated-gate`.";
+
 pub(crate) fn render_gate_decision_markdown(report: &GateDecisionReport) -> String {
     let mut out = String::new();
     out.push_str("# RIPR Gate Decision\n\n");
@@ -132,6 +136,10 @@ pub(crate) fn render_gate_decision_markdown(report: &GateDecisionReport) -> Stri
     out.push_str(&format!("Blocking: {}\n", report.summary.blocking));
     out.push_str(&format!("Acknowledged: {}\n", report.summary.acknowledged));
     out.push_str(&format!("Advisory: {}\n\n", report.summary.advisory));
+    if super::advisory_from_visible_only_posture_alone(report) {
+        out.push_str(VISIBLE_ONLY_POSTURE_NOTE);
+        out.push_str("\n\n");
+    }
 
     push_decision_section(&mut out, "Blocking", &report.decisions, "blocking");
     push_decision_section(&mut out, "Acknowledged", &report.decisions, "acknowledged");
@@ -304,6 +312,24 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
                 );
             }
         }
+        // #14485: calibrated-gate blocks on a changed file the parser
+        // declined; no candidate or violation carries that reason, so name
+        // it from the warnings, with the disclosure that lists the files.
+        if report
+            .warnings
+            .iter()
+            .any(|warning| warning == super::UNPARSED_BLOCK_WARNING)
+        {
+            let files = report
+                .warnings
+                .iter()
+                .find(|warning| warning.contains("parser_declined_files"))
+                .map(String::as_str)
+                .unwrap_or("");
+            return format!(
+                ": a changed file was not parsed, so nothing was judged for it; {files}"
+            );
+        }
     }
     String::new()
 }
@@ -340,6 +366,14 @@ fn inputs_json(inputs: &GateDecisionInputs) -> Value {
             Value::String(exception_policy.clone()),
         );
     }
+    if let Some(acknowledgements) = &inputs.acknowledgements
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "acknowledgements".to_string(),
+            Value::String(acknowledgements.clone()),
+        );
+    }
     value
 }
 
@@ -350,6 +384,16 @@ fn policy_json(policy: &GatePolicy) -> Value {
         "acknowledgement_labels": policy.acknowledgement_labels,
         "default_workflow_posture": policy.default_workflow_posture,
     })
+}
+
+fn insert_optional_string(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value {
+        object.insert(key.to_string(), Value::String(value.to_string()));
+    }
 }
 
 fn summary_json(summary: &GateSummary) -> Value {
@@ -443,6 +487,49 @@ fn decision_json(decision: &GateDecision) -> Value {
         object.insert(
             "baseline_match_kind".to_string(),
             Value::String(match_kind.clone()),
+        );
+    }
+    if let Some(policy_object) = value.get_mut("policy").and_then(Value::as_object_mut) {
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_id",
+            decision.policy.acknowledgement_id.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_match_kind",
+            decision.policy.acknowledgement_match_kind.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_actor",
+            decision.policy.acknowledgement_actor.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_reason",
+            decision.policy.acknowledgement_reason.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_expires_at",
+            decision.policy.acknowledgement_expires_at.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_review_after",
+            decision.policy.acknowledgement_review_after.as_deref(),
+        );
+        if let Some(global_scope) = decision.policy.acknowledgement_global_scope {
+            policy_object.insert(
+                "acknowledgement_global_scope".to_string(),
+                Value::Bool(global_scope),
+            );
+        }
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_limitation",
+            decision.policy.acknowledgement_limitation.as_deref(),
         );
     }
     value

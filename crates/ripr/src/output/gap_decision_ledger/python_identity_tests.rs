@@ -126,8 +126,11 @@ fn check_output(layout: Layout) -> Result<Value, String> {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     serde_json::from_str(&crate::output::json::render(&output)).map_err(|error| error.to_string())

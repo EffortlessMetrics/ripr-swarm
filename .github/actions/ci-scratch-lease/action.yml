@@ -4,7 +4,7 @@ author: 'EffortlessMetrics'
 
 # One ownership/liveness authority for /mnt/ci-scratch/{cargo-home,target,tmp}
 # per-run trees, consumed by both the inline rust-gates.yml reclaim and the
-# scheduled scratch-gc.yml sweep (#3841).
+# scratch-gc.yml sweep (#3841).
 #
 # acquire: before any per-run tree exists, create
 #   <scratch-root>/leases/<run_id>-<run_attempt>.lock recording the owner

@@ -124,11 +124,10 @@ Preserve the roadmap archive boundary and existing incoming heading anchors.
 These checks validate structure, not the truth of a product or release claim;
 verify load-bearing issue, PR, and receipt references separately.
 
-Follow [merge flow](MERGE_FLOW.md) for current hosted qualification. Until
-verified queue migration, `merge-ready` requests the selected candidate's
-late PR qualification; Ready alone requests nothing. Inspect the actual docs
+Follow [merge flow](MERGE_FLOW.md) for current hosted qualification.
+`merge-ready` requests the selected candidate's late PR qualification; Ready alone requests nothing. Inspect the actual docs
 gate for a docs-only route, required Result, current reviews, and integration
-state before protected expected-head squash. Do not report skipped Rust work
+state before enqueueing in the native merge queue (#14247). Do not report skipped Rust work
 as executed proof or bypass missing checks.
 
 Use `cargo xtask ci-full`, package/release checks, and platform-specific
@@ -147,6 +146,15 @@ Return to the [current priorities](#current-delivery-priorities) and live issues
 before allocating work.
 
 ## Campaign Map
+
+Every row in this table is recorded campaign history under the banner above.
+Three rows still self-describe as "Active" in their recorded work items —
+`Rust One-Shot Evidence-to-Repair Product Closure (32)`, `TypeScript Enablement`,
+and `Python Repair Routing (28)` — because those campaigns were still open when
+their rows were written. That label is their recorded state, not today's
+selection: the live active lanes and ranked backlog are
+[Current delivery priorities](#current-delivery-priorities) above. Read the
+current issue and live GitHub state before continuing any lane named here.
 
 | Campaign | Objective | Work items |
 | --- | --- | --- |

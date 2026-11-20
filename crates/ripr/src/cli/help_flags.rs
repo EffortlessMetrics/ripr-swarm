@@ -10,8 +10,11 @@
 //! empty `values` means "not a closed set the catalog can state".
 //!
 //! Subcommand groups that document several subcommands in one shared body
-//! (`policy`, `reports`, `baseline`, ...) cannot be split from the text; their
-//! rows are marked `flags_scope: "shared_help_body"` and list the union.
+//! (`policy`, `reports`, `baseline`, ...) are projected through
+//! `help_leaf::leaf_help`, so each leaf row lists only its own usage line and
+//! options section and is marked `flags_scope: "leaf_section"` (#14314). A
+//! shared-body path with no section mapping would still be marked
+//! `shared_help_body` and list the union.
 
 use serde::Serialize;
 
@@ -54,6 +57,13 @@ fn closed_values(path: &str, flag: &str) -> Vec<String> {
             .collect(),
         // Mirrors `parse_pilot_format`.
         ("pilot", "--format") => vec!["human".to_string(), "json".to_string()],
+        // Mirrors `parse_init_ci`.
+        ("init", "--ci") => vec!["github".to_string(), "gitlab".to_string()],
+        // Mirrors `parse_agents`.
+        ("init", "--agents") => ["claude", "codex", "cursor", "all"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -62,6 +72,17 @@ fn closed_values(path: &str, flag: &str) -> Vec<String> {
 /// word (`PATH`, `FILE:LINE`, `PATH[::TEST_NODE]`) or an angle-bracket name.
 fn is_metavar(token: &str) -> bool {
     if token.starts_with('<') && token.ends_with('>') {
+        return true;
+    }
+    // A closed lowercase choice list (`before|after|verify`) is a value too.
+    if token.contains('|')
+        && token.split('|').all(|choice| {
+            !choice.is_empty()
+                && choice
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+    {
         return true;
     }
     let mut saw_upper = false;
@@ -73,6 +94,34 @@ fn is_metavar(token: &str) -> bool {
         }
     }
     saw_upper
+}
+
+/// `true` when an option line opens with two or more comma-joined long flags
+/// (`--root, --label, ...`). `--help, -h` is one flag with a short form.
+fn is_flag_reference_list(rest: &str) -> bool {
+    let mut tokens = rest.split_whitespace();
+    let first = tokens.next().unwrap_or_default();
+    first.starts_with("--")
+        && first.ends_with(',')
+        && tokens.next().is_some_and(|next| next.starts_with("--"))
+}
+
+/// `true` for a value position that spells its closed set instead of a
+/// placeholder: two or more lowercase words joined by `|`.
+fn is_literal_alternatives(token: &str) -> bool {
+    let mut words = 0usize;
+    for word in token.split('|') {
+        if word.is_empty()
+            || !word
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || !word.as_bytes()[0].is_ascii_lowercase()
+        {
+            return false;
+        }
+        words += 1;
+    }
+    words >= 2
 }
 
 struct ParsedOption {
@@ -115,6 +164,19 @@ fn parse_options(body: &str) -> Vec<ParsedOption> {
             }
             continue;
         }
+        // `--root, --label, --out` followed by "As for <sibling>" refers to
+        // flags defined on their own lines elsewhere in the body. Reading the
+        // list as a definition would report its first member as a valueless
+        // switch and shadow the real row (#14086).
+        if is_flag_reference_list(rest) {
+            options.push(ParsedOption {
+                name: String::new(),
+                takes_value: false,
+                literal_value: None,
+                description: String::new(),
+            });
+            continue;
+        }
         let mut tokens = rest.split_whitespace().peekable();
         let mut name = String::new();
         // `--name=VALUE` spells a value-taking flag without a separate token;
@@ -138,7 +200,14 @@ fn parse_options(body: &str) -> Vec<ParsedOption> {
         let mut takes_value = inline_value;
         let mut literal_value = None;
         if let Some(token) = tokens.peek().copied() {
-            if is_metavar(token) {
+            if is_literal_alternatives(token) {
+                // `--phase before|after|verify`: the closed set, spelled out
+                // where a placeholder would be. Checked before `is_metavar`,
+                // which accepts the same token but keeps no values.
+                takes_value = true;
+                literal_value = Some(token.to_string());
+                tokens.next();
+            } else if is_metavar(token) {
                 takes_value = true;
                 tokens.next();
             } else if name == "--format"
@@ -215,7 +284,7 @@ pub(crate) fn flags_for(path: &str, body: &str) -> Vec<FlagJson> {
         if values.is_empty()
             && let Some(literal) = &option.literal_value
         {
-            values.push(literal.clone());
+            values.extend(literal.split('|').map(str::to_string));
         }
         let env = FLAG_ENVS
             .iter()
@@ -258,6 +327,22 @@ mod tests {
         Ok(())
     }
 
+    /// `--phase before|after|verify` documents a value, not a switch, so
+    /// `--phase=after` is split like `--phase after` (#14292 review).
+    #[test]
+    fn a_lowercase_choice_list_takes_a_value() -> Result<(), String> {
+        let body = "Do a thing.\n\nUsage: ripr thing [--phase before|after] [--json]\n\nOptions:\n  --phase before|after   Which phase.\n  --json                 Print JSON.\n";
+        let flags = flags_for("thing", body);
+        assert!(flag(&flags, "--phase")?.takes_value, "{flags:?}");
+        assert!(!flag(&flags, "--json")?.takes_value, "{flags:?}");
+        let production = flags_for(
+            "agent repair",
+            crate::cli::help::help_text_for("agent repair").ok_or("agent repair help")?,
+        );
+        assert!(flag(&production, "--phase")?.takes_value, "{production:?}");
+        Ok(())
+    }
+
     #[test]
     fn parses_value_required_repeatable_and_env() -> Result<(), String> {
         let flags = flags_for("thing", BODY);
@@ -287,6 +372,76 @@ mod tests {
         }
         if flags.len() != 7 {
             return Err(format!("expected 7 flags, got {}: {flags:?}", flags.len()));
+        }
+        Ok(())
+    }
+
+    /// #14086: a `--a, --b, --c` line refers to flags defined elsewhere in
+    /// the body. It must neither define its first member as a valueless
+    /// switch nor shadow the real definition that follows.
+    #[test]
+    fn a_flag_reference_list_defines_nothing() -> Result<(), String> {
+        let body = "Do a thing.\n\nUsage: ripr thing [--root PATH]\n\nFirst options:\n  --mode MODE      A mode.\n  --root, --label, --out\n                   As for the other one.\n\nSecond options:\n  --root PATH      Workspace root.\n  --label LABEL    Repeatable label.\n  --help, -h       Print this help.\n";
+        let flags = flags_for("thing", body);
+        let root = flag(&flags, "--root")?;
+        if !root.takes_value {
+            return Err(format!("the list shadowed --root PATH: {root:?}"));
+        }
+        let label = flag(&flags, "--label")?;
+        if !label.takes_value || !label.repeatable {
+            return Err(format!("--label keeps its own row: {label:?}"));
+        }
+        if flag(&flags, "--mode")?.repeatable {
+            return Err("the list's description leaked into --mode".to_string());
+        }
+        // `--out` has no defining row, so it is not invented; `--help, -h`
+        // is one flag with a short form, not a list.
+        if flags.iter().any(|flag| flag.name == "--out") {
+            return Err(format!("--out was invented from the list: {flags:?}"));
+        }
+        if flag(&flags, "--help")?.takes_value {
+            return Err("--help is a switch".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_gate_body_reports_value_taking_flags_as_such() -> Result<(), String> {
+        let body = crate::cli::help::help_text_for("gate check").ok_or("gate check has a body")?;
+        let flags = flags_for("gate check", body);
+        for name in [
+            "--base",
+            "--mode",
+            "--root",
+            "--gap-ledger",
+            "--agent-verify",
+            "--out-md",
+        ] {
+            if !flag(&flags, name)?.takes_value {
+                return Err(format!("gate {name} takes a value: {flags:?}"));
+            }
+        }
+        if !flag(&flags, "--label")?.repeatable {
+            return Err("gate --label is repeatable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn spelled_out_alternatives_are_a_value_and_its_closed_set() -> Result<(), String> {
+        let body = "Usage: ripr demo --phase before|after [--loud]\n\nOptions:\n  --phase before|after\n                 Which phase to run.\n  --loud         Say more. Use a|b carefully.\n  --out PATH|-   Output path.\n";
+        let flags = flags_for("demo", body);
+        let phase = flag(&flags, "--phase")?;
+        assert!(phase.takes_value, "{phase:?}");
+        assert_eq!(phase.values, vec!["before", "after"]);
+        // Prose that starts the description is not a value set, and neither
+        // is an uppercase placeholder that offers `-`.
+        let loud = flag(&flags, "--loud")?;
+        assert!(!loud.takes_value && loud.values.is_empty(), "{loud:?}");
+        let out = flag(&flags, "--out")?;
+        assert!(out.takes_value && out.values.is_empty(), "{out:?}");
+        for token in ["a", "a|", "|a", "A|b", "a|B", "a b", "-a|b", "a||b"] {
+            assert!(!is_literal_alternatives(token), "{token}");
         }
         Ok(())
     }
