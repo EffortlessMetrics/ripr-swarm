@@ -129,12 +129,12 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
         finding.ripr.reveal.observe.summary = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)".into();
         finding.evidence.push("assertion not credited: `assert_eq!` in render_is_empty at src/lib.rs:29: an earlier guard spares the value the assertion expects".into());
         let human = render_check(&output, &OutputFormat::Human)?;
-        let expected = if state == StageState::Weak {
-            "Why unrevealed: no test is confirmed to reach this change; related tests are linked only by a shared file or name"
-        } else {
-            "Why unrevealed: test reach to this change is not established"
-        };
-        assert!(human.contains(expected), "{state:?}: {human}");
+        // A weak reach whose summary is not the proximity-only marker names no
+        // file/name link, so it keeps the bare "not established" hint (#15336).
+        assert!(
+            human.contains("Why unrevealed: test reach to this change is not established"),
+            "{state:?}: {human}"
+        );
     }
     let mut reaching = original.clone();
     let finding = &mut reaching.findings[0];
