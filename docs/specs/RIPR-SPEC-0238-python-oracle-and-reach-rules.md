@@ -1004,7 +1004,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     is a direct, settled pytest parametrize argname of the test with
     recorded cases, rebound nowhere in the test body (no statement binding
     and no `:=`) and not a Hypothesis input (#15310); every other name keeps
-    the assertion smoke.
+    the assertion smoke. Native Python repo analysis uses this same bare-call
+    rule when the selected inventory is complete and the source identifies
+    the callee. A capped or incomplete inventory cannot establish uniqueness
+    for this credit (#10945).
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is

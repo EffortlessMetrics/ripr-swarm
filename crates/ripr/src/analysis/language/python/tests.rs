@@ -8001,6 +8001,108 @@ fn repo_working_set_limit(limit: usize) -> repo::RepoWorkingSetLimit {
     }
 }
 
+#[test]
+fn bare_bool_credit_requires_a_proven_bool_target_in_both_modes() -> Result<(), String> {
+    let test = "from rules import is_adult\n\ndef test_boundary():\n    assert is_adult(18)\n    assert not is_adult(17)\n";
+    let rebound = "from rules import is_adult\n\nis_adult = lambda age: age >= 18\n\ndef test_boundary():\n    assert is_adult(18)\n    assert not is_adult(17)\n";
+    for (label, expression, test_source, kind, strength) in [
+        (
+            "bool",
+            "age >= 18",
+            test,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "truthy",
+            "age if age >= 18 else 0",
+            test,
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "rebound",
+            "age >= 18",
+            rebound,
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+    ] {
+        let root = unique_repo_test_root(label);
+        let line = format!("    return {expression}");
+        write_repo_file(
+            &root.join("rules.py"),
+            &format!("def is_adult(age):\n{line}\n"),
+        )?;
+        write_repo_file(&root.join("tests/test_rules.py"), test_source)?;
+        let changed = ChangedFile {
+            path: PathBuf::from("rules.py"),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: line,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let options = repo_options(&root);
+        let policy = OraclePolicy::default();
+        let diff = PythonAdapter.analyze_diff(&options, &policy, &[changed])?;
+        let repo = PythonAdapter.analyze_repo(&options, &policy)?;
+        assert_eq!(diff.changed_files, 1);
+        assert_eq!(repo.production_files, 1);
+        assert!(repo.partial_reason.is_none());
+        let mut runs = vec![
+            ("diff", diff.findings, &kind, &strength),
+            ("repo", repo.findings, &kind, &strength),
+        ];
+        if kind == OracleKind::ExactValue {
+            write_repo_file(&root.join("unreadable.py"), "def broken(:\n")?;
+            let partial = PythonAdapter.analyze_repo(&options, &policy)?;
+            assert!(
+                partial
+                    .partial_reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("failed to read or parse"))
+            );
+            runs.push((
+                "partial repo",
+                partial.findings,
+                &OracleKind::SmokeOnly,
+                &OracleStrength::Smoke,
+            ));
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        for (mode, findings, expected_kind, expected_strength) in runs {
+            let finding = findings
+                .iter()
+                .find(|finding| {
+                    finding.probe.location.file == Path::new("rules.py")
+                        && finding.probe.location.line == 2
+                })
+                .ok_or_else(|| format!("{label}/{mode}: missing rules.py:2"))?;
+            let [related] = finding.related_tests.as_slice() else {
+                return Err(format!(
+                    "{label}/{mode}: expected one related test: {finding:?}"
+                ));
+            };
+            assert_eq!(related.file, Path::new("tests/test_rules.py"));
+            assert_eq!(related.name, "test_boundary");
+            assert_eq!(
+                (&related.oracle_kind, &related.oracle_strength),
+                (expected_kind, expected_strength),
+                "{label}/{mode}"
+            );
+            let expected_class = if *expected_strength == OracleStrength::Strong {
+                ExposureClass::Exposed
+            } else {
+                ExposureClass::WeaklyExposed
+            };
+            assert_eq!(finding.class, expected_class, "{label}/{mode}");
+        }
+    }
+    Ok(())
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
