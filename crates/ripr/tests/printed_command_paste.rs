@@ -372,6 +372,25 @@ fn code_spans(line: &str) -> Vec<String> {
         .collect()
 }
 
+/// The form after an inline `(PowerShell)` label. Markdown renderers wrap it
+/// with `code_span`, which widens the fence past any backtick run inside the
+/// command (a hostile root name holds one), so a lone span spanning the whole
+/// rest is read back through its fence. Plain-text surfaces wrap in single
+/// backticks without escaping; those keep the outer-backtick strip.
+fn inline_powershell_form(rest: &str) -> String {
+    let fence = rest.chars().take_while(|ch| *ch == '`').count();
+    if fence > 1 && rest.len() > fence * 2 && rest.ends_with(&"`".repeat(fence)) {
+        let spans = code_spans(rest);
+        if let [only] = spans.as_slice() {
+            return only.clone();
+        }
+    }
+    rest.strip_prefix('`')
+        .and_then(|inner| inner.strip_suffix('`'))
+        .unwrap_or(rest)
+        .to_string()
+}
+
 fn is_powershell_unavailable_disclosure(form: &str) -> bool {
     // Exact match: a translated command may carry this sentence as argument
     // data and must still paste. Substring matching would skip that case.
@@ -545,15 +564,11 @@ fn extract_text(
             // Pair the next line only when this label's rest is empty. An
             // inline form must not consume the following Bash command.
             form_on_next_line = rest.is_empty();
-            let form = Some(
-                rest.strip_prefix('`')
-                    .and_then(|inner| inner.strip_suffix('`'))
-                    .unwrap_or(rest),
-            );
-            if let (Some(form), Some(previous)) = (form, found.last_mut())
+            let form = inline_powershell_form(rest);
+            if let Some(previous) = found.last_mut()
                 && !form.is_empty()
             {
-                if is_powershell_unavailable_disclosure(form) {
+                if is_powershell_unavailable_disclosure(&form) {
                     previous.powershell_unavailable = true;
                 } else {
                     previous.powershell = Some(form.to_string());
