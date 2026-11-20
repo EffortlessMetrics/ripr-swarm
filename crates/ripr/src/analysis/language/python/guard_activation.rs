@@ -1239,19 +1239,29 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
 
 /// The 1-based last line of the owner's own multi-line `def` header (#15292).
 /// The shared span search looks ahead for the first `def`, so a header it
-/// does not recognize (`def\tquote(`) could hand back a later nested
-/// definition's span; a span counts only when its `def` line has the owner's
-/// own indentation (a decorator line shares it, a nested `def` does not).
+/// does not recognize (`def\tquote(`) could hand back a later nested or
+/// sibling definition's span. A span counts only when no line before its
+/// `def` (from the owner's first line: decorators) starts a definition of its
+/// own, and the header ends inside the owner.
 fn owner_header_end(owner_source: &str, owner: &PythonOwner) -> Option<usize> {
-    let indent = |line: usize| {
-        owner_source
-            .lines()
-            .nth(line.checked_sub(1)?)
-            .map(|text| text.len() - text.trim_start().len())
-    };
     let (def_line, header_end) =
         super::no_behavior::multi_line_def_header_span(owner_source, owner.start_line)?;
-    (indent(def_line)? == indent(owner.start_line)? && header_end > owner.start_line)
+    let starts_definition = |text: &str| {
+        let trimmed = text.trim_start();
+        let trimmed = trimmed
+            .strip_prefix("async")
+            .unwrap_or(trimmed)
+            .trim_start();
+        trimmed
+            .strip_prefix("def")
+            .is_some_and(|rest| !rest.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+    };
+    let earlier_definition = owner_source
+        .lines()
+        .skip(owner.start_line.checked_sub(1)?)
+        .take(def_line.checked_sub(owner.start_line)?)
+        .any(starts_definition);
+    (!earlier_definition && header_end > owner.start_line && header_end < owner.end_line)
         .then_some(header_end)
 }
 
@@ -1539,6 +1549,10 @@ mod tests {
         let tabbed = "def\tquote(total):\n    total = 10\n    def helper(\n        x,\n    ):\n        return x\n    return total > helper(1)\n";
         let owner = quote_owner(tabbed)?;
         assert!(name_rebound_in_owner(tabbed, &owner, "total"));
+        // Nor a later sibling definition's span at the owner's indentation.
+        let sibling = "def\tquote(total):\n    total = 10\n    return total > 1\n\n\ndef other(\n    x,\n):\n    return x\n";
+        let owner = quote_owner(sibling)?;
+        assert!(name_rebound_in_owner(sibling, &owner, "total"));
         Ok(())
     }
 
