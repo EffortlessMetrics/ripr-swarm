@@ -1962,7 +1962,7 @@ impl OwnerCallIdentity {
         let Some(owner_module) = self.definitions.first().and_then(Option::as_ref) else {
             return false;
         };
-        let Some(file_module) = file_module_segments(&self.owner_file) else {
+        let Some(file_module) = file_module_segments_in(index, &self.owner_file) else {
             return false;
         };
         let data_types: BTreeSet<Vec<String>> = owner_tree
@@ -3363,7 +3363,7 @@ pub(super) fn bare_name_renames_another_function(
                         function.item.container == FunctionContainer::Free
                             && function.name.trim_start_matches("r#") == target
                             && package_key(&function.file) == owner_package
-                            && definition_module_path(function).as_ref() == Some(&placed)
+                            && definition_module_path_in(index, function).as_ref() == Some(&placed)
                     })
                 });
         }
@@ -3665,7 +3665,7 @@ fn module_reexports_owner(
         if package_key(file) != owner_package
             || under_tests_dir(file)
             || layout.class(file).as_deref() != Some(owner_crate)
-            || file_module_segments(file).is_none_or(|segments| segments != module)
+            || file_module_segments_in(index, file).is_none_or(|segments| segments != module)
         {
             return false;
         }

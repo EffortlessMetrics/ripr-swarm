@@ -222,3 +222,65 @@ fn a_unit_test_of_a_rival_module_never_names_the_owner() -> Result<(), String> {
     assert_ne!(found.class, ExposureClass::Exposed, "{:?}", found.evidence);
     Ok(())
 }
+
+#[test]
+fn a_renamed_import_of_another_function_never_names_the_owner() -> Result<(), String> {
+    // The unit test binds `discount` to `other` (`use super::other as
+    // discount;`), so its `discount(100)` calls `other`. The import is placed
+    // in the module read from the declared root (`pricing`), and so must the
+    // function it names be (#14495 review).
+    let found = finding_in(
+        &[
+            ("Cargo.toml", MANIFEST.to_string()),
+            ("src/core/engine.rs", "pub mod pricing;\n".to_string()),
+            (
+                "src/core/pricing.rs",
+                format!(
+                    "{OWNER}\npub fn other(amount: u32) -> u32 {{\n    if amount > 100 {{ amount - 10 }} else {{ amount }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::other as discount;\n\n    #[test]\n    fn discounts() {{\n        assert_eq!(discount(100), 100);\n        assert_eq!(discount(101), 91);\n    }}\n}}\n"
+                ),
+            ),
+        ],
+        ("src/core/pricing.rs", 2),
+    )?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{:?}", found.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_reexport_is_found_in_the_module_read_from_the_declared_root() -> Result<(), String> {
+    // `src/core/api.rs` is the module `api` and re-exports the owner, so
+    // `my_pkg::core::api::discount` (the directory shape) does not compile
+    // and must not name the owner (#14495 review).
+    let files = |call: &str| {
+        vec![
+            ("Cargo.toml", MANIFEST.to_string()),
+            (
+                "src/core/engine.rs",
+                "pub mod pricing;\npub mod api;\npub mod legacy;\n".to_string(),
+            ),
+            ("src/core/pricing.rs", OWNER.to_string()),
+            ("src/core/legacy.rs", OWNER.to_string()),
+            (
+                "src/core/api.rs",
+                "pub use crate::pricing::discount;\n".to_string(),
+            ),
+            (
+                "tests/d.rs",
+                format!(
+                    "#[test]\nfn discounts() {{\n    assert_eq!({call}(100), 100);\n    assert_eq!({call}(101), 91);\n}}\n"
+                ),
+            ),
+        ]
+    };
+    let shaped = finding_in(
+        &files("my_pkg::core::api::discount"),
+        ("src/core/pricing.rs", 2),
+    )?;
+    assert_ne!(
+        shaped.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        shaped.evidence
+    );
+    Ok(())
+}

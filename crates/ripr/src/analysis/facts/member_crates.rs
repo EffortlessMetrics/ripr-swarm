@@ -71,6 +71,9 @@ pub(crate) struct MemberCrates {
     /// Kept for this analysis only. A missing entry or macro is not an
     /// absence certificate and must never clear a broader ambiguity.
     imported_macro_exports: Arc<Mutex<ImportedMacroExports>>,
+    /// Per source directory: the custom `[lib] path` root of its nearest
+    /// package, read once per analysis (#14495).
+    custom_lib_roots: Arc<Mutex<BTreeMap<PathBuf, Option<PathBuf>>>>,
 }
 
 impl MemberCrates {
@@ -82,6 +85,7 @@ impl MemberCrates {
             foreign_exports: Arc::default(),
             library_roots: Arc::default(),
             imported_macro_exports: Arc::default(),
+            custom_lib_roots: Arc::default(),
         }
     }
 
@@ -330,21 +334,20 @@ impl MemberCrates {
     pub(crate) fn custom_lib_path_root_of(&self, file: &Path) -> Option<PathBuf> {
         let root = lexical(self.root.as_ref()?);
         let file = lexical(&root.join(file));
-        // Read the manifest where the analyzed sources are read, so a dirty
-        // `[lib] path` cannot move a committed-source root.
-        let (package, _) = nearest_package_snapshot(&root, file.parent()?, true)?;
-        let relative = lexical(Path::new(
-            package.manifest.get("lib")?.get("path")?.as_str()?,
-        ));
-        if !relative
-            .components()
-            .all(|part| matches!(part, std::path::Component::Normal(_)))
-            || relative == Path::new("src").join("lib.rs")
+        let directory = file.parent()?.to_path_buf();
+        if let Some(known) = self
+            .custom_lib_roots
+            .lock()
+            .ok()
+            .and_then(|known| known.get(&directory).cloned())
         {
-            return None;
+            return known;
         }
-        let crate_root = package.directory.join(relative);
-        crate_root.strip_prefix(&root).ok().map(Path::to_path_buf)
+        let answer = custom_lib_path_root_in(&root, &directory);
+        if let Ok(mut known) = self.custom_lib_roots.lock() {
+            known.insert(directory, answer.clone());
+        }
+        answer
     }
 
     /// An established binary root cannot export macros to another crate,
@@ -1335,6 +1338,25 @@ fn import_name(
         None if normalized(key) == normalized(owner_name) => Some(library.to_string()),
         None => None,
     }
+}
+
+/// [`MemberCrates::custom_lib_path_root_of`] for a source directory, uncached.
+fn custom_lib_path_root_in(root: &Path, directory: &Path) -> Option<PathBuf> {
+    // Read the manifest where the analyzed sources are read, so a dirty
+    // `[lib] path` cannot move a committed-source root.
+    let (package, _) = nearest_package_snapshot(root, directory, true)?;
+    let relative = lexical(Path::new(
+        package.manifest.get("lib")?.get("path")?.as_str()?,
+    ));
+    if !relative
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)))
+        || relative == Path::new("src").join("lib.rs")
+    {
+        return None;
+    }
+    let crate_root = package.directory.join(relative);
+    crate_root.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
 /// The nearest package manifest at or above `directory` inside `root`, plus
