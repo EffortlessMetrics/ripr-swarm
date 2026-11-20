@@ -2248,7 +2248,7 @@ mod tests {
             let a = actual_ids.next().ok_or("first fixture seam")?;
             let b = actual_ids.next().ok_or("second fixture seam")?;
             let missing = "absent-seam".to_owned();
-            let rows = || {
+            let rows = || -> Vec<PendingStubRoute> {
                 [
                     ("narrowed", true, vec![a.clone()]),
                     ("ordered", false, vec![b.clone(), a.clone()]),
@@ -2272,8 +2272,38 @@ mod tests {
                 })
                 .collect()
             };
-            let expected =
-                finish_stub_routes(&root, &config, rows(), |_, _| Ok(oracle.classified.clone()));
+            // Independent unbatched oracle: search the complete inventory
+            // in each row's original order, as the prior producer did.
+            let expected = rows()
+                .into_iter()
+                .map(|plan: PendingStubRoute| {
+                    let PendingStubDecision::Ambiguous(line) = plan.decision else {
+                        return Err("expected an ambiguous fixture row".to_owned());
+                    };
+                    let decision = if line.candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
+                        withheld_ambiguity(&line.reason)
+                    } else {
+                        let outcomes = line
+                            .candidates
+                            .into_iter()
+                            .map(|id| {
+                                let outcome = oracle
+                                    .classified
+                                    .iter()
+                                    .find(|entry| entry.seam.id().as_str() == id)
+                                    .map(|entry| seam_stub_outcome(&root, &config, entry))
+                                    .unwrap_or(SeamStubOutcome::Missing);
+                                (id, outcome)
+                            })
+                            .collect();
+                        fold_seam_outcomes(outcomes, line.reason, line.narrowed)
+                    };
+                    Ok(StubRoute {
+                        finding_id: plan.finding_id,
+                        decision,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let mut preparations = 0;
             let selected = BTreeSet::from([a.clone(), b.clone(), missing.clone()]);
             analysis::evaluation_probe::reset();
