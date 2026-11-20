@@ -127,3 +127,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (11)
+
+Reason:
+RIPR-SPEC-0201: dunder dynamic_dispatch limit makes the reach stage unknown instead of no (#15339)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
