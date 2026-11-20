@@ -4621,7 +4621,55 @@ fn a_non_raise_continuation_argument_keeps_its_own_shape() -> Result<(), String>
         Some(source),
     )
     .ok_or_else(|| "a changed argument must carry a probe".to_string())?;
-    assert_ne!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    // Classified alone, as before the widening: a raise-wide reading would
+    // give the joined `return make(...)` its returned-value shape instead.
+    assert_eq!(finding.probe.family, ProbeFamily::Predicate, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_f_string_raise_argument_that_closes_the_call_is_an_error_path_not_exposed()
+-> Result<(), String> {
+    // #15246 review: `f"msg {x}")` does not lex on its own (an unmatched
+    // `)`), which returned before the raise widening, so the line still fell
+    // to the predicate default and read `exposed`. The span comes from the
+    // production bracket lexer, not a hand-set one.
+    let source = concat!(
+        "def check(name, n):\n",
+        "    if n < 0:\n",
+        "        raise ValueError(\n",
+        "            f\"Bad thing: {name!r}\")\n",
+        "    return name\n",
+    );
+    let ranges = super::no_behavior::bracket_continuation_line_ranges(source)
+        .ok_or_else(|| "the module must lex".to_string())?;
+    assert_eq!(ranges, vec![4..=4]);
+    let span = super::no_behavior::enclosing_bracket_statement(&ranges, 4);
+    assert_eq!(span, Some((3, 4)));
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_check.py"), SUCCESS_ONLY_TEST);
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span,
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            f\"Bad thing: {name!r}\")",
+        Some("            f\"Invalid thing: {name!r}\")"),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed raise argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
 

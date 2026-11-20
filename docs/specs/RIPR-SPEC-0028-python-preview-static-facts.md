@@ -2055,8 +2055,11 @@ blank lines inside brackets stay no-ops.
 
 A changed non-literal argument (an f-string, `"msg" % x`, a name) on a
 continuation line of a multi-line `raise E(` takes the raise's error-path
-family too (#15246); other statements' non-literal continuation lines are
-still classified alone.
+family too (#15246), including an argument line that closes the call and so
+does not lex on its own (`f"msg {x}")`); other statements' non-literal
+continuation lines are still classified alone. The joined statement then goes
+through the ordinary shape rules, so a raise whose joined text holds
+` if ... else ` still reads as a predicate.
 
 Tests: `tests.rs::a_changed_message_string_on_a_continuation_line_gets_a_probe`,
 `tests.rs::a_changed_message_argument_with_a_trailing_comma_is_an_error_path`,
@@ -2066,6 +2069,7 @@ Tests: `tests.rs::a_changed_message_string_on_a_continuation_line_gets_a_probe`,
 `tests.rs::an_f_string_raise_argument_stays_weak_under_a_bare_pytest_raises`,
 `tests.rs::an_f_string_raise_argument_matches_the_one_line_verdict_under_a_match_pin`,
 `tests.rs::a_non_literal_percent_raise_argument_on_a_continuation_line_is_not_exposed`,
+`tests.rs::an_f_string_raise_argument_that_closes_the_call_is_an_error_path_not_exposed`,
 `tests.rs::a_non_raise_continuation_argument_keeps_its_own_shape`,
 `tests.rs::an_unlexable_file_keeps_a_changed_bare_string_quiet`,
 `deleted_lines_tests.rs::deleted_string_argument_inside_brackets_is_base_side_evidence` and
