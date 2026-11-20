@@ -38047,7 +38047,7 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--base refs/remotes/origin/topic"),
+        stderr.contains("--base origin/topic`"),
         "the public failure must name the resolvable tracking ref: {stderr}"
     );
     let suggested = run_ripr(&[
@@ -38055,7 +38055,7 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
         "--root",
         &root.display().to_string(),
         "--base",
-        "refs/remotes/origin/topic",
+        "origin/topic",
     ]);
     assert!(
         suggested.status.success(),
