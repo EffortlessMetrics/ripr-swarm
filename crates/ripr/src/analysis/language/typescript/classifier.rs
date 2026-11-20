@@ -8552,16 +8552,19 @@ pub(crate) fn classify_resolved_owner(
             flow_sink.as_ref(),
         );
         if facts.is_empty() {
-            facts.extend(ts_unexercised_default_discriminator(
-                owner,
-                old_line_text,
-                line_text,
-                line,
-                related_candidates,
-                alias_map,
-                workspace_root,
-                flow_sink.as_ref(),
-            ));
+            let change = old_line_text
+                .and_then(|old| NullishChainChange::read(old, line_text, &owner.params));
+            facts.extend(change.and_then(|change| {
+                ts_unexercised_default_discriminator(
+                    owner,
+                    &change,
+                    line,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                    flow_sink.as_ref(),
+                )
+            }));
         }
         facts
     } else {
@@ -9794,17 +9797,15 @@ pub(crate) fn ts_spread_override_unseen(
 /// whose parameter has a non-empty default.
 pub(crate) fn ts_unexercised_default_discriminator(
     owner: &TypeScriptOwner,
-    old_line_text: Option<&str>,
-    line_text: &str,
+    change: &NullishChainChange,
     line: usize,
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
     flow_sink: Option<&FlowSinkFact>,
 ) -> Option<MissingDiscriminatorFact> {
-    let change = NullishChainChange::read(old_line_text?, line_text, &owner.params)?;
     let (prop, default) = change.changed_default()?;
-    if !ts_nullish_operand_unreached(&change, owner, candidates, alias_map, workspace_root) {
+    if !ts_nullish_operand_unreached(change, owner, candidates, alias_map, workspace_root) {
         return None;
     }
     Some(MissingDiscriminatorFact {
