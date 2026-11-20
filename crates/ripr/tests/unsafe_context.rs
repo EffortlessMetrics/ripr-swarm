@@ -50,7 +50,15 @@ fn unsafe_context_keeps_the_edited_behavior_primary() -> Result<(), String> {
             .collect::<Vec<_>>();
         actual.sort_unstable();
         assert_eq!(actual, expected, "{diff}");
-        if let &[(_, _, expression)] = expected {
+        if diff == "predicate.diff" {
+            assert!(
+                report.findings[0]
+                    .related_tests
+                    .iter()
+                    .any(|test| test.name == "checks_boundary")
+            );
+        }
+        if let [(_, _, expression)] = expected {
             let digest = render_check(&report, &OutputFormat::Human)?;
             assert!(digest.contains("Start here:"), "{diff}: {digest}");
             assert!(
