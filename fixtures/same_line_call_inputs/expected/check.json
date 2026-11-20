@@ -10,49 +10,49 @@
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:predicate:c1fe12b7",
-      "canonical_gap_id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:weight==100",
+      "id": "probe:src_lib.rs:return_value:4ad12f9e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shipping:return_value:return_value:60",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:weight==100",
+        "id": "gap:rust:src/lib.rs:shipping:return_value:return_value:60",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "shipping",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
-        "normalized_discriminator": "weight==100"
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "60"
 
       },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
       "probe": {
-        "id": "probe:src_lib.rs:predicate:c1fe12b7",
-        "family": "predicate",
-        "delta": "control",
+        "id": "probe:src_lib.rs:return_value:4ad12f9e",
+        "family": "return_value",
+        "delta": "value",
         "file": "./src/lib.rs",
         "line": 2,
-        "expression": "weight > 100"
+        "expression": "60"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach shipping: shipping_boundary"},
-        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 60"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: 60"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
       "evidence_stages": [
         {"stage":"reach","state":"yes","confidence":"medium"},
         {"stage":"infect","state":"yes","confidence":"medium"},
-        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach shipping: shipping_boundary", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 60", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 60 (line 2)", "related test src/lib.rs:6 shipping_boundary uses strong exact value oracle: assert_eq!(shipping(100), 10);", "related test src/lib.rs:6 shipping_boundary uses strong exact value oracle: assert_eq!(shipping(101), 50);", "source assertion argument value 10 at line 7", "source assertion argument value 50 at line 7", "source function argument value weight = 100 at line 7", "source function argument value weight = 101 at line 7", "source function argument value weight == 100 at line 7"],
+      "evidence_path": ["reach yes: Related tests appear to reach shipping: shipping_boundary", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 60", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 60 (line 2)", "related test src/lib.rs:6 shipping_boundary uses strong exact value oracle: assert_eq!(shipping(100), 10);", "related test src/lib.rs:6 shipping_boundary uses strong exact value oracle: assert_eq!(shipping(101), 50);", "source assertion argument value 10 at line 7", "source assertion argument value 50 at line 7", "source function argument value weight = 100 at line 7", "source function argument value weight = 101 at line 7"],
       "flow_sinks": [
         {"kind":"return_value","text":"60","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 60", "Detected related test input at the changed boundary", "Related tests appear to reach shipping: shipping_boundary", "Strong oracle found: exact value or pattern assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: 60", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach shipping: shipping_boundary", "Strong oracle found: exact value or pattern assertion"],
       "missing": [],
       "assertion_texts": {
         "7": "assert_eq!(shipping(100), 10);"
@@ -81,12 +81,6 @@
             "value": "weight = 101",
             "context": "function_argument",
             "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10);"
-          },
-          {
-            "line": 7,
-            "value": "weight == 100",
-            "context": "function_argument",
-            "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10); | exact input weight = 100; literal operand 100 = 100"
           }
         ],
         "missing_discriminators": [
@@ -115,12 +109,6 @@
           "value": "weight = 101",
           "context": "function_argument",
           "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10);"
-        },
-        {
-          "line": 7,
-          "value": "weight == 100",
-          "context": "function_argument",
-          "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10); | exact input weight = 100; literal operand 100 = 100"
         }
       ],
       "missing_discriminators": [

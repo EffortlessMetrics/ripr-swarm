@@ -11,18 +11,18 @@ Start here:
   State: ripr cannot tell from reading the code whether tests would notice this
   Safe next action: look at the reason below before adding a test
   File: ./src/fragment_checks.rs:8
-  Static exposure: unknown (severity: warning, confidence 0.66)
-  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
-  Gap ID (for scripts): gap:rust:src/fragment_checks.rs:assert_workspace_source_paths_are_stable:predicate_boundary:predicate:fragment.crate_root.is_none
-  Changed behavior: fragment.crate_root.is_none()
-  Missing check (1 of 3): No detected boundary input for the changed predicate
+  Static exposure: unknown (severity: note, confidence 0.50)
+  Why unknown: the analysis could not determine a static exposure state
+  Gap ID (for scripts): gap:rust:src/fragment_checks.rs:assert_workspace_source_paths_are_stable:static_unknown:static_unknown:1
+  Changed behavior: 1
+  Analyzer limit: No strong assertion was detected
   Related test: tests/fragments.rs:5 workspace_source_paths_are_stable
   Next step: The changed owner is an assertion helper (its body is dominated by assert*/expect calls
     and nothing outside tests calls it); inspect the inputs and behavior this helper checks,
     including any existing boundary or negative-path assertions. Add or tighten a test only if this
     finds a gap; compare old and new code with the project's configured test runner (`cargo test`
     for ordinary Cargo tests). The static class may remain unknown
-  Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -34,16 +34,14 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach assert_workspace_source_paths_are_stable: workspace_source_paths_are_stable
-    - infection unknown: Predicate changed, but no literal boundary was visible in the changed expression
+    - infection unknown: Changed syntax is not mapped to a high-confidence change type
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast probe:src_fragment_checks.rs:predicate:41d9e03a
-  ripr context --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast --at probe:src_fragment_checks.rs:predicate:41d9e03a
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; a test that follows the changed value through to something it can check; follow the Next step above, then rerun `ripr check`
-No test stub here: the owner returns no value to assert on
-Write this test by hand: call the function and assert what it changes (an argument it mutates, state it sets, or output it writes), or that it panics when the changed condition is hit, since it returns nothing to compare; then rerun `ripr check`.
+  ripr explain --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast probe:src_fragment_checks.rs:static_unknown:10d1e91d
+  ripr context --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast --at probe:src_fragment_checks.rs:static_unknown:10d1e91d
+  no repair start offered: ripr found 1 spot in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

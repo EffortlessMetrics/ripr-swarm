@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_line_call_inputs (4)
+
+Reason:
+RIPR-SPEC-0001: an inline branch value edit under an unchanged predicate is probed as the changed return value, not the predicate boundary (F1)
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

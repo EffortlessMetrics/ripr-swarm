@@ -12,8 +12,8 @@ Start here:
   Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run
   File: ./src/lib.rs:2
   Static exposure: exposed (severity: info, confidence 1.00)
-  Gap ID (for scripts): gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:weight==100
-  Changed behavior: weight > 100
+  Gap ID (for scripts): gap:rust:src/lib.rs:shipping:return_value:return_value:60
+  Changed behavior: 60
   Related test (1 of 2 matched rows): src/lib.rs:6 shipping_boundary
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -27,13 +27,13 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach shipping: shipping_boundary
-    - infection yes: Detected related test input at the changed boundary
-    - 11 more detail line(s) in --format human-full
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/same_line_call_inputs/input --diff <cwd>/fixtures/same_line_call_inputs/diff.patch --mode fast probe:src_lib.rs:predicate:c1fe12b7
-  ripr context --root <cwd>/fixtures/same_line_call_inputs/input --diff <cwd>/fixtures/same_line_call_inputs/diff.patch --mode fast --at probe:src_lib.rs:predicate:c1fe12b7
+  ripr explain --root <cwd>/fixtures/same_line_call_inputs/input --diff <cwd>/fixtures/same_line_call_inputs/diff.patch --mode fast probe:src_lib.rs:return_value:4ad12f9e
+  ripr context --root <cwd>/fixtures/same_line_call_inputs/input --diff <cwd>/fixtures/same_line_call_inputs/diff.patch --mode fast --at probe:src_lib.rs:return_value:4ad12f9e
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
