@@ -149,6 +149,25 @@ fn imported_raise_swap_guard_declines_other_shapes() -> Check {
     // The class is not imported by a plain `from M import Name`.
     let aliased = SOURCE.replace("import InvalidVersion", "import Other as InvalidVersion");
     assert_import_limit("aliased", &classify(&aliased, &tests, Some(OLD), NEW)?);
+    // Another imported call on the line still needs the import graph, in the
+    // arguments or in a `from` cause.
+    let with_quote = SOURCE.replace(
+        "import InvalidVersion\n",
+        "import InvalidVersion\nfrom verlib.text import quote\n",
+    );
+    for (old, new) in [
+        (
+            "        raise ValueError(quote(text))",
+            "        raise InvalidVersion(quote(text))",
+        ),
+        (
+            r#"        raise ValueError("bad") from quote(text)"#,
+            r#"        raise InvalidVersion("bad") from quote(text)"#,
+        ),
+    ] {
+        let source = with_quote.replace(NEW, new);
+        assert_import_limit(new, &classify(&source, &tests, Some(old), new)?);
+    }
     Ok(())
 }
 

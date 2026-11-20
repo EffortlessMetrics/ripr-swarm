@@ -719,6 +719,9 @@ pub(super) fn imported_raised_class_swap(
         && new_type.starts_with(|ch: char| ch.is_ascii_uppercase())
         && old_arguments == new_arguments
         && old_arguments.starts_with('(')
+        // Only the class is exempt: an imported call in the arguments or a
+        // `from cause` still needs the import graph.
+        && !super::static_limits::line_uses_imported_symbol(&new_arguments, imports)
         && imports
             .iter()
             .filter(|import| import.alias == new_type)
