@@ -187,10 +187,18 @@ fn workspace_may_extend_dyn_or_box(trait_name: &str, index: &RustIndex) -> bool 
             .any(|offset| {
                 let rest = &masked[offset + "impl".len()..];
                 let header = &rest[..rest.find(['{', ';']).unwrap_or(rest.len())];
-                let self_type = whole_word_offsets(header, "for")
-                    .last()
-                    .map_or(header, |&at| &header[at + "for".len()..]);
-                !whole_word_offsets(self_type, trait_name).is_empty()
+                // Only the implemented-trait position (`Shape for ..`) may
+                // name the trait; a self type, a bound or a `where` clause
+                // (which may hold its own `for<'a>`) refuses.
+                whole_word_offsets(header, trait_name)
+                    .into_iter()
+                    .any(|at| {
+                        let after = header[at + trait_name.len()..].trim_start();
+                        !after.strip_prefix("for").is_some_and(|rest| {
+                            rest.starts_with(char::is_whitespace)
+                                && !rest.trim_start().starts_with('<')
+                        })
+                    })
             })
             || whole_word_offsets(&masked, "type")
                 .into_iter()
