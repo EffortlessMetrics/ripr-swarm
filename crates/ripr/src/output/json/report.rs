@@ -1153,7 +1153,7 @@ fn finding_json_with_config_and_counts(
     }
     let stop_reasons = stop_reason_values(finding);
     array_field(out, indent + 1, "stop_reasons", &stop_reasons, true);
-    let strongest = strongest_related_test(finding);
+    let strongest = finding.headline_related_test();
     field(
         out,
         indent + 1,
@@ -1381,27 +1381,6 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values
-}
-
-fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    // #11228: TypeScript and JavaScript findings use the one shared selection
-    // rule (first of equal strength) so the oracle summary describes the row
-    // the headline, card and packet name. Other languages keep their existing
-    // last-of-equal-strength summary; moving them is a separate, golden-wide
-    // change.
-    if matches!(
-        finding.language,
-        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
-    ) {
-        return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
-    }
-    // #14483: the shared observation tier leads, so the summary never
-    // describes a row whose assertion cannot observe the change while a row
-    // that can is listed; strength then picks within the tier.
-    finding
-        .related_tests
-        .iter()
-        .max_by_key(|test| (test.observation_tier(), test.oracle_strength.rank()))
 }
 
 /// The observed values the check JSON renders for a finding: every value up

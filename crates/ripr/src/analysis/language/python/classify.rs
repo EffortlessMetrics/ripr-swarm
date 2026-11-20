@@ -2146,6 +2146,23 @@ fn classify_change_for_owner_inner<'a>(
         format!("owner: {}", owner.qualified_name),
         format!("owner_kind: {}", owner.kind_label()),
     ];
+    // Pin the test that supplied the alignment while its producer identity is
+    // available. Same-named tests in different files are distinct, and a
+    // repeated name in the same file cannot resolve this credit uniquely.
+    if related.len() > 1
+        && matches!(class, ExposureClass::Exposed)
+        && surfaced_alignment.observes()
+        && let Some(credit) = &surfaced_alignment.credited
+    {
+        let mut matches = related
+            .iter()
+            .filter(|row| row.file == credit.test_file && row.name == credit.test_name);
+        if let Some(row) = matches.next()
+            && matches.next().is_none()
+        {
+            evidence.push(row.headline_observer_evidence());
+        }
+    }
     if !owner.decorators.is_empty() {
         evidence.push(format!("owner_decorators: {}", owner.decorators.join(", ")));
     }

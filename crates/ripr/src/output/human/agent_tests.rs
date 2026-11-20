@@ -1200,6 +1200,50 @@ fn every_test_picker_agrees_with_the_test_row_on_the_error_variant_repro() {
     assert_eq!(fix_site, "accepts_short_names");
 }
 
+/// A one-row context window and the three check formats must use the same
+/// producer-selected test even when a higher-strength row appears first.
+#[test]
+fn check_formats_and_capped_packet_select_the_same_observer() {
+    let mut finding = weak_gap("probe:headline", 12);
+    let mut other = finding.related_tests[0].clone();
+    other.name = "different_sink".to_string();
+    other.line = 9;
+    other.oracle_strength = OracleStrength::Strong;
+    finding.related_tests[0].name = "observes_change".to_string();
+    finding.related_tests[0].miss = None;
+    finding
+        .evidence
+        .push("related_test_observer: tests/t.rs:3".to_string());
+    finding.related_tests.insert(0, other);
+
+    let packet = crate::domain::context_packet::ContextPacket::from_finding(
+        &finding,
+        1,
+        Vec::new(),
+        std::path::Path::new("."),
+    );
+    assert_eq!(packet.related_tests.len(), 1);
+    assert_eq!(packet.related_tests[0].name, "observes_change");
+    assert_eq!(packet.related_tests_total, 2);
+    let check = output(vec![finding]);
+    let human = crate::output::human::render(&check);
+    assert!(
+        human
+            .lines()
+            .any(|line| line.contains("Related test (1 of 2 matched rows)")
+                && line.contains("observes_change")),
+        "{human}"
+    );
+    let agent = rendered(&check);
+    assert!(
+        agent.contains("\nt1=tests/t.rs:3 observes_change "),
+        "{agent}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&crate::output::json::render(&check)).unwrap_or_default();
+    assert_eq!(json["findings"][0]["oracle_strength"], "weak");
+}
+
 /// #14338: an `error_path` and a `return_value` probe on one changed line
 /// with the same class, expression, missing value, test and stages print as
 /// one row; `gaps=` counts the row and `folded_gaps=` the extra finding. Any
@@ -2261,7 +2305,7 @@ fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     done.related_tests[0].name = "exact_pin".to_string();
     done.related_tests[0].oracle_strength = OracleStrength::Strong;
     done.related_tests[0].miss = None;
-    done.related_tests[0].relation_reason = Some(RelationReason::SameTestFile);
+    done.related_tests[0].relation_reason = Some(RelationReason::HelperOwnerCall);
     done.related_tests[0].relation_confidence = Some(RelationConfidence::Medium);
     done.related_tests.insert(0, caller);
     let text = explained(&done);
@@ -2270,9 +2314,7 @@ fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
     assert!(!text.contains("caller_smoke"), "{text}");
 
     // #14483: a strong pin the producer marked `no_call_path` is never the
-    // noticer while a reaching test is listed. Only the recorded miss moves
-    // the noticer: the relation alone (the file-location pin above, which
-    // records no miss) decides nothing.
+    // noticer while a reaching test is listed, even with a helper-call relation.
     let mut unreached = done.clone();
     unreached.related_tests[1].relation_reason = Some(RelationReason::OwnerNamedTest);
     unreached.related_tests[1].miss = Some(RelatedTestMiss::NoCallPath);

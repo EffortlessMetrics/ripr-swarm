@@ -8868,6 +8868,18 @@ pub(crate) fn classify_resolved_owner(
     );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
+    // The activation already pairs a live assertion and the boundary input in
+    // this test. An assertion-site reference alone has no such implication.
+    if related.len() > 1
+        && matches!(class, ExposureClass::Exposed)
+        && static_limit.is_none()
+        && let Some(index) = predicate_activations
+            .iter()
+            .position(|activation| *activation == TypeScriptPredicateActivation::Witnessed)
+        && let Some(row) = related.get(index)
+    {
+        evidence.push(row.headline_observer_evidence());
+    }
     if let Some(witness) = &loop_count_credit {
         evidence.push(format!(
             "typescript_loop_count_witness: {} ({}:{}, input {}, old {}, new {})",

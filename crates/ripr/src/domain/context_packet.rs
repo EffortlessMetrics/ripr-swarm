@@ -82,6 +82,11 @@ impl ContextPacket {
         stop_reasons: Vec<String>,
         root: &std::path::Path,
     ) -> Self {
+        let headline = finding.headline_related_test();
+        let mut missing = finding.missing.clone();
+        if headline.is_none() && !finding.related_tests.is_empty() {
+            missing.push(finding.missing_related_test_headline());
+        }
         Self {
             // 1.1 (#8743): `classification` / `severity` / `confidence` join
             // the packet so an agent holding the packet alone can state the
@@ -134,16 +139,21 @@ impl ContextPacket {
                 discriminate: finding.ripr.reveal.discriminate.state.as_str().to_string(),
             },
             related_tests_total: finding.related_tests_total(),
-            related_tests: finding
-                .related_tests
-                .iter()
+            related_tests: headline
+                .into_iter()
+                .chain(
+                    finding
+                        .related_tests
+                        .iter()
+                        .filter(|row| !headline.is_some_and(|chosen| std::ptr::eq(chosen, *row))),
+                )
                 .take(max_related_tests)
                 .cloned()
                 .collect(),
             observed_values: finding.activation.observed_values.clone(),
             missing_discriminators: finding.activation.missing_discriminators.clone(),
             witness: DiagnosticWitness::from_finding(finding),
-            missing: finding.missing.clone(),
+            missing,
             stop_reasons,
             recommended_next_step: finding.recommended_next_step.clone(),
         }

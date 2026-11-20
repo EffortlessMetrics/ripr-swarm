@@ -24,36 +24,36 @@ pub fn typescript_script_preview_related_test(finding: &Finding) -> Option<&Rela
     ) {
         return None;
     }
-    let tests = &finding.related_tests;
-    if tests.is_empty() {
-        return None;
+    if let Some(row) = finding.headline_observer() {
+        return Some(row);
     }
     let family = &finding.probe.family;
-    let family_ranked = strongest_family_relevant_related_test(tests, family);
+    let candidates = || {
+        finding
+            .oracle_related_tests()
+            .filter(|row| finding.headline_candidate(row))
+    };
+    let family_rows =
+        || candidates().filter(|row| typescript_row_carries_family_oracle(row, family));
+    let family_ranked = family_rows().min_by_key(|row| std::cmp::Reverse(row.headline_rank()));
+    if let Some(best) = family_ranked
+        && finding.class == super::ExposureClass::Exposed
+        && family_rows().any(|other| {
+            other.headline_rank() == best.headline_rank()
+                && (other.file != best.file || other.line != best.line || other.name != best.name)
+        })
+    {
+        // The metadata ref below names the last strongest family assertion.
+        // With equally plausible tests it cannot identify an observer.
+        return None;
+    }
     if let Some(row) = related_test_for_typescript_oracle_evidence_ref(finding)
+        && finding.headline_candidate(row)
         && oracle_ref_row_matches_missing_check_family(finding, row, family_ranked)
     {
         return Some(row);
     }
-    family_ranked.or_else(|| tests.first())
-}
-
-/// Strongest related-test row whose collapsed oracle can observe `family`.
-/// Equal rank keeps the first listed row (#11228).
-fn strongest_family_relevant_related_test<'a>(
-    tests: &'a [RelatedTest],
-    family: &ProbeFamily,
-) -> Option<&'a RelatedTest> {
-    let mut best: Option<&RelatedTest> = None;
-    for test in tests {
-        if !typescript_row_carries_family_oracle(test, family) {
-            continue;
-        }
-        if best.is_none_or(|current| test.oracle_strength.rank() > current.oracle_strength.rank()) {
-            best = Some(test);
-        }
-    }
-    best
+    family_ranked.or_else(|| candidates().min_by_key(|row| std::cmp::Reverse(row.headline_rank())))
 }
 
 fn related_test_for_typescript_oracle_evidence_ref(finding: &Finding) -> Option<&RelatedTest> {

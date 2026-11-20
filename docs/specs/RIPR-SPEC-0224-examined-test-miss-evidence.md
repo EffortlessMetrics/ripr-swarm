@@ -410,33 +410,19 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   misses such as `observation_unconfirmed`, which record an unestablished
   observation, not an absent one. It does not read the relation: a
   proximity-only row can still reach the owner through a helper, and the
-  producer's `no_call_path` miss is the one owner of that fact. Every
-  picker that names one row of a finding uses it, keeping its own keys
-  within a tier: the agent
-  `tK=` row (`strongest_test`), the fix site
-  (`DiagnosticWitness::best_related_test`, which the code lens and hover
-  read), the human `Related test` headline (the first row of the best tier,
-  then the Python changed-file rule within that tier), the JSON
-  `oracle_kind`/`oracle_strength` summary (the tier, then strength, so a
-  strong oracle held only by a `no_call_path` row no longer speaks for the
-  finding, last of equal rows as before), the agent `open=` row
-  (`triage::weak_assertion_row`, the first bound weak row of the best tier)
-  and the agent `done=` noticer (`noticing_test`, the tier, then strength).
-  The headline and the JSON summary always come from the same tier, though
-  the headline can name a weaker row of that tier than the summary
-  describes; `tK=` and the fix site lead with relation confidence and reach,
-  so they can name a row of another tier. The
-  TypeScript/JavaScript preview row and the per-test lead row of `ripr
-  explain` keep their own rules, and editor seam actions read seam grips,
-  which carry no miss. The fix site keeps reach as its leading key
-  (#5335), so among rows of equal reach it places the row after every row
-  that can observe the change, and places a `no_call_path` row after it,
-  because a test with no call to the changed code reaches it least of all; a
-  non-observing direct caller still outranks an observing row linked only by
-  the owner's name, import path or a fixture. The `tK=` row keeps relation
-  confidence as its leading key (#13603), so it places the row after every
-  observing row of the same confidence tier; a non-observing direct caller
-  can still outrank an observing row linked only by file location.
+  producer's `no_call_path` miss records that fact.
+- The human headline, agent test reference, JSON oracle summary and the
+  first row of a capped context packet use one display selection (#15347).
+  A Python sink-alignment credit or a witnessed JavaScript/TypeScript
+  predicate input can identify the test by its exact file and start line.
+  Remaining candidates are ordered by recorded miss, graded assertion and
+  strength. Equal candidates retain producer order, subject to the Python
+  same-diff tie-break. Equally graded exposed JS/TS tests need row-specific
+  evidence to identify the observer. A location-only match cannot
+  supply the headline. When the retained rows identify no representative, the
+  human display says so, the JSON summary reports unknown/none and the packet
+  keeps its navigation rows. Repair fix sites and test-side weak-assertion
+  navigation retain their own eligibility and ranking.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or
@@ -632,12 +618,10 @@ assertion than the strength-only pick surfaces
 reason, so no repair card becomes agent-packet eligible because of this
 selection.
 
-The human `Related test` headline row is one shared display pick: among the
-rows with the first row's oracle strength, the first row whose test file the
-same diff changed leads, and otherwise the first row stays, so the headline
-names the test the change extended rather than an untouched same-strength
-file that sorts earlier (#14027). The pick moves no row, class or oracle
-strength.
+For Python, a sink-alignment credit identifies its test while the producer
+still holds the file and name. An ambiguous identity supplies no preference.
+A same-diff file-and-line stamp breaks ties within the fallback rank. A test
+with a different strength or observation tier cannot win on a diff stamp.
 
 ### Family-relevant assertion selection (TypeScript)
 
