@@ -1102,36 +1102,39 @@ fn classify_change_for_owner_inner<'a>(
     // literal owner inputs at all the gate cannot see the activation either
     // way; that case keeps the oracle verdict and carries a named
     // `boundary_activation_unresolved` limitation instead.
-    let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
+    // #15632: an edit to the members of a literal collection in a membership
+    // test changes the result only for an input equal to an altered member,
+    // whatever statement holds the comparison.
+    let membership_gap = static_limit
+        .is_none()
         .then(|| {
-            // #15632: an edit to the members of a literal collection in a
-            // membership test changes the branch only for an input equal to
-            // an altered member.
-            owner_source
-                .zip(old_line_text)
-                .and_then(|(source, old)| {
-                    super::membership_activation::python_membership_member_gap(
-                        owner,
-                        source,
-                        line,
-                        line_text,
-                        old,
-                        &related_candidates,
-                        &focus,
-                    )
-                })
-                .or_else(|| {
-                    python_boundary_evidence(
-                        line_text,
-                        old_line_text,
-                        owner,
-                        owner_source,
-                        &related_candidates,
-                        &focus,
-                    )
-                })
+            owner_source.zip(old_line_text).and_then(|(source, old)| {
+                super::membership_activation::python_membership_member_gap(
+                    owner,
+                    source,
+                    line,
+                    line_text,
+                    old,
+                    &related_candidates,
+                    &focus,
+                )
+            })
         })
         .flatten();
+    let boundary = membership_gap.or_else(|| {
+        (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
+            .then(|| {
+                python_boundary_evidence(
+                    line_text,
+                    old_line_text,
+                    owner,
+                    owner_source,
+                    &related_candidates,
+                    &focus,
+                )
+            })
+            .flatten()
+    });
     let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
         e.activation == BoundaryActivation::Unresolved
             || (e.activation == BoundaryActivation::Missing && e.discriminator.is_none())

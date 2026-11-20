@@ -1836,29 +1836,52 @@ mutant calibrates the rule; ripr reports only the static shape.
     fixture definitions' imports are not rewritten.
 
 34. **An edited member of a literal membership collection needs an input
-    equal to that member** (#15632). When the old and the new changed line
-    each read as `if|elif|while <subject> in|not in <display>:` with the
-    same keyword, subject and operator, where the display is a tuple, list
-    or set of scalar literals (numbers, `True`/`False`, `None`, plain
-    strings without escapes) and at least one member is kept, the altered
-    members are those present on one side only under Python equality
-    (`True == 1`, `False == 0`, `1 == 1.0`): a removed member, an added
-    member, or both for a changed one. The subject must be a bare owner
-    parameter that the owner rebinds only by one case normalization
-    (`val = val.lower()`, `.casefold()`, `.upper()`) before the changed line,
-    outside any loop. A strong related call row hits an altered member when
-    its literal input equals the member and the old and new membership
-    results for that input differ; under a normalization only a string the
-    normalization leaves unchanged counts, and a non-string counts only
+    equal to that member** (#15632). The rule only withholds `exposed`; it
+    never credits and never moves another verdict up. It reads the parsed
+    owner module on the new side and on the old side (the new source with
+    the changed line restored) and engages on the one `<subject> in
+    <display>` or `<subject> not in <display>` comparison whose lines
+    include the changed line and whose members differ, wherever it sits in
+    the changed statement: an `if`/`elif`/`while` condition, an `and`/`or`
+    compound, `not (...)`, a parenthesized test, a one-line `if`, a
+    `return`, an assignment, or a display spanning several lines. The
+    display is a tuple, list or set of scalar literals (numbers,
+    `True`/`False`, `None`, plain strings without escapes), at least one
+    member is kept, the subject text and operator match on both sides, and
+    nothing on the changed line outside the display differs. The subject is
+    a bare owner parameter `p`, or `p.lower()`, `p.casefold()`,
+    `p.upper()`, `p.strip()` or `str(p)`. The altered members are those
+    present on one side only under Python equality (`True == 1`,
+    `False == 0`, `1 == 1.0`): a removed member, an added member, or both
+    for a changed one. A strong related call row hits an altered member
+    when its literal input equals the member and the old and new membership
+    results for that input differ; a compound condition may still not flip
+    on that input, which the rule accepts because it never credits by
+    itself. A string input counts under a case normalization of the
+    parameter (`val = val.lower()`, `.casefold()`, `.upper()`, before the
+    comparison and outside any loop) or a transforming subject only when the
+    transform leaves it unchanged (for `strip`, an ASCII string with no
+    surrounding whitespace); a non-string counts under a normalization only
     when each normalization line sits directly under
-    `if isinstance(<subject>, str):`. Every altered member needs a hit, or the change reads
-    `weakly_exposed` with the first unhit member named as the boundary
-    discriminator (`val == "y"`), including when no strong row binds a
-    literal or some strong call goes unread. Removing `1` while `True` stays
-    alters nothing, so a row passing `1` never hits it. A whole-collection
-    replacement, a non-literal display, a subject that is not a parameter,
-    any other rebinding, an unreadable literal and a `match` arm keep the
-    existing verdict. The rule never credits `exposed`.
+    `if isinstance(<subject>, str):`, and never under a transforming
+    subject. Any other rebinding of the parameter before the comparison, or
+    any rebinding inside a loop around it, places no input. Every altered
+    member needs a hit, or the change reads `weakly_exposed` with the first
+    unhit member named as the boundary discriminator (`val == "y"`),
+    including when no strong row binds a literal, some strong call goes
+    unread, or the rebinding is not modelled. A changed line that holds
+    only literal elements inside a display an `in` comparison owns, whose
+    old side cannot be paired (the restored old source does not parse, or
+    its comparisons do not match the new ones), reads `weakly_exposed` the
+    same way. Removing `1` while `True` stays alters nothing, so a row
+    passing `1` never hits it. Not engaged, so the existing verdict stands:
+    a whole-collection replacement (no member kept), a non-literal or
+    computed display (`TRUTHY + ("t",)`, a named constant), a subject that
+    is not a parameter or one of the transforms above, a line that also
+    changes something outside the display, an owner source that does not
+    parse, a deleted display line, and a `match` arm pattern edit
+    (`case "yes" | "y":` -> `case "yes":` still reads `exposed` with rows
+    that skip `"y"`; a separate gap).
 
 ### Verdict ladder
 

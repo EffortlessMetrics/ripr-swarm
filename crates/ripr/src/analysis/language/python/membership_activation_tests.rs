@@ -212,3 +212,202 @@ fn a_whole_collection_replacement_keeps_the_existing_verdict() -> Result<(), Str
     assert_eq!(class_at(PLAIN, 2, old, &body)?, ExposureClass::Exposed);
     Ok(())
 }
+
+/// `owner` reads `weakly_exposed` naming `discriminator` when the rows pass
+/// only `missed`, and `exposed` once `hit` passes the altered member.
+fn pins_member(
+    owner: &str,
+    line: usize,
+    old: &str,
+    (missed, hit): (&str, &str),
+    discriminator: &str,
+) -> Result<(), String> {
+    let finding = finding_at(owner, line, old, &truthy_cases(missed))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{owner}");
+    assert_eq!(
+        discriminators(&finding),
+        vec![discriminator.to_string()],
+        "{owner}"
+    );
+    assert_eq!(
+        class_at(owner, line, old, &truthy_cases(hit))?,
+        ExposureClass::Exposed,
+        "{owner}"
+    );
+    Ok(())
+}
+
+const CASES: (&str, &str) = ("\"yes\", \"on\"", "\"yes\", \"y\"");
+
+#[test]
+fn a_compound_or_wrapped_condition_reads_the_same_way() -> Result<(), String> {
+    for (new, old) in [
+        (
+            "    if val in (True, \"yes\", \"on\") and flag:",
+            "    if val in (True, \"yes\", \"y\", \"on\") and flag:",
+        ),
+        (
+            "    if flag or val in (True, \"yes\", \"on\"):",
+            "    if flag or val in (True, \"yes\", \"y\", \"on\"):",
+        ),
+        (
+            "    if (val in (True, \"yes\", \"on\")):",
+            "    if (val in (True, \"yes\", \"y\", \"on\")):",
+        ),
+    ] {
+        let owner = format!(
+            "def to_bool(val, flag=False):\n{new}\n        return True\n    return False\n"
+        );
+        pins_member(&owner, 2, old, CASES, "val == \"y\"")?;
+    }
+    // `flag` defaults to True here, so `and flag` holds for every row.
+    let owner = "def to_bool(val, flag=True):\n    if val in (True, \"yes\", \"on\") and flag:\n        return True\n    return False\n";
+    pins_member(
+        owner,
+        2,
+        "    if val in (True, \"yes\", \"y\", \"on\") and flag:",
+        CASES,
+        "val == \"y\"",
+    )
+}
+
+#[test]
+fn a_negated_membership_reads_the_same_way() -> Result<(), String> {
+    let owner = "def to_bool(val):\n    if not val in (True, \"yes\", \"on\"):\n        return False\n    return True\n";
+    pins_member(
+        owner,
+        2,
+        "    if not val in (True, \"yes\", \"y\", \"on\"):",
+        CASES,
+        "val == \"y\"",
+    )
+}
+
+#[test]
+fn a_returned_or_assigned_membership_reads_the_same_way() -> Result<(), String> {
+    let returned = "def to_bool(val):\n    return val in (True, \"yes\", \"on\")\n";
+    pins_member(
+        returned,
+        2,
+        "    return val in (True, \"yes\", \"y\", \"on\")",
+        CASES,
+        "val == \"y\"",
+    )?;
+    let assigned = "def to_bool(val):\n    ok = val in (True, \"yes\", \"on\")\n    return ok\n";
+    pins_member(
+        assigned,
+        2,
+        "    ok = val in (True, \"yes\", \"y\", \"on\")",
+        CASES,
+        "val == \"y\"",
+    )
+}
+
+#[test]
+fn a_one_line_if_and_an_elif_read_the_same_way() -> Result<(), String> {
+    let one_line =
+        "def to_bool(val):\n    if val in (True, \"yes\", \"on\"): return True\n    return False\n";
+    pins_member(
+        one_line,
+        2,
+        "    if val in (True, \"yes\", \"y\", \"on\"): return True",
+        CASES,
+        "val == \"y\"",
+    )?;
+    let elif = "def to_bool(val):\n    if val is None:\n        return False\n    elif val in (True, \"yes\", \"on\"):\n        return True\n    return False\n";
+    pins_member(
+        elif,
+        4,
+        "    elif val in (True, \"yes\", \"y\", \"on\"):",
+        CASES,
+        "val == \"y\"",
+    )
+}
+
+#[test]
+fn a_transformed_subject_places_only_strings_it_leaves_unchanged() -> Result<(), String> {
+    for (subject, discriminator) in [
+        ("val.lower()", "val.lower() == \"y\""),
+        ("val.casefold()", "val.casefold() == \"y\""),
+        ("val.strip()", "val.strip() == \"y\""),
+        ("str(val)", "str(val) == \"y\""),
+    ] {
+        let owner = format!(
+            "def to_bool(val):\n    if {subject} in (\"yes\", \"on\"):\n        return True\n    return False\n"
+        );
+        let old = format!("    if {subject} in (\"yes\", \"y\", \"on\"):");
+        pins_member(&owner, 2, &old, CASES, discriminator)?;
+    }
+    // A row equal to the removed member that the transform changes never
+    // compares as that member (`"Y".lower()` is `"y"`), and a non-string row
+    // is never placed under a transforming subject (`str(1)` is `"1"`).
+    for (subject, member) in [
+        ("val.lower()", "\"Y\""),
+        ("val.strip()", "\" y\""),
+        ("str(val)", "1"),
+    ] {
+        let owner = format!(
+            "def to_bool(val):\n    if {subject} in (\"yes\", \"on\"):\n        return True\n    return False\n"
+        );
+        let old = format!("    if {subject} in (\"yes\", {member}, \"on\"):");
+        let body = truthy_cases(&format!("\"yes\", {member}"));
+        assert_eq!(
+            class_at(&owner, 2, &old, &body)?,
+            ExposureClass::WeaklyExposed,
+            "{subject}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_line_inside_a_multi_line_display_reads_the_same_way() -> Result<(), String> {
+    let owner = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n        \"on\",\n    ):\n        return True\n    return False\n";
+    pins_member(owner, 4, "        \"yes\", \"y\",", CASES, "val == \"y\"")?;
+    // A changed member line in the middle of the display.
+    pins_member(
+        owner,
+        4,
+        "        \"y\",",
+        ("\"on\", \"yes\"", "\"y\", \"yes\""),
+        "val == \"y\"",
+    )
+}
+
+#[test]
+fn an_unmodelled_rebinding_withholds_credit_even_when_a_row_passes_the_member() -> Result<(), String>
+{
+    let owner = "def to_bool(val):\n    val = normalize(val)\n    if val in (True, \"yes\", \"on\"):\n        return True\n    return False\n";
+    let old = "    if val in (True, \"yes\", \"y\", \"on\"):";
+    for cases in [CASES.0, CASES.1] {
+        let finding = finding_at(owner, 3, old, &truthy_cases(cases))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{cases}");
+        assert_eq!(discriminators(&finding), vec!["val == \"y\"".to_string()]);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_line_that_also_changes_outside_the_display_keeps_the_existing_verdict() -> Result<(), String> {
+    let owner = "def to_bool(val, flag=True):\n    if val in (True, \"yes\", \"on\") and flag:\n        return True\n    return False\n";
+    let old = "    if val in (True, \"yes\", \"y\", \"on\") or flag:";
+    let finding = finding_at(owner, 2, old, &truthy_cases(CASES.0))?;
+    assert!(
+        !discriminators(&finding).contains(&"val == \"y\"".to_string()),
+        "the membership rule must not engage on a line with a second edit"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_line_whose_old_side_cannot_be_paired_withholds_credit() -> Result<(), String> {
+    // The old line also closed the display, so the restored old source does
+    // not parse; the changed line still only edits literal members.
+    let owner = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n        \"on\",\n    ):\n        return True\n    return False\n";
+    for cases in [CASES.0, CASES.1] {
+        let finding = finding_at(owner, 4, "        \"yes\", \"y\",)", &truthy_cases(cases))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{cases}");
+        assert_eq!(discriminators(&finding), vec!["val == \"y\"".to_string()]);
+    }
+    Ok(())
+}
