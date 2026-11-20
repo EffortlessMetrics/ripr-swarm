@@ -21,7 +21,8 @@
 //! - A test file under a nested Python project (a directory below the root
 //!   that owns the test file and statically declares a project: `setup.py`,
 //!   or a `pyproject.toml` / `setup.cfg` with a packaging section, #15302) is
-//!   verified from that directory: the command carries the test path and the venv interpreter
+//!   verified from that directory (POSIX only; Windows keeps the root route):
+//!   the command carries the test path and the venv interpreter
 //!   relative to it, and `suggested_verify_cwd: <dir>` names the directory
 //!   relative to the root. Run from the root, pytest cannot import the
 //!   project's own package. A root-level project carries no cwd line.
@@ -56,7 +57,8 @@ fn owns_python_project(dir: &Path) -> bool {
     let declares = |file: &str, sections: &[&str]| {
         std::fs::read_to_string(dir.join(file)).is_ok_and(|text| {
             text.lines().any(|line| {
-                let line = line.trim();
+                // A header may carry a trailing comment: `[project]  # meta`.
+                let line = line.split('#').next().unwrap_or_default().trim();
                 sections.iter().any(|section| {
                     // `[project]` or a subtable such as `[project.scripts]`.
                     line == *section
@@ -80,6 +82,12 @@ fn owns_python_project(dir: &Path) -> bool {
 /// POSIX path. `None` when the owning project is the root (or no directory
 /// below it owns one), so the command stays root-relative exactly as before.
 fn nested_project_dir(root: &Path, test_file: &str) -> Option<String> {
+    // The rooted `(cd -- <dir> && ...)` form is POSIX shell syntax and the
+    // human card's rooted route is POSIX-only, so Windows keeps the
+    // root-relative route.
+    if cfg!(windows) {
+        return None;
+    }
     let path = Path::new(test_file);
     let parts: Vec<&str> = path
         .components()
@@ -487,6 +495,41 @@ mod tests {
         let before = unittest.clone();
         assert_eq!(relativize_to_project("py", &mut unittest), None);
         assert_eq!(unittest, before);
+    }
+
+    /// #15302: only a declared project owns the verify cwd; a trailing
+    /// header comment still counts, tool-only configuration does not.
+    #[test]
+    fn project_ownership_needs_a_packaging_declaration() -> std::io::Result<()> {
+        let dir = TempRoot::new("ownership")?;
+        let cases: [(&str, &str, bool); 7] = [
+            (
+                "pyproject.toml",
+                "[project]  # metadata\nname = \"pkg\"\n",
+                true,
+            ),
+            (
+                "pyproject.toml",
+                "[tool.poetry.dependencies]\npython = \"^3.12\"\n",
+                true,
+            ),
+            ("pyproject.toml", "[build-system]\nrequires = []\n", true),
+            ("pyproject.toml", "[tool.ruff]\nline-length = 100\n", false),
+            ("setup.cfg", "[options]\npackages = find:\n", true),
+            ("setup.cfg", "[flake8]\nmax-line-length = 100\n", false),
+            ("tox.ini", "[tox]\nenvlist = py312\n", false),
+        ];
+        for (file, text, owns) in cases {
+            let case = dir.path().join(format!("{file}-{owns}-{}", text.len()));
+            std::fs::create_dir_all(&case)?;
+            std::fs::write(case.join(file), text)?;
+            assert_eq!(owns_python_project(&case), owns, "{file}: {text}");
+        }
+        let with_setup_py = dir.path().join("setup-py");
+        std::fs::create_dir_all(&with_setup_py)?;
+        std::fs::write(with_setup_py.join("setup.py"), "")?;
+        assert!(owns_python_project(&with_setup_py));
+        Ok(())
     }
 
     #[test]

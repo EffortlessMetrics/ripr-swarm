@@ -2879,6 +2879,51 @@ mod tests {
         Ok(())
     }
 
+    /// #15302: a record whose verify command is relative to a nested project
+    /// keeps the raw command on the repair card, and the prompt and guidance
+    /// run it from that directory.
+    #[cfg(not(windows))]
+    #[test]
+    fn review_comments_gap_ledger_card_runs_a_nested_verify_command_from_its_directory()
+    -> Result<(), String> {
+        let mut record = eligible_gap_record_json("gap:nested", "dedupe:nested");
+        let object = record
+            .as_object_mut()
+            .ok_or("nested fixture should be an object")?;
+        object.insert(
+            "verification_commands".to_string(),
+            serde_json::json!(["python -m pytest tests/test_price.py::test_discount"]),
+        );
+        object.insert("verify_cwd".to_string(), serde_json::json!("py"));
+        let records_json = serde_json::json!({ "records": [record] }).to_string();
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+        let rendered = render_gap_record_review_comments_json(
+            Path::new("."),
+            "main",
+            "HEAD",
+            &Mode::Draft,
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+        )?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse card JSON: {err}"))?;
+        let card = &value["comments"][0];
+        let rooted = "(cd -- py && python -m pytest tests/test_price.py::test_discount)";
+        assert_eq!(
+            card["repair_card"]["verify_command"],
+            "python -m pytest tests/test_price.py::test_discount",
+            "{card}"
+        );
+        assert_eq!(card["llm_guidance"]["verify_command"], rooted, "{card}");
+        assert!(
+            card["llm_guidance"]["prompt"]
+                .as_str()
+                .is_some_and(|prompt| prompt.contains(rooted)),
+            "{card}"
+        );
+        Ok(())
+    }
+
     /// Eligibility does not require a related test or target file, so an
     /// eligible card projects null test-navigation fields. The published
     /// schema's gap-ledger branch admits exactly this shape

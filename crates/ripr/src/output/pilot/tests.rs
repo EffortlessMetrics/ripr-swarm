@@ -5658,6 +5658,18 @@ fn pilot_surfaces_run_a_nested_python_verify_command_from_its_project() {
         terminal.contains(&format!("verify: {rooted}")),
         "{terminal}"
     );
+    let root_level = python_first_use();
+    let root_context = pilot_context_with_python(&artifacts, &root_level);
+    for text in [
+        render_pilot_summary_json(&[], root_context),
+        render_pilot_summary_md(&[], root_context),
+        render_pilot_terminal(&[], root_context),
+    ] {
+        assert!(
+            !text.contains("verify_cwd") && !text.contains("cd -- "),
+            "{text}"
+        );
+    }
     for (surface, text) in [("markdown", &md), ("terminal", &terminal)] {
         for line in text
             .lines()

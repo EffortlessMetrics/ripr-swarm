@@ -6,9 +6,9 @@
   project's package. Interpreter and confidence come from that same directory;
   a nested project with no venv under a root that has one is `medium`, not
   `high`. The human card, JSON (`verify_cwd`, `verify.cwd`), SARIF, GitHub
-  annotation, gap ledger, first-pr command context, pilot and agent packets
-  carry the one directory, and first-pr withholds the verify form when it
+  annotation, gap ledger, first-pr command context, pilot, agent status,
+  agent packets and review comments carry the one directory, and first-pr withholds the verify form when it
   cannot resolve it. Only a directory that declares a project (`setup.py`, or
   a `pyproject.toml` / `setup.cfg` packaging section) counts; a lint-only
-  `setup.cfg` in `tests/` does not. Root-level projects are unchanged
-  (#15302).
+  `setup.cfg` in `tests/` does not. Root-level projects, and Windows, keep the
+  root-relative route (#15302).
