@@ -39,7 +39,8 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/guard_operand_dropped_agreement/input --diff <cwd>/fixtures/guard_operand_dropped_agreement/diff.patch --mode fast probe:src_lib.rs:return_value:90a53480
   ripr context --root <cwd>/fixtures/guard_operand_dropped_agreement/input --diff <cwd>/fixtures/guard_operand_dropped_agreement/diff.patch --mode fast --at probe:src_lib.rs:return_value:90a53480
-  no repair start offered: could not establish which revisions the check analyzed; inspect the current workspace and rerun `ripr check`
+  (spot id, for repair)
+  ripr repair da758265d0555418 --root <cwd>/fixtures/guard_operand_dropped_agreement/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/guard_operand_dropped_agreement/input --at src/lib.rs:2 --kind return_value
 
