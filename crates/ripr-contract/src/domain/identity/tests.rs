@@ -694,10 +694,22 @@ fn contradictory_owners_are_named_in_sorted_order_whatever_the_registry_order() 
     let expected = format!(
         "field `snapshot_id` on `{AGENT_REQUEST}` has contradictory owners `AnalysisAttemptId` and `CompletedAnalysisSnapshotId`"
     );
-    for records in [
-        with_taxonomy(&[attempt, completed]),
-        with_taxonomy(&[completed, attempt]),
-    ] {
+    // `with_taxonomy` places records in taxonomy order, so reverse the built
+    // registry to make the validator meet the two owners the other way round.
+    let forward = with_taxonomy(&[attempt, completed]);
+    let mut reversed = forward.clone();
+    reversed.reverse();
+    let position =
+        |records: &[IdentityRecord], kind| records.iter().position(|record| record.kind == kind);
+    assert!(
+        position(&forward, IdentityKind::AnalysisAttemptId)
+            < position(&forward, IdentityKind::CompletedAnalysisSnapshotId)
+    );
+    assert!(
+        position(&reversed, IdentityKind::AnalysisAttemptId)
+            > position(&reversed, IdentityKind::CompletedAnalysisSnapshotId)
+    );
+    for records in [forward, reversed] {
         let violations = registry_violations(&records, &[]);
         assert!(has(&violations, &expected), "{violations:?}");
     }
