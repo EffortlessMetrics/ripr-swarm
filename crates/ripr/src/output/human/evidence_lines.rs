@@ -525,10 +525,14 @@ fn evidence_path<T>(
     // window is not truncated, so `showing N of M` stays true.
     let skip_restated = wording == JsonPointerWording::ExplainNamesCheck
         && observed_values_total <= MAX_OBSERVED_VALUES_SHOWN;
+    // A skipped row still counts as a source-value row for the literal
+    // evidence fallback below, so dropping it never brings the literals back.
+    let mut skipped_restated = false;
     for (index, value) in shown_values.into_iter().enumerate() {
         if skip_restated
             && value_restated_by_discriminator(value, &finding.activation.missing_discriminators)
         {
+            skipped_restated = true;
             continue;
         }
         let file = files.and_then(|files| files[index].as_deref());
@@ -568,7 +572,7 @@ fn evidence_path<T>(
         ), EvidenceSource::Window));
     }
 
-    if lines.len() == 5 && !finding.evidence.is_empty() {
+    if lines.len() == 5 && !skipped_restated && !finding.evidence.is_empty() {
         lines.extend(
             finding
                 .evidence

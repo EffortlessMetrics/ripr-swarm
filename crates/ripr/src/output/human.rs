@@ -8089,6 +8089,28 @@ mod tests {
         assert!(super::render_finding(&finding).contains(row));
     }
 
+    /// #15594 review: skipping the only source-value row must not bring the
+    /// literal evidence lines back, which print only when no row was added.
+    #[test]
+    fn explain_skipping_the_only_value_row_keeps_literal_evidence_out() {
+        let mut finding = restated_value_finding("50", "total = 50");
+        // The value row is the only row beyond the five stage rows.
+        finding.flow_sinks.clear();
+        finding.related_tests.clear();
+        let literal = "literal evidence line for the restated value";
+        finding.evidence = vec![literal.to_string()];
+        let full = super::render_finding(&finding);
+        assert!(
+            full.contains("source function argument value total = 50"),
+            "{full}"
+        );
+        assert!(!full.contains(literal), "{full}");
+
+        let rendered = explained(&finding);
+        assert!(!rendered.contains(literal), "{rendered}");
+        assert!(!rendered.contains("source function argument value total = 50"));
+    }
+
     #[test]
     fn explain_keeps_source_value_row_the_reason_does_not_restate() {
         let row = "source function argument value total = 50 at line 3";
