@@ -165,35 +165,34 @@ pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
         policy_readiness_json: options
             .policy_readiness
             .as_ref()
-            .map(|path| read_optional_text_for_report("policy readiness", path)),
+            .map(|path| read_optional_text_with_errno_for_report("policy readiness", path)),
         waiver_aging_json: options
             .waiver_aging
             .as_ref()
-            .map(|path| read_optional_text_for_report("waiver aging", path)),
+            .map(|path| read_optional_text_with_errno_for_report("waiver aging", path)),
         suppression_health_json: options
             .suppression_health
             .as_ref()
-            .map(|path| read_optional_text_for_report("suppression health", path)),
+            .map(|path| read_optional_text_with_errno_for_report("suppression health", path)),
         baseline_delta_json: options
             .baseline_delta
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline debt delta", path)),
+            .map(|path| read_optional_text_with_errno_for_report("baseline debt delta", path)),
         gate_decision_json: options
             .gate_decision
             .as_ref()
-            .map(|path| read_optional_text_for_report("gate decision", path)),
-        recommendation_calibration_json: options
-            .recommendation_calibration
-            .as_ref()
-            .map(|path| read_optional_text_for_report("recommendation calibration", path)),
+            .map(|path| read_optional_text_with_errno_for_report("gate decision", path)),
+        recommendation_calibration_json: options.recommendation_calibration.as_ref().map(|path| {
+            read_optional_text_with_errno_for_report("recommendation calibration", path)
+        }),
         mutation_calibration_json: options
             .mutation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("mutation calibration", path)),
+            .map(|path| read_optional_text_with_errno_for_report("mutation calibration", path)),
         preview_boundary_json: options
             .preview_boundary
             .as_ref()
-            .map(|path| read_optional_text_for_report("preview boundary", path)),
+            .map(|path| read_optional_text_with_errno_for_report("preview boundary", path)),
     };
     let report = output::policy_operations::build_policy_operations_report(input);
     let rendered_json = output::policy_operations::render_policy_operations_json(&report)?;

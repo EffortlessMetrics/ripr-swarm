@@ -165,3 +165,45 @@ fn swarm_ingest_non_json_result_names_file() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn policy_operations_still_reports_a_missing_input_as_missing() -> Result<(), String> {
+    // `policy operations` classifies a supplied-but-absent input as
+    // `*_missing` from the read error; the plain-words reader must not turn
+    // that into `*_unreadable`.
+    let dir = fixture("input-err-policy-ops")?;
+    let readiness = dir.join("readiness.json");
+    write(
+        &readiness,
+        br#"{"schema_version":"0.1","kind":"policy_readiness","status":"ready"}"#,
+    )?;
+    let absent = dir.join("absent-gate.json");
+    let out = dir.join("ops.json");
+    let out_md = dir.join("ops.md");
+    let root_arg = dir.display().to_string();
+    let readiness_arg = readiness.display().to_string();
+    let absent_arg = absent.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr(&[
+        "policy",
+        "operations",
+        "--root",
+        &root_arg,
+        "--policy-readiness",
+        &readiness_arg,
+        "--gate-decision",
+        &absent_arg,
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ]);
+    let stderr = stderr_of(&output);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let json =
+        std::fs::read_to_string(&out).map_err(|err| format!("read {}: {err}", out.display()))?;
+    assert!(json.contains("\"gate_decision_missing\""), "{json}");
+    assert!(!json.contains("\"gate_decision_unreadable\""), "{json}");
+    Ok(())
+}

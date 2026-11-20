@@ -1095,8 +1095,6 @@ fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
     }
 }
 
-/// `flag` names the command and flag (`outcome --before`) so a directory
-/// passed where a JSON file belongs is named in user words (#14313).
 /// Name the flag and file on a parse error raised by the pure report builder,
 /// which only sees JSON text. `inputs` maps the builder's stable message prefix
 /// to the flag and path that supplied that text.
@@ -1112,6 +1110,8 @@ fn name_calibration_input_error(err: String, inputs: &[(&str, &str, &Path)]) -> 
     err
 }
 
+/// `flag` names the command and flag (`outcome --before`) so a directory
+/// passed where a JSON file belongs is named in user words (#14313).
 fn read_calibration_text(
     path: &Path,
     flag: &str,
