@@ -678,6 +678,12 @@ fn a_regex_or_comment_comma_does_not_move_the_selector_slot() -> Result<(), Stri
             "slot-comment",
             "    expect(dir(0 /*/, 'gold', ignored */, 'silver')).toBe(7);\n",
         ),
+        // Spaced division is division, not a regex opener: the later `/tail/`
+        // must not be swallowed, so 'silver' stays the second argument.
+        (
+            "slot-spaced-division",
+            "    expect(dir(8 / 2, 'silver', /tail/, 'gold')).toBe(7);\n",
+        ),
     ] {
         let finding = finding_at(
             label,

@@ -5571,6 +5571,7 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
     let mut regex_class = false;
     let mut skip_next = false;
     let mut previous = '\0';
+    let mut last_significant = '\0';
     let mut current = String::new();
     let mut arguments = Vec::new();
     for (index, &ch) in chars.iter().enumerate() {
@@ -5609,6 +5610,7 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
                 regex_class = false;
             } else if ch == '/' && !regex_class {
                 regex = false;
+                last_significant = '/';
             } else if ch == '\n' {
                 return None;
             }
@@ -5623,6 +5625,7 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
                 escaped = true;
             } else if ch == open {
                 quote = None;
+                last_significant = open;
             }
             previous = ch;
             continue;
@@ -5645,7 +5648,7 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
                 previous = '\0';
                 continue;
             }
-            '/' if regex_can_start(previous) && regex_end(&chars, index).is_some() => {
+            '/' if regex_can_start(last_significant) && regex_end(&chars, index).is_some() => {
                 regex = true;
                 regex_class = false;
                 current.push(ch);
@@ -5671,38 +5674,24 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
             }
             _ => current.push(ch),
         }
+        if !ch.is_whitespace() {
+            last_significant = ch;
+        }
         previous = ch;
     }
     None
 }
 
-/// Whether a `/` after `previous` can open a regex literal rather than divide:
-/// at the start of an expression, after an operator, an opening bracket or a
-/// comma. After an identifier, number, `)` or `]` it is division.
-fn regex_can_start(previous: char) -> bool {
-    previous.is_whitespace()
+/// Whether a `/` after the last significant character can open a regex literal
+/// rather than divide. After an operand end (identifier, number, string, `)`,
+/// `]`, `}`) it is division, and whitespace does not change that, so `8 / 2`
+/// stays division while `, /x/` opens a regex.
+fn regex_can_start(last_significant: char) -> bool {
+    !(last_significant.is_ascii_alphanumeric()
         || matches!(
-            previous,
-            '\0' | '('
-                | '['
-                | '{'
-                | ','
-                | '='
-                | ':'
-                | ';'
-                | '!'
-                | '&'
-                | '|'
-                | '?'
-                | '+'
-                | '-'
-                | '*'
-                | '%'
-                | '<'
-                | '>'
-                | '~'
-                | '^'
-        )
+            last_significant,
+            '_' | '$' | ')' | ']' | '}' | '\'' | '"' | '`'
+        ))
 }
 
 /// The index of the `/` that closes a regex literal starting at `start`, or
