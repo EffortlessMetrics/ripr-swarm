@@ -499,19 +499,15 @@ rather than accepted with its inline tests back.
 
 ```bash
 cargo login
-cd target/publish-stage
-cargo publish --allow-dirty -p ripr-contract
+(cd target/publish-stage && cargo publish --allow-dirty -p ripr-contract)
 ```
 
 2. Read back the exact public `ripr-contract` version, checksum, and metadata
 from crates.io under a bounded polling/timeout policy and verify the published
 checksum matches the repository root's `target/package/publish-receipt.json`
 and that the receipt's `verification` is `packaged-check-passed` before
-attempting `ripr`:
-
-```bash
-curl -fsSL "https://crates.io/api/v1/crates/ripr-contract/<version>"
-```
+attempting `ripr`. Use the bounded readback commands in
+[the release transaction](RELEASE_TRANSACTION.md).
 
 A transient index delay is not a product failure, but an unavailable or
 mismatched `ripr-contract` dependency is not permission to publish `ripr`
@@ -525,7 +521,7 @@ around the edge.
 
 ```bash
 cargo xtask publish-precheck
-cargo publish --allow-dirty -p ripr
+(cd target/publish-stage && cargo publish --allow-dirty -p ripr)
 ```
 
 4. Read back the public `ripr` checksum and compare it to the receipt's
