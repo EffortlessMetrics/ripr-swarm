@@ -4276,11 +4276,11 @@ fn bracket_continuation_ranges_cover_lines_that_start_inside_a_bracket() -> Resu
     for line in 1..=8 {
         let expected = (3..=5).contains(&line);
         assert_eq!(facts.new_line_in(line), expected);
-        assert_eq!(facts.new_statement_span(line), expected.then_some((2, 5)));
+        assert_eq!(facts.line(line, None).span, expected.then_some((2, 5)));
     }
     let malformed = super::no_behavior::BracketEvidence::read(Some("x = (\n"), None);
     assert!(malformed.new_line_in(1));
-    assert!(malformed.new_statement_span(1).is_none());
+    assert!(malformed.line(1, None).span.is_none());
     Ok(())
 }
 
@@ -4302,17 +4302,17 @@ fn explicit_join_ranges_use_token_gaps_and_keep_indentation_boundaries() {
             let expected = (6..=7).contains(&line);
             assert_eq!(evidence.new_line_in(line), expected, "{line}");
             assert_eq!(evidence.old_line_in(line), expected, "{line}");
-            assert_eq!(
-                evidence.new_statement_span(line),
-                expected.then_some((3, 7))
-            );
+            assert_eq!(evidence.line(line, None).span, expected.then_some((3, 7)));
         }
     }
+    let string_receiver = "\"a\" \\\n  \"b\" \\\n  .format_map(values)\n";
+    let evidence = super::no_behavior::BracketEvidence::read(Some(string_receiver), None);
+    assert_eq!(evidence.line(2, None).span, Some((1, 3)));
     // A space after the backslash is a lexer error. Keep existing fallback.
     let bad = "x = \"a\" \\ \n    \"b\"\n";
     let evidence = super::no_behavior::BracketEvidence::read(Some(bad), None);
     assert!(evidence.new_line_in(2));
-    assert_eq!(evidence.new_statement_span(2), None);
+    assert_eq!(evidence.line(2, None).span, None);
     assert!(!evidence.old_line_in(2));
 }
 

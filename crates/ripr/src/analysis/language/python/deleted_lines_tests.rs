@@ -1850,7 +1850,7 @@ fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<()
         let source =
             format!("def capped_total(items):\n    {first}\n        \" the payload!\"\n{close}");
         let test = format!(
-            "from src.cart import capped_total\n\ndef test_message():\n    assert capped_total([]) == {original:?}\n"
+            "from src.cart import capped_total\n\ndef test_message():\n    assert capped_total([1]) == {original:?}\n"
         );
         let findings = analyze_with_test(
             "changed-continuation",
@@ -1866,11 +1866,19 @@ fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<()
                     && f.probe.location.line == 3
             })
             .ok_or_else(|| format!("no candidate finding on line 3 of {source}"))?;
-        Ok::<_, String>((finding.probe.family, finding.class))
+        Ok::<_, String>((finding.probe.family, finding.class, finding.related_tests))
     };
     let returned = shape("return (", "    )\n", " the payload")?;
     assert_eq!(returned.0, crate::domain::ProbeFamily::ReturnValue);
     assert_eq!(shape("return\\", "", " the payload")?, returned);
+
+    assert!(
+        !returned.2.is_empty(),
+        "the control must select an assertion"
+    );
+    for first in ["if items: return \\", "marker = 1; return \\"] {
+        assert_eq!(shape(first, "", " the payload")?, returned);
+    }
 
     // Both assignment spellings must report the suffix. Their right-hand
     // sides go through the existing classifier for the enclosing statement.
