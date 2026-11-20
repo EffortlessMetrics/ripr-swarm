@@ -2003,18 +2003,10 @@ pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<
 /// (#9851 vocabulary) instead of the host's errno text. Kept separate because
 /// some policy reports still classify a missing input by that errno text.
 fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
-    read_report_input_at(label, path, path)
-}
-
-pub(crate) fn read_report_input_at(
-    label: &str,
-    path: &Path,
-    display: &Path,
-) -> Result<String, String> {
     crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "read {label} {} failed: {}",
-            output::baseline_delta::display_path(display),
+            output::baseline_delta::display_path(path),
             crate::bounded_input::read_failure_detail(&err)
         )
     })
