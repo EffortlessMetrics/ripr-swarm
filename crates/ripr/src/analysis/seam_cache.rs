@@ -1956,7 +1956,10 @@ type ClassifiedSeamsWithLimit = (Vec<ClassifiedSeam>, Option<CachedSeamLimitInfo
 fn read_classified_cache_file(path: &Path) -> std::io::Result<Vec<u8>> {
     let ceiling = classified_seam_cache_encoded_shard_ceiling_bytes()
         .unwrap_or(CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
-    crate::bounded_input::read_with_limit(path, ceiling as u64)
+    let result = crate::bounded_input::read_with_limit(path, ceiling as u64);
+    #[cfg(test)]
+    tests::record_classified_load(|work| work.reads_finished += 1);
+    result
 }
 
 /// Names the entry file in a corrupt-load reason so a burst of
@@ -2843,10 +2846,11 @@ impl RepoSeamFactCache {
             // Two keys can hash to the same file name.
             return Ok(CacheLoad::Miss);
         }
-        if let Err(reason) = envelope.validate_integrity() {
+        let integrity = envelope.validate_integrity();
+        cancellation::checkpoint()?;
+        if let Err(reason) = integrity {
             return Ok(corrupt_entry(&path, reason));
         }
-        cancellation::checkpoint()?;
         Ok(CacheLoad::Hit((
             envelope.classified_seams,
             envelope.seam_limit_info,
@@ -2960,10 +2964,11 @@ impl RepoSeamFactCache {
         if !manifest.matches_key(key) {
             return Ok(CacheLoad::Miss);
         }
-        if let Err(reason) = manifest.validate_integrity() {
+        let integrity = manifest.validate_integrity();
+        cancellation::checkpoint()?;
+        if let Err(reason) = integrity {
             return Ok(corrupt_entry(&manifest_path, reason));
         }
-        cancellation::checkpoint()?;
         if manifest.shards.is_empty() && manifest.total_seams != 0 {
             return Ok(CacheLoad::CorruptIgnored {
                 reason: "sharded manifest has no shards for non-empty seam payload".to_string(),
@@ -3055,7 +3060,9 @@ impl RepoSeamFactCache {
                     reason: format!("sharded cache key mismatch in {}", shard.file),
                 });
             }
-            if let Err(reason) = envelope.validate_integrity() {
+            let integrity = envelope.validate_integrity();
+            cancellation::checkpoint()?;
+            if let Err(reason) = integrity {
                 return Ok(corrupt_entry(&shard_path, reason));
             }
             if envelope.sharded_cache_schema_version != manifest.sharded_cache_schema_version
@@ -4612,6 +4619,8 @@ impl CacheEnvelope {
         semantic_body_digest(CACHE_ENVELOPE_DIGEST_DOMAIN, self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
+        #[cfg(test)]
+        tests::record_classified_load(|work| work.validations_started += 1);
         let expected = self.expected_digest()?;
         if self.payload_digest.as_deref() == Some(expected.as_str()) {
             Ok(())
@@ -4679,6 +4688,8 @@ impl ShardedCacheManifest {
         semantic_body_digest(SHARDED_MANIFEST_DIGEST_DOMAIN, self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
+        #[cfg(test)]
+        tests::record_classified_load(|work| work.validations_started += 1);
         let expected = self.expected_digest()?;
         if self.payload_digest.as_deref() == Some(expected.as_str()) {
             Ok(())
@@ -4695,6 +4706,8 @@ impl ShardedCacheEnvelope {
         semantic_body_digest(SHARDED_ENVELOPE_DIGEST_DOMAIN, self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
+        #[cfg(test)]
+        tests::record_classified_load(|work| work.validations_started += 1);
         let expected = self.expected_digest()?;
         if self.payload_digest.as_deref() == Some(expected.as_str()) {
             Ok(())
@@ -4739,7 +4752,12 @@ mod codec {
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Result<CacheEnvelope, String> {
-        serde_json::from_slice(bytes).map_err(|err| format!("decode failed: {err}"))
+        #[cfg(test)]
+        super::tests::record_classified_load(|work| work.decodes_started += 1);
+        let result = serde_json::from_slice(bytes).map_err(|err| format!("decode failed: {err}"));
+        #[cfg(test)]
+        super::tests::record_classified_load(|work| work.decodes_finished += 1);
+        result
     }
 
     #[cfg(test)]
@@ -4750,8 +4768,13 @@ mod codec {
     }
 
     pub(super) fn decode_sharded_manifest(bytes: &[u8]) -> Result<ShardedCacheManifest, String> {
-        serde_json::from_slice(bytes)
-            .map_err(|err| format!("decode sharded manifest failed: {err}"))
+        #[cfg(test)]
+        super::tests::record_classified_load(|work| work.decodes_started += 1);
+        let result = serde_json::from_slice(bytes)
+            .map_err(|err| format!("decode sharded manifest failed: {err}"));
+        #[cfg(test)]
+        super::tests::record_classified_load(|work| work.decodes_finished += 1);
+        result
     }
 
     #[cfg(test)]
@@ -4760,8 +4783,13 @@ mod codec {
     }
 
     pub(super) fn decode_shard(bytes: &[u8]) -> Result<ShardedCacheEnvelope, String> {
-        serde_json::from_slice(bytes)
-            .map_err(|err| format!("decode sharded cache file failed: {err}"))
+        #[cfg(test)]
+        super::tests::record_classified_load(|work| work.decodes_started += 1);
+        let result = serde_json::from_slice(bytes)
+            .map_err(|err| format!("decode sharded cache file failed: {err}"));
+        #[cfg(test)]
+        super::tests::record_classified_load(|work| work.decodes_finished += 1);
+        result
     }
 
     #[cfg(test)]
@@ -7156,6 +7184,156 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(super) struct ClassifiedLoadWork {
+        pub(super) reads_finished: usize,
+        pub(super) decodes_started: usize,
+        pub(super) decodes_finished: usize,
+        pub(super) validations_started: usize,
+    }
+
+    thread_local! {
+        static CLASSIFIED_LOAD_WORK: std::cell::Cell<ClassifiedLoadWork> =
+            std::cell::Cell::new(ClassifiedLoadWork::default());
+    }
+
+    pub(super) fn record_classified_load(update: impl FnOnce(&mut ClassifiedLoadWork)) {
+        CLASSIFIED_LOAD_WORK.with(|slot| {
+            let mut work = slot.get();
+            update(&mut work);
+            slot.set(work);
+        });
+    }
+
+    fn classified_load_work() -> ClassifiedLoadWork {
+        CLASSIFIED_LOAD_WORK.with(std::cell::Cell::get)
+    }
+
+    fn classified_load_deadline_when(
+        expired: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> cancellation::AnalysisCancellationToken {
+        let now = std::time::Instant::now();
+        let budget = std::time::Duration::from_secs(1);
+        cancellation::AnalysisCancellationToken::with_budget(
+            now,
+            budget,
+            Arc::new(move || if expired() { now + budget } else { now }),
+        )
+    }
+
+    #[test]
+    fn classified_cache_cancellation_precedes_bad_digest() -> Result<(), String> {
+        use cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
+
+        let mut failures = Vec::new();
+        for (unit, stop_after) in [("single", 1), ("manifest", 1), ("last shard", 3)] {
+            let scratch = integrity_scratch("classified-cancel-corrupt")?;
+            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+            let key = empty_state().cache_key();
+            let seams = vec![sample_classified(); 2];
+            cache.store_classified_seams_with_limit(&key, &seams, None, 1)?;
+            let path = match unit {
+                "single" => {
+                    // Keep a valid sharded fallback under the same key.
+                    cache.store_classified_seams_with_limit(&key, &seams, None, 2)?;
+                    assert!(matches!(
+                        cache.load_sharded_classified_seams(&key)?,
+                        CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == seams.len()
+                    ));
+                    cache.entry_path(&key)
+                }
+                "manifest" => cache.sharded_manifest_path(&key),
+                _ => cache.sharded_shard_path(&key, 1)?,
+            };
+            assert_classified_cache_values(&cache, &key, &seams)?;
+            write_invalid_integrity(&path, Some("sha256:bad"))?;
+
+            let active = AnalysisCancellationToken::new();
+            INTEGRITY_WORK.with(|work| work.set((0, 0, 0)));
+            let result = with_token(&active, || cache.load_classified_seams_with_fallback(&key))?;
+            assert!(
+                matches!(result, CacheLoad::CorruptIgnored { ref reason }
+                    if reason.contains(&*path.to_string_lossy())
+                        && reason.contains("mismatching semantic payload digest")),
+                "{unit} should report corruption at {}: {result:?}",
+                path.display()
+            );
+            assert_eq!(INTEGRITY_WORK.with(std::cell::Cell::get).0, stop_after);
+            assert_eq!(active.observed_abort(), None);
+
+            INTEGRITY_WORK.with(|work| work.set((0, 0, 0)));
+            let token = classified_load_deadline_when(move || {
+                INTEGRITY_WORK.with(std::cell::Cell::get).0 >= stop_after
+            });
+            let result = with_token(&token, || cache.load_classified_seams_with_fallback(&key));
+            let hashes = INTEGRITY_WORK.with(std::cell::Cell::get).0;
+            if result.as_ref().err().map(String::as_str)
+                != Some("analysis cancelled: DeadlineExceeded")
+                || token.observed_abort() != Some(AnalysisAbortKind::DeadlineExceeded)
+                || hashes != stop_after
+            {
+                failures.push(format!(
+                    "{unit}: result {result:?}, hashes {hashes}/{stop_after}"
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn classified_cache_cancellation_stops_before_the_next_load_phase() -> Result<(), String> {
+        use cancellation::{AnalysisAbortKind, with_token};
+
+        let mut failures = Vec::new();
+        // A sharded lookup first reads a missing single entry. Reaching the
+        // last shard then requires a verified manifest and first shard.
+        for (unit, reads, prior_units) in
+            [("single", 1, 0), ("manifest", 2, 0), ("last shard", 4, 2)]
+        {
+            let scratch = integrity_scratch("classified-cancel-phase")?;
+            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+            let key = empty_state().cache_key();
+            let seams = vec![sample_classified(); 2];
+            let store_limit = if unit == "single" { 2 } else { 1 };
+            cache.store_classified_seams_with_limit(&key, &seams, None, store_limit)?;
+            assert_classified_cache_values(&cache, &key, &seams)?;
+
+            for after_decode in [false, true] {
+                CLASSIFIED_LOAD_WORK.with(|slot| slot.set(ClassifiedLoadWork::default()));
+                let decodes = prior_units + usize::from(after_decode);
+                let token = classified_load_deadline_when(move || {
+                    let work = classified_load_work();
+                    if after_decode {
+                        work.decodes_finished >= decodes
+                    } else {
+                        work.reads_finished >= reads
+                    }
+                });
+                let result = with_token(&token, || cache.load_classified_seams_with_fallback(&key));
+                let actual = classified_load_work();
+                let expected = ClassifiedLoadWork {
+                    reads_finished: reads,
+                    decodes_started: decodes,
+                    decodes_finished: decodes,
+                    validations_started: prior_units,
+                };
+                if result.as_ref().err().map(String::as_str)
+                    != Some("analysis cancelled: DeadlineExceeded")
+                    || token.observed_abort() != Some(AnalysisAbortKind::DeadlineExceeded)
+                    || actual != expected
+                {
+                    let phase = if after_decode { "decode" } else { "read" };
+                    failures.push(format!(
+                        "{unit} after {phase}: result {result:?}, saw {actual:?}, expected {expected:?}"
+                    ));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
         Ok(())
     }
 

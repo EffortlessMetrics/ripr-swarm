@@ -280,13 +280,13 @@ corruption. Previous unsigned generations cold-recompute. Invalid file facts
 must not contribute known-file inventory; an invalid shard rejects the whole
 set, and corrupt monolithic entries must not select a sharded substitute.
 
-Full and compact classified-cache reads observe analysis cancellation between
-the read, decode, and verification phases of a single entry or manifest,
-between verified shards, and immediately before admitting a hit. A cancelled
-lookup propagates the analysis abort and discards any provisional shard
-prefix. These are cooperative checkpoints at the existing byte-bounded file
-and processing boundaries. A synchronous read or decode can finish before
-the next checkpoint.
+Full and compact classified-cache loads check for cancellation after reads,
+decodes, and digest verification, before using the phase result. This includes
+a digest failure that would otherwise report corruption. Checkpoints also run
+between shards and before admitting a hit. A cancelled lookup propagates the
+analysis abort and discards any provisional shard prefix. The checkpoints are
+cooperative. Synchronous read, decode, and digest work can finish before the
+next checkpoint.
 
 JSON formatting is not part of this semantic digest. Composer state skipped
 by serialization is recomputed. The checksum is not writer authentication:
