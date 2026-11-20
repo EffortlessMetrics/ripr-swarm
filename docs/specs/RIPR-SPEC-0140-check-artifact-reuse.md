@@ -107,10 +107,10 @@ resolution), and reuse re-resolves the base-to-live-working-tree diff
 through git and re-hashes it. Worktree drift between write and reuse
 changes the diff bytes and fails closed on `diff_bytes_hash`.
 
-### `CheckArtifactV1` envelope, full-fidelity findings
+### `CheckArtifactV2` envelope, full-fidelity findings
 
 The artifact is a schema-versioned JSON envelope
-(`schema_version = "ripr-check-artifact-v1"`) with `tool`, `analyzer_version`,
+(`schema_version = "ripr-check-artifact-v2"`) with `tool`, `analyzer_version`,
 an `identity` block, and the complete `Finding` set — serde derives on the
 domain probe types, including the uncapped related-tests list and the
 probe owner. The existing `check --json` render is unchanged.
@@ -122,7 +122,11 @@ same path replaces it via rename (last writer wins); concurrent writers
 use distinct temp names (pid + clock + process-local sequence) so one
 writer's failure cannot tear another's artifact.
 
-The envelope stays at `ripr-check-artifact-v1` for the `worktree` diff
+Version 2 records the post-policy `owner_opt_outs` entries alongside the findings.
+Replay reads the saved decision for the selected finding. Regenerate v1
+artifacts because they cannot distinguish a withheld finding from a live one.
+
+The original envelope stayed at `ripr-check-artifact-v1` for the `worktree` diff
 source: adding an enum variant is additive — artifacts written before the
 variant existed still parse under v1, and an older binary reading a new
 `worktree` artifact fails closed on serde's unknown-variant error instead
@@ -231,7 +235,7 @@ artifact stores the uncapped related-tests list.
 
 ## Required Evidence
 
-- `CheckArtifactV1` envelope and atomic write in
+- `CheckArtifactV2` envelope and atomic write in
   `crates/ripr/src/app/check_artifact.rs`.
 - Serde round-trip derives on the domain probe types in
   `crates/ripr-contract/src/domain/probe.rs`, `classification.rs`, `language.rs`.

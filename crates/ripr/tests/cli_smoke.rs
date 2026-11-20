@@ -25809,7 +25809,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         assert_success(&check);
         let artifact_text = std::fs::read_to_string(&artifact)
             .map_err(|err| format!("artifact was not written: {err}"))?;
-        assert!(artifact_text.contains("\"ripr-check-artifact-v1\""));
+        assert!(artifact_text.contains("\"ripr-check-artifact-v2\""));
         assert!(artifact_text.contains("\"identity\""));
         assert!(artifact_text.contains("\"diff_bytes_hash\""));
         assert_sample_diff_artifact(&artifact_text, &fixture.0, "draft")?;
@@ -26044,7 +26044,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult
         );
 
         // Unsupported schema version.
-        let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
+        let stale = original.replace("ripr-check-artifact-v2", "ripr-check-artifact-v1");
         assert_ne!(stale, original, "schema mutation must change the artifact");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
