@@ -5585,6 +5585,15 @@ tests = [
   "crates/ripr/tests/ripr_check_action.rs::a_check_that_could_not_complete_fails_with_its_reason",
   "crates/ripr/tests/ripr_check_action.rs::replayed_report_text_cannot_issue_workflow_commands",
   "crates/ripr/tests/ripr_check_action.rs::each_invocation_keeps_its_own_report",
+  "crates/ripr/tests/ripr_check_action.rs::an_explicit_branch_base_on_a_shallow_checkout_is_fetched_and_deepened",
+  "crates/ripr/tests/ripr_check_action.rs::a_bare_branch_base_the_checkout_lacks_is_fetched_as_its_remote_branch",
+  "crates/ripr/tests/ripr_check_action.rs::a_bare_base_that_is_no_remote_branch_reaches_ripr_unchanged",
+  "crates/ripr/tests/ripr_check_action.rs::a_base_that_looks_like_an_option_is_refused_before_git_or_ripr_run",
+  "crates/ripr/tests/ripr_check_action.rs::a_push_to_another_branch_compares_with_the_fetched_default_branch",
+  "crates/ripr/tests/ripr_check_action.rs::a_push_to_the_default_branch_compares_with_the_commit_before_the_push",
+  "crates/ripr/tests/ripr_check_action.rs::a_first_push_to_the_default_branch_leaves_the_base_to_ripr",
+  "crates/ripr/tests/ripr_check_action.rs::the_failure_reason_keeps_the_fix_hint_and_drops_progress_lines",
+  "crates/ripr/tests/ripr_check_action.rs::the_action_silences_progress_without_a_flag_a_pinned_release_may_lack",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
