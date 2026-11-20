@@ -3421,7 +3421,7 @@ fn pilot_rust_exclusion_of_an_unreadable_only_tree_has_no_invented_count() {
 
     let artifacts = pilot_artifacts();
     let excluded =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &[])
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], false, &[])
             .with_unanalyzed(Vec::new(), true)
             .with_rust_exclusion(Some(0));
     let context = PilotSummaryContext {
