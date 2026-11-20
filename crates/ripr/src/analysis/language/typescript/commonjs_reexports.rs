@@ -38,6 +38,11 @@ pub(crate) struct CommonJsReExports {
     pub(crate) entries: Vec<((String, String), (String, String))>,
     /// `(module, source)` for `module.exports = require('./source')`.
     pub(crate) forwards: Vec<(String, String)>,
+    /// Names this module assigns exactly once onto its CommonJS exports
+    /// (`exports.NAME = ...`, `module.exports = { NAME: ... }`), whatever the
+    /// value. A whole-module forward INTO this module resolves only these
+    /// names (and the whole value), never an unexported declaration.
+    pub(crate) own_names: Vec<String>,
 }
 
 /// One forwarded value: the `require()` source and the member picked off it
@@ -80,7 +85,7 @@ pub(crate) fn commonjs_reexports(
             uses.visit_statement(statement);
         }
     }
-    if uses.binds_require {
+    if uses.binds_require || top_level_this(body) {
         return out;
     }
     let locals = require_locals(body);
@@ -197,6 +202,17 @@ pub(crate) fn commonjs_reexports(
             (member.clone(), target),
         ));
     }
+    // The same name written twice: the last value wins at runtime, so neither
+    // the named edge nor a whole-module forward under it is safe.
+    if counts.values().any(|count| *count > 1) {
+        out.forwards.clear();
+    }
+    out.own_names = counts
+        .iter()
+        .filter(|(name, count)| !name.is_empty() && **count == 1)
+        .map(|(name, _)| (*name).to_string())
+        .collect();
+    out.own_names.sort();
     let mut seen: HashSet<&str> = HashSet::new();
     for (name, value, _, _) in &named {
         if name.is_empty() || counts.get(name.as_str()) != Some(&1) {
@@ -229,9 +245,40 @@ pub(crate) fn commonjs_reexports(
         out.forwards.clear();
         if named.iter().any(|(name, _, _, _)| name.is_empty()) {
             out.entries.clear();
+            out.own_names.clear();
         }
     }
     out
+}
+
+/// Whether a top-level statement reads `this` outside any function or class
+/// body. At module scope CommonJS binds `this` to `module.exports`, so
+/// `this.parse = ...` rewrites an export without naming `module`/`exports`.
+fn top_level_this(body: &[Statement<'_>]) -> bool {
+    #[derive(Default)]
+    struct TopLevelThis(bool);
+    impl<'a> oxc_ast_visit::Visit<'a> for TopLevelThis {
+        fn visit_this_expression(&mut self, _: &oxc_ast::ast::ThisExpression) {
+            self.0 = true;
+        }
+        // A function or class body binds its own `this`; an arrow inherits it.
+        fn visit_function_body(&mut self, _: &oxc_ast::ast::FunctionBody<'a>) {}
+        fn visit_class_body(&mut self, _: &oxc_ast::ast::ClassBody<'a>) {}
+        fn visit_arrow_function_expression(
+            &mut self,
+            arrow: &oxc_ast::ast::ArrowFunctionExpression<'a>,
+        ) {
+            for statement in &arrow.body.statements {
+                self.visit_statement(statement);
+            }
+        }
+    }
+    use oxc_ast_visit::Visit;
+    let mut visitor = TopLevelThis::default();
+    for statement in body {
+        visitor.visit_statement(statement);
+    }
+    visitor.0
 }
 
 enum ExportTarget {

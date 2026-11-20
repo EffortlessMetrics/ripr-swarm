@@ -16,13 +16,15 @@ const NAMED_OWNER: &str =
 const OTHER: &str = "module.exports = function other(str) {\n  return str;\n};\n";
 const QS_TEST: &str = "var qs = require('../lib/index.js');\n\ntest('parses', () => {\n  expect(qs.parse('a=1')).toEqual(['a=1']);\n});\n";
 
+/// The finding's class and whether a related test reaches the owner through
+/// the re-export graph (`ReExportChainFollowed`), the relation this change adds.
 fn class_in(
     label: &str,
     owner: &str,
     barrel: Option<&str>,
     test_source: &str,
     extra: &[(&str, &str)],
-) -> Result<ExposureClass, String> {
+) -> Result<(ExposureClass, bool), String> {
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("lib/parse.js"), owner)?;
     ts_write_file(&root.join("lib/other.js"), OTHER)?;
@@ -42,24 +44,29 @@ fn class_in(
         )],
     );
     let _ = std::fs::remove_dir_all(&root);
-    result?
+    let finding = result?
         .findings
         .into_iter()
         .next()
-        .map(|finding| finding.class)
-        .ok_or_else(|| format!("{label}: expected a finding"))
+        .ok_or_else(|| format!("{label}: expected a finding"))?;
+    let chained = finding.related_tests.iter().any(|test| {
+        test.relation_reason == Some(crate::domain::RelationReason::ReExportChainFollowed)
+    });
+    Ok((finding.class, chained))
 }
 
 fn linked(label: &str, owner: &str, barrel: &str, test_source: &str) -> Result<(), String> {
-    let class = class_in(label, owner, Some(barrel), test_source, &[])?;
-    if class == ExposureClass::NoStaticPath {
-        return Err(format!("{label}: barrel did not link the owner"));
+    let (class, chained) = class_in(label, owner, Some(barrel), test_source, &[])?;
+    if class == ExposureClass::NoStaticPath || !chained {
+        return Err(format!(
+            "{label}: barrel did not link the owner through the re-export chain ({class:?}, chained={chained})"
+        ));
     }
     Ok(())
 }
 
 fn unlinked(label: &str, owner: &str, barrel: &str, test_source: &str) -> Result<(), String> {
-    let class = class_in(label, owner, Some(barrel), test_source, &[])?;
+    let (class, _) = class_in(label, owner, Some(barrel), test_source, &[])?;
     if class != ExposureClass::NoStaticPath {
         return Err(format!("{label}: expected no_static_path, got {class:?}"));
     }
@@ -154,14 +161,16 @@ fn renamed_export_links_through_its_exported_name() -> Result<(), String> {
 
 #[test]
 fn chained_barrels_link_within_the_hop_bound() -> Result<(), String> {
-    let class = class_in(
+    let (class, chained) = class_in(
         "cjs-b-chain",
         FN_OWNER,
         Some("module.exports = { parse: require('./parse') };\n"),
         "var qs = require('../index.js');\n\ntest('parses', () => {\n  expect(qs.parse('a=1')).toEqual(['a=1']);\n});\n",
         &[("index.js", "module.exports = require('./lib');\n")],
     )?;
-    assert_ne!(class, ExposureClass::NoStaticPath);
+    if class == ExposureClass::NoStaticPath || !chained {
+        return Err(format!("cjs-b-chain: expected a chained link, got {class:?}"));
+    }
     Ok(())
 }
 
@@ -184,14 +193,16 @@ fn chain_past_the_hop_bound_stays_unlinked() -> Result<(), String> {
         .iter()
         .map(|(a, b)| (a.as_str(), b.as_str()))
         .collect();
-    let class = class_in(
+    let (class, _) = class_in(
         "cjs-b-deep",
         NAMED_OWNER,
         None,
         "var qs = require('../a0.js');\n\ntest('parses', () => {\n  expect(qs.parse('a=1')).toEqual(['a=1']);\n});\n",
         &extra_refs,
     )?;
-    assert_eq!(class, ExposureClass::NoStaticPath);
+    if class != ExposureClass::NoStaticPath {
+        return Err(format!("cjs-b-deep: expected no_static_path, got {class:?}"));
+    }
     Ok(())
 }
 
@@ -358,4 +369,88 @@ fn barrel_extraction_records_only_literal_relative_requires() {
             .entries
             .is_empty()
     );
+}
+
+/// A whole-module forward exposes only what the source exports. A
+/// declaration the source never assigns onto `exports` is `undefined` on the
+/// barrel, so `qs.helper(...)` cannot reach it (review of #15284).
+#[test]
+fn whole_forward_does_not_reach_an_unexported_declaration() -> Result<(), String> {
+    let owner = "exports.parse = function parse(s) { return helper(s); };\nfunction helper(str) {\n  return str.split('&');\n}\n";
+    let test_source = "var qs = require('../lib/index.js');\n\ntest('helper', () => {\n  expect(qs.helper('a=1')).toEqual(['a=1']);\n});\n";
+    unlinked(
+        "cjs-r-unexported",
+        owner,
+        "module.exports = require('./parse');\n",
+        test_source,
+    )
+}
+
+/// The same name written twice over a whole forward: the last value wins at
+/// runtime, so neither write nor the forward links the owner.
+#[test]
+fn a_twice_overlaid_name_over_a_forward_stays_unlinked() -> Result<(), String> {
+    unlinked(
+        "cjs-r-dup-overlay",
+        NAMED_OWNER,
+        "module.exports = require('./parse');\nmodule.exports.parse = require('./other');\nmodule.exports.parse = require('./other');\n",
+        QS_TEST,
+    )
+}
+
+/// Exports rewritten from a nested scope, through a rebound `exports`, a
+/// local `require`, or a top-level `this`, refuse the whole barrel.
+#[test]
+fn hidden_export_rewrites_refuse_the_barrel() -> Result<(), String> {
+    for (label, barrel) in [
+        (
+            "cjs-r-nested-fn",
+            "exports.parse = require('./parse').parse;\nfunction init() { module.exports.parse = require('./other'); }\ninit();\n",
+        ),
+        (
+            "cjs-r-try",
+            "exports.parse = require('./parse').parse;\ntry { exports.parse = require('./other'); } catch (e) {}\n",
+        ),
+        (
+            "cjs-r-rebind",
+            "exports.parse = require('./parse').parse;\nexports = { parse: require('./other') };\n",
+        ),
+        (
+            "cjs-r-local-require",
+            "function require(p) { return { parse: function () {} }; }\nexports.parse = require('./parse').parse;\n",
+        ),
+        (
+            "cjs-r-this",
+            "exports.parse = require('./parse').parse;\nthis.parse = require('./other');\n",
+        ),
+    ] {
+        unlinked(label, NAMED_OWNER, barrel, QS_TEST)?;
+    }
+    Ok(())
+}
+
+/// A source module mocked behind an unmocked barrel breaks the chain, and a
+/// `qs.parse(` that appears only in a comment or string, or on a different
+/// local, does not link.
+#[test]
+fn a_mocked_source_or_a_non_call_mention_stays_unlinked() -> Result<(), String> {
+    let barrel = "module.exports = { parse: require('./parse') };\n";
+    unlinked(
+        "cjs-r-mock-source",
+        FN_OWNER,
+        barrel,
+        "jest.mock('../lib/parse');\nvar qs = require('../lib/index.js');\n\ntest('parses', () => {\n  expect(qs.parse('a=1')).toEqual(['a=1']);\n});\n",
+    )?;
+    unlinked(
+        "cjs-r-comment",
+        FN_OWNER,
+        barrel,
+        "var qs = require('../lib/index.js');\n\ntest('parses', () => {\n  // qs.parse('a=1')\n  expect('qs.parse(1)').toEqual('x');\n});\n",
+    )?;
+    unlinked(
+        "cjs-r-other-local",
+        FN_OWNER,
+        barrel,
+        "var qs = require('../lib/index.js');\nvar other = require('../lib/other.js');\n\ntest('parses', () => {\n  expect(other.parse('a=1')).toEqual(['a=1']);\n});\n",
+    )
 }

@@ -115,6 +115,9 @@ pub(crate) struct ReExportIndex {
     /// every export name (and the whole value, `default`) resolves in the
     /// source. A name the barrel itself records in `entries` wins.
     commonjs_forwards: HashMap<String, String>,
+    /// Names each module assigns exactly once onto its CommonJS exports: a
+    /// whole-module forward into that module resolves only these (#15284).
+    commonjs_own_names: HashMap<String, HashSet<String>>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -242,6 +245,7 @@ impl ReExportIndex {
         let mut ambiguous_enum_modules = HashSet::new();
         let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
         let mut commonjs_forwards: HashMap<String, String> = HashMap::new();
+        let mut commonjs_own_names: HashMap<String, HashSet<String>> = HashMap::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
             let path = normalized_path(file);
@@ -284,6 +288,12 @@ impl ReExportIndex {
             star_edges.extend(file_facts.star_edges);
             for (from, to) in file_facts.commonjs_forwards {
                 commonjs_forwards.entry(from).or_insert(to);
+            }
+            if !file_facts.commonjs_own_names.is_empty() {
+                commonjs_own_names
+                    .entry(module.clone())
+                    .or_default()
+                    .extend(file_facts.commonjs_own_names);
             }
             outbound_calls.extend(
                 file_facts
@@ -329,6 +339,7 @@ impl ReExportIndex {
             outbound_by_imported: HashMap::new(),
             rename_aliases: HashMap::new(),
             commonjs_forwards,
+            commonjs_own_names,
         };
         index.index_outbound_calls();
         index
@@ -904,6 +915,18 @@ impl ReExportIndex {
     /// with an index file (`src/index.ts` → `src/index`) is used. When
     /// neither is known the path is returned unchanged (it then matches no
     /// indexed module and nothing is credited through it).
+    /// Whether `source` exports `name` itself: its whole value (`default`), an
+    /// ES declaration export, or a CommonJS `exports.NAME` write (#15284).
+    fn source_exports_name(&self, source: &str, name: &str) -> bool {
+        if name == "default" {
+            return true;
+        }
+        let canonical = self.canonical_module(source);
+        [&self.local_exports, &self.commonjs_own_names]
+            .iter()
+            .any(|names| names.get(&canonical).is_some_and(|names| names.contains(name)))
+    }
+
     fn canonical_module(&self, module: &str) -> String {
         if self.modules.contains(module) {
             return module.to_string();
@@ -1057,8 +1080,13 @@ impl ReExportIndex {
                 enum_context,
             ) {
                 // The forward asserts the source's `module.exports` is this
-                // module's; an unrecorded name is the source's own binding.
-                ExportResolution::NotFound if enum_context.is_none() => {
+                // module's: an unrecorded name is the source's own binding
+                // only when the source exports it (the whole value, an ES
+                // declaration export, or a CommonJS `exports.NAME` write).
+                // A declaration the source never exports is `undefined`.
+                ExportResolution::NotFound
+                    if enum_context.is_none() && self.source_exports_name(source, name) =>
+                {
                     ExportResolution::Found(self.canonical_module(source), name.to_string())
                 }
                 resolved => resolved,
@@ -1707,6 +1735,10 @@ pub(crate) struct ModuleExportFacts {
     /// `module.exports = require('./source')` forwards (#15284).
     #[serde(default)]
     pub(crate) commonjs_forwards: Vec<(String, String)>,
+    /// Names the module assigns exactly once onto its CommonJS exports
+    /// (#15284).
+    #[serde(default)]
+    pub(crate) commonjs_own_names: Vec<String>,
 }
 
 impl ModuleExportFacts {
@@ -1725,6 +1757,12 @@ impl ModuleExportFacts {
         string_pair_bytes(&self.entries)
             .saturating_add(tuple_bytes(&self.star_edges))
             .saturating_add(tuple_bytes(&self.commonjs_forwards))
+            .saturating_add(
+                self.commonjs_own_names
+                    .iter()
+                    .map(String::len)
+                    .sum::<usize>(),
+            )
             .saturating_add(
                 self.namespace_exports
                     .iter()
@@ -1958,6 +1996,7 @@ pub(crate) fn module_export_facts(
         super::commonjs_reexports::commonjs_reexports(relative, body, alias_map, workspace_root);
     facts.entries.extend(commonjs.entries);
     facts.commonjs_forwards = commonjs.forwards;
+    facts.commonjs_own_names = commonjs.own_names;
     facts
 }
 
