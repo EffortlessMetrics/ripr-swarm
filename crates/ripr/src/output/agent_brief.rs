@@ -546,13 +546,19 @@ mod tests {
         let mut limited = classified();
         limited.evidence.propagate = stage(StageState::Unknown);
         let explicit = AgentBriefResolvedWorkingSet::seam_id(limited.seam.id().as_str());
-        let seams = [limited];
+        let mut covered = classified();
+        covered.class = SeamGripClass::StronglyGripped;
+        let seams = [limited, covered];
         let files = AgentBriefResolvedWorkingSet::files(vec!["src/pricing.rs".into()]);
         let config = RiprConfig::default();
+        let lines = vec![AgentBriefLine::new("src/pricing.rs", 88)];
+        let diff = AgentBriefResolvedWorkingSet::diff("change.diff", lines.clone());
+        let base = AgentBriefResolvedWorkingSet::base("main", lines);
         for (inventory, scope, expected) in [
-            (&seams[..], &files, Some(1)),
-            (&seams[..0], &files, Some(0)),
-            (&seams[..], &explicit, None),
+            (&seams[..1], &files, Some((1, 1))),
+            (&seams[1..], &diff, Some((1, 0))),
+            (&seams[..0], &base, Some((0, 0))),
+            (&seams[..1], &explicit, None),
         ] {
             let selection = select_agent_brief_seams(
                 inventory,
@@ -567,8 +573,11 @@ mod tests {
             let limits = &brief["limits"];
             for (field, count) in [
                 ("cap_omitted_seams", expected.map(|_| 0)),
-                ("omitted_by_policy", expected),
-                ("static_limited_omitted_seams", expected),
+                ("omitted_by_policy", expected.map(|(policy, _)| policy)),
+                (
+                    "static_limited_omitted_seams",
+                    expected.map(|(_, limited)| limited),
+                ),
             ] {
                 assert_eq!(
                     limits.get(field).cloned(),
