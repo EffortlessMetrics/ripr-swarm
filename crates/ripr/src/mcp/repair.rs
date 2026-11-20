@@ -410,7 +410,7 @@ fn durable_attempt_document(
     limitations.push("ordinary next-action displays bind the portable root `.` and are presentation only; the host-local root path is intentionally not projected and a display is never execution authority; trust-bound or store-qualified continuations keep their persisted advanced spelling".to_string());
     // #8766: a restart the shared repair gate refuses is named as by-hand work.
     limitations.extend(selected.restart_withheld.clone());
-    json!({
+    let mut document = json!({
         "schema_version": REPAIR_ATTEMPT_SCHEMA_VERSION,
         "attempt_id": manifest.repair_attempt_id.as_str(),
         "origin": "durable_store",
@@ -444,7 +444,15 @@ fn durable_attempt_document(
             "receipt": format!("ripr://receipt/{}", manifest.repair_attempt_id.as_str()),
         },
         "claim_boundary": "Read-only projection of one durable repair attempt from this session's root store, loaded and digest-validated by the shared repair-attempt authority on every read. MCP did not create it and executes nothing it names; the host-local root path is intentionally not projected.",
-    })
+    });
+    // Retained limitations, non-claims and routes are producer text that may
+    // spell the checkout; `next_command` keeps its own portable-root contract.
+    for field in ["limitations", "non_claims", "command_routes"] {
+        if let Some(entry) = document.get_mut(field) {
+            project_root_relative(entry, root);
+        }
+    }
+    document
 }
 
 fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
@@ -706,31 +714,97 @@ pub(super) fn durable_receipt_document(
 /// Rewrite every string in `value` that spells the host-local repository root
 /// into its root-relative form: `<root>/a/b` becomes `a/b`, a bare `<root>`
 /// becomes `.`, and any other embedded occurrence becomes `<repo-root>`.
+/// Both the spelling the server was given and its canonical form are matched,
+/// because the CLI records the canonical root in receipts and manifests.
 fn project_root_relative(value: &mut Value, root: &Path) {
-    let spelled = root.display().to_string();
-    if spelled.is_empty() {
-        return;
+    let mut spellings = vec![root.display().to_string()];
+    if let Ok(canonical) = std::fs::canonicalize(root) {
+        spellings.push(canonical.display().to_string());
     }
-    let forward = spelled.replace('\\', "/");
-    project_root_relative_with(value, &[spelled, forward]);
+    project_root_relative_with(value, &root_spellings(&spellings));
+}
+
+/// Normalize root spellings: add the forward-slash form, trim trailing
+/// separators, drop empty or filesystem-root spellings (rewriting those would
+/// corrupt every path), dedupe, and order longest first.
+fn root_spellings(raw: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for spelling in raw {
+        for candidate in [spelling.clone(), spelling.replace('\\', "/")] {
+            let trimmed = candidate.trim_end_matches(['/', '\\']);
+            let bytes = trimmed.as_bytes();
+            let absolute = trimmed.starts_with('/')
+                || (bytes.len() > 2
+                    && bytes[0].is_ascii_alphabetic()
+                    && bytes[1] == b':'
+                    && matches!(bytes[2], b'/' | b'\\'));
+            if !absolute || trimmed.is_empty() || trimmed.ends_with(':') {
+                continue;
+            }
+            if !out.iter().any(|existing| existing == trimmed) {
+                out.push(trimmed.to_string());
+            }
+        }
+    }
+    out.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
+    out
+}
+
+fn is_path_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '/' | '\\')
+}
+
+fn project_root_text(text: &str, spelling: &str) -> String {
+    if text == spelling {
+        return ".".to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut previous: Option<char> = None;
+    while let Some(index) = rest.find(spelling) {
+        let (head, tail) = rest.split_at(index);
+        out.push_str(head);
+        let before = head.chars().next_back().or(previous);
+        let after_root = &tail[spelling.len()..];
+        let start_ok = before.is_none_or(|c| !is_path_char(c));
+        let next = after_root.chars().next();
+        let sentence_dot = next == Some('.')
+            && after_root[1..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_path_char(c));
+        if !start_ok
+            || next.is_some_and(|c| !matches!(c, '/' | '\\') && is_path_char(c) && !sentence_dot)
+        {
+            // Not a whole-root occurrence (sibling prefix or longer path).
+            out.push_str(spelling);
+            previous = spelling.chars().next_back();
+            rest = after_root;
+            continue;
+        }
+        if next.is_some_and(|c| matches!(c, '/' | '\\')) {
+            rest = &after_root[1..];
+            previous = None;
+            // `<root>/` at a path start: drop it; if nothing follows keep ".".
+            if rest.is_empty() || rest.starts_with(|c: char| !is_path_char(c)) {
+                out.push('.');
+            }
+        } else {
+            out.push_str("<repo-root>");
+            rest = after_root;
+            previous = Some('>');
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn project_root_relative_with(value: &mut Value, spellings: &[String]) {
     match value {
         Value::String(text) => {
             for spelling in spellings {
-                if text == spelling {
-                    *text = ".".to_string();
-                    return;
-                }
-                for separator in ["/", "\\"] {
-                    let prefixed = format!("{spelling}{separator}");
-                    if text.contains(&prefixed) {
-                        *text = text.replace(&prefixed, "");
-                    }
-                }
                 if text.contains(spelling.as_str()) {
-                    *text = text.replace(spelling.as_str(), "<repo-root>");
+                    *text = project_root_text(text, spelling);
                 }
             }
         }
@@ -1349,6 +1423,65 @@ pub(super) mod injected_prepare_panic {
 
 #[cfg(test)]
 pub(super) mod tests {
+
+    fn projected(text: &str, roots: &[&str]) -> String {
+        let spellings = root_spellings(&roots.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+        let mut value = Value::String(text.to_string());
+        project_root_relative_with(&mut value, &spellings);
+        value.as_str().unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn root_projection_matches_given_and_canonical_spellings() {
+        let roots = ["/var/w/repo-link", "/private/var/w/repo"];
+        assert_eq!(projected("/var/w/repo-link/a/b.json", &roots), "a/b.json");
+        assert_eq!(
+            projected("/private/var/w/repo/a/b.json", &roots),
+            "a/b.json"
+        );
+        assert_eq!(projected("/private/var/w/repo", &roots), ".");
+    }
+
+    #[test]
+    fn root_projection_never_rewrites_a_filesystem_root() {
+        assert_eq!(projected("/usr/lib/x", &["/"]), "/usr/lib/x");
+        assert!(root_spellings(&["/".to_string(), "".to_string()]).is_empty());
+        // A relative root such as `.` must never rewrite every dot.
+        assert!(root_spellings(&[".".to_string(), "repo".to_string()]).is_empty());
+        assert_eq!(projected("a.b/c.d", &["."]), "a.b/c.d");
+    }
+
+    #[test]
+    fn root_projection_trims_trailing_separators() {
+        assert_eq!(projected("/w/repo/a/b", &["/w/repo/"]), "a/b");
+        assert_eq!(projected("/w/repo", &["/w/repo/"]), ".");
+    }
+
+    #[test]
+    fn root_projection_leaves_sibling_prefixes_alone() {
+        assert_eq!(projected("/w/repo2/x", &["/w/repo"]), "/w/repo2/x");
+        assert_eq!(projected("/q/w/repo/x", &["/w/repo"]), "/q/w/repo/x");
+    }
+
+    #[test]
+    fn root_projection_rewrites_prose_and_backslash_spellings() {
+        assert_eq!(
+            projected("failed at /w/repo: bad; see /w/repo/t.rs.", &["/w/repo"]),
+            "failed at <repo-root>: bad; see t.rs."
+        );
+        assert_eq!(
+            projected("open /w/repo.", &["/w/repo"]),
+            "open <repo-root>."
+        );
+        assert_eq!(
+            projected("C:\\w\\repo\\a\\b.json", &["C:\\w\\repo"]),
+            "a\\b.json"
+        );
+        assert_eq!(
+            projected("C:/w/repo/a/b.json", &["C:\\w\\repo"]),
+            "a/b.json"
+        );
+    }
     use super::super::workspace::{CODE_ITEM_NOT_FOUND, CODE_STALE_SNAPSHOT};
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
