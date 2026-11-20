@@ -3722,13 +3722,17 @@ mod spec_0106_scan_tests {
             assert_eq!(err, E::Unclosed);
         "#;
         let facts = extract_assertions(body, 1);
-        let got = facts.iter().find(|f| f.text.contains("assert_eq!"));
-        assert!(got.is_some(), "must find the assert_eq! fact");
+        let actual: Vec<_> = facts
+            .iter()
+            .map(|fact| (fact.line, fact.text.as_str(), &fact.kind))
+            .collect();
         assert_eq!(
-            got.map(|f| f.kind.clone()),
-            Some(OracleKind::ExactErrorVariant),
-            "assert_eq!(err, E::Unclosed) on an unwrap_err binding must be \
-             ExactErrorVariant even when an argument holds an unmatched bracket"
+            actual,
+            [(
+                3,
+                "assert_eq!(err, E::Unclosed);",
+                &OracleKind::ExactErrorVariant
+            )]
         );
     }
 
