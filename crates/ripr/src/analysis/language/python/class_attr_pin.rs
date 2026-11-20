@@ -61,9 +61,12 @@ pub(super) fn python_class_attr_pin_gap(
         .flat_map(|assertion| pinning_literals(&assertion.text, &assertion.gate_text))
         .any(|pin| {
             let literal: Vec<char> = pin.text.chars().collect();
+            // The old text must fit with the half-fixed rule; the new text only
+            // needs one fixed character, so a placeholder-heavy new text that
+            // could still produce the literal never reads as rejecting it.
             literal.len() >= 4
-                && infix_matches(&old, &literal, pin.regex)
-                && !infix_matches(&new, &literal, pin.regex)
+                && text_matches(&old, &literal, &pin, true)
+                && !text_matches(&new, &literal, &pin, false)
         });
     if pinned {
         return None;
@@ -130,10 +133,14 @@ fn tokens(text: &str) -> Vec<Token> {
 }
 
 /// Whether some instantiation of the wildcards contains `literal` as a
-/// substring. With `regex`, a `.` in the literal stands for any one character
-/// (`re.search` semantics); it never counts as fixed text.
-fn infix_matches(tokens: &[Token], literal: &[char], regex: bool) -> bool {
-    (0..=tokens.len()).any(|begin| {
+/// substring (`pin.whole`: equals it). With `pin.regex`, a `.` in the literal
+/// stands for any one character (`re.search` semantics); it never counts as
+/// fixed text. With `strict`, at least half the literal must be fixed text;
+/// otherwise at least one character (a placeholder alone would fit any text).
+fn text_matches(tokens: &[Token], literal: &[char], pin: &PinLiteral, strict: bool) -> bool {
+    let regex = pin.regex;
+    let begins = if pin.whole { 0..=0 } else { 0..=tokens.len() };
+    begins.into_iter().any(|begin| {
         let mut states = vec![(begin, 0usize, 0usize)];
         // `fixed` stays in the key: with a regex `.`, two paths to the same
         // `(i, j)` can align different literal characters to fixed text.
@@ -144,7 +151,17 @@ fn infix_matches(tokens: &[Token], literal: &[char], regex: bool) -> bool {
             }
             // At least half the literal must be fixed text of the constant, so
             // a placeholder cannot absorb the whole literal.
-            if j == literal.len() && fixed * 2 >= literal.len() {
+            if j == literal.len()
+                && (if strict {
+                    fixed * 2 >= literal.len()
+                } else {
+                    fixed >= 1
+                })
+                && (!pin.whole
+                    || tokens.get(i..).is_some_and(|rest| {
+                        rest.iter().all(|token| matches!(token, Token::Wildcard))
+                    }))
+            {
                 return true;
             }
             match tokens.get(i) {
@@ -173,6 +190,9 @@ struct PinLiteral {
     text: String,
     /// The literal is a `re.search` pattern (`match=`, `assertRaisesRegex`).
     regex: bool,
+    /// The literal must equal the whole text (`==`, `assertEqual`), not just
+    /// occur in it (`in`, `assertIn`, a `match=` search).
+    whole: bool,
 }
 
 /// The literals that can tell the old text from the new: the `match=` /
@@ -189,6 +209,7 @@ fn pinning_literals(text: &str, gate_text: &str) -> Vec<PinLiteral> {
         out.push(PinLiteral {
             text: pattern,
             regex: true,
+            whole: false,
         });
     }
     for line in gate_text.lines() {
@@ -205,15 +226,20 @@ fn pinning_literals(text: &str, gate_text: &str) -> Vec<PinLiteral> {
             Stmt::Expr(expression) => assert_equal_literal(&expression.value),
             _ => None,
         };
-        if let Some(text) = literal {
-            out.push(PinLiteral { text, regex: false });
+        if let Some((text, whole)) = literal {
+            out.push(PinLiteral {
+                text,
+                regex: false,
+                whole,
+            });
         }
     }
     out
 }
 
-/// The string operand of `x == "..."`, `"..." == x` or `"..." in x`.
-fn compared_literal(test: &Expr) -> Option<String> {
+/// The string operand of `x == "..."`, `"..." == x` (whole text) or
+/// `"..." in x` (substring). Two constants compare nothing the owner made.
+fn compared_literal(test: &Expr) -> Option<(String, bool)> {
     let Expr::Compare(compare) = test else {
         return None;
     };
@@ -221,14 +247,20 @@ fn compared_literal(test: &Expr) -> Option<String> {
         return None;
     };
     match op {
-        ast::CmpOp::Eq => str_constant(right).or_else(|| str_constant(&compare.left)),
-        ast::CmpOp::In => str_constant(&compare.left),
+        ast::CmpOp::Eq => match (str_constant(&compare.left), str_constant(right)) {
+            (Some(_), Some(_)) | (None, None) => None,
+            (Some(text), None) | (None, Some(text)) => Some((text, true)),
+        },
+        ast::CmpOp::In if !matches!(right, Expr::Constant(_)) => {
+            str_constant(&compare.left).map(|text| (text, false))
+        }
         _ => None,
     }
 }
 
-/// The string argument of `self.assertEqual(x, "...")`.
-fn assert_equal_literal(value: &Expr) -> Option<String> {
+/// The string argument of `self.assertEqual(x, "...")` (whole text) or
+/// `self.assertIn("...", x)` (substring).
+fn assert_equal_literal(value: &Expr) -> Option<(String, bool)> {
     let Expr::Call(call) = value else {
         return None;
     };
@@ -240,9 +272,15 @@ fn assert_equal_literal(value: &Expr) -> Option<String> {
         return None;
     };
     if callee.ends_with("assertIn") {
-        return str_constant(first);
+        if matches!(second, Expr::Constant(_)) {
+            return None;
+        }
+        return str_constant(first).map(|text| (text, false));
     }
-    str_constant(second).or_else(|| str_constant(first))
+    match (str_constant(first), str_constant(second)) {
+        (Some(_), Some(_)) | (None, None) => None,
+        (Some(text), None) | (None, Some(text)) => Some((text, true)),
+    }
 }
 
 fn str_constant(expr: &Expr) -> Option<String> {

@@ -5853,7 +5853,7 @@ fn plain_method_return_change_keeps_exposed_beside_the_class_attribute_gate() ->
 
 // #15294 review: a `.` in a `match=` pattern is a regex wildcard, and a
 // literal outside an equality operand (a call input, an assert message, a
-// `!=` operand) cannot tell the old text from the new.
+// `!=` operand, a fragment on `==`) cannot tell the old text from the new.
 #[test]
 fn class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals() -> Result<(), String>
 {
@@ -5867,6 +5867,10 @@ fn class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals() 
         "from src.subject import Limit\n\ndef test_input():\n    assert Limit().check(\"too long.\") == \"abc\"\n",
         "from src.subject import Limit\n\ndef test_message():\n    assert Limit().check(\"abc\") == \"abc\", \"Value too long.\"\n",
         "from src.subject import Limit\n\ndef test_ne():\n    assert Limit().check(\"abc\") != \"too long.\"\n",
+        // An equality must name the whole text; a fragment of it does not.
+        "from src.subject import Limit\n\ndef test_eq_fragment():\n    assert Limit().check(\"abc\") == \"too long.\"\n",
+        // Two constants compare nothing the owner made.
+        "from src.subject import Limit\n\ndef test_self():\n    Limit().check(\"abc\")\n    assert \"Value too long.\" == \"Value too long.\"\n",
     ] {
         let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
         let finding = classify_change_with_source(
