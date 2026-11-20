@@ -151,7 +151,6 @@ impl Fixture {
             "AGENTS.md",
             "AGENTS.override.md",
             "CLAUDE.md",
-            "GEMINI.md",
             "docs/ARCHITECTURE.md",
             "policy",
             "fixtures/boundary_gap/expected",
