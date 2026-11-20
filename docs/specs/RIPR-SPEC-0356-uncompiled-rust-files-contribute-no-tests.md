@@ -234,9 +234,10 @@ against a member's unified set, computed from the same `cargo metadata
    enabled features name `dep:key` (metadata lists the implicit `key =
    ["dep:key"]` feature when no `dep:` syntax hides it) or a `key/feature`
    enable; an explicit feature that only shares the dependency's name does
-   not activate it. A strong `key/feature` enable also turns on the
-   dependent's own feature named `key` when one exists, as cargo does, so
-   that feature's enables count too; a weak `key?/feature` does not. Requests expand through the receiving member's
+   not activate it. For an optional dependency, a strong `key/feature` enable also
+   activates the dependent's own feature named `key` when present. A required
+   dependency can share a local feature's name without activating it. A weak
+   `key?/feature` leaves local activation unchanged. Requests expand through the receiving member's
    feature table, and the pass repeats until no set grows, so a chain
    through several members resolves.
 3. A build dependency does not count: under resolver 2 its features are
