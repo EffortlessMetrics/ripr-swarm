@@ -624,6 +624,11 @@ pub(crate) fn parse_policy_preview_promotion_options(
             "policy preview-promote requires --class <class>; add `--class <class>` to the command",
         )
     })?;
+    if !output::policy_preview_promotion::is_valid_class_name(&candidate_class) {
+        return Err(format!(
+            "policy preview-promote --class must be letters, digits, `_` or `-` only, for example `boundary_gap`; pass --class naming such a class instead of {candidate_class:?}"
+        ));
+    }
     let out = out.unwrap_or_else(|| {
         PathBuf::from(
             output::policy_preview_promotion::default_preview_promotion_out(
