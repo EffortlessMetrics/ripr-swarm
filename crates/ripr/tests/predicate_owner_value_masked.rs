@@ -398,3 +398,99 @@ fn sibling_module_glob_cannot_rebind_the_tests_option_constructor() -> Result<()
     }
     Ok(())
 }
+
+#[test]
+fn a_primitive_branch_must_change_the_compared_value_on_one_version() -> Result<(), String> {
+    for (body, expected) in [
+        (r#"assert_eq!(if over(10) { 1 } else { 2 }, 1);"#, "exposed"),
+        (r#"assert_eq!(2, if over(10) { 1 } else { 2 });"#, "exposed"),
+        (
+            r#"assert_eq!(match over(10) { true => 'y', false => 'n' }, 'y');"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!('n', match over(10) { false => 'n', true => 'y' });"#,
+            "exposed",
+        ),
+        (r#"assert_eq!(over(10).then_some(1), Some(1));"#, "exposed"),
+        (r#"assert_eq!(Some(1), over(10).then_some(1));"#, "exposed"),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 1 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(match over(10) { true => 'y', false => '\x79' }, 'y');"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(2));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 2 }, 3);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(match over(10) { true => 'y', false => 'n' }, 'x');"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 2 }, 1); assert_eq!(match over(10) { true => 'y', false => 'n' }, 'n');"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_eq!((over(10), over(9)), (false, false));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_ne!(Some(1), over(10).then_some(1));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 2 }, 1); assert_eq!(match over(10) { true => 'y', false => 'n' }, 'y');"#,
+            "exposed",
+        ),
+        (
+            r#"let _ = over(10); assert_eq!(if over(11) { 1 } else { 2 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(if true { 1 } else { over(10) as u8 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(false.then_some(over(10)), None);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(if over(10) { let _ = 1; 1 } else { 2 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(match over(10) { true if false => 'y', _ => 'n' }, 'n');"#,
+            "weakly_exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_branch_observer_cannot_borrow_another_tests_boundary() -> Result<(), String> {
+    let finding = predicate_finding_with_root_items(
+        "assert_eq!(if over(11) { 1 } else { 2 }, 1);",
+        "#[cfg(test)] mod boundary_only { use super::*; #[test] fn calls() { let _ = over(10); } }",
+    )?;
+    let class = finding.get("classification").and_then(Value::as_str);
+    if class != Some("weakly_exposed") {
+        return Err(format!(
+            "off-boundary branch borrowed a sibling call: {class:?}"
+        ));
+    }
+    Ok(())
+}

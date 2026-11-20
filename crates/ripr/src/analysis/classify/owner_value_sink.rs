@@ -1039,7 +1039,7 @@ impl Reader<'_> {
 }
 
 /// `text` parsed as one expression.
-fn parse_expression(text: &str) -> Option<ast::Expr> {
+pub(super) fn parse_expression(text: &str) -> Option<ast::Expr> {
     let wrapped = format!("fn ripr_operand() {{ let _ = {text}\n; }}");
     let parse = parse_clean_source_file_memoized(&wrapped)?;
     parse

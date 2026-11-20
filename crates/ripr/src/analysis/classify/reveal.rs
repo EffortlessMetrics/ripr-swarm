@@ -3014,7 +3014,20 @@ fn analyze_related_assertions(
                 && !cross_package_defeats_owner
                 && !match_context.owner_shadowed
                 && (return_admission.value_observer_identity)(test, assertion);
+            // A two-version branch verdict identifies the exact assertion that
+            // observes the selected call, including beside a second oracle.
+            let projected_boolean_observer = !matched
+                && credits_oracle
+                && matches!(probe.family, ProbeFamily::Predicate)
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && !test_is_should_panic(test)
+                && super::owner_pin::conditional_projection_assertion(assertion)
+                && (return_admission.primitive_bool_projected_result_identity)(test, assertion);
             let matched = matched
+                || projected_boolean_observer
                 || value_receiver_read
                 || effect_receiver_read
                 || recording_double_read
@@ -3341,6 +3354,7 @@ fn analyze_related_assertions(
                         cross_package_defeats_owner,
                     )
                     || wrapper_pinned
+                    || projected_boolean_observer
                     || (return_admission.primitive_bool_projected_result_identity)(test, assertion)
                     || (matches!(probe.family, ProbeFamily::Predicate)
                         && (return_admission.wrapper_return_pin)(test, assertion))

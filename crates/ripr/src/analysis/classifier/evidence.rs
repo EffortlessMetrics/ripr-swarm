@@ -1218,6 +1218,23 @@ impl ClassifiedProbeEvidence {
             .as_deref()
             .filter(|_| matches!(context.probe.family, ProbeFamily::Predicate))
             .and_then(|line| predicate_initialized_field(line, &context.probe.expression));
+        let projected_boolean = |test: &TestSummary, assertion: &OracleFact| {
+            context.workspace_complete
+                && matches!(context.probe.family, ProbeFamily::Predicate)
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::primitive_bool_projected_result_identity(
+                        owner,
+                        test,
+                        assertion,
+                        context.index,
+                        pin_syntax,
+                        owner_return_pin
+                            .as_ref()
+                            .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail),
+                        context.probe,
+                    )
+                })
+        };
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -1238,23 +1255,7 @@ impl ClassifiedProbeEvidence {
                             owner,
                         )
                     }),
-                primitive_bool_projected_result_identity: &|test, assertion| {
-                    context.workspace_complete
-                        && matches!(context.probe.family, ProbeFamily::Predicate)
-                        && context.owner_fn.is_some_and(|owner| {
-                            crate::analysis::classify::primitive_bool_projected_result_identity(
-                                owner,
-                                test,
-                                assertion,
-                                context.index,
-                                pin_syntax,
-                                owner_return_pin
-                                    .as_ref()
-                                    .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail),
-                                context.probe,
-                            )
-                        })
-                },
+                primitive_bool_projected_result_identity: &projected_boolean,
                 owner_return_pin: &owner_pin_admits,
                 fixture_receiver_pin: &fixture_receiver_pin_admits,
                 owner_return_pin_required: map_callback_pin_required,
@@ -1927,7 +1928,24 @@ impl ClassifiedProbeEvidence {
                         entry_loan: &entry_loan,
                     }),
                 context.index,
-            ) {
+            )
+            // Both fold outcomes belong to the actual arguments inside this
+            // same assertion. A fold that agrees across versions cannot pair.
+            && !context.owner_fn.is_some_and(|owner| {
+                context.related_tests.iter().any(|(test, reason)| {
+                    *reason == RelationReason::DirectOwnerCall
+                        && activation_credited.iter().any(|credited| std::ptr::eq(*credited, *test))
+                        && !test.attrs.iter().any(|attr| attr.contains("should_panic"))
+                        && !test.body.contains("should_panic")
+                        && !import_defeats(test, &owner.name)
+                        && !cross_package_defeats(test, &owner.name)
+                        && test.assertions.iter().any(|assertion| {
+                            crate::analysis::classify::conditional_projection_assertion(assertion)
+                                && assertion_admitted(test, assertion)
+                                && projected_boolean(test, assertion)
+                        })
+                })
+            }) {
             StageEvidence::new(
                 StageState::Weak,
                 Confidence::Medium,

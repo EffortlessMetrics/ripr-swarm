@@ -56,6 +56,10 @@ mod fixture_receiver;
 mod helper_arguments;
 mod nominal_observer;
 pub(in crate::analysis) use boolean_projection::boolean_projection_matches_versions;
+pub(in crate::analysis) fn conditional_projection_assertion(assertion: &OracleFact) -> bool {
+    assertion_comparison_operands(&assertion.text)
+        .is_some_and(boolean_projection::has_conditional_operand)
+}
 pub(super) use nominal_observer::NominalObserverMemo;
 mod selected_error;
 pub(in crate::analysis) use selected_error::selected_unit_error_return;
@@ -4910,7 +4914,8 @@ pub(in crate::analysis) fn primitive_bool_projected_result_identity(
             .all(|side| side.trim_start().starts_with('('))
             || compared
                 .iter()
-                .all(|side| side.trim_start().starts_with("Some(")))
+                .all(|side| side.trim_start().starts_with("Some("))
+            || boolean_projection::has_conditional_operand(compared))
     {
         return crate::analysis::test_grip_evidence::baseline_owner(
             owner,

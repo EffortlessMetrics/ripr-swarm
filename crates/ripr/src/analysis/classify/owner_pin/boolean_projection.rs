@@ -11,6 +11,33 @@ use super::{
 use crate::analysis::test_grip_evidence::fold_boolean_owner_call;
 use ra_ap_syntax::{AstNode, ast};
 
+mod conditional;
+pub(in crate::analysis::classify) use conditional::has_conditional_operand;
+
+struct ComparedCall {
+    call: String,
+    when_false: bool,
+    when_true: bool,
+}
+
+impl ComparedCall {
+    fn equals(call: String, expected: bool) -> Self {
+        Self {
+            call,
+            when_false: !expected,
+            when_true: expected,
+        }
+    }
+
+    fn matches(&self, value: bool) -> bool {
+        if value {
+            self.when_true
+        } else {
+            self.when_false
+        }
+    }
+}
+
 pub(in crate::analysis) fn boolean_projection_matches_versions(
     owner: &FunctionSummary,
     baseline: &FunctionSummary,
@@ -26,7 +53,11 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         return None;
     }
     let compared = assertion_comparison_operands(&assertion.text)?;
-    let cells = if compared
+    let cells = if has_conditional_operand(compared) {
+        vec![conditional::comparison(
+            compared, test, assertion, index, syntax,
+        )?]
+    } else if compared
         .iter()
         .all(|side| side.trim_start().starts_with('('))
     {
@@ -54,7 +85,7 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
             Ok(expected) => (right, expected),
             Err(_) => (left, right.parse::<bool>().ok()?),
         };
-        vec![(call.to_string(), expected)]
+        vec![ComparedCall::equals(call.to_string(), expected)]
     };
     if function_declaration_is_async(owner, index) != Some(false)
         || !(test.start_line..=test.end_line).contains(&assertion.line)
@@ -65,21 +96,22 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         return None;
     }
     let (mut before_matches, mut after_matches) = (true, true);
-    for (call, expected) in cells {
-        if !is_whole_free_owner_call(&call, &owner.name)
-            || !OwnerReturnPin::field_call_binds_owner(owner, index, test, &call, syntax)
+    for cell in cells {
+        let call = &cell.call;
+        if !is_whole_free_owner_call(call, &owner.name)
+            || !OwnerReturnPin::field_call_binds_owner(owner, index, test, call, syntax)
         {
             return None;
         }
-        let arguments = super::super::activation::call_arguments(&call, &owner.name)?;
+        let arguments = super::super::activation::call_arguments(call, &owner.name)?;
         let (Some(before), Some(after)) = (
             fold_boolean_owner_call(baseline, &arguments),
             fold_boolean_owner_call(owner, &arguments),
         ) else {
             return None;
         };
-        before_matches &= before == expected;
-        after_matches &= after == expected;
+        before_matches &= cell.matches(before);
+        after_matches &= cell.matches(after);
     }
     Some((before_matches != unequal, after_matches != unequal))
 }
@@ -150,7 +182,7 @@ fn some_payload(operand: &str) -> Option<&str> {
     Some(text.get("Some(".len()..closing)?.trim())
 }
 
-fn tuple_cells([left, right]: [&str; 2]) -> Option<Vec<(String, bool)>> {
+fn tuple_cells([left, right]: [&str; 2]) -> Option<Vec<ComparedCall>> {
     let (left, right) = (tuple(left)?, tuple(right)?);
     let (actual, expected) = if right.fields().all(|field| bool_literal(&field).is_some()) {
         (left, right)
@@ -169,7 +201,10 @@ fn tuple_cells([left, right]: [&str; 2]) -> Option<Vec<(String, bool)>> {
             let ast::Expr::CallExpr(call) = call else {
                 return None;
             };
-            Some((call.syntax().text().to_string(), bool_literal(&literal)?))
+            Some(ComparedCall::equals(
+                call.syntax().text().to_string(),
+                bool_literal(&literal)?,
+            ))
         })
         .collect()
 }
