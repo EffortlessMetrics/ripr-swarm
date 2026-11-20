@@ -3681,6 +3681,21 @@ pub(crate) fn preview_seam_route(
     )
 }
 
+/// A diff probe can identify a changed expression for inspection even when
+/// its family has no corresponding seam. The id alone carries no diff scope.
+pub(crate) fn static_unknown_repair_hint(item: &str) -> Option<&'static str> {
+    let (file, suffix) = item.strip_prefix("probe:")?.split_once(':')?;
+    let fingerprint = suffix.strip_prefix("static_unknown:")?;
+    let hash = match fingerprint.split_once('.') {
+        Some((hash, ordinal)) if ordinal.parse::<u32>().ok()? >= 2 => hash,
+        Some(_) => return None,
+        None => fingerprint,
+    };
+    (!file.is_empty() && hash.len() == 8 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(
+        "a static_unknown finding ID has no repair seam; inspect this ID with `ripr explain` using the same root and diff options as the original `ripr check`",
+    )
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
     unknown_repair_item_reason(Some(root), item)
 }
@@ -3696,6 +3711,9 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
             no_seam_inventory_reason(language, ""),
             gap_bound_start_pointer(language)
         );
+    }
+    if let Some(hint) = static_unknown_repair_hint(item) {
+        return format!("repair item `{item}` cannot start a repair: {hint}");
     }
     let list = match root {
         Some(root) => format!(

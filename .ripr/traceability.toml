@@ -2301,6 +2301,8 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_ineligible_seam_refuses_without_attempt_or_lock",
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock",
   "crates/ripr/tests/task_first_facade.rs::repair_accepts_the_producer_gap_id_check_prints",
+  "crates/ripr/tests/task_first_facade.rs::static_unknown_range_id_routes_to_inspection",
+  "crates/ripr/tests/task_first_facade.rs::startable_predicate_routes_to_the_printed_repair",
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_names_only_the_seam_it_was_minted_from",
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_rejects_other_languages_and_hash_ids",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_prints_repair_identity_that_starts_the_same_seam",

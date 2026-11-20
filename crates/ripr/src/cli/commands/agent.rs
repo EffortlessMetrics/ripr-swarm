@@ -975,6 +975,13 @@ pub(in crate::cli) fn translate_seam_id_for(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
+            if matches!(surface, SeamIdSurface::Repair)
+                && let Some(hint) = crate::app::task_first::static_unknown_repair_hint(seam_id)
+            {
+                return Err(SeamIdTranslateError::Refused(format!(
+                    "{label} --seam-id `{seam_id}` cannot start a repair: {hint}"
+                )));
+            }
             let list = format!("`ripr pilot --root {root_arg}` to list current repair IDs");
             // The shared resolver just ran and returned `Unknown`, so the
             // packet surface's `ripr repair <finding-id>` recovery route
