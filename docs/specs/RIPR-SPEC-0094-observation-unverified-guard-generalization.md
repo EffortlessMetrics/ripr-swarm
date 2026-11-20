@@ -1114,9 +1114,11 @@ JSON `ripr` object and `evidence_stages`), while the human card re-derived
 "assertion missing". `label(0)` is the same value on every run whatever
 `discount` does, so the assertion is a constant, like `assert!(true)`.
 
-Rule, for every family, beside the #14968 literal rule. An assertion that is
-an unconditional top-level statement of the test body (the same position test
-as #14968) is dropped from the assertions reveal credits when its compared
+Rule, for every family, beside the #14968 literal rule. In a related test
+that may supply the oracle and is tied to the owner by a reach relation (a
+direct or helper call, not a name-only or same-file/module proximity
+relation), an assertion that is an unconditional top-level statement of the
+test body (the same position test as #14968) is dropped from the assertions reveal credits when its compared
 operands (never its message arguments) are built only from literals, `!`,
 `-`, parentheses, binary operators, and at least one call of a plain function
 path (`label`, `crate::label`, `demo::label`, `super::label`, no turbofish,
@@ -1153,6 +1155,9 @@ selects) leaves the assertion as it was.
 
 Known limits:
 
+- A test related only by name or by file/module proximity keeps its listed
+  oracle row, so a finding whose tests never reach the owner keeps its
+  "No test reaches the changed owner" reading.
 - A constant computed through a test-local binding (`let n = 0;
   assert_eq!(label(n), "zero")`) keeps its earlier credit; the rule reads the
   assertion's syntax, not the test's data flow.

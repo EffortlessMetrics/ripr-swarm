@@ -2750,12 +2750,15 @@ fn analyze_related_assertions(
                 && (path != name || !test_body_shadows_owner(test, name))
                 && (return_admission.closed_constant_call)(test, assertion, path)
         };
-        // A test that cannot supply the oracle (name-only, or proximity
-        // beside a reaching test) keeps its listed row as before: its miss
-        // already says it does not reach the owner.
+        // Only a test tied to the owner by a call, helper chain or other
+        // reach relation drops a constant this way. A name-only or
+        // proximity-only test keeps its listed row as before, so a finding
+        // whose tests never reach the owner keeps saying so.
         let constant_only_assertion = |assertion: &OracleFact| {
             super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
                 || credits_oracle
+                    && !name_only(*reason)
+                    && !is_proximity_only(*reason)
                     && super::literal_assertion::is_unconditional_closed_call_assertion(
                         test,
                         assertion,
