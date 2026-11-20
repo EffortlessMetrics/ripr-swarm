@@ -178,3 +178,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inherent_receiver_local_wrapper (15)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless inherent_receiver_local_wrapper --reason "..."`
+
+Updated:
+- `expected/human.txt`

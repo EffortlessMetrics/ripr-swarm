@@ -358,3 +358,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_returned_error_drop_plain (28)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/human.txt`

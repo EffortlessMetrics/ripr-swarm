@@ -105,7 +105,13 @@ The Summary names how many findings were found and how many the reader's
 suppression policy removed (`N found, M suppressed by your settings`),
 disclosing the suppressed remainder; the word is never "shown" and never
 "hidden", because the bounded digest renders exactly one finding and the
-`Hidden:` block below names the rest (#10691). `human-full` keeps the
+`Hidden:` block below names the rest (#10691). When several checks share one
+edited line (a predicate and a return value on the same line), the Summary
+names the line count the `Counts:` line prints (`2 changed behaviors checked
+on 1 candidate line`) so the number matches the edit (#15313). When every
+finding reads as noticed and `State:` says `no test gap found`, the Summary
+says `No test gap: N listed` instead of `N found`, so the two lines never
+disagree (#15313). `human-full` keeps the
 `N of M finding(s) unsuppressed` form with the stable class tokens, each
 glossed once on a `Terms:` line beneath the Summary.
 

@@ -614,3 +614,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guarded_result_match_swallowed (47)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless guarded_result_match_swallowed --reason "..."`
+
+Updated:
+- `expected/human.txt`

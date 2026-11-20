@@ -396,7 +396,10 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> String {
-    let mut out = render_header_summary(output, config, true);
+    let triage = triage::select_human_triage(output, config);
+    let all_clear = !output.findings.is_empty()
+        && triage::reads_all_clear(&triage, output, drill_in, provenance);
+    let mut out = render_header_summary(output, config, true, all_clear);
     render_analysis_outcome_disclosure(&mut out, output, true);
     render_suppression_policy_block(&mut out, output);
     render_owner_opt_out_block(&mut out, output);
@@ -410,7 +413,6 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             // paragraph: `Start here:` opens after a blank line here, as it
             // does after the analysis-outcome block on a run with findings.
             out.push('\n');
-            let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         let mut tail = String::new();
@@ -431,7 +433,6 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         return out;
     }
 
-    let triage = triage::select_human_triage(output, config);
     triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
     let mut tail = String::new();
     render_all_no_path_disclosure(&mut tail, output);
@@ -476,7 +477,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
 ) -> String {
-    let mut out = render_header_summary(output, config, false);
+    let mut out = render_header_summary(output, config, false, false);
 
     render_analysis_outcome_disclosure(&mut out, output, false);
     render_suppression_policy_block(&mut out, output);
@@ -636,7 +637,12 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
 /// `plain` selects the bounded (default) human wording (#8165): plain words
 /// only, no schema tokens. `human-full` passes `false` and keeps the schema
 /// summary byte-for-byte.
-fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool) -> String {
+pub(super) fn render_header_summary(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    plain: bool,
+    all_clear: bool,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
@@ -730,12 +736,24 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                     s.proof_harness_only
                 ));
             }
+            // #15313: two checks (a predicate and a return value) can sit on one
+            // edited line. Name the line count the `Counts:` line also prints, so a
+            // reader can match "2 changed behaviors" to their one-line edit.
+            let on_lines = shared_line_note(output);
+            // #15313: `found` means "listed for review", and a reader takes it as a
+            // gap count. `all_clear` is the decision behind the Start here
+            // `State: no test gap found` (`triage::reads_all_clear`); the Summary
+            // says so in the same words, and only then.
+            let listed = if all_clear {
+                format!("No test gap: {unsuppressed} listed")
+            } else {
+                format!("{unsuppressed} found")
+            };
             out.push_str(&format!(
-                "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{owner_opt_out}{base_side}\n\n",
+                "Summary: {} changed {} checked{on_lines}: {}. {listed}, {} suppressed by your settings{owner_opt_out}{base_side}\n\n",
                 s.probes,
                 if s.probes == 1 { "behavior" } else { "behaviors" },
                 classes,
-                unsuppressed,
                 suppressed,
             ));
         }
@@ -767,6 +785,24 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
     }
     render_language_file_breakdown(&mut out, output);
     out
+}
+
+/// #15313: names the candidate-line count when several checks share a line
+/// (" on 1 candidate line"). Empty when each check has its own line or the run
+/// carries no analysis outcome. The count is the producer's own
+/// `candidate_line_count`, the number the `Counts:` line prints.
+fn shared_line_note(output: &CheckOutput) -> String {
+    let Some(outcome) = &output.analysis_outcome else {
+        return String::new();
+    };
+    let lines = outcome.counts.candidate_line_count;
+    if lines == 0 || lines >= outcome.counts.probe_count {
+        return String::new();
+    }
+    format!(
+        " on {lines} candidate {}",
+        if lines == 1 { "line" } else { "lines" }
+    )
 }
 
 /// #8389: base-side findings (`base_deleted`, `moved_or_renamed`) are counted
@@ -2328,7 +2364,7 @@ mod tests {
                 analyzed_revisions: None,
             };
 
-            let rendered = render_header_summary(&output, &RiprConfig::default(), false);
+            let rendered = render_header_summary(&output, &RiprConfig::default(), false, false);
 
             let expected = format!("root: {}\n", crate::output::path::human_path(&root));
             assert!(

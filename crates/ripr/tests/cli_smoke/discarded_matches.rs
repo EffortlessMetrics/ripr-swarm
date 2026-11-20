@@ -176,6 +176,32 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
+/// #15313 added two plain-Summary spellings that carry no new count: an
+/// " on N candidate line(s)" clause after `checked`, and `No test gap: N
+/// listed` for `N found` on an all-clear run. Fold both back so the positional
+/// count parse below reads the same numbers.
+fn plain_summary_without_15313_wording(body: &str) -> String {
+    let mut out = body.to_string();
+    if let Some(start) = out.find(" checked on ")
+        && let Some(colon) = out[start..].find(':')
+    {
+        let clause = &out[start + " checked".len()..start + colon];
+        if clause.ends_with(" candidate line") || clause.ends_with(" candidate lines") {
+            out.replace_range(start + " checked".len()..start + colon, "");
+        }
+    }
+    if let Some(start) = out.find("No test gap: ")
+        && let Some(end) = out[start..].find(" listed")
+    {
+        let count = out[start + "No test gap: ".len()..start + end].to_string();
+        out.replace_range(
+            start..start + end + " listed".len(),
+            &format!("{count} found"),
+        );
+    }
+    out
+}
+
 /// Project a Summary line, in the historical or the plain-language spelling,
 /// onto one canonical form that still carries every count: changed behaviors,
 /// the five class buckets, and the reported / total findings. A count
@@ -192,7 +218,8 @@ fn canonical_summary(line: &str) -> String {
             "Summary: behaviors={behaviors} buckets={buckets:?} reported={reported} total={total}\n"
         )
     };
-    let body = line.trim_end_matches('\n');
+    let body = plain_summary_without_15313_wording(line.trim_end_matches('\n'));
+    let body = body.as_str();
     // Historical human-full / current human-full: tokens unchanged.
     if body.contains("reachable_unrevealed") {
         let head =

@@ -489,3 +489,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_conditional_failure (36)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human.txt`
