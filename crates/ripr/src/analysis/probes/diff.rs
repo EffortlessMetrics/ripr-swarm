@@ -3121,13 +3121,39 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
     // the line and no common suffix reaches into it (`if a != b` from
     // `if a == b {`), the old line's tail cannot be split from the shape.
     let tail = added_line.len() - end;
-    if prefix < start || suffix < tail || (start == 0 && prefix == 0) || (tail == 0 && suffix == 0)
-    {
+    if prefix < start {
+        return None;
+    }
+    if suffix < tail {
+        // The body after the shape changed too, so no common suffix reaches
+        // it (#15420: `if total >= 100 { a }` -> `if total > 200 { b }`).
+        return removed_head_span(added_line, start, end, removed_line);
+    }
+    if (start == 0 && prefix == 0) || (tail == 0 && suffix == 0) {
         return None;
     }
     let removed_end = removed_line.len().checked_sub(added_line.len() - end)?;
     let span = removed_line.get(start..removed_end)?.trim();
     (!span.is_empty()).then(|| span.to_string())
+}
+
+/// The old condition when the shape is the head of a `{` block on the added
+/// line, the text before it is unchanged, and the block body changed too: the
+/// old text from the shape's start up to its own opening `{`. A cut equal to
+/// the shape means the edit is in the body only, so it keeps the whole line.
+fn removed_head_span(
+    added_line: &str,
+    start: usize,
+    end: usize,
+    removed_line: &str,
+) -> Option<String> {
+    if !added_line.get(end..)?.trim_start().starts_with('{') {
+        return None;
+    }
+    let old_tail = removed_line.get(start..)?;
+    let span = old_tail.get(..old_tail.find('{')?)?.trim();
+    let shape = added_line.get(start..end)?.trim();
+    (!span.is_empty() && span != shape).then(|| span.to_string())
 }
 
 /// Byte lengths of the text the two lines share at the start and at the
@@ -6195,6 +6221,48 @@ mod tests {
         ));
         // Operators in strings or comments are masked.
         assert!(same_connectives("s == \"a && b\"", "s != \"a && b\""));
+    }
+
+    #[test]
+    fn removed_span_of_shape_matches_granularity_when_operator_literal_and_body_change() {
+        // #15420: the issue's exact pair.
+        assert_eq!(
+            removed_span_of_shape(
+                "if total > 200 { total - 25 } else { total }",
+                "total > 200",
+                "if total >= 100 { total - 10 } else { total }"
+            )
+            .as_deref(),
+            Some("total >= 100")
+        );
+        // Operator-only and literal-only edits keep their cut.
+        assert_eq!(
+            removed_span_of_shape(
+                "if total > 100 { total - 10 } else { total }",
+                "total > 100",
+                "if total >= 100 { total - 10 } else { total }"
+            )
+            .as_deref(),
+            Some("total >= 100")
+        );
+        assert_eq!(
+            removed_span_of_shape(
+                "if total >= 200 { total - 10 } else { total }",
+                "total >= 200",
+                "if total >= 100 { total - 10 } else { total }"
+            )
+            .as_deref(),
+            Some("total >= 100")
+        );
+        // A body-only edit never cuts the old line.
+        assert_eq!(
+            removed_span_of_shape(
+                "if total >= 100 { total - 25 }",
+                "total >= 100",
+                "if total >= 100 { total - 10 }"
+            ),
+            None
+        );
     }
 
     #[test]
