@@ -1657,6 +1657,48 @@ mod tests {
     }
 
     #[test]
+    fn non_tty_held_stream_heartbeats_one_interval_after_disclosure() {
+        // STANDARD on a non-TTY stream: the stage line discloses the run at
+        // 2s, and the first heartbeat waits a full `heartbeat_every` (8s)
+        // after it, then repeats on that cadence.
+        let buffer = Buffer::new();
+        let (clock, now) = FakeClock::start();
+        let sink = CliProgressSink::with_writer_and_clock(
+            Box::new(buffer.clone()),
+            false,
+            ProgressPolicy::STANDARD,
+            now,
+        );
+        sink.stop_heartbeat();
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        clock.advance_millis(1_900);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(buffer.text(), "", "held before 2s");
+        clock.advance_millis(200);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        let disclosed = "ripr progress: analyzing [diff]\n";
+        assert_eq!(buffer.text(), disclosed, "stage line only at disclosure");
+        clock.advance_millis(7_900);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(buffer.text(), disclosed, "no heartbeat inside the interval");
+        clock.advance_millis(200);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        let first = format!("{disclosed}ripr progress: analyzing still active after 10s\n");
+        assert_eq!(buffer.text(), first, "first heartbeat one interval later");
+        clock.advance_millis(7_900);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(buffer.text(), first, "throttled to heartbeat_every");
+        clock.advance_millis(200);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(
+            buffer.text(),
+            format!("{first}ripr progress: analyzing still active after 10s\n"),
+            "heartbeats keep the 8s cadence"
+        );
+    }
+
+    #[test]
     fn non_tty_fast_failure_keeps_stage_context_before_failed() {
         let text = held_run(300, AnalysisProgressStage::Failed);
         assert_eq!(
