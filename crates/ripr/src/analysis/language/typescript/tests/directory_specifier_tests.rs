@@ -190,6 +190,13 @@ fn require_of_other_directory_does_not_relate_to_root_index_owner() -> Result<()
 /// "alias resolution is not enabled" advice meant for bare aliases.
 #[test]
 fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> Result<(), String> {
+    // The second join escapes the workspace and cannot be attributed to a
+    // package or file obtained by clamping it to the workspace root.
+    assert_relative_import_disclosed("..")?;
+    assert_relative_import_disclosed("../..")
+}
+
+fn assert_relative_import_disclosed(specifier: &str) -> Result<(), String> {
     let root = ts_unique_tempdir("dir-unresolved-parent")?;
     ts_write_file(
         &root.join("src/calc.js"),
@@ -197,7 +204,7 @@ fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> R
     )?;
     ts_write_file(
         &root.join("test/calc.test.js"),
-        "const { isAdult } = require('..');\n\ntest('adult', () => {\n  expect(isAdult(18)).toBe(true);\n});\n",
+        &format!("const {{ isAdult }} = require('{specifier}');\n\ntest('adult', () => {{\n  expect(isAdult(18)).toBe(true);\n}});\n"),
     )?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -219,7 +226,7 @@ fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> R
             .evidence
             .iter()
             .any(|line| line.contains("typescript_relative_import_unresolved")),
-        "`require('..')` must be disclosed as an unresolved relative import: {:?}",
+        "`require('{specifier}')` must be disclosed as an unresolved relative import: {:?}",
         finding.evidence
     );
     assert!(
