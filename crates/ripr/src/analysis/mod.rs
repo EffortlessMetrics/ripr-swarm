@@ -181,17 +181,22 @@ pub(crate) use seam_inventory::hold_seam_limit_mutators;
 #[cfg(test)]
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
+#[cfg(test)]
+pub(crate) use seam_inventory::{
+    CLASSIFIED_INVENTORY_SEAMS, SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES,
+};
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
-    REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, SecondStageScope, TargetedTestInventoryError,
-    announce_seam_facts_cache_misses, apply_pilot_seam_budget,
+    REPO_EXPOSURE_SEAM_LIMIT_ENV, RepairWidening, ScopedClassifiedSeamInventory,
+    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, SecondStageScope,
+    TargetedTestInventoryError, announce_seam_facts_cache_misses, apply_pilot_seam_budget,
     classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
     diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
+    inventory_classified_seams_report_for_repair_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
@@ -204,8 +209,6 @@ pub(crate) use seam_inventory::{
     workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
-#[cfg(test)]
-pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{

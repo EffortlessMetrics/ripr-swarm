@@ -448,7 +448,50 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<ClassifiedSeamsReport, String> {
-    inventory_classified_seams_report_inner(root, config, None)
+    inventory_classified_seams_report_inner(
+        root,
+        config,
+        None,
+        None,
+        &mut RepairWidening::NotApplied,
+    )
+}
+
+/// How a repair-mode inventory resolved the widen decision (#15384).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RepairWidening {
+    /// No cold widening happened: the caller applies its own widen decision to
+    /// the returned cut (a cache hit, an explicit limit, or an in-range count).
+    NotApplied,
+    /// The cold walk saw a default-cap cut within the repair ceiling after
+    /// discovery and classified every seam once. The report is the complete
+    /// widened inventory the old rerun produced.
+    Widened,
+    /// As [`Self::Widened`], but a Rust file the parse budget declined means
+    /// the widened inventory is not known complete, so the report keeps the
+    /// original default-cap cut and no rerun is needed.
+    DeclinedKeptCut,
+}
+
+/// Repair-mode inventory (#15384): when the cold walk discovers a built-in
+/// default cut whose exact total is within `repair_ceiling`, it widens the cap
+/// before classification instead of classifying the cut set and then the
+/// whole set again. Everything else behaves exactly like
+/// [`inventory_classified_seams_report_at_with_config`].
+pub(crate) fn inventory_classified_seams_report_for_repair_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    repair_ceiling: usize,
+) -> Result<(ClassifiedSeamsReport, RepairWidening), String> {
+    let mut widening = RepairWidening::NotApplied;
+    let report = inventory_classified_seams_report_inner(
+        root,
+        config,
+        None,
+        Some(repair_ceiling),
+        &mut widening,
+    )?;
+    Ok((report, widening))
 }
 
 /// Diff-aware pilot selection, using ordinary selected-path/byte cache identity.
@@ -457,13 +500,21 @@ pub(crate) fn inventory_pilot_seams_report_at_with_config(
     config: &RiprConfig,
     changed_paths: &[PathBuf],
 ) -> Result<ClassifiedSeamsReport, String> {
-    inventory_classified_seams_report_inner(root, config, Some(changed_paths))
+    inventory_classified_seams_report_inner(
+        root,
+        config,
+        Some(changed_paths),
+        None,
+        &mut RepairWidening::NotApplied,
+    )
 }
 
 fn inventory_classified_seams_report_inner(
     root: &Path,
     config: &RiprConfig,
     changed_paths: Option<&[PathBuf]>,
+    repair_ceiling: Option<usize>,
+    widening: &mut RepairWidening,
 ) -> Result<ClassifiedSeamsReport, String> {
     #[cfg(test)]
     WORKSPACE_CLASSIFIED_INVENTORIES.with(|count| count.set(count.get() + 1));
@@ -477,6 +528,8 @@ fn inventory_classified_seams_report_inner(
         config,
         changed_paths,
         &mut family_store_failures,
+        repair_ceiling,
+        widening,
     );
     trace_cache_family_store_failures(&family_store_failures, result.as_ref().ok());
     result
@@ -487,6 +540,8 @@ fn inventory_classified_seams_report_collect(
     config: &RiprConfig,
     changed_paths: Option<&[PathBuf]>,
     family_store_failures: &mut FileFactCacheStats,
+    repair_ceiling: Option<usize>,
+    widening: &mut RepairWidening,
 ) -> Result<ClassifiedSeamsReport, String> {
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
@@ -654,71 +709,121 @@ fn inventory_classified_seams_report_collect(
     }
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
-    let (classified, limit_info, lexical_fallback_files, compact_classified, evidence_limitations) =
-        match inventory_classified_seams_from_state_with_config(
-            &state,
-            config,
-            &analyzed_production_files,
-        ) {
-            Ok(pair) => {
-                trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
-                pair
-            }
-            Err(err) => {
-                trace_latency_phase("cold_compute", "error", compute_started.elapsed());
-                trace_latency_phase("total", "error", total_started.elapsed());
-                return Err(err);
-            }
-        };
+    let mut widened_cut: Option<WidenedCut> = None;
+    let (
+        mut classified,
+        mut limit_info,
+        lexical_fallback_files,
+        compact_classified,
+        evidence_limitations,
+    ) = match inventory_classified_seams_from_state_with_config(
+        &state,
+        config,
+        &analyzed_production_files,
+        repair_ceiling,
+        &mut widened_cut,
+    ) {
+        Ok(pair) => {
+            trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
+            pair
+        }
+        Err(err) => {
+            trace_latency_phase("cold_compute", "error", compute_started.elapsed());
+            trace_latency_phase("total", "error", total_started.elapsed());
+            return Err(err);
+        }
+    };
     // Best-effort write: a write failure does not fail analysis. The
     // result is already in memory; the next run just sees a miss again.
     // Persist the limit_info so a warm-path load returns the correct run_status.
-    let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.as_ref().map(Into::into);
-    let store_started = Instant::now();
-    trace_latency_phase(
-        "cache_store",
-        &format!(
-            "start_classified_{}_limit_{}",
-            classified.len(),
-            store_limit
-        ),
-        Duration::ZERO,
-    );
-    // #13340: a walk whose shared-table warm panicked answered every seam with
-    // the fail-closed stand-in. That is one run's transient fault, not a
-    // property of the inputs the key names, so it is never stored: the next
-    // run recomputes instead of replaying the stand-in as the cached result.
-    let (store_status, classified_store_stored) = if !evidence_limitations.is_empty() {
-        ("skipped_evidence_incomplete".to_owned(), false)
-    } else {
-        match cache.store_classified_seams_with_limit_and_fallback(
-            &key,
-            &classified,
-            cached_limit_info.as_ref(),
-            &lexical_fallback_files,
+    let mut key = key;
+    if let Some(cut) = widened_cut {
+        // #15384: the walk widened after discovery, so `classified` is the
+        // complete inventory the old rerun produced, keyed under the widened
+        // cap (`limit_{total}`) exactly as that rerun keyed it. The default-cap
+        // key keeps the entry the old first pass stored: the canonical
+        // prefix, whose per-seam evidence and class do not depend on the
+        // other seams, so later plain reads and repair warm starts hit.
+        let widened_key = {
+            let _cap = PilotInventoryDefault::widen_to(cut.total);
+            state.cache_key()
+        };
+        let cut_info = SeamLimitInfo {
+            analyzed: cut.cap,
+            total: cut.total,
+            source: SeamLimitSource::Default,
+        };
+        let cached_cut_info: CachedSeamLimitInfo = (&cut_info).into();
+        let store_context = ClassifiedFamilyStoreContext {
+            lexical_fallback_files: &lexical_fallback_files,
             store_limit,
-        ) {
-            Ok(status) => {
-                if let Some(advisory) = &status.advisory {
-                    eprintln!("ripr: {advisory}");
-                }
-                (status.label, true)
-            }
-            Err(reason) => {
-                eprintln!("ripr: repo seam cache store ignored ({reason})");
-                let label = cache_store_status_label(&reason);
-                family_store_failures.record_store_failure(
-                    PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
-                    FileFactStoreError {
-                        stage: FileFactStoreStage::ClassifiedSeamStore,
-                        message: reason,
-                    },
-                );
-                (label, false)
-            }
+            evidence_complete: evidence_limitations.is_empty(),
+        };
+        let widened_stored = store_classified_family(
+            &cache,
+            &widened_key,
+            &classified,
+            None,
+            &store_context,
+            family_store_failures,
+        );
+        if widened_stored && let Some(compact_classified) = compact_classified {
+            publish_compact_classified_family(
+                root,
+                &widened_key,
+                compact_classified,
+                &lexical_fallback_files,
+            );
         }
-    };
-    trace_latency_phase("cache_store", &store_status, store_started.elapsed());
+        let cut_len = cut.cap.min(classified.len());
+        store_classified_family(
+            &cache,
+            &key,
+            &classified[..cut_len],
+            Some(&cached_cut_info),
+            &store_context,
+            family_store_failures,
+        );
+        let declined = rust_index::declined_rust_files_at(root, &lexical_fallback_files);
+        if declined.is_empty() {
+            *widening = RepairWidening::Widened;
+            key = widened_key;
+        } else {
+            // A declined file has no seams in the inventory, so the widened
+            // set is not known complete: keep the original truncation.
+            *widening = RepairWidening::DeclinedKeptCut;
+            classified.truncate(cut_len);
+            limit_info = Some(cut_info);
+        }
+        trace_latency_phase("total", "computed", total_started.elapsed());
+        return Ok(ClassifiedSeamsReport {
+            classified,
+            corpus_key: key.is_reusable().then_some(key),
+            analyzed_production_files,
+            diff_bound_corpus,
+            limit_info,
+            skipped_generated,
+            naming_only_skips,
+            declined_rust_files: declined,
+            evidence_limitations: evidence_limitations
+                .into_iter()
+                .chain(unreadable_limitations)
+                .collect(),
+        });
+    }
+    let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.as_ref().map(Into::into);
+    let classified_store_stored = store_classified_family(
+        &cache,
+        &key,
+        &classified,
+        cached_limit_info.as_ref(),
+        &ClassifiedFamilyStoreContext {
+            lexical_fallback_files: &lexical_fallback_files,
+            store_limit,
+            evidence_complete: evidence_limitations.is_empty(),
+        },
+        family_store_failures,
+    );
     // #12506 dual publication: publish the compact-classified family the
     // summary renderer reads, derived inside this same cold walk, so a
     // classified run leaves summary-json's warm path populated instead of
@@ -746,6 +851,72 @@ fn inventory_classified_seams_report_collect(
             .chain(unreadable_limitations)
             .collect(),
     })
+}
+
+/// Best-effort store of one classified-family entry. Returns whether it was
+/// stored; a failed-closed evidence pass (#13340) is never stored, so the next
+/// run recomputes instead of replaying the stand-in.
+struct ClassifiedFamilyStoreContext<'a> {
+    lexical_fallback_files: &'a [PathBuf],
+    store_limit: usize,
+    evidence_complete: bool,
+}
+
+fn store_classified_family(
+    cache: &RepoSeamFactCache,
+    key: &RepoSeamCacheKey,
+    classified: &[ClassifiedSeam],
+    limit: Option<&CachedSeamLimitInfo>,
+    context: &ClassifiedFamilyStoreContext<'_>,
+    family_store_failures: &mut FileFactCacheStats,
+) -> bool {
+    let ClassifiedFamilyStoreContext {
+        lexical_fallback_files,
+        store_limit,
+        evidence_complete,
+    } = *context;
+    let store_started = Instant::now();
+    trace_latency_phase(
+        "cache_store",
+        &format!(
+            "start_classified_{}_limit_{}",
+            classified.len(),
+            store_limit
+        ),
+        Duration::ZERO,
+    );
+    let (store_status, stored) = if !evidence_complete {
+        ("skipped_evidence_incomplete".to_owned(), false)
+    } else {
+        match cache.store_classified_seams_with_limit_and_fallback(
+            key,
+            classified,
+            limit,
+            lexical_fallback_files,
+            store_limit,
+        ) {
+            Ok(status) => {
+                if let Some(advisory) = &status.advisory {
+                    eprintln!("ripr: {advisory}");
+                }
+                (status.label, true)
+            }
+            Err(reason) => {
+                eprintln!("ripr: repo seam cache store ignored ({reason})");
+                let label = cache_store_status_label(&reason);
+                family_store_failures.record_store_failure(
+                    PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                    FileFactStoreError {
+                        stage: FileFactStoreStage::ClassifiedSeamStore,
+                        message: reason,
+                    },
+                );
+                (label, false)
+            }
+        }
+    };
+    trace_latency_phase("cache_store", &store_status, store_started.elapsed());
+    stored
 }
 
 /// Publish the compact-classified family derived inside a classified cold
@@ -1378,10 +1549,21 @@ type ClassifiedSeamInventory = (
     Vec<AnalysisLimitation>,
 );
 
+/// A default-cap cut the repair path widened after discovery (#15384).
+#[derive(Clone, Copy, Debug)]
+struct WidenedCut {
+    /// The built-in cap the plain inventory would have cut at.
+    cap: usize,
+    /// The exact deduplicated total the walk classified in full.
+    total: usize,
+}
+
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
     production_files: &[PathBuf],
+    repair_ceiling: Option<usize>,
+    widened_cut: &mut Option<WidenedCut>,
 ) -> Result<ClassifiedSeamInventory, String> {
     let build_started = Instant::now();
     trace_latency_phase(
@@ -1411,8 +1593,28 @@ fn inventory_classified_seams_from_state_with_config(
     // inventory work, rather than after; every other behavior is unchanged.
     let limit_and_source = repo_exposure_seam_limit()?;
     let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
-    let bounded = inventory_seams_from_index_bounded(production_files, &cached.index, limit)?;
+    // #15384: a repair walk over a built-in default cap retains up to the
+    // repair ceiling, so the exact total is known after discovery and before
+    // any seam is classified. Discovery is the canonical sorted prefix, so
+    // the cut set is the first `limit` of the retained seams.
+    let widen_ceiling = repair_ceiling.filter(|ceiling| {
+        matches!(limit_and_source, Some((cap, SeamLimitSource::Default)) if cap < *ceiling)
+    });
+    let discover_limit = widen_ceiling.or(limit);
+    let mut bounded =
+        inventory_seams_from_index_bounded(production_files, &cached.index, discover_limit)?;
     cancellation::checkpoint()?;
+    if let (Some(ceiling), Some(cap)) = (widen_ceiling, limit)
+        && bounded.total_unique > cap
+        && bounded.total_unique <= ceiling
+    {
+        *widened_cut = Some(WidenedCut {
+            cap,
+            total: bounded.total_unique,
+        });
+    } else if let Some(cap) = limit {
+        bounded.seams.truncate(cap);
+    }
     // The retained-object peak is production-observable here (issue #4997):
     // the retained prefix stays within K while the trace reports the peak
     // retained count. It excludes the single in-flight candidate that
@@ -1424,7 +1626,7 @@ fn inventory_classified_seams_from_state_with_config(
     );
     let seams = bounded.seams;
     let limit_info = limit_and_source.and_then(|(limit, source)| {
-        if bounded.total_unique <= limit {
+        if bounded.total_unique <= limit || widened_cut.is_some() {
             None
         } else {
             trace_latency_phase(
@@ -3500,6 +3702,8 @@ fn classify_seams_owned_retaining(
     evidence: Vec<test_grip_evidence::TestGripEvidence>,
     input: super::witness::AdapterInput,
 ) -> Vec<ClassifiedSeam> {
+    #[cfg(test)]
+    CLASSIFIED_INVENTORY_SEAMS.with(|count| count.set(count.get() + seams.len()));
     let classified = seam_classification::classify_seams_owned(seams, evidence);
     super::witness::retain_classified_seams(&classified, input);
     classified
@@ -4527,6 +4731,9 @@ thread_local! {
     /// Uncapped seam-id walks [`locate_seam_file_at_with_config`] ran on this
     /// thread.
     pub(crate) static SEAM_FILE_LOCATIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+    /// Seams the full classified inventory classified on this thread (#15384).
+    pub(crate) static CLASSIFIED_INVENTORY_SEAMS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
@@ -12712,6 +12919,8 @@ marker = "libtest_mimic::Trial"
             &RiprConfig::default(),
             None,
             &mut failures,
+            None,
+            &mut RepairWidening::NotApplied,
         )?;
         Ok((report, failures))
     }

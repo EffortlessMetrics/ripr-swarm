@@ -908,7 +908,29 @@ pub(crate) fn inventory_for_repair(
     ),
     String,
 > {
-    let first = crate::analysis::inventory_classified_seams_at_with_config(root, config)?;
+    // #15384: a cold walk that discovers a default cut within the ceiling
+    // widens before classification, so each seam is classified once. A warm
+    // cache hit, an explicit limit or an in-range count falls through to the
+    // rerun decision below, which is unchanged.
+    let (report, widening) =
+        crate::analysis::inventory_classified_seams_report_for_repair_at_with_config(
+            root,
+            config,
+            REPAIR_SEAM_CEILING,
+        )?;
+    match widening {
+        crate::analysis::RepairWidening::Widened => {
+            report.require_complete_evidence("repair seam inventory")?;
+            return Ok((report.classified, report.limit_info));
+        }
+        crate::analysis::RepairWidening::DeclinedKeptCut => {
+            report.require_complete_evidence("seam inventory")?;
+            return Ok((report.classified, report.limit_info));
+        }
+        crate::analysis::RepairWidening::NotApplied => {}
+    }
+    report.require_complete_evidence("seam inventory")?;
+    let first = (report.classified, report.limit_info);
     if let Some(cap) = first.1.as_ref().and_then(repair_widened_cap) {
         let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
         let rerun =
@@ -4844,6 +4866,145 @@ pub(crate) mod tests {
             crate::analysis::repo_exposure_seam_limit()?,
             Some((DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, SeamLimitSource::Default))
         );
+        Ok(())
+    }
+
+    /// #15384: a cold repair walk over a repository just above the default
+    /// cap classifies each seam once, and its widened inventory, its stored
+    /// default-cap entry and its limit facts equal the old two-pass path (a
+    /// plain cut inventory, then a rerun under the widened cap). A ceiling
+    /// below the total keeps the cut and classifies only the cap.
+    #[test]
+    fn widened_repair_inventory_classifies_each_seam_once() -> Result<(), String> {
+        use crate::analysis::{
+            CLASSIFIED_INVENTORY_SEAMS, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, PilotInventoryDefault,
+            RepairWidening, SeamLimitSource,
+        };
+        if std::env::var_os("RIPR_REPO_EXPOSURE_SEAM_LIMIT").is_some() {
+            return Ok(());
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-once-{}-{stamp}", std::process::id()));
+        let _guard = TempRootGuard { root: root.clone() };
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"once\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let write_module = |file: usize| -> Result<(), String> {
+            let mut body = String::new();
+            for item in 0..100 {
+                body.push_str(&format!(
+                    "pub fn f{file}_{item}(x: i32) -> bool {{ x > {item} }}\n"
+                ));
+            }
+            std::fs::write(root.join(format!("src/m{file}.rs")), body)
+                .map_err(|error| error.to_string())
+        };
+        let write_lib = |modules: usize| -> Result<(), String> {
+            let lib: String = (0..modules)
+                .map(|file| format!("pub mod m{file};\n"))
+                .collect();
+            std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())
+        };
+        write_module(0)?;
+        write_lib(1)?;
+        let config = load_for_root(&root)?;
+        let per_module =
+            crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?
+                .0
+                .len();
+        assert!(per_module > 0, "calibration module yields seams");
+        let modules = (DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + per_module) / per_module + 5;
+        for file in 1..modules {
+            write_module(file)?;
+        }
+        write_lib(modules)?;
+        let cache_dir = root.join("target");
+        let remove_cache = || -> Result<(), String> {
+            match std::fs::remove_dir_all(&cache_dir) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.to_string()),
+            }
+        };
+        let counted = || CLASSIFIED_INVENTORY_SEAMS.with(std::cell::Cell::get);
+        let plain =
+            |root: &Path| crate::analysis::inventory_classified_seams_at_with_config(root, &config);
+        let to_json = |seams: &[crate::analysis::ClassifiedSeam]| -> Result<String, String> {
+            serde_json::to_string(seams).map_err(|error| error.to_string())
+        };
+        remove_cache()?;
+
+        // New path, cold: classify once.
+        CLASSIFIED_INVENTORY_SEAMS.with(|count| count.set(0));
+        let (repaired, repaired_info) = inventory_for_repair(&root, &config)?;
+        let total = repaired.len();
+        assert!(
+            total > DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+            "fixture exceeds the cap"
+        );
+        assert!(total <= REPAIR_SEAM_CEILING, "fixture stays in range");
+        assert_eq!(counted(), total, "each seam is classified exactly once");
+        assert!(repaired_info.is_none(), "the widened inventory is complete");
+        // Warm: the widened and default-cap entries are both stored.
+        let (warm, _) = inventory_for_repair(&root, &config)?;
+        assert_eq!(counted(), total, "a warm repair classifies nothing");
+        assert_eq!(to_json(&warm)?, to_json(&repaired)?);
+        let (new_plain, new_plain_info) = plain(&root)?;
+        assert_eq!(counted(), total, "the cut entry is served from the cache");
+
+        // Old path on the same inputs: cut inventory, then widened rerun.
+        remove_cache()?;
+        CLASSIFIED_INVENTORY_SEAMS.with(|count| count.set(0));
+        let (old_plain, old_plain_info) = plain(&root)?;
+        let cap = old_plain_info
+            .as_ref()
+            .and_then(repair_widened_cap)
+            .ok_or("the plain inventory must be a widenable cut")?;
+        let rerun = {
+            let _widened = PilotInventoryDefault::widen_to(cap);
+            crate::analysis::inventory_classified_seams_report_at_with_config(&root, &config)?
+        };
+        assert_eq!(
+            counted(),
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + total,
+            "the old path classifies the cut set and then everything"
+        );
+        assert_eq!(cap, total);
+        assert_eq!(to_json(&repaired)?, to_json(&rerun.classified)?);
+        assert_eq!(repaired_info, rerun.limit_info);
+        assert_eq!(to_json(&new_plain)?, to_json(&old_plain)?);
+        assert_eq!(new_plain_info, old_plain_info);
+        assert!(new_plain_info.is_some_and(|info| {
+            info.is_truncated()
+                && info.analyzed == DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+                && info.source == SeamLimitSource::Default
+        }));
+
+        // A ceiling below the total leaves the refusal-bearing cut in place
+        // and classifies only the cap.
+        remove_cache()?;
+        CLASSIFIED_INVENTORY_SEAMS.with(|count| count.set(0));
+        let (report, widening) =
+            crate::analysis::inventory_classified_seams_report_for_repair_at_with_config(
+                &root,
+                &config,
+                total - 1,
+            )?;
+        assert_eq!(widening, RepairWidening::NotApplied);
+        assert_eq!(counted(), DEFAULT_REPO_EXPOSURE_SEAM_LIMIT);
+        assert_eq!(
+            to_json(&report.classified)?,
+            to_json(&old_plain)?,
+            "past the ceiling the plain cut stands"
+        );
+        assert_eq!(report.limit_info, old_plain_info);
+        remove_cache()?;
         Ok(())
     }
 
