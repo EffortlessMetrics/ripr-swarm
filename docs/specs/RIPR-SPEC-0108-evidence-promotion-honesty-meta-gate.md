@@ -165,6 +165,16 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      the corpus naming the report, the version it is held at and a reason. A
      pin that disagrees with the report, is not older than the current version, or names
      no capture fails (#12293).
+     The standalone `check-evidence-promotion-honesty --producer-schemas`
+     check verifies report digests, generation pins, and producer provenance
+     from locally available Git objects (#15533). A capture's
+     `analysis_inputs.analyzer_version` must name a full build commit. For a
+     clean producer, the module-level Rust constant `CACHE_SCHEMA_VERSION`
+     at that commit must match the recorded generation, even for pinned
+     captures. A dirty producer requires a valid pin. A missing stamp or
+     unavailable clean producer source fails as missing evidence. The required
+     honesty gate checks currentness and pins. Producer history verification
+     is an explicit opt-in while producer retention is being resolved.
      Every committed full capture (a report carrying the producer's `artifact`
      block or `source_subject.corpus`) must carry an `artifact.content_sha256`
      that matches its own bytes under `raw_json_placeholder_v1` (#12602). A

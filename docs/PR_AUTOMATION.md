@@ -295,7 +295,7 @@ cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-doc-roles
 cargo xtask check-droid-review-config
-cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]
+cargo xtask check-evidence-promotion-honesty [--producer-schemas | --pinned-external [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]]
 cargo xtask check-executable-files
 cargo xtask check-file-policy
 cargo xtask check-covered-by
