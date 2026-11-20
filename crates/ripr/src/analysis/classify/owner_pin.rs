@@ -9155,12 +9155,13 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         };
         (dot + 1, constructed)
     };
-    let after_name = &operand[call_start + name.len()..];
-    if !after_name.starts_with('(') {
+    // #15277: a turbofish (`name::<u8>(..)`, `recv.name::<u8>(..)`) names
+    // the same function; it only fixes the generic arguments.
+    let opening = call_start + name.len() + turbofish_len(&operand[call_start + name.len()..]);
+    if !operand[opening..].starts_with('(') {
         return None;
     }
     let masked = mask_comments_and_strings(operand);
-    let opening = call_start + name.len();
     let closing = matching_close(&masked, opening, b'(', b')')?;
     if !operand[closing + 1..].trim().is_empty() {
         return None;
@@ -9172,6 +9173,32 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
+}
+
+/// The byte length of a turbofish (`::<u8, Vec<T>>`) opening `text`, or 0
+/// when `text` does not open with one or its brackets do not close. A `->`
+/// inside a fn-pointer argument is not a closing bracket.
+fn turbofish_len(text: &str) -> usize {
+    let Some(rest) = text.strip_prefix("::<") else {
+        return 0;
+    };
+    let bytes = rest.as_bytes();
+    let mut depth = 1usize;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' if at > 0 && bytes[at - 1] == b'-' => {}
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return "::<".len() + at + 1;
+                }
+            }
+            b'(' | b')' | b';' | b'{' | b'}' => return 0,
+            _ => {}
+        }
+    }
+    0
 }
 
 /// RIPR-SPEC-0225 rule 1: the initializer of the local binding an operand

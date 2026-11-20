@@ -14979,3 +14979,39 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     let matches = StdRootedCalls::of(sources[3]);
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
 }
+
+/// #15277: a turbofish names the same function, so `doubled::<u8>(5)` and
+/// `s.apply::<u8>(4)` are the owner calls their plain spellings are. An
+/// unclosed turbofish, a path value without a call, or anything chained
+/// after the call is no owner call.
+#[test]
+fn a_turbofish_call_has_the_plain_call_shape() {
+    assert!(matches!(
+        owner_call_shape("doubled::<u8>(5)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("doubled::<Vec<u8>>(v)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("doubled::<fn(u8) -> u8>(f)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("s.apply::<u8>(4)", "apply"),
+        Some(CallShape::Method("s"))
+    ));
+    for operand in [
+        "doubled::<u8(5)",
+        "doubled::<u8>",
+        "doubled::<u8>(5).min(3)",
+        "doubled::<u8> (5)",
+        "doubled::other(5)",
+    ] {
+        assert!(owner_call_shape(operand, "doubled").is_none(), "{operand}");
+    }
+    assert_eq!(turbofish_len("::<u8>(5)"), "::<u8>".len());
+    assert_eq!(turbofish_len("(5)"), 0);
+    assert_eq!(turbofish_len("::<u8(5)"), 0);
+}
