@@ -170,10 +170,10 @@ mod tests {
         for ty in ["&dyn Iterator<Item = u8>", "&dyn Iterator <Item = u8>"] {
             for (init, lowers) in [("todo!()", true), ("real_value()", false)] {
                 let body =
-                    format!("let expected: {ty} = {init}; assert!(expected.size_hint().0 > 0);");
+                    format!("let expected: {ty} = {init};\nassert!(expected.size_hint().0 > 0);");
                 let scope = PlaceholderScope::from_body(&body);
                 assert_eq!(
-                    scope.at(body.find("assert!").unwrap()).contains("expected"),
+                    scope.on_line(&body, 1, "assert!").contains("expected"),
                     lowers,
                     "{body}"
                 );
