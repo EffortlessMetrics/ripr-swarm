@@ -31,9 +31,15 @@ export async function startServerOnce(
 }
 
 export async function restartServerOnce(
-  currentController: Pick<RiprClientController, 'start' | 'stop'> | undefined,
+  currentController:
+    | (Pick<RiprClientController, 'start' | 'stop'> & Partial<Pick<RiprClientController, 'resetCrashRecoveryForExplicitRestart'>>)
+    | undefined,
   startSettleBudgetMs = DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS
 ): Promise<void> {
+  // Every caller is an intentional restart (command, configuration change,
+  // root switch); crash retries re-enter through controller.start(), not here.
+  // An open crash circuit must not survive a user-driven fix.
+  currentController?.resetCrashRecoveryForExplicitRestart?.();
   await lifecycleCoordinator.restart(currentController, startSettleBudgetMs);
 }
 
@@ -45,8 +51,11 @@ export async function stopServerOnce(
 }
 
 export async function startAfterWorkspaceTrust(
-  currentController: Pick<RiprClientController, 'start'> | undefined
+  currentController:
+    | (Pick<RiprClientController, 'start'> & Partial<Pick<RiprClientController, 'resetCrashRecoveryForExplicitRestart'>>)
+    | undefined
 ): Promise<void> {
+  currentController?.resetCrashRecoveryForExplicitRestart?.();
   await startServerOnce(currentController);
 }
 
@@ -78,6 +87,47 @@ export async function pauseRemovedWorkspaceRootOnce(
     currentController.quarantineRemovedWorkspaceRoot();
     await lifecycleCoordinator.pause(currentController);
     currentController.completeWorkspaceRootRemoval();
+  }
+}
+
+/** Listener body for workspace-folder changes; exported so tests drive the production path. */
+export async function handleWorkspaceFoldersChanged(
+  currentController: RiprClientController | undefined,
+  event: Pick<vscode.WorkspaceFoldersChangeEvent, 'added' | 'removed'>,
+  output: Pick<vscode.LogOutputChannel, 'appendLine'>
+): Promise<void> {
+  if (currentController?.sessionRootRemoved(event.removed)) {
+    output.appendLine('ripr selected workspace folder was removed; pausing until explicit root recovery.');
+    try {
+      await pauseRemovedWorkspaceRootOnce(currentController, event.removed);
+    } catch (error) {
+      output.appendLine(`ripr server pause after workspace folder removal failed: ${String(error)}`);
+    }
+    return;
+  }
+  if (event.added.length === 0) {
+    // A removal can leave an ambiguous multi-root window with one folder;
+    // re-resolve so the status does not stay on "Select one workspace folder".
+    // No-op unless the controller is awaiting a root that now resolves.
+    // Gate on awaitingWorkspaceRoot so an unrelated removal never restarts a
+    // running server onto the active editor's folder.
+    if (!currentController?.awaitingWorkspaceRoot()) {
+      return;
+    }
+    try {
+      await synchronizeWorkspaceRootOnce(currentController);
+    } catch (error) {
+      output.appendLine(`ripr server start after workspace folder removal failed: ${String(error)}`);
+    }
+    return;
+  }
+  output.appendLine(
+    `ripr workspace folder added (${event.added.length}); starting the server if none is running.`
+  );
+  try {
+    await startServerOnce(currentController);
+  } catch (error) {
+    output.appendLine(`ripr server start after workspace folder change failed: ${String(error)}`);
   }
 }
 
@@ -142,7 +192,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     // No matching `onCommand:ripr.selectWorkspaceRoot` entry in package.json
     // `activationEvents`: since VS Code 1.74 a contributed command activates
-    // its extension automatically, and engines.vscode is ^1.90.0. The
+    // its extension automatically, and engines.vscode is ^1.91.0. The
     // manifest's legacy onCommand list predates that guarantee and is not
     // extended for new commands. (#2077)
     vscode.commands.registerCommand('ripr.selectWorkspaceRoot', async () =>
@@ -271,26 +321,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       controller?.markWorkspaceClosed(document);
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(async (event) => {
-      if (controller?.sessionRootRemoved(event.removed)) {
-        output.appendLine('ripr selected workspace folder was removed; pausing until explicit root recovery.');
-        try {
-          await pauseRemovedWorkspaceRootOnce(controller, event.removed);
-        } catch (error) {
-          output.appendLine(`ripr server pause after workspace folder removal failed: ${String(error)}`);
-        }
-        return;
-      }
-      if (event.added.length === 0) {
-        return;
-      }
-      output.appendLine(
-        `ripr workspace folder added (${event.added.length}); starting the server if none is running.`
-      );
-      try {
-        await startServerOnce(controller);
-      } catch (error) {
-        output.appendLine(`ripr server start after workspace folder change failed: ${String(error)}`);
-      }
+      await handleWorkspaceFoldersChanged(controller, event, output);
     }),
     vscode.workspace.onDidGrantWorkspaceTrust(async () => {
       output.appendLine('ripr workspace trust granted; starting a fresh server session.');

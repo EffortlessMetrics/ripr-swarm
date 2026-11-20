@@ -672,3 +672,38 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_adversarial_owner_identity_after_insertion (41)
+
+Reason:
+RIPR-SPEC-0027: an exported plain value declaration presents as a value change, not a predicate (#14381 review)
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_owner_identity_after_insertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_adversarial_owner_identity_after_insertion (42)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_owner_identity_after_insertion --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_adversarial_owner_identity_after_insertion (43)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_owner_identity_after_insertion --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

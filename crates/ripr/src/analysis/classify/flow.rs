@@ -201,7 +201,7 @@ pub(in crate::analysis) fn local_flow_sinks(
             probe.location.line,
             owner.clone(),
         )],
-        ProbeFamily::MatchArm => vec![match_arm_sink(probe, owner.clone())],
+        ProbeFamily::MatchArm => vec![match_arm_sink(probe, owner_fn, owner.clone())],
         ProbeFamily::ReturnValue => vec![return_value_sink(probe, owner_fn, owner.clone())],
         ProbeFamily::Predicate => predicate_flow_sinks(probe, owner_fn, owner.clone()),
     };
@@ -588,13 +588,30 @@ fn return_value_sink(
     )
 }
 
-fn match_arm_sink(probe: &Probe, owner: Option<SymbolId>) -> FlowSinkFact {
-    let arm_result = probe
-        .expression
-        .split_once("=>")
-        .map(|(_, result)| result.trim().trim_end_matches(',').to_string())
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| probe.expression.clone());
+fn match_arm_sink(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    owner: Option<SymbolId>,
+) -> FlowSinkFact {
+    // The arm arrow is located on the comment/string-masked text, so a `=>`
+    // inside a string or comment pattern (`"a=>b" =>`) is not mistaken for
+    // it and the probe is read as head-only, as the renderer reads it.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&probe.expression);
+    let arrow = if masked.len() == probe.expression.len() {
+        masked.find("=>")
+    } else {
+        probe.expression.find("=>")
+    };
+    let arm_result = arrow
+        .map(|at| {
+            probe.expression[at + 2..]
+                .trim()
+                .trim_end_matches(',')
+                .to_string()
+        })
+        .filter(|text| !text.is_empty());
+    let head_only = arm_result.is_none();
+    let arm_result = arm_result.unwrap_or_else(|| probe.expression.clone());
 
     if arm_result.contains("Err(") {
         flow_sink(
@@ -604,13 +621,118 @@ fn match_arm_sink(probe: &Probe, owner: Option<SymbolId>) -> FlowSinkFact {
             owner,
         )
     } else {
-        flow_sink(
-            FlowSinkKind::MatchArm,
-            arm_result,
-            probe.location.line,
-            owner,
-        )
+        // #14420: the parser's arm shape is the head alone (`Size::Medium =>`),
+        // so the result a test must pin was lost. The sink's kind is decided
+        // from the probe text as before; only its text reads the arm's
+        // same-line result from the owner source when one is short and plain.
+        let text = head_only
+            .then(|| owner_fn.and_then(|owner| same_line_arm_result(probe, owner)))
+            .flatten()
+            .unwrap_or(arm_result);
+        flow_sink(FlowSinkKind::MatchArm, text, probe.location.line, owner)
     }
+}
+
+/// Longest same-line arm result [`same_line_arm_result`] names.
+const ARM_RESULT_BUDGET: usize = 60;
+
+/// #14420: the result of a head-only match-arm probe's arm when it sits on
+/// the head's own line in the owner source (`Size::Medium => 450,` gives
+/// `450`). The line must hold this head and exactly one `=>`, and the
+/// result must be short, balanced, comment-free and neither a block nor an
+/// `Err(..)` (whose sink kind the probe text decides). Anything else is
+/// `None`, and the sink keeps the head.
+fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String> {
+    same_line_arm_result_in(
+        &probe.expression,
+        probe.location.line,
+        &owner.body,
+        owner.start_line,
+    )
+}
+
+/// [`same_line_arm_result`] over any source text: `body` is text whose first
+/// line is `start_line`, and `head` is the arm head on `line` (#14683: the
+/// agent brief reads a seam's arm from its whole file with `start_line` 1).
+pub(in crate::analysis) fn same_line_arm_result_in(
+    head: &str,
+    line_number: usize,
+    body: &str,
+    start_line: usize,
+) -> Option<String> {
+    let line = body.lines().nth(line_number.checked_sub(start_line)?)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(line);
+    if masked.len() != line.len() || masked.matches("=>").count() != 1 {
+        return None;
+    }
+    let arrow = masked.find("=>")?;
+    let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let head = head.trim().strip_suffix("=>")?;
+    if compact(&line[..arrow]) != compact(head) {
+        return None;
+    }
+    // A trailing line comment (`Size::Medium => 450, // new tier`) is cut at
+    // the first `//` outside every string literal the shared lexical scan
+    // reads (raw strings, escapes and char literals included).
+    let tail = &line[arrow + 2..];
+    let strings = crate::analysis::extract::string_literal_spans(tail);
+    let tail = tail
+        .match_indices("//")
+        .map(|(at, _)| at)
+        .find(|&at| {
+            !strings
+                .iter()
+                .any(|&(open, close, _)| open < at && at < close)
+        })
+        .map_or(tail, |at| &tail[..at]);
+    // An unterminated string continues past this line, so the arm does.
+    let (_, quotes) = crate::analysis::extract::mask_with_string_delimiter_quotes(tail);
+    if quotes % 2 != 0 {
+        return None;
+    }
+    // A comma ends a non-block arm; without one the arm must be the last
+    // before the match's closing brace. Otherwise the result continues on
+    // the next line (`base` then `+ 1,`) and its first line alone would
+    // name a wrong value.
+    if !tail.trim_end().ends_with(',') {
+        let next = body
+            .lines()
+            .skip(line_number.checked_sub(start_line)? + 1)
+            .map(str::trim)
+            .find(|next| !next.is_empty() && !next.starts_with("//"));
+        if !next.is_some_and(|next| next.starts_with('}')) {
+            return None;
+        }
+    }
+    let end = arrow + 2 + tail.len();
+    let result = tail.trim().trim_end_matches(',').trim_end();
+    let masked_result = masked[arrow + 2..end]
+        .trim()
+        .trim_end_matches(',')
+        .trim_end();
+    let balanced = |open: char, close: char| {
+        let mut depth = 0_i32;
+        for ch in masked_result.chars() {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+        }
+        depth == 0
+    };
+    let plain = !result.is_empty()
+        && result.chars().count() <= ARM_RESULT_BUDGET
+        && !result.contains("/*")
+        && !result.contains("Err(")
+        && !spells_result_err(result)
+        && !masked_result.contains(['{', '}'])
+        && balanced('(', ')')
+        && balanced('[', ']');
+    plain.then(|| result.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -699,7 +821,16 @@ fn predicate_as_owner_tail(
     let ast::Expr::BinExpr(binary) = &comparison else {
         return None;
     };
-    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+    // #15027: an `||` chain carries the predicate's value to the return only
+    // when the edit appends one equality arm on the same parameter
+    // (`n == 1` to `n == 1 || n == 2`). Any input equal to the new literal
+    // then flips the whole chain, so the chain's change is the returned
+    // change. Every other connective tail keeps no sink: a changed operand
+    // of `x > 1 || y` may be masked by `y`.
+    let op = binary.op_kind();
+    let appended_arm = matches!(op, Some(ast::BinaryOp::LogicOp(ast::LogicOp::Or)))
+        && super::infection::appended_equality_arm(probe, owner).is_some();
+    if !matches!(op, Some(ast::BinaryOp::CmpOp(_))) && !appended_arm {
         return None;
     }
     let actual = comparison.syntax().text().to_string();
@@ -2073,9 +2204,28 @@ fn is_obvious_return_expression(text: &str) -> bool {
         || trimmed.contains('(')
         || trimmed.contains('"')
         || trimmed.chars().any(|ch| ch.is_ascii_digit())
+        // #15029: a char literal is a value as plainly as a digit or a
+        // string literal is (`c == ',' || c == ';'`).
+        || contains_char_literal(trimmed)
         || [" + ", " - ", " * ", " / ", " % "]
             .iter()
             .any(|operator| trimmed.contains(operator))
+}
+
+/// Whether `text` holds a char literal: `'x'` or an escape such as `'\\n'`.
+/// A lifetime (`'a`) has no closing quote right after its first char, so it
+/// is not one.
+fn contains_char_literal(text: &str) -> bool {
+    text.match_indices('\'').any(|(at, _)| {
+        let mut chars = text[at + 1..].chars();
+        match chars.next() {
+            // An escape: the escaped char, then a closing quote within the
+            // longest escape (`\\u{10FFFF}`).
+            Some('\\') => chars.next().is_some() && chars.take(9).any(|ch| ch == '\''),
+            Some('\'') | None => false,
+            Some(_) => chars.next() == Some('\''),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -2142,6 +2292,29 @@ mod tests {
                 "{discarded}: {sinks:?}"
             );
         }
+    }
+
+    /// #15029: a char-literal chain on the owner's tail sinks to the return
+    /// like its integer twin; a lifetime is not a char literal.
+    #[test]
+    fn char_literal_tail_reaches_the_return_sink() {
+        for text in [
+            "c == ',' || c == ';'",
+            "c == '\\n'",
+            "c == '\\''",
+            "c == '\\u{1F600}'",
+        ] {
+            assert!(contains_char_literal(text), "{text}");
+            assert!(is_obvious_return_expression(text), "{text}");
+        }
+        for text in ["x as &'a str", "a || b", "'", "''", "'a"] {
+            assert!(!contains_char_literal(text), "{text}");
+        }
+        let owner = tail_owner("pub fn is_sep(c: char) -> bool {\n    c == ',' || c == ';'\n}");
+        let probe = probe(ProbeFamily::ReturnValue, "c == ',' || c == ';'", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert_eq!(sinks.len(), 1, "{sinks:?}");
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
     }
 
     #[test]
@@ -2256,6 +2429,81 @@ mod tests {
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
         probe.owner = Some(owner.id.clone());
         probe.location.file = std::path::PathBuf::from("src/other.rs");
+        assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+    }
+
+    /// #15027: a returned `||` tail reaches the return sink only when it is
+    /// an appended equality arm on the same parameter; other connective tails
+    /// keep no sink because an operand may be masked.
+    #[test]
+    fn appended_equality_arm_tail_reaches_return_sink_and_other_or_tails_do_not() {
+        for (body, before, after) in [
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(c: char) -> bool { c == ',' || c == ';' }",
+                "c == ','",
+                "c == ',' || c == ';'",
+            ),
+            (
+                "pub fn gate(flag: &str) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue && sink.line == 1),
+                "{body}: {sinks:?}"
+            );
+        }
+        for (body, before, after) in [
+            (
+                "pub fn gate(x: u32, y: bool) -> bool { x >= 1 || y }",
+                "x >= 1",
+                "x >= 1 || y",
+            ),
+            (
+                "pub fn gate(n: u32, m: u32) -> bool { n == 1 || m == 2 }",
+                "n == 1",
+                "n == 1 || m == 2",
+            ),
+            (
+                "pub fn gate(flag: Flag) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+            (
+                "pub fn gate(n: f64) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 || n == 3 }",
+                "n == 1",
+                "n == 1 || n == 2 || n == 3",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            assert_eq!(
+                predicate_as_owner_tail(&probe, Some(&owner)),
+                None,
+                "{body}"
+            );
+        }
+        // Without a recorded pre-edit text the chain is not an appended arm.
+        let owner = tail_owner("pub fn gate(n: u32) -> bool { n == 1 || n == 2 }");
+        let probe = probe(ProbeFamily::Predicate, "n == 1 || n == 2", 1);
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
     }
 
@@ -3223,6 +3471,125 @@ mod tests {
         assert_eq!(error_sinks[0].text, "Result::Err(AuthError::Bad)");
         assert_eq!(value_sinks[0].kind, FlowSinkKind::MatchArm);
         assert_eq!(value_sinks[0].text, "total + 1");
+    }
+
+    /// #14420: a head-only arm probe (`Size::Medium =>`, the parser's arm
+    /// shape) names the arm's same-line result as its sink, so the value a
+    /// test must pin reaches the gap row. Near misses keep the head.
+    #[test]
+    fn head_only_arm_sink_reads_the_same_line_result() {
+        let owner = function(
+            "pub fn price(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        Size::Medium => 450, // new tier\n        Size::Large => { 500 }\n        Size::Huge =>\n            900,\n        Size::Odd => compute(\"=>\", 1),\n        Size::Bad => Err(PriceError::Bad),\n    }\n}\n",
+        );
+        let sink_text = |expression: &str, line: usize| {
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, expression, line),
+                Some(&owner),
+            );
+            assert_eq!(sinks[0].kind, FlowSinkKind::MatchArm, "{expression}");
+            sinks[0].text.clone()
+        };
+        assert_eq!(sink_text("Size::Small =>", 3), "300");
+        // A trailing line comment is not part of the result.
+        assert_eq!(sink_text("Size::Medium =>", 4), "450");
+        // A block body, a body on the next line and a head that is not this
+        // line's head keep the head too; a `=>` inside a string is not an arm.
+        assert_eq!(sink_text("Size::Large =>", 5), "Size::Large =>");
+        assert_eq!(sink_text("Size::Huge =>", 6), "Size::Huge =>");
+        assert_eq!(sink_text("Size::Odd =>", 8), "compute(\"=>\", 1)");
+        assert_eq!(sink_text("Size::Other =>", 3), "Size::Other =>");
+        // The kind still follows the probe text: a head-only `Err` arm stays a
+        // match-arm sink naming its head, as before.
+        assert_eq!(sink_text("Size::Bad =>", 9), "Size::Bad =>");
+        // A probe that already carries its body is unchanged.
+        assert_eq!(sink_text("Size::Small => 301,", 3), "301");
+        // Two arms on one line are not one arm's result.
+        let mut packed = function(
+            "pub fn price(size: Size) -> u32 {\n    match size { Size::Small => 1, Size::Large => 2 }\n}\n",
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Small =>", 2),
+                Some(&packed)
+            )[0]
+            .text,
+            "Size::Small =>"
+        );
+        // An owner that starts deep in its file reads the probe's own line;
+        // a `//` inside a string is kept, and multibyte text slices cleanly.
+        packed = function(
+            "pub fn label(size: Size) -> &'static str {\n    match size {\n        Size::Small => \"http://s/é\", // ü\n        Size::Large => \"ü\",\n    }\n}\n",
+        );
+        packed.start_line = 40;
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Small =>", 42),
+                Some(&packed)
+            )[0]
+            .text,
+            "\"http://s/é\""
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Large =>", 43),
+                Some(&packed)
+            )[0]
+            .text,
+            "\"ü\""
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Large =>", 3),
+                Some(&packed)
+            )[0]
+            .text,
+            "Size::Large =>"
+        );
+        // A result continued on the next line keeps the head: its first line
+        // alone (`base`, `a ||`, `"x"`) would name a wrong value. A last arm
+        // without a comma reads when the match closes on the next line, and
+        // a comment after a raw string holding a quote is cut.
+        packed = function(
+            "pub fn price(size: Size, base: u32) -> u32 {\n    match size {\n        Size::Small => base\n            + 1,\n        Size::Medium => a ||\n            b,\n        Size::Large => \"x\"\n            .len(),\n        Size::Raw => r#\"a\"b\"#.len(), // c\n        Size::Huge => 900\n        // last arm\n    }\n}\n",
+        );
+        let read = |head: &str, line: usize| {
+            local_flow_sinks(&probe(ProbeFamily::MatchArm, head, line), Some(&packed))[0]
+                .text
+                .clone()
+        };
+        assert_eq!(read("Size::Small =>", 3), "Size::Small =>");
+        assert_eq!(read("Size::Medium =>", 5), "Size::Medium =>");
+        assert_eq!(read("Size::Large =>", 7), "Size::Large =>");
+        assert_eq!(read("Size::Raw =>", 9), "r#\"a\"b\"#.len()");
+        assert_eq!(read("Size::Huge =>", 10), "900");
+        // A `=>` inside a string or comment pattern is not the arm arrow: the
+        // probe is head-only and the line's real result is read.
+        let literal = function(
+            "pub fn label(s: &str) -> u32 {\n    match s {\n        \"a=>b\" => 450,\n        _ => 0,\n    }\n}\n",
+        );
+        let read_literal = |head: &str| {
+            local_flow_sinks(&probe(ProbeFamily::MatchArm, head, 3), Some(&literal))[0]
+                .text
+                .clone()
+        };
+        assert_eq!(read_literal("\"a=>b\" =>"), "450");
+        assert_eq!(read_literal("\"a=>b\" => 451,"), "451");
+        // A turbofish `Err::<..>(..)` result is an error construction too, so
+        // the head is kept as for `Err(..)`.
+        let turbofish = function(
+            "pub fn state(s: State) -> Result<u32, E> {\n    match s {\n        State::Bad => Err::<u32, E>(E::Bad),\n        _ => Ok(0),\n    }\n}\n",
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "State::Bad =>", 3),
+                Some(&turbofish)
+            )[0]
+            .text,
+            "State::Bad =>"
+        );
+        // Without an owner there is no source to read.
+        let sinks = local_flow_sinks(&probe(ProbeFamily::MatchArm, "Size::Small =>", 3), None);
+        assert_eq!(sinks[0].text, "Size::Small =>");
     }
 
     #[test]

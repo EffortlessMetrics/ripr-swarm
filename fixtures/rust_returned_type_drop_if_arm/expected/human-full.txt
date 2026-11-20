@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_returned_type_drop_if_arm/input
 
-Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
   only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
   no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
@@ -10,7 +10,7 @@ Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach
   unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING ./src/lib.rs:14
   id: probe:src_lib.rs:field_construction:7199daa5
@@ -51,3 +51,42 @@ Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_if_arm/input --diff <cwd>/fixtures/rust_returned_type_drop_if_arm/diff.patch --mode fast probe:src_lib.rs:field_construction:7199daa5
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_if_arm/input --diff <cwd>/fixtures/rust_returned_type_drop_if_arm/diff.patch --mode fast --at probe:src_lib.rs:field_construction:7199daa5
+
+WARNING ./src/lib.rs:14
+  id: probe:src_lib.rs:return_value:d6c89ab3
+
+Changed
+  before: Cfg { n: x * 2 }
+  after:  Cfg { n: x * 3 }
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::make
+  gap id (for scripts): gap:rust:src/lib.rs:make:return_value:return_value:cfg_n_x*3
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach make: makes
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: Cfg { n: x * 3 }
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion
+  - local flow reaches returned value: Cfg { n: x * 3 } (line 14)
+  - related test src/lib.rs:25 makes uses strong whole object equality oracle: assert_eq!(make(true, 4), Cfg { n: 12 }); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 12 at line 26
+  - source function argument value flag = true at line 26
+  - source function argument value x = 4 at line 26
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  The related test `makes` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_returned_type_drop_if_arm/input --diff <cwd>/fixtures/rust_returned_type_drop_if_arm/diff.patch --mode fast probe:src_lib.rs:return_value:d6c89ab3
+  ripr context --root <cwd>/fixtures/rust_returned_type_drop_if_arm/input --diff <cwd>/fixtures/rust_returned_type_drop_if_arm/diff.patch --mode fast --at probe:src_lib.rs:return_value:d6c89ab3

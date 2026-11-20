@@ -13,7 +13,7 @@ Start here:
   File: ./src/lib.rs:6
   Static exposure: weak (severity: warning, confidence 0.66)
   Why weak: test reach to this change is not established
-  Changed behavior: Self::Object(value) =>
+  Changed behavior: Self::Object(value) => Some(*value)
   Analyzer limit: A test may reach this change through an internal helper-call chain ripr cannot
     fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named
     limitation, not a coverage claim

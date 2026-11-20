@@ -211,6 +211,8 @@ fn is_bolero_check(call: &ast::MacroCall, bolero_bound: bool) -> bool {
 }
 
 fn file_binds_bolero_check(source: &str) -> bool {
+    #[cfg(test)]
+    BINDING_SCANS.with(|scans| scans.set(scans.get() + 1));
     if source.contains("mod bolero") || source.contains("macro_rules! check") {
         return false;
     }
@@ -218,6 +220,13 @@ fn file_binds_bolero_check(source: &str) -> bool {
         let line = line.split("//").next().unwrap_or(line);
         use_imports_bolero_check(line)
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// File-wide `use bolero::check` scans run on this thread, so a test can
+    /// prove an unrelated opaque macro does not pay for one.
+    static BINDING_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn use_imports_bolero_check(line: &str) -> bool {
@@ -256,11 +265,15 @@ pub(crate) fn bolero_macro_escape_allowed(
     macro_path: &str,
 ) -> bool {
     let path = compact(macro_path);
-    let bolero_bound = file_binds_bolero_check(module_source);
+    // The file-wide `use bolero::check` scan only matters for a bare `check`
+    // path, so every other opaque macro skips it. The owner-pin context check
+    // asks once per test function with an opaque macro, and each ask rescanned
+    // the whole module source line by line.
     let qualified_path = matches!(
         path.as_str(),
         "bolero::check" | "::bolero::check" | "bolero::check!" | "::bolero::check!"
-    ) || (bolero_bound && matches!(path.as_str(), "check" | "check!"));
+    ) || (matches!(path.as_str(), "check" | "check!")
+        && file_binds_bolero_check(module_source));
     if !qualified_path {
         return false;
     }
@@ -360,6 +373,79 @@ fn fake() {
             ".with_type::<u8>().with_generator(/* unsupported */)",
         );
         assert!(bolero_profiles(&source).is_empty());
+    }
+
+    fn named_test_function(source: &str, name: &str) -> Result<ast::Fn, &'static str> {
+        let parsed = parse_clean_source_file(source).ok_or("parse")?;
+        parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .find(|function| function.name().is_some_and(|found| found.text() == name))
+            .ok_or("test function")
+    }
+
+    fn binding_scans() -> usize {
+        BINDING_SCANS.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn escape_scans_the_file_binding_only_for_a_bare_check_path() -> Result<(), &'static str> {
+        let source = r#"
+use bolero::check;
+#[test]
+fn bare_chain() {
+    check!().with_type::<u8>().for_each(|n| { assert_eq!(*n, 1); });
+}
+"#;
+        let function = named_test_function(source, "bare_chain")?;
+        let before = binding_scans();
+        assert!(!bolero_macro_escape_allowed(
+            &function,
+            source,
+            "assert_matches"
+        ));
+        assert!(!bolero_macro_escape_allowed(
+            &function,
+            source,
+            "my_crate::check"
+        ));
+        assert_eq!(
+            binding_scans() - before,
+            0,
+            "a path that is not a bare `check` must not rescan the file"
+        );
+        // A qualified path reads the binding only through the profile pass.
+        let before = binding_scans();
+        assert!(bolero_macro_escape_allowed(
+            &function,
+            source,
+            "bolero::check"
+        ));
+        assert_eq!(binding_scans() - before, 1);
+        // A bare `check` reads it for the path and again for the profiles.
+        let before = binding_scans();
+        assert!(bolero_macro_escape_allowed(&function, source, "check !"));
+        assert_eq!(binding_scans() - before, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn bare_check_escape_still_requires_the_file_binding() -> Result<(), &'static str> {
+        let source = GOOD.replace("bolero::check!()", "check!()");
+        let function = named_test_function(&source, "increment_matches_model")?;
+        assert!(!bolero_macro_escape_allowed(&function, &source, "check"));
+        // A complete qualified profile without a `use bolero::check` binding:
+        // only the file-binding conjunct refuses an opaque bare `check`.
+        let good_function = named_test_function(GOOD, "increment_matches_model")?;
+        assert!(!bolero_macro_escape_allowed(&good_function, GOOD, "check"));
+        assert!(bolero_macro_escape_allowed(
+            &good_function,
+            GOOD,
+            "bolero::check"
+        ));
+        Ok(())
     }
 
     #[test]

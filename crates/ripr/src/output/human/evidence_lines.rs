@@ -107,12 +107,38 @@ const EXACT_ASSERTION_PRESENT_PHRASES: [&str; 2] = [
     "already asserts an exact value",
 ];
 
+/// The banned snake_case state tokens (#10697). A classifier may lead a
+/// `missing` entry with one as a label (`propagation_unknown: changed value
+/// sinks ...`). JSON `missing` and `human-full` keep that label byte-for-byte;
+/// the default human line drops it and keeps the prose that follows, the same
+/// way [`plain_probe_family`] maps the catch-all family to `unclear`.
+const STATE_TOKEN_PREFIXES: [&str; 6] = [
+    "weakly_exposed: ",
+    "reachable_unrevealed: ",
+    "no_static_path: ",
+    "infection_unknown: ",
+    "propagation_unknown: ",
+    "static_unknown: ",
+];
+
+/// Drop a leading `<state token>: ` label from a default human line. Only the
+/// exact token-plus-separator form is rewritten; any other text is unchanged.
+fn strip_state_token_prefix(text: &str) -> &str {
+    for prefix in STATE_TOKEN_PREFIXES {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    text
+}
+
 /// #13037: [`plain_default_missing`] for one finding. When the finding's own
 /// next step says a related test already has an exact assertion, "No strong
 /// assertion was detected" would contradict it, so the default line says what
 /// is actually missing: the link from that assertion to the changed value.
 /// JSON `missing` and `human-full` keep the classifier wording byte-for-byte.
 pub(crate) fn plain_default_missing_for(finding: &crate::domain::Finding, text: &str) -> String {
+    let text = strip_state_token_prefix(text);
     let exact_assertion_present = finding
         .recommended_next_step
         .as_deref()
@@ -643,4 +669,38 @@ fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&st
         return false;
     };
     discriminator_values.contains(&value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_state_token_prefix;
+
+    #[test]
+    fn a_leading_state_token_label_is_dropped_from_the_default_line() {
+        let producer = "propagation_unknown: changed value sinks to the owner return value or \
+                        constructed object (`5`); all strong assertions observe an unrelated \
+                        expression, not the changed sink; propagation unknown";
+        let plain = strip_state_token_prefix(producer);
+        assert!(!plain.contains("propagation_unknown"), "{plain}");
+        assert!(
+            plain.starts_with("changed value sinks to the owner return value"),
+            "{plain}"
+        );
+        assert!(plain.ends_with("propagation unknown"), "{plain}");
+    }
+
+    #[test]
+    fn a_token_that_is_not_a_leading_label_is_left_alone() {
+        // The prose tail keeps the plain words; only the label form is rewritten.
+        let prose = "changed value sinks to a non-escaping call effect; propagation unknown";
+        assert_eq!(strip_state_token_prefix(prose), prose);
+        // A token inside a sentence is not a label.
+        let inline = "the class is propagation_unknown here";
+        assert_eq!(strip_state_token_prefix(inline), inline);
+        // A token without the separator is not a label.
+        assert_eq!(
+            strip_state_token_prefix("propagation_unknown"),
+            "propagation_unknown"
+        );
+    }
 }

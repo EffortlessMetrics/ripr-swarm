@@ -46,6 +46,8 @@ pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+#[cfg(test)]
+mod actionability_proptest_tests;
 mod admission;
 #[cfg(test)]
 mod admission_tests;
@@ -65,6 +67,7 @@ mod boundary_label_tests;
 mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
+mod call_lexer;
 mod call_removal_guard;
 #[cfg(test)]
 mod call_removal_tests;
@@ -75,6 +78,7 @@ mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
+mod commonjs_default_class;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -130,6 +134,7 @@ mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
+mod module_value_reads;
 #[cfg(test)]
 mod negated_jest_assertion_tests;
 #[cfg(test)]
@@ -234,6 +239,7 @@ pub(crate) use boundary_selection::{
 };
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use call_lexer::inside_block_comment;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use close_to_guard::*;
@@ -1362,6 +1368,14 @@ impl TypeScriptAdapter {
             // HashMap key.
             let mut owner_contexts: std::collections::HashMap<usize, OwnerLineContext<'_>> =
                 std::collections::HashMap::new();
+            // #13827: removed lines that could have thrown the old side's
+            // error, read once per changed file for the message pin.
+            let removed_throw_candidates: Vec<String> = changed
+                .removed_lines
+                .iter()
+                .filter(|removed| removed_line_may_throw(&removed.text))
+                .map(|removed| removed.text.trim().to_string())
+                .collect();
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
@@ -1397,11 +1411,46 @@ impl TypeScriptAdapter {
                 .filter(|facts| facts.parse_error.is_none())?;
                 Some((source.lines().collect::<Vec<_>>(), facts))
             });
+            // #14097: the wrapped signature of a new owner, read once per
+            // changed file. A header line whose removed counterpart looks
+            // like it is a changed signature, so it does not count as added
+            // and the whole header keeps its probes.
+            let wrapped_header_lines = ast_probe_facts
+                .as_ref()
+                .map(|(source_lines, _)| {
+                    let added_line_numbers: std::collections::HashSet<usize> = changed
+                        .added_lines
+                        .iter()
+                        .filter(|added| {
+                            !counterparts
+                                .get(&added.line)
+                                .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
+                        })
+                        .map(|added| added.line)
+                        .collect();
+                    new_owner_wrapped_header_lines(
+                        &changed.path,
+                        &changed_norm,
+                        source_lines,
+                        &all_owners,
+                        &removed_texts,
+                        |line| added_line_numbers.contains(&line),
+                        |line| {
+                            changed.added_lines.iter().any(|other| {
+                                other.line == line && is_probe_candidate(other.line, &other.text)
+                            })
+                        },
+                    )
+                })
+                .unwrap_or_default();
             for added in &changed.added_lines {
                 if inside_private_member_boundary(&private_boundaries, added.line) {
                     continue;
                 }
                 if !is_probe_candidate(added.line, &added.text) {
+                    continue;
+                }
+                if wrapped_header_lines.contains(&added.line) {
                     continue;
                 }
                 // New-declaration guard: the opening line of a NEW function,
@@ -1507,6 +1556,9 @@ impl TypeScriptAdapter {
                                 (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                                 ([added], [removed]) if added.line == removed.new_side_line
                             );
+                            context
+                                .removed_throw_candidates
+                                .clone_from(&removed_throw_candidates);
                             context
                         });
                         classify_resolved_owner(
@@ -1626,7 +1678,7 @@ impl TypeScriptAdapter {
                         owner.end_line,
                     )?;
                     let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                        changed_owner_line_context(
+                        let mut context = changed_owner_line_context(
                             owner,
                             &all_tests,
                             &options.root,
@@ -1634,7 +1686,11 @@ impl TypeScriptAdapter {
                             &relation_index,
                             alias_map_ref,
                             &cross_module_fan_in_limited,
-                        )
+                        );
+                        context
+                            .removed_throw_candidates
+                            .clone_from(&removed_throw_candidates);
+                        context
                     });
                     classify_resolved_owner(
                         &changed.path,

@@ -70,9 +70,11 @@ fn unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim() -> R
             .iter()
             .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
             .ok_or("setup: expected a real return-value finding")?;
+        // #14968: the smoke test's `assert_eq!(2 + 2, 4)` compares only
+        // literals, so it gives no credit; the inspect-first guidance stays.
         assert_eq!(
             finding.class,
-            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
             "{fence}: {finding:?}"
         );
         assert_eq!(finding.ripr.reach.state.as_str(), "weak", "{fence}");
@@ -165,7 +167,9 @@ fn wrapper_error_retains_specific_guidance_for_proximity_reach() -> Result<(), S
     let output = check_workspace(fixture.input())?;
     assert_eq!(output.findings.len(), 2, "setup: two wrapper probes");
     for finding in &output.findings {
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        // #14968: the literal-only smoke test gives no credit, but the typed
+        // wrapper limitation and its guidance stay (RIPR-SPEC-0094).
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
         assert_eq!(finding.ripr.reach.state.as_str(), "weak");
         assert!(!finding.related_tests.is_empty());
         assert!(finding.related_tests.iter().all(|test| {
@@ -207,7 +211,7 @@ fn assertion_helper_retains_oracle_inspection_guidance() -> Result<(), String> {
     assert_eq!(
         finding.recommended_next_step.as_deref(),
         Some(
-            "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it); inspect the inputs and behavior this helper checks, including any existing boundary or negative-path assertions. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+            "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing outside tests calls it); inspect the inputs and behavior this helper checks, including any existing boundary or negative-path assertions. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
         )
     );
     Ok(())

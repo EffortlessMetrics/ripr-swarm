@@ -144,4 +144,23 @@ mod tests {
         assert_eq!(first, second);
         Ok(())
     }
+
+    #[test]
+    fn content_hash_gap_needs_exactly_sixteen_hex_digits() {
+        for refused in [
+            "gap:67f9714ba37b396",
+            "gap:67f9714ba37b39670",
+            "gap:67f9714ba37b396g",
+            "gap:",
+        ] {
+            assert_eq!(
+                CanonicalItemId::from_canonical_gap_id(refused),
+                Err(CanonicalItemParseError::WrongClass {
+                    value: refused.to_string(),
+                    expected: "canonical_gap_id",
+                }),
+                "{refused:?}"
+            );
+        }
+    }
 }

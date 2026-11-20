@@ -130,29 +130,28 @@ Check summary is not the original proof. Keep unavailable, failed, cancelled,
 partial and stale evidence visible. Do not create another mutable status store
 or commit per-run logs to product history merely to make them discoverable.
 
-## Late qualification: target versus active machinery
+## Late qualification and native-queue landing
 
-The intended SDLC flow under
-[#4984](https://github.com/EffortlessMetrics/ripr-swarm/issues/4984) is:
+The live SDLC flow is:
 
 ```text
 Warm draft work and repeated focused review/repair
-  -> Ready for final review, not a CI launch
-  -> explicit merge-ready qualification request
-  -> applicable mandatory proof plus justified additional investigation
-  -> separate final product/vision/current-repository judgment
-  -> normal expected-head protected squash
+  -> apply merge-ready for PR qualification
+  -> final product/vision/current-repository judgment
+  -> enqueue the exact reviewed head
+  -> required qualification on the queued merge composition
+  -> GitHub queue-driven protected squash
   -> landed-state reconciliation
 ```
 
-The accepted destination under #4984 is native merge-queue qualification of
-the actual merge composition; generic automatic merge is not a substitute for
-the installed legacy final judgment. Until verified migration, the installed
-`merge-ready` label route above remains operative (see [merge flow](MERGE_FLOW.md)).
-One late run is the normal legacy path, not a ban on justified repair/rerun. Available checks,
-mandatory obligations and selected additional checks are different sets.
-Evidence reuse needs a reviewed applicability decision; static output cannot
-silently waive a required check.
+Applying `merge-ready` requests qualification on the PR; it does not enqueue or
+authorize merge. The native queue is active and accepted PR #14710 through it on
+2026-11-15. Direct expected-head squash is refused (#14247); use the native queue
+route in [merge flow](MERGE_FLOW.md), not generic automatic merge. One justified
+repair or rerun does not remove mandatory checks. Available checks, mandatory
+obligations and selected additional checks are different sets. Evidence reuse
+needs a reviewed applicability decision; static output cannot silently waive a
+required check.
 
 The ceiling is **CI run duration <=20 minutes**. Queue/request latency,
 request-to-result latency, total local/hosted compute and cost per accepted PR
