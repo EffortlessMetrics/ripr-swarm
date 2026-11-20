@@ -157,7 +157,8 @@ export function resolveProxy(targetUrl: string, settings: ProxySettings): ProxyR
   }
   let auth: string | undefined;
   try {
-    auth = proxy.username
+    // A password-only proxy (`http://:token@host`) still authenticates.
+    auth = proxy.username || proxy.password
       ? `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`
       : undefined;
   } catch {

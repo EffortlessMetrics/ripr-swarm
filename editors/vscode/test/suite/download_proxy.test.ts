@@ -65,6 +65,14 @@ suite('VS Code download proxy support (#15317)', () => {
     );
   });
 
+  test('a password-only proxy URL still carries basic auth', () => {
+    const result = resolveProxy(TARGET, { httpProxy: credentialUrl('http', '', 'tok3n', 'proxy.corp:3128'), env: {} });
+    assert.strictEqual(result.kind === 'proxy' && result.auth, ':tok3n');
+    assert.strictEqual(result.kind === 'proxy' && result.display, 'http://proxy.corp:3128');
+    const bare = resolveProxy(TARGET, { httpProxy: 'http://proxy.corp:3128', env: {} });
+    assert.strictEqual(bare.kind === 'proxy' && bare.auth, undefined);
+  });
+
   test('a raw percent sign in proxy credentials is unsupported, not a throw, and leaks nothing', () => {
     const result = resolveProxy(TARGET, { httpProxy: credentialUrl('http', 'al%ice', 'pa%ss', 'proxy.corp:3128'), env: {} });
     assert.strictEqual(result.kind, 'unsupported');
