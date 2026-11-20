@@ -298,6 +298,9 @@ pub(crate) struct TypeScriptScopeBinding {
     /// tests), is only declared, or anything else in the file could rebind
     /// the name or the class.
     pub(crate) constructed_by: Option<String>,
+    /// The direct callee that most recently set this receiver in a recognized
+    /// synchronous beforeEach. Resolved to an import only at relation time.
+    pub(crate) hook_factory: Option<String>,
     /// `true` when the innermost binding of `name` is a file-level
     /// declaration. Such a name cannot shadow an import (redeclaring an
     /// imported name is a syntax error); it is the owner itself in a
@@ -771,6 +774,7 @@ pub(crate) enum TypeScriptRelationKind {
     /// Direct call through the manifest source of an unread package build.
     /// The runtime bundle may be stale, so this never lends oracle credit.
     PackageBuildSource,
+    HookFactoryMethod,
     SameFileProximity,
     DescribeName,
     TestName,
@@ -790,7 +794,7 @@ impl TypeScriptRelationKind {
             // Below every relation that calls the owner itself.
             Self::ModuleEntryCall | Self::DecoratedMethodCall => 3,
             Self::SameFileProximity => 3,
-            Self::ModuleValueUse | Self::PackageBuildSource => 2,
+            Self::ModuleValueUse | Self::PackageBuildSource | Self::HookFactoryMethod => 2,
             Self::DescribeName => 2,
             Self::TestName => 1,
         }
@@ -828,6 +832,7 @@ impl TypeScriptRelationKind {
             Self::DecoratedMethodCall => "decorated_method_call",
             Self::ModuleValueUse => "module_value_use",
             Self::PackageBuildSource => "package_build_source",
+            Self::HookFactoryMethod => "hook_factory_method",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
             Self::TestName => "test_name",

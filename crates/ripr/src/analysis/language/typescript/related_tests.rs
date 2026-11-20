@@ -2113,7 +2113,7 @@ pub(crate) fn related_test_candidates<'a>(
 /// Only the source relationship is known. Reuse the direct-call binding guards
 /// on a view of the import; never expose the redirect to the oracle, barrel or
 /// module-entry graph as an ordinary runtime module identity.
-fn build_entry_call(
+pub(super) fn build_entry_call(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     reexports: &ReExportIndex,
@@ -4901,7 +4901,7 @@ pub(crate) fn legacy_candidate_observes_owner_call(
 
 /// Build a candidate whose owner-path disposition comes from the same gates
 /// that assigned `relation` (#5523). Every candidate is built here.
-fn related_candidate<'a>(
+pub(super) fn related_candidate<'a>(
     test: &'a TypeScriptTest,
     relation: TypeScriptRelationKind,
     owner: &TypeScriptOwner,
@@ -4939,7 +4939,7 @@ pub(crate) fn owner_path_disposition(
     if let Some(view) = test.reach_view() {
         return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
     }
-    if relation == TypeScriptRelationKind::PackageBuildSource {
+    if matches!(relation, TypeScriptRelationKind::PackageBuildSource | TypeScriptRelationKind::HookFactoryMethod) {
         return TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport;
     }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
@@ -5003,7 +5003,7 @@ fn ts_relation_to_domain(
         // The test calls a same-module export that calls the owner: the
         // TypeScript form of a production helper that delegates to the owner.
         TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
-        TypeScriptRelationKind::DecoratedMethodCall => RelationReason::HelperOwnerCall,
+        TypeScriptRelationKind::DecoratedMethodCall | TypeScriptRelationKind::HookFactoryMethod => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
         TypeScriptRelationKind::ModuleValueUse
@@ -5025,7 +5025,8 @@ fn ts_relation_to_domain(
         | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
         | TypeScriptRelationKind::TestName
-        | TypeScriptRelationKind::PackageBuildSource => RelationConfidence::Low,
+        | TypeScriptRelationKind::PackageBuildSource
+        | TypeScriptRelationKind::HookFactoryMethod => RelationConfidence::Low,
     };
     (Some(reason), Some(confidence))
 }

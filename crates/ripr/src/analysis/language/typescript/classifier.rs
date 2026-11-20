@@ -7203,6 +7203,7 @@ pub(crate) fn classify_change_with_alias_state(
 /// with many changed lines paid a multiplicative cost per line.
 pub(crate) struct OwnerLineContext<'a> {
     pub(crate) related_candidates: Vec<TypeScriptRelatedCandidate<'a>>,
+    hook_methods: Vec<super::hook_factory_method::MethodCandidate<'a>>,
     pub(crate) mock_paths: Vec<String>,
     pub(crate) named_limitations_from_ownership: Vec<TypeScriptNamedLimitation>,
     pub(crate) named_limitations_from_spy: Vec<TypeScriptNamedLimitation>,
@@ -7254,7 +7255,11 @@ pub(crate) fn owner_line_context<'a>(
         };
     let named_limitations_from_spy: Vec<TypeScriptNamedLimitation> =
         named_limitations_for_spy_fabrication_from_candidates(owner, &index_candidates);
+    let hook_methods = super::hook_factory_method::candidates(
+        owner, &index_candidates, workspace_root, reexport_index, alias_map,
+    );
     OwnerLineContext {
+        hook_methods,
         related_candidates,
         mock_paths,
         named_limitations_from_ownership,
@@ -7388,7 +7393,7 @@ fn observes_constructed_call(observed: &str, test_body: &str, class: &str, metho
 
 /// `body` without comments and without whitespace around `.` (`l . add`,
 /// `l./* c */add`), so member names can be matched as contiguous text.
-fn normalize_member_access(body: &str) -> String {
+pub(super) fn normalize_member_access(body: &str) -> String {
     let mut stripped = String::with_capacity(body.len());
     let mut chars = body.chars().peekable();
     // Comment markers inside a string or template literal (`"http://x"`,
@@ -7532,6 +7537,25 @@ pub(crate) fn classify_resolved_owner(
         &decorated_gated
     } else {
         &context.related_candidates
+    };
+    let mut with_hook_methods;
+    let related_candidates = if context.hook_methods.iter().any(|row| row.lines.contains(&line)) {
+        with_hook_methods = related_candidates.clone();
+        for row in context.hook_methods.iter().filter(|row| row.lines.contains(&line)) {
+            if let Some(existing) = with_hook_methods.iter_mut().find(|candidate| {
+                std::ptr::eq(candidate.test, row.candidate.test)
+            }) {
+                if existing.relation.is_uncertain() {
+                    *existing = row.candidate;
+                }
+            } else {
+                with_hook_methods.push(row.candidate);
+            }
+        }
+        sort_related_candidates(&mut with_hook_methods);
+        &with_hook_methods
+    } else {
+        related_candidates
     };
     // The changed line's probe family selects which assertion of each
     // related test the public row shows (#5525, RIPR-SPEC-0224): the same
@@ -8985,6 +9009,12 @@ pub(crate) fn classify_resolved_owner(
             candidate.relation.as_str(),
             candidate.test.name
         ));
+        if candidate.relation == TypeScriptRelationKind::HookFactoryMethod {
+            evidence.push(format!(
+                "test `{}` calls the matching method on the receiver assigned by beforeEach. The loaded implementation and the assertion's observation of the edit are unverified",
+                candidate.test.name
+            ));
+        }
         if candidate.relation == TypeScriptRelationKind::PackageBuildSource {
             evidence.push(format!(
                 "test `{}` calls the package through its build entry. The manifest links that entry to this source, but the loaded bundle is unverified",

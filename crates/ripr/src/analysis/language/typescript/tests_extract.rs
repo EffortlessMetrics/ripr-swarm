@@ -1501,6 +1501,8 @@ enum ScopeValue {
     Declared,
     /// `new Cart()` / `new shop.Cart()`, by constructor text.
     Constructed(String),
+    /// A plain factory call assigned by a setup hook.
+    Factory(String),
     /// Anything else, including a shadowing function, class or parameter.
     Other,
 }
@@ -1559,13 +1561,13 @@ impl TestScope {
                     }
                     Some((value, phase)) if *phase != Phase::Declaration => match value {
                         ScopeValue::Constructed(constructor) => Some(constructor.clone()),
-                        ScopeValue::Declared | ScopeValue::Other => None,
+                        ScopeValue::Declared | ScopeValue::Other | ScopeValue::Factory(_) => None,
                     },
                     _ => {
                         let mut constructors = writes.iter().filter_map(|(value, _)| match value {
                             ScopeValue::Declared => None,
                             ScopeValue::Constructed(constructor) => Some(Some(constructor)),
-                            ScopeValue::Other => Some(None),
+                            ScopeValue::Other | ScopeValue::Factory(_) => Some(None),
                         });
                         let first = constructors.next().flatten();
                         first
@@ -1573,7 +1575,17 @@ impl TestScope {
                             .cloned()
                     }
                 };
+                // Require a real uninitialised variable at this level. An
+                // undeclared assignment or a nearer shadow supplies no receiver.
+                let hook_factory = match writes.last() {
+                    Some((ScopeValue::Factory(factory), Phase::BeforeEach))
+                        if found.iter().any(|(value, phase)| {
+                            *phase == Phase::Declaration && matches!(value, ScopeValue::Declared)
+                        }) => Some(factory.clone()),
+                    _ => None,
+                };
                 resolved.push(TypeScriptScopeBinding {
+                    hook_factory,
                     name: name.to_string(),
                     constructed_by,
                     // `levels` is the test's own parameters, then the
@@ -1717,10 +1729,24 @@ fn collect_scope_bindings(
                     }
                     returned |= may_return(inner, source);
                 }
+                let synchronous = phase == Phase::BeforeEach
+                    && call.arguments.len() == 1
+                    && match argument {
+                        Argument::ArrowFunctionExpression(f) => !f.r#async && !f.expression
+                            && f.params.items.is_empty() && f.params.rest.is_none(),
+                        Argument::FunctionExpression(f) => !f.r#async && !f.generator
+                            && f.params.items.is_empty() && f.params.rest.is_none(),
+                        _ => false,
+                    };
                 let writes: Vec<ScopeEntry> = writes
                     .into_iter()
                     .filter(|(name, _)| !locals.iter().any(|(local, _, _)| local == name))
                     .map(|(name, value)| match phase {
+                        _ if matches!(&value, ScopeValue::Factory(factory)
+                            if !synchronous || locals.iter().any(|(name, _, _)| name == factory)) =>
+                        {
+                            (name, ScopeValue::Other, phase)
+                        }
                         Phase::Interleaved => (name, ScopeValue::Other, phase),
                         _ => (name, value, phase),
                     })
@@ -1810,7 +1836,13 @@ fn collect_hook_assignment(
                 sites.push(target.span.start as usize);
                 out.push((
                     target.name.to_string(),
-                    constructed_value(&assignment.right),
+                    match assignment.right.without_parentheses() {
+                        Expression::CallExpression(call) if !call.optional => match &call.callee {
+                            Expression::Identifier(id) => ScopeValue::Factory(id.name.to_string()),
+                            _ => ScopeValue::Other,
+                        },
+                        other => constructed_value(other),
+                    },
                 ));
                 return;
             }
@@ -1946,7 +1978,7 @@ fn withhold_rebound_scope_receivers(
         }
         let mut bindings = test.scope_bindings.to_vec();
         for binding in &mut bindings {
-            let Some(constructor) = &binding.constructed_by else {
+            let Some(constructor) = binding.constructed_by.as_ref().or(binding.hook_factory.as_ref()) else {
                 continue;
             };
             let root = constructor.split('.').next().unwrap_or(constructor);
@@ -1975,6 +2007,7 @@ fn withhold_rebound_scope_receivers(
                     })
             {
                 binding.constructed_by = None;
+                binding.hook_factory = None;
             }
         }
         let rewritten = ScopeBindings::from(bindings);
