@@ -339,6 +339,13 @@ fn drive_before_phase_inner(
             &seam_id,
         )?);
     }
+    // A repair attempt exists only at the exact Git top-level (#15363). Refuse
+    // a subdirectory root after the write-free seam translation (so a stale
+    // `--seam-id` still names itself) and before the locks or any workflow
+    // write create state under that root's `target/ripr`.
+    if let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&options.root) {
+        return Err(refusal.into());
+    }
     let _workflow_lock = lock_repair_workflow(&options.root)?;
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
