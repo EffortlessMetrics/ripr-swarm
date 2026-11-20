@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/tests/fuzz_panic_freedom.rs::output_oracle_checks_nested_report_schema",
+  "crates/ripr/tests/fuzz_panic_freedom.rs::output_oracle_checks_conditional_and_dictionary_fields",
+]
+code = ["crates/ripr/tests/common/published_schema.rs"]
