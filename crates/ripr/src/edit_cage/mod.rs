@@ -2173,10 +2173,14 @@ fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
 /// subdirectory of its work tree, `None` for the exact top-level or when Git
 /// cannot say (those cases keep the attempt's own refusals). Check-time route
 /// gating and the before-phase entry share this so a printed repair start never
-/// reaches the cage's refusal (subdirectory `--root`).
+/// reaches the cage's refusal (subdirectory `--root`). It asks Git exactly as
+/// [`canonical_repository_root`] does (same command, environment and deadline),
+/// so check never withholds a start the cage would accept, for example under
+/// an exported `GIT_DIR`.
 pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
     let requested = fs::canonicalize(root).ok()?;
-    let top = crate::git::discovered_work_tree_toplevel(&requested, Duration::from_secs(5))?;
+    let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = fs::canonicalize(&top).ok()?;
     (requested != top).then_some(top)
 }
 
