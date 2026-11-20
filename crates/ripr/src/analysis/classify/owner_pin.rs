@@ -14027,8 +14027,10 @@ fn other_definition_competes(
 
 /// The declared named type of an inherent or trait `impl` method with a
 /// `self` receiver, as [`declared_receiver`] reads it: `None` for a trait
-/// default body, a free or local `fn`, an unknown container, and a generic,
-/// reference, slice, tuple, pointer, `dyn` or undeclared self type.
+/// default body, a free or local `fn`, an unknown container, a generic,
+/// reference, slice, tuple, pointer, `dyn` or undeclared self type, and a
+/// name the workspace aliases, renames to, or uses as an impl's generic
+/// parameter in that file.
 fn impl_receiver_type(function: &FunctionSummary, index: &RustIndex) -> Option<String> {
     if !function.item.has_self_param {
         return None;
@@ -14042,10 +14044,65 @@ fn impl_receiver_type(function: &FunctionSummary, index: &RustIndex) -> Option<S
     if self_ty.contains('<') {
         return None;
     }
-    match declared_receiver(self_ty, index)? {
-        ReceiverType::Named(name) => Some(name),
-        ReceiverType::ByteSlice => None,
+    let name = match declared_receiver(self_ty, index)? {
+        ReceiverType::Named(name) => name,
+        ReceiverType::ByteSlice => return None,
+    };
+    // #15426 review: the written name must bind the declared type. An
+    // `impl<T> .. for T` beside a declared `struct T`, or a `type` alias or
+    // `as` rename of that name anywhere in the workspace, may denote another
+    // type (`type Line = super::Square; impl Line { .. }`), so it is not
+    // established and the caller keeps the rival competing.
+    let raw = format!("r#{name}");
+    let rebinds = index.files().values().any(|facts| {
+        let source = facts.source.as_ref();
+        file_aliases_type(source, &name)
+            || file_renames_to(source, &name)
+            || file_renames_to(source, &raw)
+    });
+    let generic_in_file = index
+        .files()
+        .get(&function.file)
+        .is_some_and(|facts| impl_generics_name(&facts.source, &name));
+    (!rebinds && !generic_in_file).then_some(name)
+}
+
+/// Whether any `impl<..>` header in `source` lists `name` among its generic
+/// parameters (or anywhere in its angle brackets, which fails closed).
+fn impl_generics_name(source: &str, name: &str) -> bool {
+    if !source.contains(name) {
+        return false;
     }
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    whole_word_offsets(&masked, "impl")
+        .into_iter()
+        .any(|offset| {
+            let rest = &masked[offset + "impl".len()..];
+            let open = offset + "impl".len() + (rest.len() - rest.trim_start().len());
+            if bytes.get(open) != Some(&b'<') {
+                return false;
+            }
+            let mut depth = 0usize;
+            let mut close = None;
+            for (at, byte) in bytes.iter().enumerate().skip(open) {
+                match byte {
+                    b'<' => depth += 1,
+                    b'>' if at > 0 && bytes[at - 1] == b'-' => {}
+                    b'>' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            close = Some(at);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // An unbalanced header fails closed.
+            let generics = close.map_or(&masked[open..], |close| &masked[open..close]);
+            !whole_word_offsets(generics, name).is_empty()
+        })
 }
 
 struct UnindexedDefinition<'a> {

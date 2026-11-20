@@ -15046,7 +15046,8 @@ fn a_sibling_impl_on_another_named_type_does_not_defeat_the_pin() -> Result<(), 
 
 /// Rivals that can take a call on a `Square` receiver still refuse: an
 /// inherent `area` on `Square`, another trait's `area` on `Square`, a
-/// blanket impl, and a trait default body.
+/// blanket impl, a trait default body, and a name that may be rebound to
+/// `Square` (alias, rename, generic parameter).
 #[test]
 fn a_rival_that_may_take_the_owner_receiver_still_defeats_the_pin() {
     for rival in [
@@ -15058,6 +15059,12 @@ fn a_rival_that_may_take_the_owner_receiver_still_defeats_the_pin() {
         // A second `Square` in another module shares the base name, so a
         // receiver typed `Square` may be either type.
         "pub mod other {\n    pub struct Square(pub u32);\n    impl super::Shape for Square {\n        fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        // #15426 review: names that may denote `Square` although another
+        // declared type has that name: a `type` alias, an `as` rename, and a
+        // blanket impl's parameter beside a declared `struct T`.
+        "pub mod aliases {\n    pub type Line = super::Square;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        "pub mod renamed {\n    use super::Square as Line;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        "pub mod unrelated {\n    pub struct T;\n}\npub trait Any3 { fn area(self) -> u32; }\nimpl<T> Any3 for T {\n    fn area(self) -> u32 { 9 }\n}\n",
     ] {
         let lib = format!("{SHAPE_LIB}{rival}");
         let (_, pin) = shape_pin(&lib, SHAPE_TESTS);
