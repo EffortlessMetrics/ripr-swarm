@@ -812,6 +812,19 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 Some(output::doctor::DOCTOR_TOOL_TIMEOUT),
             ) {
                 crate::analysis::HeadRefState::Unborn => InitNextStep::NoCommits,
+                // `check` and `doctor` share one default-base search, so a
+                // repository whose default branch is neither `main` nor
+                // `master` (and has no `origin/HEAD`) is told here, not
+                // promised a comparison `check` will refuse.
+                crate::analysis::HeadRefState::Resolved
+                    if crate::analysis::default_base_unresolved_message(
+                        root,
+                        Some(output::doctor::DOCTOR_TOOL_TIMEOUT),
+                    )
+                    .is_some() =>
+                {
+                    InitNextStep::NoDefaultBase
+                }
                 _ => InitNextStep::Ready,
             }
         } else {
@@ -820,7 +833,7 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         println!("{}", init_next_step_line(next, &doctor, &check));
         let commands: &[&String] = match next {
             InitNextStep::Ready | InitNextStep::NoCommits => &[&doctor, &check],
-            InitNextStep::NoGit => &[&doctor],
+            InitNextStep::NoGit | InitNextStep::NoDefaultBase => &[&doctor],
         };
         for command in commands.iter().copied() {
             if let Some(powershell) = output::markdown::powershell_text_variant(command) {
@@ -840,6 +853,10 @@ enum InitNextStep {
     /// Inside a work tree with an unborn `HEAD`: the state right after
     /// `git init`, where `ripr check` has no base and exits 2.
     NoCommits,
+    /// Inside a work tree whose `HEAD` resolves but where a bare `ripr check`
+    /// finds no default base (default branch not `main`/`master`, no
+    /// `origin/HEAD`; a shallow CI checkout): it exits 2 until one is named.
+    NoDefaultBase,
     /// Not established as inside a work tree.
     NoGit,
 }
@@ -853,6 +870,9 @@ fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String 
         ),
         InitNextStep::NoCommits => format!(
             "Next: run `{doctor}` to verify your setup. This repository has no commits yet, so `ripr check` has no base to compare: commit once, then edit a tracked source file and run `{check}`."
+        ),
+        InitNextStep::NoDefaultBase => format!(
+            "Next: run `{doctor}` to verify your setup. `ripr check` cannot find a default branch to compare against here (no origin/HEAD, origin/main, origin/master, main or master): run `git remote set-head origin --auto` if `origin` has a default branch (offline: `git remote set-head origin <branch>`), or run `{check} --base <ref>`."
         ),
         InitNextStep::NoGit => format!(
             "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
@@ -1703,6 +1723,18 @@ mod tests {
         let no_git = init_next_step_line(InitNextStep::NoGit, "ripr doctor", "ripr check");
         assert!(no_git.contains("run `git init`"), "{no_git}");
         assert!(!no_git.contains("no commits yet"), "{no_git}");
+    }
+
+    /// A repository whose default branch is not `main`/`master` (and has no
+    /// `origin/HEAD`) makes `ripr check` exit 2, so the closing line must not
+    /// promise a default-branch comparison; it names the durable fix and the
+    /// per-run `--base`.
+    #[test]
+    fn next_step_line_does_not_promise_a_default_branch_check_that_will_refuse() {
+        let line = init_next_step_line(InitNextStep::NoDefaultBase, "ripr doctor", "ripr check");
+        assert!(!line.contains("against its default branch"), "{line}");
+        assert!(line.contains("git remote set-head origin --auto"), "{line}");
+        assert!(line.contains("`ripr check --base <ref>`"), "{line}");
     }
 
     #[test]
