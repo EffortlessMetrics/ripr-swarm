@@ -1169,9 +1169,8 @@ fn invisibility_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOper
 /// parameters returning the payload. Equal payloads give equal values, and
 /// a different constructor on either side (`Ok(x)` to `Err(x)`) or any
 /// statement, generic or receiver refuses, so a peeled fold can only say two
-/// values are equal when the real ones are (#15414). The return type is
-/// dropped, so the payload folds in exact arithmetic: a wrapping difference
-/// can only hide a reading, never invent one.
+/// values are equal when the real ones are (#15414). The rebuilt function
+/// returns the payload's declared type, so the fold keeps its width guard.
 fn shared_constructor_payloads(current: &str, baseline: &str) -> Option<(String, String)> {
     let (current_constructor, current_payload) = constructor_payload_function(current)?;
     let (baseline_constructor, baseline_payload) = constructor_payload_function(baseline)?;
@@ -1214,12 +1213,36 @@ fn constructor_payload_function(body: &str) -> Option<(String, String)> {
         return None;
     };
     let name = function.name()?;
+    // Keep the payload's declared type (`T` of `Result<T, _>` or `Option<T>`)
+    // so the fold still refuses a result outside that integer width; a
+    // missing or other return type keeps exact arithmetic as before.
+    let payload_type = function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .and_then(|ty| match ty {
+            ast::Type::PathType(path) => path.path()?.segment(),
+            _ => None,
+        })
+        .and_then(|segment| {
+            let wrapper = segment.name_ref()?.text().to_string();
+            if !matches!(wrapper.as_str(), "Result" | "Option") {
+                return None;
+            }
+            match segment.generic_arg_list()?.generic_args().next()? {
+                ast::GenericArg::TypeArg(arg) => Some(arg.ty()?.syntax().text().to_string()),
+                _ => None,
+            }
+        });
+    let return_type = payload_type
+        .map(|ty| format!(" -> {ty}"))
+        .unwrap_or_default();
     Some((
         constructor,
         format!(
-            "fn {}{} {{\n    {}\n}}\n",
+            "fn {}{}{} {{\n    {}\n}}\n",
             name.text(),
             param_list.syntax().text(),
+            return_type,
             payload.syntax().text()
         ),
     ))

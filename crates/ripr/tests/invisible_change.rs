@@ -482,8 +482,25 @@ fn a_changed_constructor_is_not_read_as_the_same_value() -> Result<(), String> {
         OK_FEE_OLD,
         "#[test]\nfn zero() {\n    assert_eq!(invisible::fee(0), Err(0));\n}\n",
     )?;
-    for finding in &findings {
-        assert!(!same_value(finding), "{finding:?}");
-    }
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_agreeing_input_wrapped_at_the_payload_width_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // Control: `x * 2 / 2` and `x * 3 / 3 + x % 2` differ at odd inputs and
+    // agree at `3_000_000_000` in exact arithmetic, but there both products
+    // overflow `u32`; the peel must keep the payload's declared width so the
+    // fold refuses instead of calling them equal.
+    let lib = "pub fn fee(x: u32) -> Result<u32, String> {\n    Ok(x * 3 / 3 + x % 2)\n}\n";
+    let findings = findings(
+        lib,
+        "    Ok(x * 2 / 2)",
+        "#[test]\nfn big() {\n    assert_eq!(invisible::fee(3_000_000_000), Ok(3_000_000_000));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
     Ok(())
 }
