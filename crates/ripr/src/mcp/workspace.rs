@@ -1381,6 +1381,26 @@ impl WorkspaceSession {
                 .map(|limitation| limitation.kind.as_str())
                 .collect::<Vec<_>>(),
         });
+        // Closed gap: every selected item is an `exposed` item the shared seam
+        // gate refused as already gripped, so the default listing is empty
+        // because nothing remains to do. The typed `kind` stays
+        // `complete_with_findings` (findings exist, all already pinned); the
+        // label must not say "findings below" over an empty list.
+        if snapshot.outcome.kind == AnalysisOutcomeKind::CompleteWithFindings
+            && scope.exposed_omitted > 0
+            && snapshot
+                .items
+                .iter()
+                .filter(|item| {
+                    selection
+                        .selected_ids()
+                        .any(|id| id == item.canonical_id.as_str())
+                })
+                .all(|item| GapListFilter::default().excludes_exposed_by_default(item))
+        {
+            outcome["label"] =
+                json!("no test gap found: every finding is already gripped by existing tests");
+        }
         // #13280: a committed zero-item no-scope snapshot examined no behavior;
         // say so beside the typed kind so zero items never read as clean.
         if snapshot_analyzed_no_behavior(snapshot) {
@@ -3738,6 +3758,50 @@ mod tests {
         assert_eq!(analyzed_language_label(&no_language), "source");
         Ok(())
     }
+    /// Closed gap: when every selected item is an already-gripped `exposed`
+    /// item the empty default list says "no test gap found", not "findings
+    /// below"; one open (non-exposed) item keeps the original label.
+    #[test]
+    fn closed_gap_list_label_says_no_test_gap_found() -> Result<(), String> {
+        let label = |all_exposed: bool| -> Result<Value, String> {
+            let mut session = session_with_findings(2)?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for (index, item) in snapshot.items.iter_mut().enumerate() {
+                if all_exposed || index == 0 {
+                    item.class = crate::domain::ExposureClass::Exposed.as_str().to_string();
+                    item.repair_readiness.ineligibility =
+                        Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED);
+                }
+            }
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let closed = label(true)?;
+        assert_eq!(closed["items"], json!([]), "{closed}");
+        assert_eq!(closed["exposed_omitted"], json!(2), "{closed}");
+        assert!(
+            closed["outcome"]["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("no test gap found")),
+            "{closed}"
+        );
+        // Negative control: one open item keeps the typed outcome's label.
+        let open = label(false)?;
+        assert_eq!(open["exposed_omitted"], json!(1), "{open}");
+        assert_eq!(open["outcome"]["label"], json!("findings below"), "{open}");
+        Ok(())
+    }
+
     /// #14327: with no `class` filter the list leaves out `exposed` items the
     /// shared seam gate refused as `seam_already_gripped` and discloses them as
     /// `exposed_omitted`. An `exposed` item refused for limited evidence (a

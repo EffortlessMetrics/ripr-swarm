@@ -739,7 +739,7 @@ fn refusal_next(
     let (kind, detail, mcp, verify) = match reason {
         "seam_already_gripped" if class == "exposed" => (
             "nothing_to_do",
-            "existing tests already grip this seam; no static gap remains to repair",
+            "nothing to do: existing tests already grip this seam, so the change is already pinned and no static gap remains to repair. This is the closed-gap success state; isError only means no repair transaction was created",
             Value::Null,
             Value::Null,
         ),

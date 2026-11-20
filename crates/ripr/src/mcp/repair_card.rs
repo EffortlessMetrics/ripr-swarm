@@ -378,6 +378,18 @@ fn retain_unambiguous_item_bindings(bindings: &mut Vec<SeamCardBinding>) {
 /// remedy command, which this root-relative adapter words as a repository
 /// command instead (#10718).
 fn policy_omitted_failure(seam_id: &str, reason: &str) -> AttemptFailure {
+    // The default policy omits `strongly_gripped` seams because the existing
+    // tests already pin the change: a closed gap, not a configuration problem.
+    // The typed code stays `policy_omitted` (pinned); only the words change.
+    if reason.contains("strongly_gripped") {
+        return AttemptFailure::new(
+            AgentCardRefusalKind::PolicyOmitted.as_str(),
+            format!(
+                "agent card seam_id {seam_id} is already gripped by existing tests (strongly_gripped): the change is already pinned and there is no repair card to read; nothing to do. The agent policy {reason}."
+            ),
+            "none: the gap is closed; ripr_refresh only after further edits. Change the agent policy (`ripr agent brief --seam-id <seam> --json` shows it) only to list gripped seams anyway",
+        );
+    }
     agent_card_failure(AgentCardError::refusal(
         AgentCardRefusalKind::PolicyOmitted,
         format!(
@@ -778,6 +790,40 @@ fn mcp_detail_routes(card: &Value, canonical_id: &str) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    /// Closed gap: a strongly_gripped omission reads as already pinned, with
+    /// the pinned `policy_omitted` code; any other omission keeps the policy
+    /// wording.
+    #[test]
+    fn policy_omitted_for_strongly_gripped_says_nothing_to_do() {
+        let gripped = policy_omitted_failure(
+            "seam-a",
+            "is configured off for strongly_gripped seams and is not included in agent results",
+        );
+        assert_eq!(gripped.code, "policy_omitted");
+        assert!(
+            gripped.detail.contains("already gripped"),
+            "{}",
+            gripped.detail
+        );
+        assert!(
+            gripped.detail.contains("nothing to do"),
+            "{}",
+            gripped.detail
+        );
+        assert!(gripped.recovery.starts_with("none: the gap is closed"));
+        let weak = policy_omitted_failure(
+            "seam-a",
+            "is configured off for weakly_gripped seams and is not included in agent results",
+        );
+        assert_eq!(weak.code, "policy_omitted");
+        assert!(!weak.detail.contains("already gripped"), "{}", weak.detail);
+        assert!(
+            weak.recovery.contains("inspect it with"),
+            "{}",
+            weak.recovery
+        );
+    }
+
     use super::*;
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,

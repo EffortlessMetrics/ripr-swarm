@@ -485,7 +485,7 @@ pub(crate) struct GapItem {
     pub(crate) file: String,
     /// Exposure class wire token (`exposed`, `weakly_exposed`, ...) captured
     /// at projection time, so list filters re-read stored facts (#7464).
-    class: String,
+    pub(super) class: String,
     /// Language wire string (`rust`, `python`, ...) or `None` when the
     /// producer populated no language; stored for the same filter route.
     language: Option<String>,
@@ -739,6 +739,13 @@ impl GapItem {
                     "{}; keep the snapshot's explicit `base`, if any, in the refresh request, then re-read this limitation against the new snapshot",
                     self.repair_readiness.detail()
                 )
+            } else if code == crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
+                && self.class == "exposed"
+            {
+                // The gap is closed: the same decision `ripr_prepare_repair`
+                // words as `nothing_to_do`. "Make the test change it implies"
+                // would contradict it.
+                "nothing to do: existing tests already grip this seam, so the change is already pinned; refresh only after further edits".to_string()
             } else if let Some(step) = advisory_next_step {
                 format!("{step}; then {refresh_recovery}")
             } else {
@@ -2787,6 +2794,32 @@ mod tests {
         let other = GapItem::from_finding(&unlimited, Path::new("."))?;
         let other = other.limitation_document("snapshot:sha256:abc");
         assert_ne!(limitation_field(&other, "stage")?, "producer_static_limit");
+        Ok(())
+    }
+
+    /// Closed gap: an already-gripped `exposed` item's limitation says nothing
+    /// remains to do, while an already-gripped non-exposed item keeps the
+    /// edit-and-refresh recovery.
+    #[test]
+    fn already_gripped_exposed_limitation_says_nothing_to_do() -> Result<(), String> {
+        let refused = |class: &str| -> Result<Value, String> {
+            let mut item = GapItem::from_finding(&finding()?, Path::new("."))?;
+            item.class = class.to_string();
+            item.repair_readiness =
+                ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
+                    code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+                    detail: "the seam is already gripped".to_string(),
+                }));
+            Ok(item.limitation_document("snapshot:sha256:abc"))
+        };
+        let exposed = refused("exposed")?;
+        let recovery = limitation_field(&exposed, "recovery")?;
+        assert!(recovery.starts_with("nothing to do"), "{recovery}");
+        assert!(!recovery.contains("make the test change"), "{recovery}");
+        let weak = refused("weakly_exposed")?;
+        let weak_recovery = limitation_field(&weak, "recovery")?;
+        assert!(!weak_recovery.starts_with("nothing to do"), "{weak}");
+        assert!(weak_recovery.contains("ripr_refresh"), "{weak}");
         Ok(())
     }
 
