@@ -68,8 +68,38 @@ pub(crate) fn literal_arm_return(
         return None;
     }
     let source = owner.source_text.as_deref()?;
+    // The recorded source must start on the owner's first line (an arrow on
+    // the line after `export const dir =` does not), or line offsets into it
+    // name another line.
+    if owner.end_line.checked_sub(owner.start_line)? + 1 != source.lines().count() {
+        return None;
+    }
     let changed = line.checked_sub(owner.start_line)?;
+    if source.lines().nth(changed).map(str::trim) != Some(line_text.trim()) {
+        return None;
+    }
     let returns = owner_returns(&owner.file, source)?;
+    // `undefined` is an ordinary identifier: a parameter or local may bind it.
+    let binds_undefined = owner.params.iter().any(|param| param == "undefined")
+        || [
+            "let undefined",
+            "const undefined",
+            "var undefined",
+            "function undefined",
+            "undefined:",
+            "undefined =",
+            "(undefined",
+            ", undefined",
+        ]
+        .iter()
+        .any(|binding| source.contains(binding));
+    if binds_undefined
+        && returns
+            .iter()
+            .any(|(_, value)| *value == Some(ArmConstant::Undefined))
+    {
+        return None;
+    }
     let mut changed_seen = false;
     let mut new_value_shared = false;
     for (return_line, value) in &returns {
@@ -102,6 +132,7 @@ fn call_leaves_changed_arm(
     change: &LiteralArmReturn,
     owner: &TypeScriptOwner,
     arguments: &[String],
+    workspace_root: Option<&Path>,
 ) -> bool {
     use super::guard_entry_guard::{
         CallInputs, call_excludes_arm, enclosing_conditions, parameter_defaults, parameter_shapes,
@@ -109,6 +140,16 @@ fn call_leaves_changed_arm(
     let Some(source) = owner.source_text.as_deref() else {
         return false;
     };
+    // A recursive or re-exported owner can re-enter the changed arm from
+    // inside the call; a comment in the argument text can shift the
+    // positions the raw splitter reads.
+    if !workspace_root.is_some_and(|root| owner_module_names_owner_once(owner, root))
+        || arguments
+            .iter()
+            .any(|argument| argument.contains("/*") || argument.contains("//"))
+    {
+        return false;
+    }
     let Some(conditions) =
         enclosing_conditions(source, owner.start_line, change.line, &change.line_text)
     else {
@@ -191,9 +232,9 @@ pub(crate) fn ts_literal_arm_witness(
             // the call provably leaves the changed arm closed.
             let new_result_of_another_arm = expected_value.as_ref() == Some(&change.new_value)
                 && change.new_value_shared
-                && observed_arguments
-                    .as_deref()
-                    .is_some_and(|arguments| call_leaves_changed_arm(change, owner, arguments));
+                && observed_arguments.as_deref().is_some_and(|arguments| {
+                    call_leaves_changed_arm(change, owner, arguments, workspace_root)
+                });
             // An assertion anywhere that expects the old or the new result,
             // alone or inside a wrapping object, array or expression, may
             // observe the changed arm directly or through a local or a
@@ -284,6 +325,12 @@ fn returned_literal_text(line_text: &str) -> Option<&str> {
 /// A scalar literal (string, number, boolean, `null`, `undefined`), never a
 /// member path whose value is unknown without the declaration.
 fn scalar_constant(text: &str) -> Option<ArmConstant> {
+    // A BigInt (`5n`) reads as the number 5, but `5n !== 5`: its identity is
+    // unproven here, so it is not a readable scalar.
+    let trimmed = text.trim();
+    if trimmed.ends_with('n') && trimmed.starts_with(|c: char| c.is_ascii_digit() || c == '-') {
+        return None;
+    }
     match parse_arm_constant(text)? {
         ArmConstant::Member(_) => None,
         constant => Some(constant),

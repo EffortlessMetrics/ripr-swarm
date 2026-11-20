@@ -3289,7 +3289,7 @@ fn is_test_framework_source(source: &str) -> bool {
 /// owner's module (its declaration). A second occurrence may be a
 /// recursive or mutually recursive call, a self alias, or a re-export that
 /// lets another path re-enter the owner with a different input.
-fn owner_module_names_owner_once(owner: &TypeScriptOwner, root: &Path) -> bool {
+pub(crate) fn owner_module_names_owner_once(owner: &TypeScriptOwner, root: &Path) -> bool {
     let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
         return false;
     };
@@ -8065,7 +8065,9 @@ pub(crate) fn classify_resolved_owner(
     });
     // #15306: a changed literal return of one arm of a literal-return lookup
     // is seen only by an assertion that expects that arm's old result.
-    let literal_arm_unpinned = strong_oracle_present
+    // Only a lone one-for-one line replacement: another changed line could
+    // change another arm's result or pair this line with the wrong old text.
+    let literal_arm_unpinned = (strong_oracle_present && context.single_line_replacement)
         .then(|| literal_arm_return(owner, line, line_text, old_line_text))
         .flatten()
         .and_then(|change| {

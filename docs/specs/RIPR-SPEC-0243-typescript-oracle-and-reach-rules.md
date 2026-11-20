@@ -2689,7 +2689,13 @@ keys); do not take the next number.
   distinguishes the versions when the call takes the arm). When another arm
   also returns the new literal, an exact assertion expecting it counts as that
   arm's result only when its call's literal inputs provably leave the changed
-  arm closed (the #8569 condition reader); otherwise it keeps the verdict.
+  arm closed (the #8569 condition reader) and the owner's module names it
+  once (no recursion or re-export); otherwise it keeps the verdict. The rule
+  applies only to a lone one-for-one line replacement in the file, and only
+  when the owner's recorded source starts on its first line and holds the
+  changed line there; a `return undefined` with an `undefined` binding in
+  scope, a BigInt literal (`5n !== 5`), and a comment inside a shared-result
+  call's arguments are refused.
   When every strong assertion on a direct owner call expects another arm's
   readable literal,
   the change is not observed: the existing literal-return reading makes it
@@ -2706,6 +2712,10 @@ keys); do not take the next number.
   `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
   `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
   `a_shared_new_result_is_credited_only_on_the_selected_arm`,
+  `a_recursive_owner_keeps_a_shared_new_result`,
+  `an_arrow_on_the_next_line_keeps_the_verdict`,
+  `a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused`,
+  `a_bigint_return_is_not_a_readable_scalar`,
   `an_unreadable_expected_side_keeps_the_verdict` and
   `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
