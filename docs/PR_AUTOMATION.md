@@ -1409,7 +1409,8 @@ internal consistency of the fixture's captured page chain. Its coverage claim
 depends on the capture preserving the observed links and IDs. The command writes
 `target/ripr/reports/release-milestone-fixture.{json,md}` and exits successfully
 only when the local comparison is `in_sync`. The report is evidence about the
-supplied fixture alone.
+supplied fixture alone. See the [fixture comparison contract](specs/RIPR-SPEC-0452-release-milestone-fixture-parity.md)
+for comparison and refusal rules.
 
 ## CI Reports
 
