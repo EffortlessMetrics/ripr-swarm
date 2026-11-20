@@ -632,7 +632,9 @@ boundary without changing the guards (#4104 E):
   or `this.ms` cannot use a standalone literal argument as its value, even
   when the signature binds a parameter named `ms`. Arithmetic operands have
   no simple boundary label. A simple parameter, including a Unicode binding,
-  reads its own argument position.
+  reads its own argument position. When both operands name parameters, only
+  equal arguments at those two positions witness the equality boundary. An
+  empty array passed to the receiver parameter witnesses a length of zero.
 - **Boundary parameters evidence** (#4759): when both sides of that
   discriminator are distinct plain positional parameters of the owner
   (`amount == threshold`), the adapter instead emits

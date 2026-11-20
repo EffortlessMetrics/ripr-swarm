@@ -8,4 +8,5 @@ fixtures = [
   "fixtures/typescript_boundary_operand_field",
   "fixtures/typescript_boundary_operand_unicode_local",
   "fixtures/typescript_boundary_operand_unicode_parameter",
+  "fixtures/typescript_boundary_operand_unicode_unrelated_pair",
 ]

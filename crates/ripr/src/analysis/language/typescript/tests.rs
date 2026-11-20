@@ -38,6 +38,9 @@ pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
 
 #[test]
 fn node_expected_failure_test_cannot_donate_classifier_oracle_credit() -> Result<(), String> {
+    let mut owner = test_owner("applyDiscount", "src/lib.ts");
+    owner.params = vec!["amount".into(), "threshold".into()];
+    owner.arity = Some(2);
     let qualified = r#"
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -70,7 +73,7 @@ test("qualified", { expectFailure: true }, () => {
                 Path::new("src/lib.ts"),
                 2,
                 "    if (amount >= threshold) {",
-                &[test_owner("applyDiscount", "src/lib.ts")],
+                std::slice::from_ref(&owner),
                 &tests,
                 None,
                 &ReExportIndex::empty(),
@@ -5434,8 +5437,8 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         commonjs_whole_function: false,
         constructor_callback: false,
         module_entries: Vec::new(),
-        arity: None,
-        params: Vec::new(),
+        arity: Some(2),
+        params: vec!["amount".into(), "threshold".into()],
         source_text: None,
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5536,8 +5539,8 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         commonjs_whole_function: false,
         constructor_callback: false,
         module_entries: Vec::new(),
-        arity: None,
-        params: Vec::new(),
+        arity: Some(2),
+        params: vec!["amount".into(), "threshold".into()],
         source_text: None,
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -16057,9 +16060,9 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
-        params: Vec::new(),
+        params: vec!["amount".into(), "threshold".into()],
         method_kind: TypeScriptMethodKind::Ordinary,
-        arity: None,
+        arity: Some(2),
         source_text: None,
     };
     let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
@@ -16112,8 +16115,11 @@ fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), 
 /// call with two identical arguments as the boundary witness.
 #[test]
 fn spec_0027_non_literal_boundary_requires_identical_arguments() -> Result<(), String> {
+    let mut owner = test_owner("isAllowed", "src/lib.ts");
+    owner.params = vec!["count".into(), "limit".into()];
+    owner.arity = Some(2);
     let below = [exact_value_test("isAllowed", "isAllowed(4, 5)", "true")];
-    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &below)?;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (count <= limit) {", &below)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(
         missing_discriminator_values(&finding),
@@ -16124,8 +16130,22 @@ fn spec_0027_non_literal_boundary_requires_identical_arguments() -> Result<(), S
         exact_value_test("isAllowed", "isAllowed(4, 5)", "true"),
         exact_value_test("isAllowed", "isAllowed(5, 5)", "false"),
     ];
-    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &at)?;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (count <= limit) {", &at)?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    owner.params = vec!["時".into(), "unused".into(), "limit".into()];
+    owner.arity = Some(3);
+    for (call, result, expected) in [
+        ("isAllowed(0, 0, 10)", "false", ExposureClass::WeaklyExposed),
+        ("isAllowed(10, 0, 10)", "true", ExposureClass::Exposed),
+    ] {
+        let tests = [exact_value_test("isAllowed", call, result)];
+        assert_eq!(
+            classify_boundary_line_for_owner(&owner, "  if (時 >= limit) {", &tests)?.class,
+            expected,
+            "{call}"
+        );
+    }
 
     // Object-literal props name both operands: equal values witness the
     // boundary, unequal values do not.

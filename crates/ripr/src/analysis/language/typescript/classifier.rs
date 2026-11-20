@@ -2640,13 +2640,17 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 !is_boundary_literal(&effective_left)
                     && nullish_argument_reaches_read_argument(&arguments, &effective_left, owner)
             } else if literals.is_empty() {
-                call_has_identical_arguments(&arguments, &owner.params)
-                    || object_argument_pins_operands_equal(
-                        &arguments,
-                        &effective_left,
-                        &effective_right,
-                        &owner.params,
-                    )
+                call_has_identical_arguments(
+                    &arguments,
+                    &owner.params,
+                    &effective_left,
+                    &effective_right,
+                ) || object_argument_pins_operands_equal(
+                    &arguments,
+                    &effective_left,
+                    &effective_right,
+                    &owner.params,
+                )
             } else {
                 literals.iter().any(|literal| {
                     boundary_literal_reaches_read_argument(
@@ -5504,10 +5508,10 @@ pub(crate) fn owner_call_arguments(
         {
             continue;
         }
-        let Some(inner) = observed
-            .get(idx + owner_name.len()..)
-            .and_then(|rest| rest.trim_start().strip_prefix('('))
-        else {
+        let suffix = observed[idx + owner_name.len()..].trim_start();
+        let Some(inner) = suffix.strip_prefix('(').or_else(|| {
+            generic_owner_argument_list(&observed[idx..], owner_name)?.strip_prefix('(')
+        }) else {
             continue;
         };
         if let Some(arguments) = balanced_call_arguments(inner) {
@@ -5515,6 +5519,27 @@ pub(crate) fn owner_call_arguments(
         }
     }
     calls
+}
+
+/// For an observed `owner<T>(...)`, read the argument list after the
+/// parser-confirmed type arguments. A relational expression has no such list.
+pub(super) fn generic_owner_argument_list<'a>(observed: &'a str, name: &str) -> Option<&'a str> {
+    let observed = observed.trim();
+    if !observed.strip_prefix(name)?.trim_start().starts_with('<') {
+        return None;
+    }
+    let allocator = Allocator::default();
+    let Expression::CallExpression(call) = Parser::new(&allocator, observed, SourceType::ts())
+        .parse_expression()
+        .ok()?
+    else {
+        return None;
+    };
+    if !matches!(&call.callee, Expression::Identifier(id) if id.name == name) {
+        return None;
+    }
+    let types = call.type_arguments.as_ref()?;
+    Some(observed.get(types.span.end as usize..)?.trim_start())
 }
 
 /// Parameter positions a spread call keeps marked unreadable.
@@ -5614,28 +5639,21 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
     None
 }
 
-/// `true` when an argument at `position` can be read by the owner. With no
-/// parameter facts every position is live (previous behaviour); with facts,
-/// positions at or beyond the declared arity are dead — extra call arguments
-/// a fixed-signature owner never reads.
-fn argument_position_is_live(position: usize, params: &[String]) -> bool {
-    params.is_empty() || position < params.len()
-}
-
-/// `true` when two LIVE arguments of one observed owner call are identical
-/// (`isAllowed(5, 5)` witnesses `count <= limit`). Arguments in dead
-/// positions (past the owner's declared arity) are ignored — a duplicated
-/// literal parked in an unread argument cannot witness (#4102 shape 1).
-pub(crate) fn call_has_identical_arguments(arguments: &[String], params: &[String]) -> bool {
-    let live: Vec<&String> = arguments
-        .iter()
-        .enumerate()
-        .filter(|(idx, _)| argument_position_is_live(*idx, params))
-        .map(|(_, argument)| argument)
-        .collect();
-    live.iter().enumerate().any(|(idx, left)| {
-        !left.is_empty() && live.iter().skip(idx + 1).any(|right| *right == *left)
-    })
+/// Both comparison operands must read the positions holding the equal values.
+pub(crate) fn call_has_identical_arguments(
+    arguments: &[String],
+    params: &[String],
+    left: &str,
+    right: &str,
+) -> bool {
+    let read = |operand: &str| {
+        params
+            .iter()
+            .position(|name| name == operand)
+            .and_then(|position| arguments.get(position))
+    };
+    left != right
+        && matches!((read(left), read(right)), (Some(a), Some(b)) if !a.is_empty() && a == b)
 }
 
 /// `true` when an object-literal argument binds both comparison operands
@@ -5654,7 +5672,14 @@ fn object_argument_pins_operands_equal(
         return false;
     }
     arguments.iter().enumerate().any(|(position, argument)| {
-        if !argument_position_is_live(position, params) {
+        let reads_field = |operand: &str| match operand.split_once('.') {
+            Some((base, field)) => {
+                params.get(position).is_some_and(|param| param == base)
+                    && oxc_syntax::identifier::is_identifier_name(field)
+            }
+            None => params.is_empty() && is_bare_identifier(operand),
+        };
+        if !reads_field(left) || !reads_field(right) {
             return false;
         }
         let Some(body) = argument
@@ -5770,7 +5795,16 @@ fn boundary_literal_reaches_read_argument(
                 .iter()
                 .position(|name| name == base)
                 .and_then(|index| arguments.get(index))
-                .is_some_and(|argument| object_argument_pins_literal(argument, field, literal));
+                .is_some_and(|argument| {
+                    object_argument_pins_literal(argument, field, literal)
+                        || (field == "length"
+                            && numeric_literal_value(literal).as_deref() == Some("0")
+                            && argument
+                                .trim()
+                                .strip_prefix('[')
+                                .and_then(|rest| rest.strip_suffix(']'))
+                                .is_some_and(|body| body.trim().is_empty()))
+                });
     }
     if !can_read_positional_argument(operand, owner) {
         return false;
