@@ -16,6 +16,7 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
         std::process::id()
     ));
     fs::create_dir_all(&root)?;
+    ensure_fixture_repo_root(&root)?;
 
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["init", "--root"])
@@ -5112,7 +5113,18 @@ fn run_ripr_in(
         .output()?)
 }
 
+/// Make a CI fixture root its own Git repository when it is not one yet.
+/// Cargo pins TMPDIR under this checkout's `target/`, and `init --ci` refuses
+/// a root below a Git top level (#15389); an adopter's root is the repository.
+fn ensure_fixture_repo_root(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    if !root.join(".git").exists() {
+        fixture_git_ok(root, &["init", "-q"])?;
+    }
+    Ok(())
+}
+
 fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    ensure_fixture_repo_root(root)?;
     let root = root.to_string_lossy();
     run_ripr_in(
         std::path::Path::new("."),

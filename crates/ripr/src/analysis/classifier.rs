@@ -29,7 +29,8 @@ pub fn classify_probe(
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
 ) -> Finding {
-    let candidate_index = RelatedTestCandidateIndex::new(index);
+    let candidate_index =
+        RelatedTestCandidateIndex::new(index).with_unchanged_module_declarations(index);
     let transitive_reach = TransitiveReachIndex::new(index);
     classify_probe_with_candidate_index_and_origins(
         probe,
@@ -324,6 +325,22 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             candidate_index.module_declarations(),
             candidate_index.base_may_rebind_trusted_macros(),
         )
+    });
+    // #15104: the legacy constant-tail edge reads only the new-side owner,
+    // so it asks the shared owner's gate decision whether a test may run a
+    // `cfg` twin instead, only for a probe that edge would read.
+    context.owner_may_be_swapped = owner_fn.is_some_and(|owner| {
+        super::classify::changes_constant_owner_tail(probe, owner)
+            && find_file_facts(index, &owner.file).is_none_or(|facts| {
+                crate::analysis::diff::owner_may_be_swapped(
+                    facts.source.as_ref(),
+                    &owner.file,
+                    candidate_index.module_declarations(),
+                    &owner.name,
+                    owner.start_line,
+                    owner.end_line,
+                )
+            })
     });
     context.compile_time_guarded = owner_fn.is_none()
         && candidate_index
