@@ -333,7 +333,70 @@ pub(super) fn type_scope_is_clear(
     ) || file_renames_to(source, impl_type)
         || file_renames_to(source, raw_impl_type.as_str())
         || parent_chain_shadows_type(test, impl_type, owner_scope, index)
-        || declares_value_named(&mask_comments_and_strings(source), impl_type))
+        || file_declares_value_named(test, source, impl_type, index))
+}
+
+/// [`declares_value_named`] over the test file's masked source. A file whose
+/// raw text has no candidate declaration is answered without masking, and
+/// the masked copy is the file snapshot's memoized one (the same copy
+/// `test_module_shadows_type` reads), so no reading re-masks a large test
+/// file on every check (#12947).
+fn file_declares_value_named(
+    test: &TestSummary,
+    source: &str,
+    name: &str,
+    index: &RustIndex,
+) -> bool {
+    if !may_declare_value_named(source, name) {
+        return false;
+    }
+    // A caller supplying different source bytes must never borrow the
+    // indexed snapshot.
+    let snapshot = index
+        .files()
+        .get(&test.file)
+        .filter(|facts| std::ptr::eq(facts.source.as_ref(), source))
+        .and_then(|_| index.source_syntax.get(index, &test.file));
+    match snapshot {
+        Some(snapshot) => declares_value_named(
+            snapshot.masked_source(|| mask_comments_and_strings(source)),
+            name,
+        ),
+        None => declares_value_named(&mask_comments_and_strings(source), name),
+    }
+}
+
+/// A raw-text superset of [`declares_value_named`]: some whole-word `name`
+/// (or `r#name`) whose preceding code, past whitespace and an optional
+/// `mut`, ends with `fn`, `const` or `static`, or with a comment (`*/`, or a
+/// line holding `//`) that masking would turn into whitespace between the
+/// keyword and the name.
+fn may_declare_value_named(raw: &str, name: &str) -> bool {
+    if name.is_empty() || !raw.contains(name) {
+        return false;
+    }
+    raw.match_indices(name).any(|(at, _)| {
+        if !ident_boundary(raw, at, at + name.len()) {
+            return false;
+        }
+        let before = raw[..at].strip_suffix("r#").unwrap_or(&raw[..at]);
+        let before = before.trim_end();
+        let before = match before.strip_suffix("mut") {
+            Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
+            _ => before,
+        };
+        let line = before.rsplit('\n').next().unwrap_or(before);
+        before.ends_with("*/")
+            || line.contains("//")
+            || ["fn", "const", "static"].iter().any(|keyword| {
+                before.strip_suffix(keyword).is_some_and(|head| {
+                    !head
+                        .bytes()
+                        .last()
+                        .is_some_and(|byte| is_ident_byte(byte) || byte == b'#')
+                })
+            })
+    })
 }
 
 /// Whether the masked source declares a `fn`, `const` or `static` (also
@@ -1027,5 +1090,15 @@ mod tests {
         assert!(!declares_value_named("fn KeyMaker() {}", "Key"));
         assert!(!declares_value_named("fn make() -> Key { Key(1) }", "Key"));
         assert!(!declares_value_named("let myfn Key = 1;", "Key"));
+        // The raw prefilter keeps every masked hit, a comment between the
+        // keyword and the name included, and drops a file with no candidate.
+        assert!(may_declare_value_named("fn /* c */ Key() {}", "Key"));
+        assert!(may_declare_value_named("fn // c\n    Key() {}", "Key"));
+        assert!(may_declare_value_named("static mut Key: u8 = 0;", "Key"));
+        assert!(!may_declare_value_named(
+            "let k = Key(1);\nstruct Key;",
+            "Key"
+        ));
+        assert!(!may_declare_value_named("fn make() {}", "Key"));
     }
 }
