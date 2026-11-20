@@ -1369,7 +1369,7 @@ is not decided here.
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_failed_restart_retains_literal_unix_root`
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_open_gap_restart_retains_literal_unix_root`
 - `crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once`
-- `crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory`
+- `crates/ripr/tests/generated_review_workflow/main.rs::generated_status_command_runs_from_a_foreign_working_directory`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots`
 - `editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)`
 - `editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions`
