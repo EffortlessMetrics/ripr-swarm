@@ -154,11 +154,9 @@ pub enum StopReason {
     /// the ambiguous name but cannot bind it to one workspace function.
     /// Classification is `static_unknown`. See RIPR-SPEC-0159 / #7272.
     HelperIdentityUnresolved,
-    /// The changed line is a compile-time assertion (`const _: () = assert!(..)`,
-    /// `static_assertions::const_assert!`). A violating edit fails to build; it
-    /// is not a test-kill question, so ripr states that instead of placing the
-    /// line in a function. Classification stays `static_unknown`, never
-    /// `exposed` (#11547).
+    /// The change involves a potential compile-time assertion. A violation
+    /// can prevent a build that evaluates the assertion. Classification
+    /// stays `static_unknown` (#11547).
     CompileTimeInvariant,
     /// The changed code states an unsafe contract the compiler does not
     /// check: an `unsafe fn` (callers now carry a safety obligation) or an
@@ -251,8 +249,8 @@ impl StopReason {
                  is not unique"
             }
             StopReason::CompileTimeInvariant => {
-                "the changed line is a compile-time assertion, so a violating edit fails to \
-                 build instead of failing a test"
+                "the change involves a possible compile-time assertion, and a violation can prevent \
+                 builds that evaluate it"
             }
             StopReason::UnsafeObligation => {
                 "the change adds or alters an unsafe contract (an unsafe function or an \
@@ -1324,6 +1322,15 @@ mod tests {
         assert!(probe_over(ProbeFamily::StaticUnknown, "const CAP: u64 = 5;").offers_stub_route());
         assert!(!probe_over(ProbeFamily::StaticUnknown, "mystery!();").offers_stub_route());
         assert!(probe_over(ProbeFamily::Predicate, "a > b").offers_stub_route());
+    }
+
+    #[test]
+    fn compile_time_invariant_gloss_is_conditional() {
+        let gloss = StopReason::CompileTimeInvariant.describe();
+        assert!(
+            gloss.contains("can prevent builds that evaluate it"),
+            "{gloss}"
+        );
     }
 
     /// #4323: every stop-reason gloss is one clean clause (no whitespace runs
