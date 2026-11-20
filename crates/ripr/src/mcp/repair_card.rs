@@ -277,9 +277,23 @@ pub(super) fn verify_consumed_source_custody(
     surface: &str,
 ) -> Result<(), AttemptFailure> {
     let evidence_paths = crate::app::repair_card_handoff::evidence_probe_paths(entry);
+    verify_consumed_paths(root, snapshot, item, producers, &evidence_paths, surface)
+}
+
+/// The same digest comparison over an explicit path set, for an item with no
+/// bound seam (#15240): the caller names the files, the shared custody owner
+/// decides, and the typed `stale_snapshot` refusal is identical.
+pub(super) fn verify_consumed_paths(
+    root: &Path,
+    snapshot: &Snapshot,
+    item: &GapItem,
+    producers: &SnapshotCardProducers,
+    paths: &[PathBuf],
+    surface: &str,
+) -> Result<(), AttemptFailure> {
     if let Some(drift) = producers
         .consumed_sources
-        .first_drift(evidence_paths.iter().map(PathBuf::as_path), |relative| {
+        .first_drift(paths.iter().map(PathBuf::as_path), |relative| {
             std::fs::read(root.join(relative)).ok()
         })
     {

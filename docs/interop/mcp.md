@@ -361,9 +361,12 @@ digests of the files the card's evidence is bound to: an edit or commit after
 `ripr_refresh` (the server does not watch the worktree) refuses with
 `stale_snapshot`, names the path and says to run `ripr_refresh` again.
 `ripr_prepare_repair` runs the same shared check before it creates or replays
-a transaction and refuses with the same typed `stale_snapshot` (#15240): it
-never mints a ready transaction over an edited, committed, reset or deleted
-consumed file. A committed refresh whose findings and checkout Rust files were not
+a transaction, ahead of the ineligible (negative) documents, and refuses with
+the same typed `stale_snapshot` (#15240) when a checked file changed or was
+deleted. The checked files are those with a captured digest that the item's
+evidence is bound to (an item without a bound seam is checked over its own
+file and fix-site file); a proposed new test file with no captured digest is
+not checked. A committed refresh whose findings and checkout Rust files were not
 shown to agree (a consumed file edited, staged, deleted or changed during the
 refresh, or any uncommitted or untracked Rust source or test file, including
 one outside the diff) likewise withholds repair cards (`incomplete_inventory`)

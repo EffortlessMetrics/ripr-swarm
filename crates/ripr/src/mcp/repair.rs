@@ -858,12 +858,10 @@ impl WorkspaceSession {
         // changed after the snapshot captured it. The card's own shared
         // consumed-source custody check decides, with the same typed
         // `stale_snapshot` refusal; the server does not watch the worktree.
-        if let Some(producers) = &snapshot.card_producers
-            && let Some(binding) = producers
-                .bindings
-                .iter()
-                .find(|binding| binding.item_canonical_id == item.canonical_id)
-        {
+        // The refusal precedes the ineligible (negative) documents too. An
+        // item with no bound seam (admission can ready an unbound item) is
+        // checked over its own file and fix-site file instead of skipped.
+        if let Some(producers) = &snapshot.card_producers {
             let Some(root) = root else {
                 return Err(AttemptFailure::new(
                     super::workspace::CODE_WORKSPACE_UNAVAILABLE,
@@ -871,14 +869,35 @@ impl WorkspaceSession {
                     "restart the server with `ripr mcp --stdio --root <repository>` and retry",
                 ));
             };
-            super::repair_card::verify_consumed_source_custody(
-                root,
-                snapshot,
-                item,
-                producers,
-                &binding.seam,
-                "repair preparation",
-            )?;
+            match producers
+                .bindings
+                .iter()
+                .find(|binding| binding.item_canonical_id == item.canonical_id)
+            {
+                Some(binding) => super::repair_card::verify_consumed_source_custody(
+                    root,
+                    snapshot,
+                    item,
+                    producers,
+                    &binding.seam,
+                    "repair preparation",
+                )?,
+                None => {
+                    let mut paths = vec![std::path::PathBuf::from(&item.file)];
+                    let fix_file = fix_site_file(item);
+                    if !fix_file.is_empty() {
+                        paths.push(std::path::PathBuf::from(fix_file));
+                    }
+                    super::repair_card::verify_consumed_paths(
+                        root,
+                        snapshot,
+                        item,
+                        producers,
+                        &paths,
+                        "repair preparation",
+                    )?;
+                }
+            }
         }
         let readiness = &item.repair_readiness;
         if !readiness.ready {
@@ -1983,6 +2002,61 @@ pub(super) mod tests {
                 "a non-predicate item must not be terminal: {ordinary}"
             ));
         }
+        Ok(())
+    }
+
+    /// #15240: a ready item with no bound seam is still custody-checked over
+    /// its own and fix-site files; unchanged bytes still prepare (control).
+    #[test]
+    fn ready_unbound_item_is_refused_when_its_files_changed() -> Result<(), String> {
+        let dir = unique_test_dir("unbound-stale")?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        let src = dir.join("src/lib.rs");
+        let test_file = dir.join("tests/checkout.rs");
+        std::fs::write(&src, b"fn a() {}\n").map_err(|e| e.to_string())?;
+        std::fs::write(&test_file, b"fn t() {}\n").map_err(|e| e.to_string())?;
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let snapshot = session
+            .last_good
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture snapshot must be uniquely owned")?;
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("src/lib.rs"), Some(b"fn a() {}\n"));
+        consumed.record(Path::new("tests/checkout.rs"), Some(b"fn t() {}\n"));
+        snapshot.card_producers = Some(super::super::repair_card::SnapshotCardProducers {
+            repository_head: "head".to_string(),
+            bindings: Vec::new(),
+            candidate_seams: Vec::new(),
+            completeness: super::super::repair_admission::InventoryCompleteness::Complete,
+            config: crate::config::RiprConfig::default(),
+            consumed_sources: consumed,
+        });
+        let control = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+            .map_err(|failure| {
+                format!("unchanged unbound item must prepare: {}", failure.detail)
+            })?;
+        if control
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            return Err(format!("control must be ready: {control}"));
+        }
+        for (path, label) in [(&src, "item file"), (&test_file, "fix-site file")] {
+            let original = std::fs::read(path).map_err(|e| e.to_string())?;
+            std::fs::write(path, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+            let result =
+                session.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir));
+            std::fs::write(path, original).map_err(|e| e.to_string())?;
+            match result {
+                Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+                other => return Err(format!("{label}: changed file must be stale: {other:?}")),
+            }
+        }
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
         Ok(())
     }
 
