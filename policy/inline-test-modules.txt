@@ -123,6 +123,7 @@ crates/ripr/src/analysis/classify/related_tests/generic_sibling.rs|1
 crates/ripr/src/analysis/classify/related_tests/implicit_dispatch.rs|1
 crates/ripr/src/analysis/classify/related_tests/iterator_dispatch.rs|1
 crates/ripr/src/analysis/classify/related_tests/operator_dispatch.rs|1
+crates/ripr/src/analysis/classify/related_tests/parse_dispatch.rs|1
 crates/ripr/src/analysis/classify/related_tests/std_receiver.rs|1
 crates/ripr/src/analysis/classify/reveal.rs|1
 crates/ripr/src/analysis/classify/scanner_transfer.rs|2
@@ -277,6 +278,7 @@ crates/ripr/src/analysis/probes/family.rs|1
 crates/ripr/src/analysis/probes/ids.rs|1
 crates/ripr/src/analysis/probes/lexical.rs|1
 crates/ripr/src/analysis/probes/macro_definition.rs|1
+crates/ripr/src/analysis/probes/moved_item.rs|1
 crates/ripr/src/analysis/probes/path_only_argument.rs|1
 crates/ripr/src/analysis/probes/repo.rs|3
 crates/ripr/src/analysis/probes/unchanged_code_line.rs|1
@@ -485,7 +487,7 @@ crates/ripr/src/domain/verification_result.rs|1
 crates/ripr/src/edit_cage/mod.rs|1
 crates/ripr/src/git.rs|2
 crates/ripr/src/lsp/action_contract.rs|1
-crates/ripr/src/lsp/actions.rs|1
+crates/ripr/src/lsp/actions.rs|2
 crates/ripr/src/lsp/agent_protocol.rs|1
 crates/ripr/src/lsp/analysis_thread.rs|1
 crates/ripr/src/lsp/backend.rs|14

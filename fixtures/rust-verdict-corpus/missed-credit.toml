@@ -405,6 +405,10 @@ case = "spec-b-0153-registered-harness-subject"
 reason = "The registered Trial callback is indexed for reach but its assertion is not credited, so this configured adapter control records static_unknown/limited rather than ideal credit. Removing only the valid registration loses the adapted relation and changes the exact row to no_static_path; this entry does not accept that drift (#10495)."
 
 [[entry]]
+case = "spec-b-0153-undeclared-harness-helper"
+reason = "Runtime truth is discriminated, but `src/lib.rs` declares `#[cfg_attr(é, path = \"alternate.rs\")] mod unicode_child;`, whose target `src/alternate.rs` shares this owner's directory; the shared base-owner gate decision does not follow that target's own `mod` declarations, so it reads every non-root file there as possibly that target's child, the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets' child declarations are read."
+
+[[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"
 reason = "RIPR-SPEC-0154 example 7 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
 

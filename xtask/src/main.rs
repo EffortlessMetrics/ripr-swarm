@@ -48,6 +48,7 @@ mod generation_pins;
 mod kani_lane;
 mod public_proof;
 mod publish_rehearsal;
+mod publish_stage;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
@@ -2128,6 +2129,19 @@ fn check_vsix_inventory(
             shown.join(", ")
         ));
     }
+    let test_input: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .filter(|name| is_extension_test_input(name))
+        .collect();
+    if !test_input.is_empty() {
+        let shown: Vec<&str> = test_input.iter().take(5).copied().collect();
+        return Err(format!(
+            "carries {} extension test entries (first: {}); compiled tests, test fixtures and test build configs stay out of the shipped extension (#15216)",
+            test_input.len(),
+            shown.join(", ")
+        ));
+    }
     if entries.len() > max_entries {
         return Err(format!(
             "carries {} entries, above the {max_entries}-entry bound",
@@ -2154,6 +2168,41 @@ fn is_workspace_build_output(name: &str) -> bool {
         return true;
     }
     name.ends_with(".rlib") || name.ends_with(".rmeta")
+}
+
+/// Rejects the extension's own development tests in the packaged extension
+/// (#15216). `tsc -p editors/vscode` compiles `test/**` beside `src/**` into
+/// `out/`, so only `.vscodeignore` keeps `out/test/**` out; this reads the
+/// real archive members instead. Production dependencies under
+/// `extension/node_modules/` are their authors' layout and are not judged.
+fn is_extension_test_input(name: &str) -> bool {
+    let Some(own) = name.strip_prefix("extension/") else {
+        return false;
+    };
+    if own.starts_with("node_modules/") {
+        return false;
+    }
+    match own.rsplit_once('/') {
+        Some((dir, file)) => {
+            if dir.split('/').any(|segment| {
+                matches!(
+                    segment,
+                    "test" | "tests" | "__tests__" | "test-fixtures" | "fixtures"
+                )
+            }) {
+                return true;
+            }
+            [".test.", ".spec."]
+                .iter()
+                .any(|marker| file.contains(marker))
+        }
+        None => {
+            (own.starts_with("tsconfig") && own.ends_with(".json"))
+                || [".test.", ".spec."]
+                    .iter()
+                    .any(|marker| own.contains(marker))
+        }
+    }
 }
 
 /// `vsce package` ships `editors/vscode/LICENSE` as this archive member.

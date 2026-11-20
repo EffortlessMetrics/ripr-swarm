@@ -5,16 +5,29 @@ use super::{
     ExposureClass, OracleKind, OracleStrength, ProbeId, RiprEvidence, SourceLocation, SymbolId,
 };
 
+/// The shape of changed behavior a probe stands for. Serialized as the
+/// snake_case `family` token in JSON output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeFamily {
+    /// `predicate`: a changed condition or comparison that decides a branch.
     Predicate,
+    /// `return_value`: a changed value the function returns or computes.
     ReturnValue,
+    /// `error_path`: a changed error path, such as an error return or raise.
     ErrorPath,
+    /// `call_deletion`: a call site the diff removed.
     CallDeletion,
+    /// `field_construction`: a changed field value in a constructed struct
+    /// or object.
     FieldConstruction,
+    /// `side_effect`: a changed effect outside the return value, such as a
+    /// call made for its effect or a process exit code.
     SideEffect,
+    /// `match_arm`: a changed match arm.
     MatchArm,
+    /// `static_unknown`: a changed line whose behavior shape `ripr` could not
+    /// classify.
     StaticUnknown,
 }
 
@@ -42,6 +55,7 @@ impl ProbeFamily {
         })
     }
 
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             ProbeFamily::Predicate => "predicate",
@@ -56,16 +70,23 @@ impl ProbeFamily {
     }
 }
 
+/// What kind of difference a probe's change makes. Serialized as the
+/// snake_case `delta` token in JSON output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeltaKind {
+    /// `value`: a different value is produced.
     Value,
+    /// `control`: a different branch or path is taken.
     Control,
+    /// `effect`: a different effect happens outside the returned value.
     Effect,
+    /// `unknown`: the kind of difference is not known.
     Unknown,
 }
 
 impl DeltaKind {
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             DeltaKind::Value => "value",
@@ -76,19 +97,44 @@ impl DeltaKind {
     }
 }
 
+/// Why static analysis stopped short for a finding. Serialized as snake_case
+/// tokens in `stop_reasons`. RIPR-SPEC-0411 lists each value's role and
+/// current producer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
+    /// `max_depth_reached`: reserved wire value; not emitted today.
     MaxDepthReached,
+    /// `external_crate_boundary`: reserved wire value; not emitted today.
     ExternalCrateBoundary,
+    /// `dynamic_dispatch_unresolved`: the path goes through a dynamic call
+    /// `ripr` cannot resolve statically.
     DynamicDispatchUnresolved,
+    /// `proc_macro_opaque`: heuristic annotation. The changed expression
+    /// contains a macro call (`name!(`) whose expansion `ripr` does not see.
     ProcMacroOpaque,
+    /// `fixture_opaque`: heuristic annotation. A related test mentions a
+    /// fixture, builder, or generator, so its inputs may come from values
+    /// `ripr` does not evaluate.
     FixtureOpaque,
+    /// `feature_unknown`: reserved wire value; not emitted today.
     FeatureUnknown,
+    /// `async_boundary_opaque`: heuristic annotation. The changed expression
+    /// names `async`, `spawn`, or `await`, so the path may cross a task
+    /// boundary `ripr` does not follow. A name match alone does not mean a
+    /// boundary is crossed.
     AsyncBoundaryOpaque,
+    /// `no_changed_rust_line`: heuristic annotation. `ripr` could not place
+    /// the changed line inside a Rust function it analyzes.
     NoChangedRustLine,
+    /// `infection_evidence_unknown`: added when a finding is
+    /// `infection_unknown` and has no more specific reason.
     InfectionEvidenceUnknown,
+    /// `propagation_evidence_unknown`: added when a finding is
+    /// `propagation_unknown` and has no more specific reason.
     PropagationEvidenceUnknown,
+    /// `static_probe_unknown`: added when a finding is `static_unknown` and
+    /// has no more specific reason.
     StaticProbeUnknown,
     /// Reach through internal calls is unresolved. A bounded walk may retain
     /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
@@ -123,6 +169,7 @@ pub enum StopReason {
 }
 
 impl StopReason {
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             StopReason::MaxDepthReached => "max_depth_reached",
