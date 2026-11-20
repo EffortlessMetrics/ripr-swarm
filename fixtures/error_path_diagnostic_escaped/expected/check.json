@@ -3,10 +3,10 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/error_path_diagnostic_escaped/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:98dfaa07d45179f30655821378877efab4e0f654cd843c66e05203a85354e61f","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:98dfaa07d45179f30655821378877efab4e0f654cd843c66e05203a85354e61f","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -120,116 +120,6 @@
       "suggested_next_action": "The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces.",
       "language": "rust",
       "source_currentness": "candidate_current"
-    },
-    {
-      "id": "probe:src_lib.rs:static_unknown:afc04379",
-      "canonical_gap_id": "gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "read_all",
-        "behavior_kind": "static_unknown",
-        "probe_kind": "static_unknown",
-        "normalized_discriminator": "let_n=rdr.read_mut_buf_.unwrap_or_0"
-
-      },
-      "classification": "static_unknown",
-      "severity": "note",
-      "confidence": 0.50,
-      "probe": {
-        "id": "probe:src_lib.rs:static_unknown:afc04379",
-        "family": "static_unknown",
-        "delta": "unknown",
-        "file": "./src/lib.rs",
-        "line": 5,
-        "expression": "let n = rdr.read(&mut buf).unwrap_or(0);"
-       },
-      "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach read_all: reads_successfully"},
-        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
-        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
-       },
-      "evidence_stages": [
-        {"stage":"reach","state":"yes","confidence":"medium"},
-        {"stage":"infect","state":"unknown","confidence":"unknown"},
-        {"stage":"propagate","state":"unknown","confidence":"low"},
-        {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low"}
-      ],
-      "evidence_path": ["reach yes: Related tests appear to reach read_all: reads_successfully", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:14 reads_successfully uses exact value oracle, not graded against this probe: assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");", "source assertion argument value 10 at line 17", "source assertion argument value \"read \\\"error\\\", (panic)\" at line 18", "source assertion argument value 10 at line 18"],
-      "flow_sinks": [
-        {"kind":"unknown","text":"unknown sink","line":5}
-      ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach read_all: reads_successfully"],
-      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
-      "assertion_texts": {
-        "17": "assert_eq!(got.ok(), Some(10));",
-        "18": "assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");"
-      },
-      "activation": {
-        "observed_values": [
-          {
-            "line": 17,
-            "value": "10",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 18,
-            "value": "\"read \\\"error\\\", (panic)\"",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 18,
-            "value": "10",
-            "context": "assertion_argument"
-          }
-        ],
-        "missing_discriminators": [
-        ]
-      },
-      "observed_values": [
-        {
-          "line": 17,
-          "value": "10",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 18,
-          "value": "\"read \\\"error\\\", (panic)\"",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 18,
-          "value": "10",
-          "context": "assertion_argument"
-        }
-      ],
-      "missing_discriminators": [
-      ],
-      "related_tests_total": 1,
-      "related_tests": [
-        {
-          "name": "reads_successfully",
-          "file": "src/lib.rs",
-          "line": 14,
-          "oracle_strength": "unknown",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(rdr.len(), 10, \"read \\\"error\\\", (panic)\");",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        }
-      ],
-      "stop_reasons": ["static_probe_unknown"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "unknown",
-      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
-      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
-      "language": "rust",
-      "source_currentness": "base_deleted"
     }
   ]
 }

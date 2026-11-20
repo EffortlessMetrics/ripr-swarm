@@ -3751,7 +3751,10 @@ impl RustAdapter {
                 .count(),
             limitations: limitations
                 .into_iter()
-                .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(limitations_for_absent_changed_files(
+                    &options.root,
+                    &absent_changed_files,
+                )?)
                 .chain(workspace::limitations_for_unreadable_unchanged_paths(
                     &unreadable_unchanged_paths,
                 )?)
@@ -4946,7 +4949,10 @@ mod tests {
                 > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
             "fixture must exceed the detail budget when the path is interpolated"
         );
-        let limitations = limitations_for_absent_changed_files(&[std::path::PathBuf::from(&deep)])?;
+        let limitations = limitations_for_absent_changed_files(
+            std::path::Path::new("/nonexistent-ripr-root"),
+            &[std::path::PathBuf::from(&deep)],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some(deep.as_str()));
         let detail = limitations[0].bounded_detail.as_deref().unwrap_or_default();
@@ -10350,7 +10356,7 @@ fn absent_delimiter_boundary_returns_head() {
                 context.production_like_targets.insert(file.clone());
             }
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10376,7 +10382,7 @@ fn absent_delimiter_boundary_returns_head() {
         ] {
             let loaded = vec![(file.clone(), source.to_vec())];
             let remaining = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10409,7 +10415,7 @@ fn absent_delimiter_boundary_returns_head() {
                 Vec::new()
             };
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &harnesses,
