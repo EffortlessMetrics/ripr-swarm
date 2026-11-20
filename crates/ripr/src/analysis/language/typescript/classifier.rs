@@ -5555,14 +5555,37 @@ fn starts_with_spread(argument: &str) -> bool {
 }
 
 /// Split the text after a call's opening parenthesis into its top-level
-/// arguments, stopping at the matching closing parenthesis.
+/// arguments, stopping at the matching closing parenthesis. Commas inside
+/// strings, template literals, brackets and `/* */` or `//` comments do not
+/// split an argument; an unterminated comment or string leaves the list
+/// unreadable (`None`), so a caller that needs exact arguments keeps its
+/// verdict instead of reading invented slots.
 pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;
+    let mut block_comment = false;
+    let mut line_comment = false;
+    let mut previous = '\0';
     let mut current = String::new();
     let mut arguments = Vec::new();
     for ch in inner.chars() {
+        if block_comment {
+            current.push(ch);
+            if previous == '*' && ch == '/' {
+                block_comment = false;
+            }
+            previous = ch;
+            continue;
+        }
+        if line_comment {
+            current.push(ch);
+            if ch == '\n' {
+                line_comment = false;
+            }
+            previous = ch;
+            continue;
+        }
         if let Some(open) = quote {
             current.push(ch);
             if escaped {
@@ -5572,11 +5595,20 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
             } else if ch == open {
                 quote = None;
             }
+            previous = ch;
             continue;
         }
         match ch {
             '"' | '\'' | '`' => {
                 quote = Some(ch);
+                current.push(ch);
+            }
+            '/' if previous == '/' => {
+                line_comment = true;
+                current.push(ch);
+            }
+            '*' if previous == '/' => {
+                block_comment = true;
                 current.push(ch);
             }
             '(' | '[' | '{' => {
@@ -5600,6 +5632,7 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
             }
             _ => current.push(ch),
         }
+        previous = ch;
     }
     None
 }

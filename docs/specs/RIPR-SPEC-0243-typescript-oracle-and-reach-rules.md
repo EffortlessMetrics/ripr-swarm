@@ -2691,14 +2691,14 @@ keys); do not take the next number.
   arm's result only when its call's literal inputs provably leave the changed
   arm closed (the #8569 condition reader) and the owner's module names it
   once (no recursion or re-export); otherwise it keeps the verdict. The rule
-  applies only to a lone one-for-one line replacement in the file, and only
-  when the owner's recorded source starts on its first line and holds the
-  changed line there; a `return undefined` with an `undefined` binding in
-  scope, a BigInt literal (`5n !== 5`), and a comment inside a shared-result
-  call's arguments are refused.
+  applies only to a lone one-for-one line replacement in the file. The changed
+  line is located from the owner text's own first line (an arrow after
+  `export const dir =` starts one line later) and must hold the changed text
+  there. Argument slots skip commas inside comments; an unterminated comment
+  or string leaves them unreadable. A `return undefined` with an `undefined`
+  binding in scope, and a BigInt literal (`5n !== 5`), are refused.
   When every strong assertion on a direct owner call expects another arm's
-  readable literal,
-  the change is not observed: the existing literal-return reading makes it
+  readable literal, the change is not observed: the existing literal-return reading makes it
   `infection_unknown`, with a line naming the unpinned arm result.
   A duplicated old literal, any non-literal or multi-line return, a generator
   or concise-arrow owner, a non-direct relation, and a snapshot, structural,
@@ -2713,7 +2713,9 @@ keys); do not take the next number.
   `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
   `a_shared_new_result_is_credited_only_on_the_selected_arm`,
   `a_recursive_owner_keeps_a_shared_new_result`,
-  `an_arrow_on_the_next_line_keeps_the_verdict`,
+  `a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result`,
+  `an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return`,
+  `an_arrow_on_the_next_line_locates_the_changed_return`,
   `a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused`,
   `a_bigint_return_is_not_a_readable_scalar`,
   `an_unreadable_expected_side_keeps_the_verdict` and

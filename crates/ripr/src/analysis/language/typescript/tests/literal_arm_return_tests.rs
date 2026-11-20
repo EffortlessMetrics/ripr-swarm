@@ -7,7 +7,7 @@ fn owner(source: &str) -> TypeScriptOwner {
         name: "dir".to_string(),
         file: PathBuf::from("src/dir.ts"),
         start_line: 10,
-        end_line: 9 + source.lines().count(),
+        end_line: 10 + source.lines().count(),
         source_text: Some(source.to_string()),
         ..test_owner("dir", "src/dir.ts")
     }
@@ -128,8 +128,8 @@ fn a_generator_or_concise_arrow_owner_is_refused() {
 
 #[test]
 fn a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused() {
-    // `export const dir =` on the owner's first line, the arrow on the next:
-    // the recorded source is one line shorter than the owner's span.
+    // An owner span that disagrees with its recorded text (one line longer)
+    // would offset into another line: the changed text is not there.
     let mut shifted = owner(SWITCH);
     shifted.end_line += 1;
     assert_eq!(
@@ -171,6 +171,27 @@ fn a_bigint_return_is_not_a_readable_scalar() {
             Some("      return 'one';")
         ),
         None
+    );
+}
+
+#[test]
+fn an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return() {
+    // `export const dir =` is line 10; the arrow's own text starts on line 11,
+    // so the changed line must be offset from the text's origin, not from the
+    // declaration's first line.
+    let source = "(n: number): string => {\n  switch (n) {\n    case 1:\n      return 'uno';\n    case 2:\n      return 'two';\n    default:\n      return 'other';\n  }\n}";
+    let mut owner = owner(source);
+    owner.start_line = 10;
+    owner.end_line = 20;
+    let change = literal_arm_return(
+        &owner,
+        14,
+        "      return 'uno';",
+        Some("      return 'one';"),
+    );
+    assert!(
+        change.is_some(),
+        "the return on the arrow text's fourth line must be located"
     );
 }
 
@@ -263,7 +284,7 @@ fn an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm() -> Result<(), 
             finding
                 .missing
                 .iter()
-                .any(|line| line.contains("expects another arm's result (`'two'`)")),
+                .any(|line| line.contains("expect other arms' results (`'two'`)")),
             "{label}: {:?}",
             finding.missing
         );
@@ -394,6 +415,17 @@ fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), Stri
             "shared-gold-and-silver",
             "    expect(dir('gold')).toBe(7);\n    expect(dir('silver')).toBe(7);\n",
         ),
+        // A comma inside a block or line comment is not an argument slot: the
+        // argument list stays unreadable, so the shared-result exclusion does
+        // not apply and the verdict is kept.
+        (
+            "shared-comment-comma",
+            "    expect(dir('gold' /* , 'silver' */)).toBe(7);\n",
+        ),
+        (
+            "shared-line-comment-comma",
+            "    expect(dir('gold' // , 'silver'\n    )).toBe(7);\n",
+        ),
     ] {
         let finding = run(label, body)?;
         assert_eq!(
@@ -427,7 +459,7 @@ fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), Stri
             finding
                 .missing
                 .iter()
-                .any(|line| line.contains("expects another arm's result (") && line.contains("`7`")),
+                .any(|line| line.contains("expect other arms' results (") && line.contains("`7`")),
             "{label}: {:?}",
             finding.missing
         );
@@ -485,23 +517,19 @@ fn a_recursive_owner_keeps_a_shared_new_result() -> Result<(), String> {
     Ok(())
 }
 
-/// An arrow owner whose arrow starts on the line after `export const dir =`
-/// records its source from the arrow, one line after the owner's first
-/// line. The changed return has a neighboring return on the next line, so
-/// an off-by-one read would land on another literal return: the rule is
-/// refused instead. The same owner written on one line is read, which shows
-/// the refusal comes from the shifted source.
+/// A recursive owner can re-enter the changed arm with another input, so a
+/// call that leaves the arm closed does not prove the shared new result came
+/// from the unchanged arm: the verdict is kept.
 #[test]
-fn an_arrow_on_the_next_line_keeps_the_verdict() -> Result<(), String> {
-    const BODY: &str = "    if (n === 1)\n      return 'one';\n    return 'two';\n  };\n";
-    let shifted = format!("export const dir =\n  (n: number): string => {{\n{BODY}");
+fn a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result() -> Result<(), String> {
+    const REENTRANT: &str = "export function dir(kind: string): number {\n  if (kind === 'again') {\n    dir('silver');\n  }\n  switch (kind) {\n    case 'gold':\n      return 7;\n    case 'silver':\n      return 5;\n    default:\n      return 0;\n  }\n}\n";
     let finding = finding_at(
-        "arm-arrow-next-line",
-        &shifted,
-        4,
-        "      return 'one';",
-        "      return 'uno';",
-        &vitest("    expect(dir(2)).toBe('two');\n"),
+        "shared-reentrant",
+        REENTRANT,
+        8,
+        "      return 5;",
+        "      return 7;",
+        &vitest("    expect(dir('gold')).toBe(7);\n"),
     )?;
     assert_eq!(
         finding.class,
@@ -509,37 +537,53 @@ fn an_arrow_on_the_next_line_keeps_the_verdict() -> Result<(), String> {
         "{:?}",
         finding.missing
     );
-    assert!(
-        !finding
-            .missing
-            .iter()
-            .any(|line| line.contains("expects another arm's result")),
-        "{:?}",
-        finding.missing
-    );
-    let same_line = format!("export const dir = (n: number): string => {{\n{BODY}");
-    let finding = finding_at(
-        "arm-arrow-same-line",
-        &same_line,
-        3,
-        "      return 'one';",
-        "      return 'uno';",
-        &vitest("    expect(dir(2)).toBe('two');\n"),
-    )?;
-    assert_eq!(
-        finding.class,
-        ExposureClass::InfectionUnknown,
-        "{:?}",
-        finding.missing
-    );
-    assert!(
-        finding
-            .missing
-            .iter()
-            .any(|line| line.contains("expects another arm's result (`'two'`)")),
-        "{:?}",
-        finding.missing
-    );
+    Ok(())
+}
+
+/// An arrow owner whose arrow starts on the line after `export const dir =`
+/// records its source from the arrow, one line after the owner's first
+/// line. The changed return has a neighboring return on the next line, so
+/// an off-by-one read would land on `return 'two'` and refuse the rule; the
+/// rule instead locates the changed return and reads the same as the owner
+/// written on one line.
+#[test]
+fn an_arrow_on_the_next_line_locates_the_changed_return() -> Result<(), String> {
+    const BODY: &str = "    if (n === 1)\n      return 'one';\n    return 'two';\n  };\n";
+    for (label, source, line) in [
+        (
+            "arm-arrow-next-line",
+            format!("export const dir =\n  (n: number): string => {{\n{BODY}"),
+            4,
+        ),
+        (
+            "arm-arrow-same-line",
+            format!("export const dir = (n: number): string => {{\n{BODY}"),
+            3,
+        ),
+    ] {
+        let finding = finding_at(
+            label,
+            &source,
+            line,
+            "      return 'one';",
+            "      return 'uno';",
+            &vitest("    expect(dir(2)).toBe('two');\n"),
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("expect other arms' results (`'two'`)")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
     Ok(())
 }
 
@@ -580,7 +624,7 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
         unpinned
             .missing
             .iter()
-            .any(|line| line.contains("expects another arm's result")),
+            .any(|line| line.contains("expect other arms' results")),
         "it.each unpinned: {:?}",
         unpinned.missing
     );
@@ -596,7 +640,7 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
         !snapshot
             .missing
             .iter()
-            .any(|line| line.contains("expects another arm's result")),
+            .any(|line| line.contains("expect other arms' results")),
         "snapshot: {:?}",
         snapshot.missing
     );
@@ -624,11 +668,20 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
             "      return 'once';",
             &vitest(body),
         )?;
+        // `'once'` is a different length from `'one'`, so the derived
+        // `.length` assertions separate the two versions and the change is
+        // detected; `'uno'` (also length 3) could not show that.
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
         assert!(
             !finding
                 .missing
                 .iter()
-                .any(|line| line.contains("expects another arm's result")),
+                .any(|line| line.contains("expect other arms' results")),
             "{label}: {:?}",
             finding.missing
         );

@@ -102,6 +102,21 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) source_text: Option<String>,
 }
 
+impl TypeScriptOwner {
+    /// The 1-indexed line `source_text` starts on. `start_line` is the
+    /// declaration's first line, which for an arrow owner can be the line
+    /// before the arrow (`export const dir =` then `(n) => ...`), so a
+    /// changed line must be offset from the text's own origin, not from
+    /// `start_line`. `end_line` is the text's last line, so the origin is
+    /// that line minus the text's own line breaks.
+    pub(crate) fn source_start_line(&self) -> usize {
+        match self.source_text.as_deref() {
+            Some(text) => self.end_line.saturating_sub(text.matches('\n').count()),
+            None => self.start_line,
+        }
+    }
+}
+
 /// Syntactic method-shape refinement recorded during owner extraction.
 #[derive(
     Clone,
