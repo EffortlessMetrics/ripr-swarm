@@ -94,6 +94,17 @@ fn record_output_location_refusal(report: &mut DoctorReport, refusal: &str) {
     );
 }
 
+/// Evidence for a bare repository root (#15297): the repair is a checked-out
+/// work tree, so no `git init` and no whole-repository route is named.
+fn bare_repository_evidence(root: &Path) -> String {
+    format!(
+        "{} is a bare Git repository with no work tree; the diff-scoped commands read checked-out \
+         source. Check out a work tree (`git worktree add <path>` or `git clone`), then pass \
+         `--root <path>`.",
+        human_path(root)
+    )
+}
+
 /// Evidence for a root outside a Git work tree. It names the whole-repository
 /// pilot route only when the output location lets pilot run (#14114).
 fn outside_work_tree_evidence(root: &Path, output_location_refused: bool) -> String {
@@ -1714,28 +1725,52 @@ pub(crate) enum WorkTreeProbe {
     Outside,
     /// Git refused the repository for its owner (#4530); carries the repair.
     Refused(String),
+    /// A bare repository: it is a repository, but has no checked-out source,
+    /// so its next action is a work tree, not `git init` (#15297).
+    Bare,
+    /// `git` is not on `PATH`: a different repair from a directory that is
+    /// not a repository (install Git, not `git init`) (#15297).
+    GitMissing,
 }
 
 pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
-    let output = crate::git::run_git_output_with_deadline(
+    let output = match crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-inside-work-tree"],
         Some(DOCTOR_TOOL_TIMEOUT),
-    )
-    .ok()?;
+    ) {
+        Ok(output) => output,
+        Err(error) if crate::git::is_git_not_found_on_path(&error.to_string()) => {
+            return Some(WorkTreeProbe::GitMissing);
+        }
+        Err(_) => return None,
+    };
     if !output.status.success() {
         return Some(
             crate::git::dubious_ownership_message(root, &output.stderr, "")
                 .map_or(WorkTreeProbe::Outside, WorkTreeProbe::Refused),
         );
     }
-    Some(
-        if String::from_utf8_lossy(&output.stdout).trim() == "true" {
-            WorkTreeProbe::Inside
-        } else {
-            WorkTreeProbe::Outside
-        },
+    if String::from_utf8_lossy(&output.stdout).trim() == "true" {
+        return Some(WorkTreeProbe::Inside);
+    }
+    // `--is-inside-work-tree` prints `false` for a bare repository and for
+    // the inside of a `.git` directory; only the bare answer changes the
+    // repair, so any other reply stays `Outside`.
+    let bare = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--is-bare-repository"],
+        Some(DOCTOR_TOOL_TIMEOUT),
     )
+    .ok()
+    .is_some_and(|output| {
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+    });
+    Some(if bare {
+        WorkTreeProbe::Bare
+    } else {
+        WorkTreeProbe::Outside
+    })
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
@@ -2110,7 +2145,12 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 DoctorStatus::Fail,
                 Some(outside_work_tree_evidence(root, output_refusal.is_some())),
             ),
-            None => report.add_check(
+            Some(WorkTreeProbe::Bare) => report.add_check(
+                "git_repository",
+                DoctorStatus::Fail,
+                Some(bare_repository_evidence(root)),
+            ),
+            Some(WorkTreeProbe::GitMissing) | None => report.add_check(
                 "git_repository",
                 DoctorStatus::Fail,
                 Some(format!(

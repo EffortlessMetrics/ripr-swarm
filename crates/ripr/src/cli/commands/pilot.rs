@@ -502,6 +502,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )
     .with_rust_exclusion(rust_excluded)
     .with_declined_rust_files(declined_rust_files.clone());
+    let language_routes = withhold_check_routes_without_work_tree(language_routes, &input.root);
     timings.record("language_scan", scan_started, None);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
@@ -886,6 +887,25 @@ fn load_pilot_current_change(
         .map(|loaded| (loaded.text, loaded.effective_base));
     output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
         .with_working_tree(from_working_tree)
+}
+
+/// `ripr check` refuses a root that is not a Git work tree (and a bare
+/// repository), so pilot must not print it as the follow-up there (#15297).
+/// Probed only when a route would otherwise print a check command.
+fn withhold_check_routes_without_work_tree(
+    routes: output::pilot::PilotLanguageRoutes,
+    root: &std::path::Path,
+) -> output::pilot::PilotLanguageRoutes {
+    use output::doctor::WorkTreeProbe;
+    use output::pilot::CheckBlocker;
+    if !routes.routes.iter().any(|route| route.command.is_some()) {
+        return routes;
+    }
+    match output::doctor::work_tree_probe(root) {
+        Some(WorkTreeProbe::Outside) => routes.with_check_blocker(root, CheckBlocker::NotWorkTree),
+        Some(WorkTreeProbe::Bare) => routes.with_check_blocker(root, CheckBlocker::BareRepository),
+        _ => routes,
+    }
 }
 
 /// A few fixed words for why the current change could not be loaded, shown

@@ -83,6 +83,10 @@ pub(crate) struct PilotLanguageRoute {
     /// TypeScript/JavaScript, the `python_diff_first` repair route for Python,
     /// or the unavailable-adapter notice.
     pub(crate) guidance: Option<String>,
+    /// `ripr check` cannot run at this root (not a Git work tree, or a bare
+    /// repository), so no check command is offered and `guidance` carries the
+    /// route that works instead (#15297).
+    pub(crate) blocked_by_work_tree: bool,
 }
 
 impl PilotLanguageRoute {
@@ -95,7 +99,9 @@ impl PilotLanguageRoute {
     }
 
     pub(crate) fn route(&self) -> &'static str {
-        if self.available {
+        if self.blocked_by_work_tree {
+            "needs_git_work_tree"
+        } else if self.available {
             "check_diff_first"
         } else {
             "unavailable_in_this_binary"
@@ -186,6 +192,32 @@ impl PilotLanguageRoutes {
         self.no_rust_source = !self.rust_seams_present && !rust_source_present;
         self.unanalyzed = unanalyzed;
         self
+    }
+
+    /// A root where `ripr check` refuses (not a Git work tree, or bare): drop
+    /// every check command and name the route that works, so no next step
+    /// points back into the refusal (#15297).
+    pub(crate) fn with_check_blocker(mut self, root: &Path, blocker: CheckBlocker) -> Self {
+        let text = blocker.route_text(root);
+        for route in self
+            .routes
+            .iter_mut()
+            .filter(|route| route.command.is_some())
+        {
+            route.command = None;
+            route.guidance_category = None;
+            route.guidance = Some(text.clone());
+            route.blocked_by_work_tree = true;
+        }
+        self
+    }
+
+    /// The route text for a blocked root, when a check command was withheld.
+    pub(crate) fn blocked_route_text(routes: &[PilotLanguageRoute]) -> Option<&str> {
+        routes
+            .iter()
+            .find(|route| route.blocked_by_work_tree)
+            .and_then(|route| route.guidance.as_deref())
     }
 
     /// The repository has no Rust source, so Rust-scan wording does not apply.
@@ -288,6 +320,7 @@ fn route_for(
             command: None,
             guidance_category: None,
             guidance: language.unavailable_adapter_notice(),
+            blocked_by_work_tree: false,
         };
     }
     let typescript_family = matches!(language, LanguageId::TypeScript | LanguageId::JavaScript);
@@ -324,5 +357,28 @@ fn route_for(
         )),
         guidance_category,
         guidance,
+        blocked_by_work_tree: false,
+    }
+}
+
+/// Why `ripr check` cannot run at the pilot root (#15297).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckBlocker {
+    /// The root is not inside a Git work tree.
+    NotWorkTree,
+    /// The root is a bare repository: a repository with no checked-out source.
+    BareRepository,
+}
+
+impl CheckBlocker {
+    /// The route that works at this root, in place of the refused check.
+    fn route_text(self, root: &Path) -> String {
+        let shown = shell_arg(&root_path_display(&bound_root_path(root)));
+        match self {
+            CheckBlocker::NotWorkTree => format!(
+                "ripr check needs a Git work tree and this root is not one: run `git init` and commit the files, or check a saved patch with `ripr check --root {shown} --diff PATH`"
+            ),
+            CheckBlocker::BareRepository => "ripr check needs checked-out source and this root is a bare Git repository: run `git worktree add <path>` (or `git clone`), then pass `--root <path>`".to_string(),
+        }
     }
 }

@@ -620,8 +620,13 @@ fn render_pilot_summary_md_with_target(
         (None, Some(routes)) => {
             let commands = PilotLanguageRoutes::commands(routes);
             if commands.is_empty() {
-                out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
-                out.push('\n');
+                match PilotLanguageRoutes::blocked_route_text(routes) {
+                    Some(route) => out.push_str(&format!("{route}\n")),
+                    None => {
+                        out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
+                        out.push('\n');
+                    }
+                }
                 return out;
             }
             out.push_str(
@@ -1043,7 +1048,12 @@ fn render_pilot_terminal_with_target(
     }
     if let Some(routes) = routes {
         let commands = PilotLanguageRoutes::commands(routes);
-        if commands.is_empty() {
+        if let (true, Some(route)) = (
+            commands.is_empty(),
+            PilotLanguageRoutes::blocked_route_text(routes),
+        ) {
+            out.push_str(&format!("Next: {route}\n"));
+        } else if commands.is_empty() {
             out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
             out.push('\n');
         } else {
@@ -1830,6 +1840,7 @@ fn terminal_rank_label(label: &str) -> &'static str {
 fn terminal_route_status_label(route: &PilotLanguageRoute) -> &'static str {
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
+        (true, true) if route.blocked_by_work_tree => "preview; ripr check cannot run at this root",
         (true, true) => "preview; run the command below to check the diff",
         (true, false) => "preview; turn it on in ripr.toml [languages] to check it",
     }

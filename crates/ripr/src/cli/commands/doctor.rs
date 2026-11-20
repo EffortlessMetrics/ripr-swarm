@@ -997,7 +997,7 @@ Point RIPR_CACHE_DIR at a writable directory.",
                 );
             }
             if let Some(line) =
-                enable_before_first_command_line(environment.preview_enablement.as_ref())
+                enable_before_first_command_line(environment.preview_enablement.as_ref(), first)
             {
                 lines.push(line);
             }
@@ -1318,13 +1318,26 @@ fn doctor_start_here_lines(
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a
     // guaranteed no-op. Name the enable step next to the command.
-    if let Some(line) = enable_before_first_command_line(preview_enablement) {
+    if let Some(line) = enable_before_first_command_line(preview_enablement, first) {
         lines.push(line);
     }
     lines
 }
 
-fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> Option<String> {
+fn enable_before_first_command_line(
+    enablement: Option<&PreviewEnablement>,
+    first: output::doctor::DoctorFirstCommand,
+) -> Option<String> {
+    // The enable step gates a `ripr check`. A first command that is not a
+    // check (whole-repository pilot outside Git, or a missing root) does not
+    // read the language setting, so it is no prerequisite there (#15297).
+    if matches!(
+        first,
+        output::doctor::DoctorFirstCommand::OutsideGit
+            | output::doctor::DoctorFirstCommand::MissingRoot
+    ) {
+        return None;
+    }
     // Name the config entries here: this line says what to write in
     // ripr.toml, while the Tip names the detected source.
     let names = enablement?
@@ -1653,7 +1666,15 @@ fn detected_languages_lines(
         let entries: Vec<String> = detected
             .iter()
             .map(|language| {
-                if language.adapter_available {
+                if language.adapter_available && language.enabled == Some(false) {
+                    // The Tip below says "detected but not enabled"; the line
+                    // naming the language says the same (#15297).
+                    format!(
+                        "{} ({}) [not enabled]",
+                        language.language,
+                        language.status.as_str()
+                    )
+                } else if language.adapter_available {
                     format!("{} ({})", language.language, language.status.as_str())
                 } else {
                     format!(
@@ -8822,7 +8843,10 @@ mod tests {
     }
 
     fn test_enable_before_first_command(root: &Path) -> Option<String> {
-        enable_before_first_command_line(test_preview_enablement(root).as_ref())
+        enable_before_first_command_line(
+            test_preview_enablement(root).as_ref(),
+            output::doctor::DoctorFirstCommand::DefaultCheck,
+        )
     }
 
     /// #13788: after `ripr init` writes its config for a root package.json

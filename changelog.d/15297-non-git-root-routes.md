@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr pilot` in a root that is not a Git work tree no longer routes to a `ripr check` that refuses there; it names `git init` plus a commit or `ripr check --diff PATH` (a bare repository: `git worktree add`). `ripr init` refuses a bare repository without writing `ripr.toml`, and says to install Git when Git is missing instead of `git init`. `ripr doctor` names a bare repository, marks a detected but disabled language `[not enabled]`, and no longer lists enabling it as a prerequisite to `ripr pilot` (#15297).
