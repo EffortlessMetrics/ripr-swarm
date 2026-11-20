@@ -153,7 +153,14 @@ mkdir -p target
 
 `--ensure` reads the pin again, repairs missing SDK components and a changed
 pin, and reuses installed stable instead of refreshing the rolling channel.
-It reuses the npm graph only when the recorded lock input and required compiler
+Before editor provisioning, the selected npm executable reports the effective
+cache for `editors/vscode`. Provisioning requires an absolute path outside the
+checkout and checks that a new private file can be written, read and removed.
+To choose a different cache for one invocation, set `npm_config_cache` to its
+absolute path in that command's environment. The [cache preflight contract](.allow/spec-system/slices/provision-dev-npm-cache.v1.toml)
+maps this behavior to the implementation and its offline controls.
+
+Provisioning reuses the npm graph only when the recorded lock input and required compiler
 and downloader files still match. A changed lockfile or incomplete installation
 requires `npm ci` again. Ordinary explicit provisioning refreshes stable;
 `--ensure` does not silently turn every new task into a stable upgrade.

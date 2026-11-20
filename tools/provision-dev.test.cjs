@@ -90,7 +90,7 @@ function nativeToolMain() {
       'RUSTUP_AUTO_INSTALL', 'RUSTC', 'CARGO_BUILD_RUSTC', 'RUSTC_WRAPPER',
       'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER',
       'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER', 'TAR_OPTIONS', 'PATH',
-      'DEBIAN_FRONTEND'].map(key => [key, process.env[key] ?? null])) });
+      'npm_config_cache', 'NPM_CONFIG_CACHE', 'DEBIAN_FRONTEND'].map(key => [key, process.env[key] ?? null])) });
   save();
   if (state.failure?.command === command
     && (!state.failure.includes || args.includes(state.failure.includes))) {
@@ -203,7 +203,15 @@ function nativeToolMain() {
   }
   if (command === 'npm') {
     if (args[0] === '--version') return output('11.6.0');
+    const cache = process.env.npm_config_cache ?? process.env.NPM_CONFIG_CACHE
+      ?? state.defaultCache ?? path.join(process.env.HOME, '.npm');
+    if (JSON.stringify(args) === JSON.stringify(['config', 'get', 'cache'])) {
+      // npm initializes its effective cache during config lookup, even for "get".
+      try { fs.mkdirSync(cache, { recursive: true }); } catch { /* npm tolerates this. */ }
+      return output(cache);
+    }
     if (args[0] === 'ci') {
+      if (state.failAtInstall) fail('fixture npm ci encountered an unusable cache', 83);
       const lockBytes = fs.readFileSync(path.join(process.cwd(), 'package-lock.json'));
       const lock = JSON.parse(lockBytes);
       const modules = path.join(process.cwd(), 'node_modules');
@@ -298,7 +306,7 @@ function writeFile(filename, content, mode) {
 }
 
 function makeFixture(t, options = {}) {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-provision-test-'));
+  const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ripr-provision-test-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const root = path.join(temp, 'checkout with spaces');
   const cargoHome = path.join(temp, 'cargo home');
@@ -345,6 +353,14 @@ function makeFixture(t, options = {}) {
     'sudo', 'apt-get', 'apt-cache',
     'npm', 'xvfb-run', 'Xvfb', 'xauth']) {
     if (name !== options.missingCommand) writeFile(path.join(bin, name), toolScript, 0o755);
+  }
+  if (options.missingCommand !== 'npm') {
+    // The lookup's Node process may write only the fixture event journal.
+    writeFile(statePath + '.npm.cjs', 'process.argv.splice(1, 1);\n(' + nativeToolMain.toString() + ')();');
+    writeFile(path.join(bin, 'npm'), '#!/bin/bash\n'
+      + 'record=()\nif [[ "$1" == config && "$NODE_OPTIONS" == *--permission* ]]; then\n'
+      + '  record+=(--allow-fs-write="$RIPR_PROVISION_TEST_STATE")\nfi\n'
+      + 'exec node "${record[@]}" "$RIPR_PROVISION_TEST_STATE.npm.cjs" "$0" "$@"\n', 0o755);
   }
   for (const [name, actual] of [['bash', '/bin/bash'], ['timeout', NATIVE ? '/usr/bin/timeout' : null],
     ['node', process.execPath]]) {
@@ -861,6 +877,134 @@ test('Given missing components on installed SDKs, ensure repairs them without ad
     assert.equal(f.read().stableRefreshes, 1);
   });
 
+test('An unusable default npm cache fails before ci with the native cause and recovery',
+  { skip: !NATIVE }, async t => {
+    const f = makeFixture(t);
+    const cache = path.join(f.env.HOME, 'default cache');
+    fs.mkdirSync(cache, { recursive: true });
+    fs.chmodSync(cache, 0o555);
+    t.after(() => { if (fs.existsSync(cache)) fs.chmodSync(cache, 0o755); });
+    f.update(state => { state.defaultCache = cache; state.failAtInstall = true; });
+    if (process.getuid() === 0) {
+      // Root can bypass mode bits. Inject the same native refusal at the
+      // exclusive probe open while retaining real child processes and paths.
+      const open = fs.openSync;
+      t.mock.method(fs, 'openSync', (filename, flags, ...rest) => {
+        if (flags === 'wx+' && path.basename(filename).startsWith('.ripr-provision-')) {
+          throw Object.assign(new Error('EACCES: permission denied, open ' + filename), { code: 'EACCES' });
+        }
+        return open(filename, flags, ...rest);
+      });
+    }
+    await assert.rejects(f.run(['--ensure']), error => error.exitCode === 1
+      && /EACCES/.test(error.message) && /npm_config_cache=/.test(error.message)
+      && !/corrupt/i.test(error.message));
+    const events = f.read().events;
+    assert.deepEqual(events.filter(event => event.command === 'npm').map(event => event.args),
+      [['config', 'get', 'cache']]);
+    assert.equal(fs.existsSync(path.join(f.modules, '.ripr-provision-lock.json')), false);
+  });
+
+test('An explicit npm cache with spaces is used by lookup, install and offline reuse',
+  { skip: !NATIVE }, t => {
+    const f = makeFixture(t);
+    const cache = path.join(f.env.HOME, 'chosen cache ');
+    f.env.NPM_CONFIG_CACHE = cache;
+    const physicalHome = path.join(path.dirname(f.env.HOME), 'physical home');
+    fs.mkdirSync(physicalHome);
+    fs.symlinkSync(physicalHome, f.env.HOME);
+    fs.chmodSync(f.env.HOME, 0o311); // Traverse and create, without listing the parent.
+    const lock = fs.readFileSync(f.lock);
+    const first = f.cli(['--ensure']);
+    fs.chmodSync(f.env.HOME, 0o700);
+    assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stdout, /\(created\)/);
+    assert.deepEqual(fs.readdirSync(cache), []);
+    assert.match(first.stdout, /npm cache/i);
+    fs.writeFileSync(path.join(cache, 'sentinel'), 'keep');
+    const second = f.cli(['--ensure']);
+    assert.equal(second.status, 0, second.stderr);
+    assert.deepEqual(fs.readdirSync(cache), ['sentinel']);
+    assert.equal(fs.readFileSync(path.join(cache, 'sentinel'), 'utf8'), 'keep');
+    const events = f.read().events.filter(event => event.command === 'npm');
+    const editor = path.dirname(f.lock);
+    assert.deepEqual(events.filter(event => event.args[0] !== 'run').map(event => event.args),
+      [['config', 'get', 'cache'], ['ci', '--include=dev'], ['ls', '--all', '--include=dev', '--offline'],
+        ['config', 'get', 'cache'], ['ls', '--all', '--include=dev', '--offline']]);
+    for (const event of events) {
+      assert.equal(event.cwd, editor);
+      assert.equal(event.env.RUSTC, events.find(call => call.args[0] === 'ci').env.RUSTC);
+      assert.equal(event.env.NPM_CONFIG_CACHE, cache);
+      assert.equal(event.env.npm_config_cache, null);
+      assert.equal(event.executable, path.join(f.bin, 'npm'));
+    }
+    assert.deepEqual(fs.readFileSync(f.lock), lock);
+  });
+
+test('Unsafe npm cache selections preserve existing contents and reject before installation',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    fs.mkdirSync(f.env.HOME);
+    const file = path.join(f.env.HOME, 'file');
+    const link = path.join(f.env.HOME, 'link');
+    const dangling = path.join(f.env.HOME, 'dangling');
+    fs.writeFileSync(file, 'keep');
+    fs.symlinkSync(f.root, link);
+    fs.symlinkSync(path.join(f.env.HOME, 'absent'), dangling);
+    const unsafe = [
+      [file, /ENOTDIR/], [dangling, /ENOTDIR|ELOOP/], [path.join(link, 'escaped'), /ENOTDIR|ELOOP/],
+      [f.root, /outside the checkout/], ['/', /below the filesystem root/],
+      ['relative', /one absolute/], [f.root + '/../outside', /traversal/],
+      [f.root + '/tracked-cache', /outside the checkout/], [f.env.HOME + '\n/extra', /control characters/],
+    ];
+    for (const [cache, reason] of unsafe) {
+      f.env.npm_config_cache = cache;
+      await assert.rejects(f.run([]), error => reason.test(error.message) && /npm_config_cache=/.test(error.message));
+    }
+    assert.equal(f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'config').length, unsafe.length);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'keep');
+    assert.equal(fs.existsSync(path.join(f.root, 'escaped')), false);
+    assert.equal(fs.existsSync(path.join(f.root, 'tracked-cache')), false);
+    assert.equal(fs.existsSync(path.join(f.env.HOME, 'absent')), false);
+    assert.equal(f.read().events.some(event => event.command === 'npm' && event.args[0] === 'ci'), false);
+  });
+
+test('Native npm cache probe errors retain the cause and clean only owned files',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    const cache = path.join(f.env.HOME, 'caller cache');
+    f.env.npm_config_cache = cache;
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, 'sentinel'), 'preserve');
+    // Inject a native error only into the descriptor write in this process.
+    // The child npm and its cwd, environment and command line remain real fixtures.
+    const write = fs.writeFileSync;
+    for (const code of ['EACCES', 'EROFS', 'ENOSPC']) {
+      fs.writeFileSync = (file, data, ...args) => {
+        if (typeof file === 'number' && Buffer.isBuffer(data) && data.toString() === 'ripr') {
+          throw Object.assign(new Error(`${code}: fixture filesystem write`), { code });
+        }
+        return write(file, data, ...args);
+      };
+      try {
+        await assert.rejects(f.run(['--ensure']), new RegExp(code + ': fixture filesystem write'));
+      } finally { fs.writeFileSync = write; }
+      assert.deepEqual(fs.readdirSync(cache), ['sentinel']);
+    }
+    assert.equal(f.read().npmInstalls, 0);
+    assert.equal(fs.readFileSync(path.join(cache, 'sentinel'), 'utf8'), 'preserve');
+  });
+
+test('A failed npm cache query preserves native stderr and exit',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    f.update(state => { state.failure = { command: 'npm', includes: 'config',
+      status: 72, message: 'fixture configuration failure' }; });
+    await assert.rejects(f.run([]), error => error.exitCode === 72
+      && /fixture configuration failure.*npm_config_cache=/s.test(error.message));
+    assert.equal(f.read().npmInstalls, 0);
+  });
+
 test('Given matching locked editor dependencies, ensure reuses them without rerunning npm ci',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
@@ -921,6 +1065,7 @@ test('Given a failing Xvfb or canonical editor smoke, setup retains native diagn
 test('Given a changed locked source at the same version, ensure reinstalls before the editor smoke',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
+    f.env.npm_config_cache = path.join(f.env.HOME, 'selected cache');
     await f.run([]);
     const lock = JSON.parse(fs.readFileSync(f.lock, 'utf8'));
     lock.packages['node_modules/typescript'].resolved = 'https://registry.invalid/reviewed-typescript-6.0.3.tgz';
@@ -931,16 +1076,21 @@ test('Given a changed locked source at the same version, ensure reinstalls befor
     const installed = JSON.parse(fs.readFileSync(path.join(f.modules, 'typescript/package.json')));
     assert.equal(installed.version, '6.0.3');
     assert.equal(installed.resolved, 'https://registry.invalid/reviewed-typescript-6.0.3.tgz');
+    const installs = f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'ci');
+    assert.ok(installs.every(event => event.env.npm_config_cache === f.env.npm_config_cache));
   });
 
 test('Given damaged installed dependencies, a matching stamp cannot suppress repair',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
+    f.env.npm_config_cache = path.join(f.env.HOME, 'selected cache');
     await f.run([]);
     fs.rmSync(path.join(f.modules, 'typescript/bin/tsc'));
     await f.run(['--ensure']);
     assert.equal(f.read().npmInstalls, 2);
     assert.equal(fs.existsSync(path.join(f.modules, 'typescript/bin/tsc')), true);
+    const installs = f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'ci');
+    assert.ok(installs.every(event => event.env.npm_config_cache === f.env.npm_config_cache));
   });
 
 test('Given different installed dependency versions, a matching stamp cannot prove a locked install',
@@ -956,6 +1106,7 @@ test('Given different installed dependency versions, a matching stamp cannot pro
 test('Given a deleted packaging entrypoint or transitive dependency, ensure repairs the editor tree',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
+    f.env.npm_config_cache = path.join(f.env.HOME, 'selected cache');
     await f.run([]);
     fs.rmSync(path.join(f.modules, '.bin/vsce'));
     await f.run(['--ensure']);
@@ -965,6 +1116,8 @@ test('Given a deleted packaging entrypoint or transitive dependency, ensure repa
     await f.run(['--ensure']);
     assert.equal(f.read().npmInstalls, 3);
     assert.equal(fs.existsSync(path.join(f.modules, 'fixture-transitive-dependency/package.json')), true);
+    const installs = f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'ci');
+    assert.ok(installs.every(event => event.env.npm_config_cache === f.env.npm_config_cache));
   });
 
 test('Given a lockfile changed during npm ci, no reusable install stamp or editor success is published',
@@ -997,6 +1150,7 @@ test('Given a failed locked reinstall, ensure cannot report editor success or re
     f.update(state => { state.failure = { command: 'npm', includes: 'ci', status: 74 }; });
     await assert.rejects(f.run(['--ensure']), error => error.exitCode === 74);
     assert.equal(f.read().editorSmokes, 1);
+    assert.equal(fs.existsSync(path.join(f.modules, '.ripr-provision-lock.json')), false);
     f.update(state => { state.failure = null; });
     await f.run(['--ensure']);
     assert.equal(f.read().npmInstalls, 2);
