@@ -355,6 +355,7 @@ enum MetadataState {
     #[default]
     Unloaded,
     Failed,
+    WorkspaceMembershipRejected,
     /// Workspace test targets keyed by their lexically resolved source
     /// path; each entry lists the owning package manifest directories
     /// with the cargo target name (#3637 review), metadata `test` flag
@@ -610,7 +611,9 @@ impl ManifestInventory {
         self.ensure_workspace_metadata(workspace_root);
         match &self.metadata {
             MetadataState::Loaded(inventory) => Some(inventory.package_dirs.clone()),
-            MetadataState::Unloaded | MetadataState::Failed => None,
+            MetadataState::Unloaded
+            | MetadataState::Failed
+            | MetadataState::WorkspaceMembershipRejected => None,
         }
     }
 
@@ -679,7 +682,9 @@ impl ManifestInventory {
             // No metadata premise is available (probe failed or was never
             // loadable): the registration grants nothing. Fail closed —
             // under-credit, never over-credit (#3634).
-            MetadataState::Unloaded | MetadataState::Failed => InventoryLookup::Unavailable,
+            MetadataState::Unloaded
+            | MetadataState::Failed
+            | MetadataState::WorkspaceMembershipRejected => InventoryLookup::Unavailable,
         };
         (anchored, lookup)
     }
@@ -689,11 +694,16 @@ impl ManifestInventory {
     /// batch fails closed deterministically instead of re-spawning.
     fn ensure_workspace_metadata(&mut self, workspace_root: &Path) {
         if matches!(self.metadata, MetadataState::Unloaded) {
-            self.metadata = match run_workspace_cargo_metadata(workspace_root) {
-                Some(targets) => MetadataState::Loaded(targets),
-                None => MetadataState::Failed,
-            };
+            self.metadata =
+                run_workspace_cargo_metadata(workspace_root).unwrap_or(MetadataState::Failed);
         }
+    }
+
+    /// Cargo explicitly rejected the analyzed package as a nonmember of its
+    /// enclosing workspace. Ordinary test discovery cannot run this package.
+    pub(crate) fn workspace_membership_rejected(&mut self, workspace_root: &Path) -> bool {
+        self.ensure_workspace_metadata(workspace_root);
+        matches!(self.metadata, MetadataState::WorkspaceMembershipRejected)
     }
 
     fn manifest_at(&mut self, dir: &Path) -> OwnedManifest {
@@ -737,6 +747,10 @@ fn cargo_metadata_command(workspace_root: &Path) -> std::process::Command {
     command
         .args([
             "metadata",
+            // The membership refusal below reads Cargo's diagnostic even when
+            // the parent process requests color for interactive output.
+            "--color",
+            "never",
             "--no-deps",
             "--format-version",
             "1",
@@ -775,7 +789,7 @@ fn cargo_metadata_command(workspace_root: &Path) -> std::process::Command {
 /// temp file rather than a pipe so a large workspace cannot fill the OS
 /// pipe buffer and deadlock against the poll; the file is removed on
 /// every path.
-fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInventory> {
+fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataState> {
     let manifest_path = workspace_root.join("Cargo.toml");
     if !manifest_path.is_file() {
         return None;
@@ -794,13 +808,15 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0)
     ));
+    let stderr_path = stdout_path.with_extension("stderr");
+    let stderr_file = std::fs::File::create_new(&stderr_path).ok()?;
     let parsed = std::fs::File::create(&stdout_path)
         .ok()
         .and_then(|stdout_file| {
             let mut command = cargo_metadata_command(workspace_root);
             command
                 .stdout(std::process::Stdio::from(stdout_file))
-                .stderr(std::process::Stdio::null());
+                .stderr(stderr_file);
             // The owned-subprocess authority (#3803) keeps the bounded
             // probe's tree termination Job-Object-backed on Windows.
             crate::process_owner::OwnedProcess::spawn(command).ok()
@@ -816,7 +832,27 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
                     std::fs::read(&stdout_path)
                         .ok()
                         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                        .map(|value| workspace_target_inventory(&value))
+                        .map(|value| MetadataState::Loaded(workspace_target_inventory(&value)))
+                }
+                crate::git::ChildWait::Exited(status) if status.code() == Some(101) => {
+                    // The rejected manifest must be the analysis root. An
+                    // unrelated failure is not evidence about this package.
+                    use std::io::Read;
+                    let mut diagnostic = String::new();
+                    std::fs::File::open(&stderr_path)
+                        .ok()?
+                        .take(8192)
+                        .read_to_string(&mut diagnostic)
+                        .ok()?;
+                    let mut lines = diagnostic.lines().skip_while(|line| {
+                        *line
+                            != "error: current package believes it's in a workspace when it's not:"
+                    });
+                    lines.next()?;
+                    let rejected = Path::new(lines.next()?.strip_prefix("current:")?.trim());
+                    (std::fs::canonicalize(rejected).ok()?
+                        == std::fs::canonicalize(&manifest_path).ok()?)
+                    .then_some(MetadataState::WorkspaceMembershipRejected)
                 }
                 // Tree cleanup could not be confirmed after the probe
                 // ended abnormally: the wait contract only guarantees a
@@ -826,6 +862,7 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
                 _ => None,
             }
         });
+    let _ = std::fs::remove_file(&stderr_path);
     let _ = std::fs::remove_file(&stdout_path);
     parsed
 }
