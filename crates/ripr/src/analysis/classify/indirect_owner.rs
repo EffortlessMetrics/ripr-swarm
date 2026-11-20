@@ -510,7 +510,12 @@ fn mention_is_value(
     let after = code[at + name.len()..].trim_start();
     let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
     let method = before.ends_with('.');
-    let called = after.starts_with(['(', '!']) || after.starts_with("::<");
+    // #14941: whitespace may separate `::` from `<` (`thr :: <u8>(50)`); the
+    // code is comment-masked, so a comment between reads as whitespace too.
+    let turbofish = after
+        .strip_prefix("::")
+        .is_some_and(|rest| rest.trim_start().starts_with('<'));
+    let called = after.starts_with(['(', '!']) || turbofish;
     // #10604: a mention that continues a path (`thr::internal::thr(50)`, where
     // the crate or module is spelled like the owner) is a qualifier segment,
     // not the owner passed as a value: a value use is never followed by `::`
@@ -1349,6 +1354,28 @@ mod tests {
         // Control 2: real calls and the turbofish are unchanged.
         assert!(!value("assert!(thr(50));", "thr"));
         assert!(!value("assert!(thr::<u8>(50));", "thr"));
+    }
+
+    /// #14941: a turbofish is `::` then `<`, and Rust allows whitespace (and
+    /// comments, masked to whitespace) between them. Every spelling is the
+    /// call, never the owner passed as a value.
+    #[test]
+    fn a_whitespace_spelled_turbofish_is_a_call_not_a_value() {
+        assert!(!value("assert!(thr::<u8>(50));", "thr"));
+        assert!(!value("assert!(thr ::<u8>(50));", "thr"));
+        assert!(!value("assert!(thr:: <u8>(50));", "thr"));
+        assert!(!value("assert!(thr :: <u8>(50));", "thr"));
+        assert!(!value("assert!(thr :: \n <u8>(50));", "thr"));
+        assert!(!value("assert!(thr::/* c */<u8>(50));", "thr"));
+        assert!(!value("assert!(thr /* c */ :: <u8>(50));", "thr"));
+        // Fail closed: a spaced `::` is a qualifier, and a lone `<` or `::`
+        // not followed by `<` or a segment is still a value or comparison.
+        assert!(!value("assert!(thr :: helper());", "thr"));
+        assert!(value("let g = thr; g(50);", "thr"));
+        assert!(value("let g = thr ;", "thr"));
+        assert!(value("rows.map(thr).count();", "thr"));
+        assert!(value("let b = thr < 5;", "thr"));
+        assert!(value("let b = thr :: ;", "thr"));
     }
 
     /// Review round 1 (Devin): excluding the qualifier must not eat the value

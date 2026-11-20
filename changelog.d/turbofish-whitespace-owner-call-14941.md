@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A whitespace-spelled turbofish on the changed owner (`thr :: <u8>(50)`, `thr:: <u8>(50)`, or a comment between `::` and `<`) is now read as the call, like the adjacent `thr::<u8>(50)`, instead of the owner passed as a function value, so the indirect-owner limit no longer withholds a real gap on it (#14941). A genuine function value (`let g = thr;`, `.map(thr)`) still keeps that limit.
