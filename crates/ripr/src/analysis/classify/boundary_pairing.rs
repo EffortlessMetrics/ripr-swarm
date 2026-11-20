@@ -328,7 +328,7 @@ fn assertion_names_one_entry_call(
                     })
         })
         && owner_call_count(&assertion.text, entry) == 1
-        && owner_call_count(&assertion.text, &owner.name) == 0
+        && !mentions_owner_call(&assertion.text, &owner.name)
 }
 
 /// `Some(prefix)` when `subject` is one whole call `a::b::name(..)` through a
@@ -356,12 +356,15 @@ fn path_qualified_whole_call<'a>(subject: &'a str, name: &str) -> Option<&'a str
 }
 
 fn owner_call_count(text: &str, name: &str) -> usize {
-    // The argument lists read only a plain `name(` call; a turbofish or
-    // macro spelling still counts (#15277 review), so the count can only
-    // overcount, which every caller reads as a refusal.
-    owner_call_argument_lists(text, name)
-        .len()
-        .max(super::owner_pin::closure_adaptor::call_count(text, name))
+    owner_call_argument_lists(text, name).len()
+}
+
+/// Whether `text` may hold any call of `name`: a plain call, or a turbofish
+/// or macro spelling the plain argument reader cannot see (#15277 review).
+/// It can only overcount, so the "no direct owner call" refusals read it.
+fn mentions_owner_call(text: &str, name: &str) -> bool {
+    owner_call_count(text, name) > 0
+        || super::owner_pin::closure_adaptor::call_count(text, name) > 0
 }
 
 /// Activation already recorded a boundary `==` row bound down the chain
@@ -385,7 +388,7 @@ fn assertion_observes_boundary_entry_call(
             && fact.value.contains(" == ")
             && call_line.contains(&assertion.text)
             && owner_call_count(call_line, entry) == 1
-            && owner_call_count(call_line, &owner.name) == 0
+            && !mentions_owner_call(call_line, &owner.name)
     })
 }
 
@@ -4581,15 +4584,20 @@ mod tests {
     }
 
     #[test]
-    fn owner_call_count_sees_a_turbofish_owner_call() {
+    fn mentions_owner_call_sees_a_turbofish_owner_call() {
         // #15277 review: the #6780 "assertion holds no direct owner call"
-        // refusal must see `owner::<u8>(3)`.
-        assert_eq!(
-            owner_call_count("assert_eq!(wrapper(10), owner::<u8>(3));", "owner"),
-            1
-        );
-        assert_eq!(owner_call_count("owner(1) + owner::<u8>(2)", "owner"), 2);
-        assert_eq!(owner_call_count("assert_eq!(wrapper(10), 3);", "owner"), 0);
+        // refusal must see `owner::<u8>(3)`, while the exact `!= 1` helper
+        // counts keep reading plain calls only.
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner::<u8>(3));",
+            "owner"
+        ));
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner(3));",
+            "owner"
+        ));
+        assert!(!mentions_owner_call("assert_eq!(wrapper(10), 3);", "owner"));
+        assert_eq!(owner_call_count("owner::<u8>(2)", "owner"), 0);
     }
 
     #[test]
