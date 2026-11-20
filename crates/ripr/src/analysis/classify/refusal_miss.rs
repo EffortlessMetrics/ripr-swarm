@@ -13,6 +13,9 @@ use std::time::Instant;
 
 type TestKey = (PathBuf, String, usize);
 
+/// Per-probe memo of refusal, cfg-gate and module-gate answers. It lives in
+/// one `ProbeContext`, so answers are reused across that probe's assertions
+/// and related tests, never across probes or owners.
 #[derive(Default)]
 pub(in crate::analysis) struct RefusalMemo {
     local_refusals: RefCell<BTreeMap<TestKey, Option<Vec<Option<AssertionRefusal>>>>>,
