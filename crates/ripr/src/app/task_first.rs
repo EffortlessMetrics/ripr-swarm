@@ -1047,6 +1047,17 @@ pub(crate) fn resolve_repair_start(
         |entry| matches!(scope, Some(ChangeScope::TouchesSeams(_))) && !off_change(entry),
         || check_run.get().map(|output| output.findings.clone()),
     );
+    // A wrapper of a variant that was just reopened is not the same behavior
+    // as a gripped one any more (#15278).
+    let gripped_siblings: Vec<&crate::analysis::ClassifiedSeam> = gripped_siblings
+        .into_iter()
+        .filter(|sibling| {
+            refusals.iter().any(|(entry, refusal)| {
+                entry.seam.id() == sibling.seam.id()
+                    && matches!(refusal, Some((RefusalKind::AlreadyGripped, _)))
+            })
+        })
+        .collect();
     // For each gripped refusal: whether the spot is outside the change, and why.
     let mut gripped_reasons: Vec<(bool, String)> = Vec::new();
     let mut eligible_off_change = 0usize;
@@ -1599,13 +1610,23 @@ fn reopen_gripped_that_check_reads_open<'a>(
     };
     for position in gripped {
         let entry = refusals[position].0;
-        let open = findings.iter().find(|finding| {
-            finding.class != crate::domain::ExposureClass::Exposed
-                && super::repair_card_handoff::finding_names_seam_by_location(
-                    finding, entry, classified,
-                )
-        });
-        if let Some(finding) = open {
+        let open: Vec<&crate::domain::Finding> = findings
+            .iter()
+            .filter(|finding| {
+                finding.class != crate::domain::ExposureClass::Exposed
+                    && super::repair_card_handoff::finding_names_seam_by_location(
+                        finding, entry, classified,
+                    )
+            })
+            .collect();
+        // A gap check names leads over a static limit on the same seam, the
+        // way check itself leads with the gap (#14266), so the reason does
+        // not depend on the order of check's findings.
+        let lead = open
+            .iter()
+            .find(|finding| !super::gap_bound_repair::finding_is_static_limited(finding))
+            .or_else(|| open.first());
+        if let Some(finding) = lead {
             refusals[position].1 =
                 Some((RefusalKind::RouteNotReady, check_reads_open_reason(finding)));
         }
@@ -5459,6 +5480,161 @@ pub(crate) mod tests {
         });
         assert!(failing.get().is_none() && failing.get().is_none());
         assert_eq!(none_runs.get(), 1);
+    }
+
+    /// #15278: the reverse screen only ever opens a changed gripped seam,
+    /// and only on check's non-exposed reading of it (or when check cannot
+    /// run); its reason does not depend on the order of check's findings.
+    #[test]
+    fn reopen_opens_only_changed_gripped_seams_check_reads_open() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{ExposureClass, Finding};
+        let classified = vec![gate_entry(
+            SeamGripClass::Exposed,
+            vec![weak_related_test()],
+        )];
+        let gripped = || {
+            vec![(
+                &classified[0],
+                Some((RefusalKind::AlreadyGripped, "gripped".to_string())),
+            )]
+        };
+        let finding = |class: ExposureClass| -> Finding {
+            let mut finding = crate::app::repair_card_handoff::tests::producer_gap_finding(
+                "probe:src_pricing.rs:42:predicate",
+                "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                "predicate",
+            );
+            finding.probe.location = crate::domain::SourceLocation::new("src/pricing.rs", 42, 5);
+            finding.class = class;
+            finding
+        };
+        // Fixture check: the synthetic finding binds the seam through the
+        // shared join, so the cases below exercise the real binding.
+        assert!(
+            crate::app::repair_card_handoff::finding_names_seam_by_location(
+                &finding(ExposureClass::WeaklyExposed),
+                &classified[0],
+                &classified,
+            ),
+            "the synthetic finding must bind the gripped seam"
+        );
+        let kind = |refusals: &[(
+            &crate::analysis::ClassifiedSeam,
+            Option<(RefusalKind, String)>,
+        )]| { refusals[0].1.clone() };
+        let runs = std::cell::Cell::new(0usize);
+        let counted = |findings: Option<Vec<Finding>>| {
+            runs.set(runs.get() + 1);
+            findings
+        };
+        // Off the change: untouched, and check never runs.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| false,
+            || counted(Some(vec![finding(ExposureClass::WeaklyExposed)])),
+        );
+        assert_eq!(runs.get(), 0);
+        assert_eq!(kind(&kept), gripped()[0].1);
+        // An open (not gripped) seam is never touched, and check never runs.
+        let open = vec![(
+            &classified[0],
+            Some((RefusalKind::RouteNotReady, "not ready".to_string())),
+        )];
+        let kept = reopen_gripped_that_check_reads_open(
+            open,
+            &classified,
+            |_| true,
+            || counted(Some(Vec::new())),
+        );
+        assert_eq!(runs.get(), 0);
+        assert_eq!(
+            kind(&kept),
+            Some((RefusalKind::RouteNotReady, "not ready".to_string()))
+        );
+        // Check reads the seam exposed, or binds nothing: still gripped.
+        for findings in [vec![finding(ExposureClass::Exposed)], Vec::new()] {
+            let kept = reopen_gripped_that_check_reads_open(
+                gripped(),
+                &classified,
+                |_| true,
+                || counted(Some(findings)),
+            );
+            assert_eq!(kind(&kept), gripped()[0].1);
+        }
+        // Check cannot run: opened, with a reason that claims nothing of check.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| true,
+            || counted(None),
+        );
+        assert_eq!(
+            kind(&kept),
+            Some((
+                RefusalKind::Unverified,
+                CHECK_UNAVAILABLE_REASON.to_string()
+            ))
+        );
+        // Weak beside exposed on one seam: opened with check's weak reading.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| true,
+            || {
+                counted(Some(vec![
+                    finding(ExposureClass::Exposed),
+                    finding(ExposureClass::WeaklyExposed),
+                ]))
+            },
+        );
+        let Some((RefusalKind::RouteNotReady, reason)) = kind(&kept) else {
+            return Err(format!(
+                "a weak reading must open the seam: {:?}",
+                kind(&kept)
+            ));
+        };
+        assert!(
+            reason.starts_with("`ripr check` reads this changed code as weak"),
+            "{reason}"
+        );
+        // A static limit alone opens it with the limit's reason.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| true,
+            || counted(Some(vec![finding(ExposureClass::StaticUnknown)])),
+        );
+        assert_eq!(
+            kind(&kept),
+            Some((RefusalKind::RouteNotReady, CHECK_UNKNOWN_REASON.to_string()))
+        );
+        // A gap leads over a static limit whatever check's order.
+        for findings in [
+            vec![
+                finding(ExposureClass::StaticUnknown),
+                finding(ExposureClass::WeaklyExposed),
+            ],
+            vec![
+                finding(ExposureClass::WeaklyExposed),
+                finding(ExposureClass::StaticUnknown),
+            ],
+        ] {
+            let kept = reopen_gripped_that_check_reads_open(
+                gripped(),
+                &classified,
+                |_| true,
+                || counted(Some(findings)),
+            );
+            let Some((RefusalKind::RouteNotReady, reason)) = kind(&kept) else {
+                return Err(format!("a gap must open the seam: {:?}", kind(&kept)));
+            };
+            assert!(reason.contains("as weak"), "{reason}");
+        }
+        Ok(())
     }
 
     fn candidate(id: &str) -> (String, RepairCandidateNote) {

@@ -742,6 +742,11 @@ fn assert_limited_change_is_not_called_gripped(
             !repair.contains("different check than the one still open"),
             "a spot check reads as open is not a different check:\n{repair}"
         );
+        assert!(
+            !(repair.contains("outside your changed lines")
+                && repair.contains("already noticed by existing tests and not listed")),
+            "a spot check reads as open on the change is not counted outside it:\n{repair}"
+        );
         assert_plain(&repair);
         return Ok(());
     }
