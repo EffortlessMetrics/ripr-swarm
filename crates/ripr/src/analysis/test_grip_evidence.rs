@@ -3546,7 +3546,7 @@ fn weaken_unselected_arm(
             StageState::Unknown,
             Confidence::Low,
             format!(
-                "{ARM_SELECTION_UNREAD_REASON_PREFIX} `{}`: a related test calls `{}`, but no call's input is read as selecting this arm",
+                "{ARM_SELECTION_UNREAD_REASON_PREFIX} `{}`: no related test of `{}` is read as passing an input that selects this arm",
                 first_line, owner.name
             ),
         );
