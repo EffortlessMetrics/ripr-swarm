@@ -259,3 +259,16 @@ Updated:
 - `expected/human.txt`
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — typescript_infection_shapes (22)
+
+Reason:
+RIPR-SPEC-0243 #15393: a filled default's advice asks for a call that omits the argument
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/sarif.json`
+- `expected/github.txt`

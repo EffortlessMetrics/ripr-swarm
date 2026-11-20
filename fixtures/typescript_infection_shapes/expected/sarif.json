@@ -833,7 +833,7 @@
             }
           ],
           "message": {
-            "text": "reachable_unrevealed static exposure for predicate probe: export function say(msg: string, loud = true): string {. Next step: TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted."
+            "text": "reachable_unrevealed static exposure for predicate probe: export function say(msg: string, loud = true): string {. Next step: TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|src/pricing.ts"
@@ -925,7 +925,7 @@
             },
             "severity": "warning",
             "stop_reasons": [],
-            "suggested_next_action": "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.",
+            "suggested_next_action": "TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted.",
             "tool": "ripr",
             "typescript_preview_card": {
               "authority_boundary": "preview_advisory_only",

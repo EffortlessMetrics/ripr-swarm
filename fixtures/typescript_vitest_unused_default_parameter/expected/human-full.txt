@@ -83,7 +83,7 @@ TypeScript repair packet (advisory)
   next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted
+  TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_vitest_unused_default_parameter/input --diff <cwd>/fixtures/typescript_vitest_unused_default_parameter/diff.patch --mode fast probe:src_def.ts:typescript_preview:a65132fe

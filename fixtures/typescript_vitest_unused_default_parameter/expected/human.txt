@@ -24,8 +24,9 @@ Start here:
     passes that argument: observed `pick` calls: `('x', { level: 'B' })`. The default never applies
     under the tests, so no assertion can observe it. Add a call that omits the argument
   Related test: test/def.test.ts:5 pick joins the level
-  Next step — TypeScript preview advisory: no related test call enters the changed branch; add a
-    test input that enters it before strengthening any assertion. No repair packet is emitted
+  Next step — TypeScript preview advisory: every related call passes the argument whose default
+    changed, so the default never applies; add a test call that omits it before strengthening any
+    assertion. No repair packet is emitted
   Evidence: reach yes · infection no · propagation unknown · observation yes · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
