@@ -518,7 +518,7 @@ mod output_dir_tests {
     use crate::testing::unwritable_output::OutputDirFixture;
 
     const PILOT_HINT: &str = "write elsewhere with --out PATH";
-    const FIRST_PR_HINT: &str = "write elsewhere with --out-dir PATH";
+    const FIRST_PR_HINT: &str = "write elsewhere with --output-dir PATH";
 
     #[test]
     fn permission_denied_names_the_relocate_flag() {
@@ -535,7 +535,8 @@ mod output_dir_tests {
     #[test]
     fn read_only_filesystem_names_the_relocate_flag() {
         let err = io::Error::new(io::ErrorKind::ReadOnlyFilesystem, "Read-only file system");
-        let message = create_output_dir_error(Path::new("target/ripr/reports"), &err, "--out-dir");
+        let message =
+            create_output_dir_error(Path::new("target/ripr/reports"), &err, "--output-dir");
         assert!(message.contains(FIRST_PR_HINT), "{message}");
         assert!(!message.contains(PILOT_HINT), "{message}");
     }
@@ -555,7 +556,8 @@ mod output_dir_tests {
     #[test]
     fn not_a_directory_does_not_name_the_relocate_flag() {
         let err = io::Error::new(io::ErrorKind::NotADirectory, "Not a directory");
-        let message = create_output_dir_error(Path::new("target/ripr/reports"), &err, "--out-dir");
+        let message =
+            create_output_dir_error(Path::new("target/ripr/reports"), &err, "--output-dir");
         assert!(!message.contains("write elsewhere"), "{message}");
     }
 

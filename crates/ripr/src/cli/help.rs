@@ -2292,6 +2292,21 @@ fn parse_demo<'a>(xs: &'a str) {
                 "--static-json",
                 "hidden alias of --repo-exposure-json",
             ),
+            // #10543 item 4: `--output-dir` is the documented directory
+            // spelling; the old `--out-dir` stays accepted so existing
+            // scripts and workflows keep working, without listing two
+            // spellings for one option.
+            ("first-pr", "--out-dir", "hidden alias of --output-dir"),
+            (
+                "pr-comments requests",
+                "--out-dir",
+                "hidden alias of --output-dir",
+            ),
+            (
+                "pr-comments summary",
+                "--out-dir",
+                "hidden alias of --output-dir",
+            ),
             // `mcp --help --all` is rejected with a route to the documented
             // extended help (#9867); `--all` is not an accepted mcp flag, so
             // it owns no Options entry — the help body names the supported

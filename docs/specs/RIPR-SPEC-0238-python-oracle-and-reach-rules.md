@@ -996,7 +996,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     exception (#9542, RIPR-SPEC-0028): a bare `assert f(lit, ..)` or
     `assert not f(lit, ..)` whose single resolved workspace function owner
     provably returns `bool` is an exact pin, read as `f(lit, ..) == True` /
-    `== False`.
+    `== False`. A plain-name argument counts as such a literal only when it
+    is a direct, settled pytest parametrize argname of the test with
+    recorded cases, rebound nowhere in the test body (no statement binding
+    and no `:=`) and not a Hypothesis input (#15310); every other name keeps
+    the assertion smoke.
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is

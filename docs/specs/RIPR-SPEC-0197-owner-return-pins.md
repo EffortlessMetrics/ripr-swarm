@@ -490,6 +490,12 @@ wrong credits.
    RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
+   The same holds for a `?` inside a trusted macro's operands in the test
+   function's own body (`assert_eq!(parse(..)?, 91)`, #14116): its error
+   fails the test, so it cannot skip the comparison. It still refuses when
+   the macro call sits in a closure, an `async` block or a nested `fn`, when
+   the operand holds a closure (`|`) or an `async` block, and in any
+   function that is not a test (a helper's caller may discard the error).
    Exactly
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
@@ -4106,7 +4112,8 @@ of the exact `x == 101` input row, independently of final gap admission. The
 three non-owner fixtures (`rust_nested_use_cfg`, `rust_nested_use_dependency_alias`,
 `rust_nested_use_dependency_glob`) classify their return-value findings
 `infection_unknown`, because call identity does not resolve to the owner;
-`rust_nested_use_owner` remains `static_unknown`. The fixtures use direct calls,
+`rust_nested_use_owner` resolves the owner call, so its return-value finding reads
+`weakly_exposed` (#14940). The fixtures use direct calls,
 not function values.
 
 Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). The computed-input continuation (`computed_input_parameters`) applies the same admission (below). It does not cover the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.

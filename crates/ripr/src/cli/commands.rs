@@ -1494,10 +1494,10 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         {
             forbidden.push(input);
         }
-        if forbidden
-            .iter()
-            .any(|path| output::path::same_output_leaf(jsonl, path))
-        {
+        if forbidden.iter().any(|path| {
+            output::path::same_output_leaf(jsonl, path)
+                || output::path::output_replaces_input(jsonl, path)
+        }) {
             return Err(
                 "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
                     .to_string(),
@@ -7142,6 +7142,7 @@ language = "rust"
     fn init_ci_github_writes_workflow_and_preserves_existing_config() -> Result<(), String> {
         let dir = unique_command_test_dir("init-ci");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let config = dir.join(CONFIG_FILE_NAME);
         std::fs::write(&config, "# existing policy\n")
             .map_err(|err| format!("write existing config: {err}"))?;
@@ -7171,6 +7172,7 @@ language = "rust"
         let workflow_dir = dir.join(".github/workflows");
         std::fs::create_dir_all(&workflow_dir)
             .map_err(|err| format!("create workflow dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let workflow = workflow_dir.join("ripr.yml");
         std::fs::write(&workflow, "name: Existing\n")
             .map_err(|err| format!("write existing workflow: {err}"))?;

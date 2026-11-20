@@ -1,0 +1,45 @@
+{
+  "case_id": "authored-8637-std-debug-assert-one",
+  "subject_id": "authored-8637-std-debug-assert",
+  "diff": "cases/authored-8637-std-debug-assert-one.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "std_rooted_debug_assert_eq_pin",
+  "hard_case": "The pin is spelled `std::debug_assert_eq!`, the std-rooted twin of the bare `debug_assert_eq!`, which runs only in a debug profile.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "2",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::pins_one_in_debug",
+        "equivalence_review": "not equivalent: `one()` returns 2 and `std::debug_assert_eq!(one(), 1)` fails under the default debug test profile. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_failed in tests::pins_one_in_debug."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`std::debug_assert_eq!(one(), 1)` is the bare `debug_assert_eq!` rooted at the standard library (#8637). Under `cargo test` it fails on the edit, so a named debug-profile limit is an acceptable abstention; before the fix ripr read it reachable_unrevealed, a false gap.",
+  "labeling_observation": {
+    "ripr_commit": "332729ac",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

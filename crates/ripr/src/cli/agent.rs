@@ -365,10 +365,14 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut test_result: Option<PathBuf> = None;
     let mut store: Option<PathBuf> = None;
     let mut json = false;
+    let mut quiet = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json = true,
+            // Same meaning as `ripr repair --quiet`: the flag twin of
+            // `RIPR_QUIET`, which this phase already honors.
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
                 let reconciled = reconcile_root(
@@ -770,7 +774,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         test_result,
         store,
         json,
-        quiet: false,
+        quiet,
         facade_start: false,
     }))
 }
@@ -1962,6 +1966,24 @@ mod tests {
         };
         assert_eq!(parse(&[]), Some(false));
         assert_eq!(parse(&["--json"]), Some(true));
+    }
+
+    /// `agent repair` takes `--quiet` like `ripr repair`, the flag twin of
+    /// the `RIPR_QUIET` switch the phase already honors; it leaves `--json`
+    /// alone.
+    #[test]
+    fn agent_repair_quiet_flag_is_the_ripr_quiet_twin() {
+        let parse = |extra: &[&str]| {
+            let mut values = vec!["repair", "--seam-id", "seam:sample", "--phase", "before"];
+            values.extend_from_slice(extra);
+            match parse_agent_args(&args(&values)) {
+                Ok(AgentCommand::Repair(options)) => Some((options.quiet, options.json)),
+                _ => None,
+            }
+        };
+        assert_eq!(parse(&[]), Some((false, false)));
+        assert_eq!(parse(&["--quiet"]), Some((true, false)));
+        assert_eq!(parse(&["--quiet", "--json"]), Some((true, true)));
     }
 
     #[test]

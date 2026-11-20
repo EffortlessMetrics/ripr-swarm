@@ -53,7 +53,8 @@ A panic-family call site is acceptable only if it satisfies **both rails**.
 
 ## Required feature coverage
 
-The required Rust lane keeps two strict Clippy invocations:
+The required Rust lane keeps two strict Clippy invocations, plus a Rust-only
+library lint described below:
 
 ```bash
 cargo clippy -p ripr --all-targets --all-features -- -D warnings
@@ -69,6 +70,20 @@ The second retains default-feature workspace coverage. Both are necessary:
 an all-features build omits `#[cfg(not(feature = "lang-perl"))]` branches
 that still need linting in the default build. Warning denial applies to both
 commands, and both include test and example targets.
+
+Neither covers code that only a preview language uses, which compiles in both
+of those builds and goes unused in the supported Rust-only build. That build
+reached 38 warnings before #14263 gated the helpers, so the required run also
+lints its library:
+
+```bash
+cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings
+```
+
+Hosted routes run it in shard 2 of `rust-test-shards.yml`, off the gates job's
+critical path; routes that run tests in `rust-gates.yml` run it there.
+`xtask/tests/rust_gate_workflow_contract.rs` pins one step in each workflow and
+its condition. Rust-only test targets are not linted and still warn.
 
 This does not execute optional-feature tests, lint every possible feature
 combination, or establish native-platform coverage beyond the runner used.
