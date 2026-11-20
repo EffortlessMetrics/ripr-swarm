@@ -9,4 +9,5 @@ tests = [
   "crates/ripr/tests/custom_lib_path_module_identity.rs::a_unit_test_of_a_rival_module_never_names_the_owner",
   "crates/ripr/tests/custom_lib_path_module_identity.rs::a_renamed_import_of_another_function_never_names_the_owner",
   "crates/ripr/tests/custom_lib_path_module_identity.rs::a_reexport_is_found_in_the_module_read_from_the_declared_root",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_nested_root_keeps_a_module_named_like_another_target",
 ]

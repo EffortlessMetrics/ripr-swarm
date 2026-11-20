@@ -438,8 +438,10 @@ names the owner, and a same-named rival module (`my_pkg::legacy::discount`)
 settles away from it. A unit test's own module is read the same way, so a
 test in `src/core/pricing.rs` is in `pricing`, and a rival's unit test never
 collides with an owner whose directory shape it shares. An explicit
-`[lib] path = "src/lib.rs"` is the default layout. Files under `tests/`, `benches/`, `examples/` and
-`src/bin/` keep their own targets. A renamed import's target and a
+`[lib] path = "src/lib.rs"` is the default layout. Files under the package's
+`tests/`, `benches/`, `examples/` and `src/bin/`, its `src/main.rs` and its
+`build.rs` keep their own targets; those paths are fixed relative to the
+package, so a nested root keeps a module named `main` or `tests`. A renamed import's target and a
 re-exporting module are placed in the same reading. A root outside `src/`
 still leaves its owners unplaced (crate placement needs `src/`, so it fails
 closed); a `#[path]` remap keeps the rule off as before.
@@ -451,6 +453,7 @@ closed); a `#[path]` remap keeps the rule off as before.
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::a_unit_test_of_a_rival_module_never_names_the_owner`
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::a_renamed_import_of_another_function_never_names_the_owner`
 - `crates/ripr/tests/custom_lib_path_module_identity.rs::a_reexport_is_found_in_the_module_read_from_the_declared_root`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_nested_root_keeps_a_module_named_like_another_target`
 
 ## Implementation Mapping
 

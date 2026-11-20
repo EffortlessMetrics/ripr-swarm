@@ -1663,25 +1663,33 @@ fn file_module_segments_in(index: &RustIndex, file: &Path) -> Option<Vec<String>
 /// `None` when the package has no custom root or `file` is not under the
 /// root's directory.
 fn custom_lib_root_segments(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
-    let crate_root = index.member_crates.custom_lib_path_root_of(file)?;
+    let custom = index.member_crates.custom_lib_path_root_of(file)?;
     let normalized = super::related_tests::normalize_path(file);
-    let root = super::related_tests::normalize_path(&crate_root);
+    let root = super::related_tests::normalize_path(&custom.crate_root);
     if normalized == root {
         return Some(Vec::new());
+    }
+    // Other targets' paths never hold the library's modules. They are fixed
+    // relative to the package directory, not to the root's directory, so a
+    // nested root keeps a `tests` or `main` module of its own (#14495 review).
+    let package = super::related_tests::normalize_path(&custom.package);
+    let in_package = if package.is_empty() {
+        Some(normalized.as_str())
+    } else {
+        normalized.strip_prefix(&format!("{package}/"))
+    }?;
+    if ["tests/", "benches/", "examples/", "src/bin/"]
+        .iter()
+        .any(|target| in_package.starts_with(target))
+        || matches!(in_package, "src/main.rs" | "build.rs")
+    {
+        return None;
     }
     let directory = match root.rsplit_once('/') {
         Some((directory, _)) => format!("{directory}/"),
         None => String::new(),
     };
     let body = normalized.strip_prefix(&directory)?.strip_suffix(".rs")?;
-    // Other targets' directories never hold the library's modules.
-    if ["tests/", "benches/", "examples/", "src/bin/"]
-        .iter()
-        .any(|target| body.starts_with(target))
-        || matches!(body, "main" | "build" | "src/main")
-    {
-        return None;
-    }
     let mut segments: Vec<String> = body.split('/').map(str::to_string).collect();
     if segments.last().is_some_and(|last| last == "mod") {
         segments.pop();

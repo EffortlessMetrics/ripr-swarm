@@ -44,6 +44,16 @@ const TEST_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "d
 /// and `[build-dependencies]` to the build script only (#11401).
 const LIBRARY_DEPENDENCY_TABLES: &[&str] = &["dependencies"];
 
+/// A package's manifest-declared `[lib] path` root (#14495), both paths
+/// relative to the analysis root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CustomLibRoot {
+    /// The package directory, which other targets' paths are relative to.
+    pub(crate) package: PathBuf,
+    /// The library's crate root file.
+    pub(crate) crate_root: PathBuf,
+}
+
 /// Import names per (test file directory, owner crate root).
 type ImportNames = BTreeMap<(PathBuf, PathBuf), Vec<String>>;
 /// Foreign-export answers per (owner crate root, item name).
@@ -73,7 +83,7 @@ pub(crate) struct MemberCrates {
     imported_macro_exports: Arc<Mutex<ImportedMacroExports>>,
     /// Per source directory: the custom `[lib] path` root of its nearest
     /// package, read once per analysis (#14495).
-    custom_lib_roots: Arc<Mutex<BTreeMap<PathBuf, Option<PathBuf>>>>,
+    custom_lib_roots: Arc<Mutex<BTreeMap<PathBuf, Option<CustomLibRoot>>>>,
 }
 
 impl MemberCrates {
@@ -331,7 +341,7 @@ impl MemberCrates {
     /// (#14495). `None` for a default `src/lib.rs` library, an escaping or
     /// non-string path, a virtual or unreadable manifest, or absent
     /// manifest authority.
-    pub(crate) fn custom_lib_path_root_of(&self, file: &Path) -> Option<PathBuf> {
+    pub(crate) fn custom_lib_path_root_of(&self, file: &Path) -> Option<CustomLibRoot> {
         let root = lexical(self.root.as_ref()?);
         let file = lexical(&root.join(file));
         let directory = file.parent()?.to_path_buf();
@@ -1341,7 +1351,7 @@ fn import_name(
 }
 
 /// [`MemberCrates::custom_lib_path_root_of`] for a source directory, uncached.
-fn custom_lib_path_root_in(root: &Path, directory: &Path) -> Option<PathBuf> {
+fn custom_lib_path_root_in(root: &Path, directory: &Path) -> Option<CustomLibRoot> {
     // Read the manifest where the analyzed sources are read, so a dirty
     // `[lib] path` cannot move a committed-source root.
     let (package, _) = nearest_package_snapshot(root, directory, true)?;
@@ -1356,7 +1366,10 @@ fn custom_lib_path_root_in(root: &Path, directory: &Path) -> Option<PathBuf> {
         return None;
     }
     let crate_root = package.directory.join(relative);
-    crate_root.strip_prefix(root).ok().map(Path::to_path_buf)
+    Some(CustomLibRoot {
+        package: package.directory.strip_prefix(root).ok()?.to_path_buf(),
+        crate_root: crate_root.strip_prefix(root).ok()?.to_path_buf(),
+    })
 }
 
 /// The nearest package manifest at or above `directory` inside `root`, plus

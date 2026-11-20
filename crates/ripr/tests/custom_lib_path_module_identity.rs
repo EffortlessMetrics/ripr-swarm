@@ -284,3 +284,36 @@ fn a_reexport_is_found_in_the_module_read_from_the_declared_root() -> Result<(),
     );
     Ok(())
 }
+
+#[test]
+fn a_nested_root_keeps_a_module_named_like_another_target() -> Result<(), String> {
+    // Other targets' paths (`tests/`, `src/main.rs`) are fixed relative to
+    // the package, so `src/core/main.rs` below the root `src/core/engine.rs`
+    // is the library module `main` (#14495 review).
+    let files = |call: &str| {
+        vec![
+            ("Cargo.toml", MANIFEST.to_string()),
+            ("src/core/engine.rs", "pub mod main;\n".to_string()),
+            ("src/core/main.rs", OWNER.to_string()),
+            (
+                "tests/d.rs",
+                format!(
+                    "#[test]\nfn discounts() {{\n    assert_eq!({call}(100), 100);\n    assert_eq!({call}(101), 91);\n}}\n"
+                ),
+            ),
+        ]
+    };
+    let found = finding_in(&files("my_pkg::main::discount"), ("src/core/main.rs", 2))?;
+    assert_exposed("module named main", &found);
+    let shaped = finding_in(
+        &files("my_pkg::core::main::discount"),
+        ("src/core/main.rs", 2),
+    )?;
+    assert_ne!(
+        shaped.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        shaped.evidence
+    );
+    Ok(())
+}
