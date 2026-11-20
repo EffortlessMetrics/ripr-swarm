@@ -6138,6 +6138,7 @@ fn check_allow_attributes_impl() -> Result<(), String> {
     let guarded = guarded_allow_attribute_lints();
     let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
 
+    let mut violations = Vec::new();
     for path in tracked_files()? {
         if !path.ends_with(".rs") {
             continue;
@@ -6147,6 +6148,17 @@ fn check_allow_attributes_impl() -> Result<(), String> {
             continue;
         }
         let text = read_text_lossy(file_path)?;
+        // Fixture inputs model other crates and do not inherit the workspace lints.
+        if !file_path
+            .components()
+            .any(|part| part.as_os_str() == "fixtures")
+        {
+            for (line, lint) in unguarded_allows_without_reason(&text, &guarded) {
+                violations.push(format!(
+                    "{path}:{line} allow({lint}) needs a written reason"
+                ));
+            }
+        }
         for (line, attribute) in guarded_allow_attributes_in_text(&text, &guarded) {
             counts
                 .entry((path.clone(), attribute))
@@ -6155,7 +6167,9 @@ fn check_allow_attributes_impl() -> Result<(), String> {
         }
     }
 
-    let violations = allow_attribute_budget_violations(&allowlist, &counts, &guarded);
+    violations.extend(allow_attribute_budget_violations(
+        &allowlist, &counts, &guarded,
+    ));
 
     finish_policy_report(
         PolicyReportSpec {
@@ -22173,6 +22187,66 @@ fn guarded_allow_attribute_lints() -> BTreeSet<&'static str> {
     ]
     .into_iter()
     .collect()
+}
+
+/// Inspect actual Rust attributes, including each suppression inside cfg_attr.
+/// Comments, example source strings and sibling attributes cannot supply a reason.
+fn unguarded_allows_without_reason(
+    text: &str,
+    guarded: &BTreeSet<&'static str>,
+) -> Vec<(usize, String)> {
+    let mut findings = Vec::new();
+    if !text.contains("allow") {
+        return findings;
+    }
+    let parsed = SourceFile::parse(text, Edition::CURRENT);
+    for meta in parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTreeMeta::cast)
+    {
+        if !meta
+            .path()
+            .is_some_and(|path| path.syntax().text() == "allow")
+        {
+            continue;
+        }
+        let Some(args) = meta.token_tree() else {
+            continue;
+        };
+        let tokens: Vec<_> = args
+            .syntax()
+            .children_with_tokens()
+            .filter(|token| {
+                !token.kind().is_trivia()
+                    && !matches!(token.kind(), SyntaxKind::L_PAREN | SyntaxKind::R_PAREN)
+            })
+            .collect();
+        let parts = tokens.split(|token| token.kind() == SyntaxKind::COMMA);
+        if parts.clone().any(|part| matches!(part, [key, eq, value]
+            if key.to_string() == "reason" && eq.kind() == SyntaxKind::EQ && value.kind() == SyntaxKind::STRING)) {
+            continue;
+        }
+        for part in parts {
+            if part.is_empty()
+                || !part.iter().all(|t| {
+                    matches!(
+                        t.kind(),
+                        SyntaxKind::IDENT | SyntaxKind::COLON | SyntaxKind::COLON2
+                    )
+                })
+            {
+                continue;
+            }
+            let lint: String = part.iter().map(ToString::to_string).collect();
+            if !guarded.contains(lint.as_str()) {
+                let offset = usize::from(meta.syntax().text_range().start());
+                findings.push((byte_line_number(text, offset), lint));
+            }
+        }
+    }
+    findings
 }
 
 fn guarded_allow_attributes_in_text(
