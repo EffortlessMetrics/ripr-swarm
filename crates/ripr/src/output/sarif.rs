@@ -2087,6 +2087,8 @@ mod tests {
             .collect()
     }
 
+    // RIPR-SPEC-0008: the results byte bound admits by level (error,
+    // warning, note, other), original index as the tiebreak (#15373).
     #[test]
     fn sarif_results_bound_keeps_warning_before_earlier_note() {
         let results = vec![bound_probe("note", 0), bound_probe("warning", 1)];
