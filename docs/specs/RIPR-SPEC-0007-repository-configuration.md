@@ -167,7 +167,11 @@ what `ripr init --mcp` can do: run it when the entry is missing (including a
 missing `mcpServers` key), add `--force` to replace a customized `ripr` entry,
 and fix or remove the file first when it is not a JSON object or `mcpServers`
 is not an object, which init refuses. A `.mcp.json` that is a symlink is not
-verified; one over 1 MiB is reported as unreadable.
+verified; one over 1 MiB is reported as unreadable. A matching entry also
+with no URL and an omitted or `stdio` transport gets a separate `mcp_stdio_executable` check using doctor's existing PATH
+lookup. An executable found on this shell's PATH passes this prerequisite.
+A missing executable yields an advisory with the PATH recovery step and
+leaves overall status unchanged. The check does not launch the server.
 
 ### Generated MCP registration (#13050)
 

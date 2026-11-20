@@ -140,6 +140,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
     );
     report.segments = environment.facts.segments.clone();
     let binary = output::doctor_binary::probe_binary_identity(&root);
+    record_mcp_checks(&root, &binary, &mut report);
     ok &= add_language_runtime_probes(
         &root,
         &detected,
@@ -197,7 +198,9 @@ fn doctor_json(
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
     let mut report = evaluation.report;
-    report.binary = Some(output::doctor_binary::probe_binary_identity(root));
+    let binary = output::doctor_binary::probe_binary_identity(root);
+    record_mcp_checks(root, &binary, &mut report);
+    report.binary = Some(binary);
     let enabled_languages = enabled_languages(&evaluation.config);
     let _ = add_language_runtime_probes(
         root,
@@ -217,9 +220,6 @@ fn doctor_json(
         language_detection_elapsed,
     );
     report.apply_environment(environment.facts);
-    if let Some(verdict) = mcp_config_verdict(root) {
-        report.add_mcp_config_check(verdict.ok, verdict.text);
-    }
     if profile == output::doctor::DoctorProfile::SourceBuild
         && let Some(advisory) = linker_temp_redirect_advisory(root)
     {
@@ -933,12 +933,19 @@ Point RIPR_CACHE_DIR at a writable directory.",
         lines.push(warning.clone());
     }
 
-    if let Some(verdict) = mcp_config_verdict(root) {
-        lines.push(format!(
-            "{} {}",
-            if verdict.ok { "✓" } else { "~" },
-            verdict.text
-        ));
+    for name in ["mcp_config", "mcp_stdio_executable"] {
+        if let Some(check) = check_named(report, name) {
+            let evidence = check.evidence.as_deref().unwrap_or(name);
+            if binary.compact_path_advisory() == Some(evidence) {
+                continue; // Already rendered with the binary's PATH advisories.
+            }
+            let icon = if check.status == output::doctor::DoctorCheckStatus::Pass {
+                "✓"
+            } else {
+                "~"
+            };
+            lines.push(format!("{icon} {evidence}"));
+        }
     }
 
     lines.extend(preview_language_enable_suggestions(
@@ -3644,6 +3651,34 @@ struct McpConfigVerdict {
     text: String,
 }
 
+/// Record configuration and local executable lookup separately. A matching
+/// command line says nothing about whether the MCP server has started.
+fn record_mcp_checks(
+    root: &Path,
+    binary: &output::doctor_binary::DoctorBinaryIdentity,
+    report: &mut output::doctor::DoctorReport,
+) {
+    let Some(verdict) = mcp_config_verdict(root) else {
+        return;
+    };
+    report.add_mcp_config_check(verdict.ok, verdict.text);
+    if !verdict.ok {
+        return;
+    }
+    if binary.path_ripr.is_some() {
+        report.add_check(
+            "mcp_stdio_executable",
+            output::doctor::DoctorStatus::Pass,
+            Some("MCP stdio: found `ripr` on this shell's PATH".to_string()),
+        );
+    } else {
+        let warning = binary.compact_path_advisory()
+            .filter(|_| binary.missing_path_dependents.iter().any(|file| file == ".mcp.json"))
+            .unwrap_or(".mcp.json specifies `ripr`, which is missing from this shell's PATH; add the directory containing the intended executable to PATH");
+        report.add_advisory_check("mcp_stdio_executable", warning.to_string());
+    }
+}
+
 /// Judges `<root>/.mcp.json`; `None` when the file is absent (or not a regular
 /// file), because a project without MCP config has nothing to verify.
 fn mcp_config_verdict(root: &Path) -> Option<McpConfigVerdict> {
@@ -3662,7 +3697,7 @@ fn mcp_config_verdict(root: &Path) -> Option<McpConfigVerdict> {
     Some(match verdict {
         Ok(()) => McpConfigVerdict {
             ok: true,
-            text: ".mcp.json: `ripr` MCP server runs `ripr mcp --stdio`".to_string(),
+            text: ".mcp.json: `ripr` server entry specifies `ripr mcp --stdio`".to_string(),
         },
         Err((problem, repair)) => McpConfigVerdict {
             ok: false,
@@ -3711,6 +3746,16 @@ fn mcp_config_problem(text: &str) -> Result<(), (String, &'static str)> {
         args.len() == 2 && args[0].as_str() == Some("mcp") && args[1].as_str() == Some("--stdio")
     });
     if command == Some("ripr") && exact {
+        if entry.get("url").is_some()
+            || entry
+                .get("type")
+                .is_some_and(|kind| kind.as_str() != Some("stdio"))
+        {
+            return Err((
+                "`ripr` server entry specifies a URL or a transport other than stdio".to_string(),
+                MCP_REPAIR_FORCE,
+            ));
+        }
         return Ok(());
     }
     let shown = args
@@ -6821,7 +6866,7 @@ mod tests {
         )?;
         assert!(
             ok.as_ref()
-                .is_some_and(|(ok, text)| *ok && text.contains("runs `ripr mcp --stdio`")),
+                .is_some_and(|(ok, text)| *ok && text.contains("specifies `ripr mcp --stdio`")),
             "{ok:?}"
         );
 
@@ -9273,10 +9318,29 @@ mod tests {
             ),
             Ok(())
         );
+        assert_eq!(
+            mcp_config_problem(
+                r#"{"mcpServers":{"ripr":{"type":"stdio","command":"ripr","args":["mcp","--stdio"]}}}"#
+            ),
+            Ok(())
+        );
         let problem = |text: &str| mcp_config_problem(text).err();
         let fix_file = "fix or remove the file, then run `ripr init --mcp`";
         let init = "run `ripr init --mcp`";
         let force = "run `ripr init --mcp --force` to replace the customized entry";
+        for entry in [
+            r#"{"mcpServers":{"ripr":{"type":"http","command":"ripr","args":["mcp","--stdio"]}}}"#,
+            r#"{"mcpServers":{"ripr":{"url":"https://example.invalid","command":"ripr","args":["mcp","--stdio"]}}}"#,
+        ] {
+            assert_eq!(
+                problem(entry),
+                Some((
+                    "`ripr` server entry specifies a URL or a transport other than stdio"
+                        .to_string(),
+                    force
+                ))
+            );
+        }
         assert_eq!(
             problem("[]"),
             Some(("is not a JSON object".to_string(), fix_file))

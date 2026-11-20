@@ -768,9 +768,13 @@ capability without failing installed-binary analysis. An additive
 `.github/workflows/ripr.yml` installs ripr without a version (the 0.10
 template) or pins a version other than the running one; its `evidence` names
 the refresh command. When the root has a `.mcp.json`, an additive `mcp_config`
-check reports `pass` if its `ripr` server entry runs `ripr mcp --stdio` (what
+check reports `pass` if its `ripr` server entry specifies `ripr mcp --stdio` (what
 `ripr init --mcp` writes) and `advisory` otherwise, with `evidence` naming the
-problem; it never changes `status`, and no file means no check. The source-build profile
+problem; it never changes `status`, and no file means no check. A matching
+entry with no URL and an omitted or `stdio` transport also emits `mcp_stdio_executable`. This check reports `pass` when doctor
+finds `ripr` on its own PATH and `advisory` with a recovery step when it cannot.
+The check only inspects executable lookup. Server startup and MCP discovery
+require separate evidence. The source-build profile
 fails on missing tools or rustc below RIPR's build MSRV. Missing cargo or rustc
 evidence names an install route (rustup or the OS package manager); a rustc
 below the build minimum still names `rustup update stable`. It reports its
