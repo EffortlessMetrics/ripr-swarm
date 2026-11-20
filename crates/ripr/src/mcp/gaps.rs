@@ -505,6 +505,9 @@ pub(crate) struct GapItem {
     /// `ripr_prepare_repair` carries it in `next` for `seam_not_found` and
     /// `seam_ambiguous` (#11622); it is not part of any served document.
     pub(crate) stub_route: Option<(String, usize, &'static str)>,
+    /// The changed seam's id when `--at` on `stub_route`'s line would refuse as
+    /// ambiguous; the refusal's stub command then names `--seam-id` instead.
+    pub(crate) stub_seam_id: Option<String>,
     /// Complete bounded evidence document (without the per-request snapshot
     /// binding and links, which are injected at serve time). The repair
     /// projection reads `changed_behavior` and the discriminator from it.
@@ -640,6 +643,12 @@ impl GapItem {
             list_summary,
             list_summary_bytes,
             stub_route: crate::app::test_stub::stub_route_location(finding, root),
+            stub_seam_id: matches!(
+                repair_readiness.ineligibility,
+                Some("seam_not_found" | "seam_ambiguous")
+            )
+            .then(|| crate::app::test_stub::stub_route_seam_id(root, finding))
+            .flatten(),
             evidence_core,
             evidence_bytes,
             candidate_actionable: finding.is_candidate_actionable(),

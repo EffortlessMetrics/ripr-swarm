@@ -730,6 +730,7 @@ fn refusal_next(
     class: &str,
     canonical_id: &str,
     stub_route: Option<&(String, usize, &'static str)>,
+    stub_seam_id: Option<&str>,
     terminal_static_limit: Option<&Value>,
 ) -> Value {
     let gap_route = json!({
@@ -815,7 +816,12 @@ fn refusal_next(
             .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
     {
         next["stub_route"] = json!({
-            "command": format!("ripr agent stub --at {file}:{line} --kind {family}"),
+            "command": match stub_seam_id {
+                Some(id) if !id.chars().any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c)) => {
+                    format!("ripr agent stub --seam-id {id}")
+                }
+                _ => format!("ripr agent stub --at {file}:{line} --kind {family}"),
+            },
             "run_from": "the repository root",
             "note": "writes nothing without --write; derives a test skeleton from the changed code. Fill its todo!() values by hand, then re-check with after_editing_tests. This route does not make the item repair-ready.",
         });
@@ -865,6 +871,7 @@ impl WorkspaceSession {
                     .unwrap_or(""),
                 &item.canonical_id,
                 item.stub_route.as_ref(),
+                item.stub_seam_id.as_deref(),
                 item.terminal_static_limit().as_ref(),
             );
             let mut next = next;
@@ -1406,7 +1413,7 @@ pub(super) mod tests {
     #[test]
     fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
         let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
-            let next = refusal_next(reason, class, "gap:x", None, None);
+            let next = refusal_next(reason, class, "gap:x", None, None, None);
             if next["kind"] != kind
                 || next["reason"] != reason
                 || next["after_editing_tests"].is_null() == verify
@@ -1452,7 +1459,14 @@ pub(super) mod tests {
             "await_producer_fact",
             false,
         )?;
-        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None);
+        let by_hand = refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            None,
+            None,
+            None,
+        );
         if by_hand["mcp"]["arguments"]["canonical_id"] != "gap:x"
             || by_hand["after_editing_tests"]["mcp"]["arguments"]["source"] != "worktree"
         {
@@ -1470,7 +1484,7 @@ pub(super) mod tests {
     fn refusal_next_carries_the_stub_route_only_for_unbound_seams() -> Result<(), String> {
         let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
         for reason in ["seam_not_found", "seam_ambiguous"] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None, None);
             if next["stub_route"]["command"]
                 != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
                 || next["kind"] != "write_test_by_hand"
@@ -1484,14 +1498,21 @@ pub(super) mod tests {
             "seam_inventory_truncated",
             "something_new",
         ] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None, None);
             if next.get("stub_route").is_some() {
                 return Err(format!("{reason} must not name a stub route: {next}"));
             }
         }
-        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None)
-            .get("stub_route")
-            .is_some()
+        if refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            None,
+            None,
+            None,
+        )
+        .get("stub_route")
+        .is_some()
         {
             return Err("no resolver route means no stub_route".into());
         }
@@ -1502,11 +1523,46 @@ pub(super) mod tests {
             "gap:x",
             Some(&spaced),
             None,
+            None,
         )
         .get("stub_route")
         .is_some()
         {
             return Err("a path needing quoting must not name a command".into());
+        }
+        Ok(())
+    }
+
+    /// An ambiguous `--at` line names the changed seam's own id, the same
+    /// selector `ripr repair` prints; a missing id keeps the location form.
+    #[test]
+    fn refusal_next_names_the_seam_id_when_the_line_is_ambiguous() -> Result<(), String> {
+        let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
+        let named = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            Some("seam:src/pricing.rs:88:retries"),
+            None,
+        );
+        if named["stub_route"]["command"]
+            != "ripr agent stub --seam-id seam:src/pricing.rs:88:retries"
+        {
+            return Err(format!("seam id not named: {named}"));
+        }
+        let located = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            None,
+            None,
+        );
+        if located["stub_route"]["command"]
+            != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
+        {
+            return Err(format!("location form lost: {located}"));
         }
         Ok(())
     }
@@ -1523,6 +1579,7 @@ pub(super) mod tests {
             "infection_unknown",
             "gap:x",
             Some(&route),
+            None,
             Some(&limit),
         );
         if terminal["kind"] != "terminal_static_limit"
@@ -1540,18 +1597,39 @@ pub(super) mod tests {
             ("seam_inventory_truncated", "change_policy"),
             ("worktree_source_not_committed", "commit_then_refresh"),
         ] {
-            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            let next = refusal_next(
+                reason,
+                "infection_unknown",
+                "gap:x",
+                None,
+                None,
+                Some(&limit),
+            );
             if next["kind"] != kind || next.get("static_limit").is_some() {
                 return Err(format!("{reason} must keep its own route: {next}"));
             }
         }
         for reason in ["seam_gate_refused", "seam_ambiguous", "static_limitation"] {
-            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            let next = refusal_next(
+                reason,
+                "infection_unknown",
+                "gap:x",
+                None,
+                None,
+                Some(&limit),
+            );
             if next["kind"] != "terminal_static_limit" {
                 return Err(format!("{reason} must carry the marker: {next}"));
             }
         }
-        let ordinary = refusal_next("seam_not_found", "infection_unknown", "gap:x", None, None);
+        let ordinary = refusal_next(
+            "seam_not_found",
+            "infection_unknown",
+            "gap:x",
+            None,
+            None,
+            None,
+        );
         if ordinary["kind"] != "write_test_by_hand" || ordinary.get("static_limit").is_some() {
             return Err(format!("no limit must keep the ordinary route: {ordinary}"));
         }

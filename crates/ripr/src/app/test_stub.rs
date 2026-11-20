@@ -712,6 +712,18 @@ pub(crate) fn stub_selector(
     }
 }
 
+/// The seam id a finding's stub route must name with `--seam-id` because
+/// `--at FILE:LINE` would refuse as ambiguous: the same route decision
+/// `ripr check` renders (`StubRouteDecision::SeamStub`), under the loaded
+/// configuration. `None` keeps the location form.
+pub(crate) fn stub_route_seam_id(root: &Path, finding: &Finding) -> Option<String> {
+    let config = crate::config::load_for_root(root).unwrap_or_default();
+    match stub_route_for_finding(root, &config, finding, &mut None)?.decision {
+        StubRouteDecision::SeamStub { seam_id } => Some(seam_id),
+        _ => None,
+    }
+}
+
 /// The route decision for one finding, from the resolver
 /// `ripr agent stub --at` runs. `None` when the finding gets no route or the
 /// resolver finds no seam there; nothing is printed then.
