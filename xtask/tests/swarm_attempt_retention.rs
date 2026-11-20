@@ -6,11 +6,11 @@ mod xtask_bin;
 use serde_json::{Value, json};
 use std::{fs, path::Path, process::Output};
 
-fn refresh(root: &Path, receipt: &str) -> Result<Output, Box<dyn std::error::Error>> {
+fn refresh(root: &Path, receipt: &str, gap: &str) -> Result<Output, Box<dyn std::error::Error>> {
     let outcomes = json!({
         "inputs": {"agent_receipt": receipt},
         "outcomes": [{
-            "canonical_gap_id": "gap:retention",
+            "canonical_gap_id": gap,
             "receipt_state": "receipt_movement_improved",
             "outcome_state": "evidence_improved",
             "movement_source": "agent_receipt",
@@ -51,7 +51,7 @@ fn retains_registered_receipts_across_replay_and_refuses_incomplete_history()
     let mut original_id = None;
     let mut second_id = None;
     for (receipt, count) in [(first, 1), (second, 2), (second, 2), (first, 2)] {
-        let output = refresh(&root, receipt)?;
+        let output = refresh(&root, receipt, "gap:retention")?;
         assert!(
             output.status.success(),
             "{}",
@@ -82,6 +82,15 @@ fn retains_registered_receipts_across_replay_and_refuses_incomplete_history()
         }
     }
 
+    let original = fs::read(&ledger)?;
+    let collision = refresh(&root, first, "gap_retention")?;
+    assert!(!collision.status.success());
+    assert!(
+        String::from_utf8_lossy(&collision.stderr)
+            .contains("refresh would replace registered attempt")
+    );
+    assert_eq!(fs::read(&ledger)?, original);
+
     let retained: Value = serde_json::from_slice(&fs::read(&ledger)?)?;
     // Keep the count unchanged to isolate the ID membership check.
     let mut missing = retained.clone();
@@ -96,7 +105,7 @@ fn retains_registered_receipts_across_replay_and_refuses_incomplete_history()
     for invalid in [missing, truncated] {
         let bytes = serde_json::to_vec(&invalid)?;
         fs::write(&ledger, &bytes)?;
-        let output = refresh(&root, first)?;
+        let output = refresh(&root, first, "gap:retention")?;
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("attempt history unavailable"));
         assert_eq!(fs::read(&ledger)?, bytes);

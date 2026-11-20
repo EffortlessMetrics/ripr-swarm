@@ -2444,14 +2444,7 @@ pub(crate) fn ripr_swarm_attempt_ledger_report(
     ) = ripr_swarm_read_optional_json(&args.actionable_gap_outcomes_path);
     let (prior_ledger_state, prior_ledger_limitation, prior_ledger) =
         ripr_swarm_read_optional_json(&args.prior_ledger_path);
-    if let Some(prior) = &prior_ledger {
-        validate_retained_attempt_history(prior).map_err(|reason| {
-            format!(
-                "attempt history unavailable at {}: {reason}",
-                args.prior_ledger_path.display()
-            )
-        })?;
-    } else if prior_ledger_state == "malformed" {
+    if prior_ledger_state == "malformed" {
         return Err(format!(
             "attempt history unavailable: {}",
             prior_ledger_limitation
@@ -2489,6 +2482,14 @@ pub(crate) fn ripr_swarm_attempt_ledger_report(
         },
     );
 
+    if let Some(prior) = &prior_ledger {
+        validate_retained_attempt_history(prior, &report.attempts).map_err(|reason| {
+            format!(
+                "attempt history unavailable at {}: {reason}",
+                args.prior_ledger_path.display()
+            )
+        })?;
+    }
     write_report(
         "swarm-attempt-ledger.json",
         &ripr_swarm_attempt_ledger_json(&report)?,
@@ -3061,8 +3062,11 @@ pub(crate) fn ripr_swarm_attempt_ledger_ordered_import_timestamp(
 }
 
 // A readable JSON file can still be missing previously registered attempts.
-// Check the prior report before stale queue placeholders are intentionally filtered.
-fn validate_retained_attempt_history(ledger: &Value) -> Result<(), String> {
+// Check its registrations against the replacement before publishing either file.
+fn validate_retained_attempt_history(
+    ledger: &Value,
+    refreshed: &[RiprSwarmAttemptLedgerEntry],
+) -> Result<(), String> {
     let attempts = ledger
         .get("attempts")
         .and_then(Value::as_array)
@@ -3091,6 +3095,29 @@ fn validate_retained_attempt_history(ledger: &Value) -> Result<(), String> {
             return Err(format!(
                 "{summary} registers {expected} attempts, but history contains {}",
                 attempts.len()
+            ));
+        }
+    }
+    for row in attempts {
+        let Some(id) = row["attempt_id"].as_str() else {
+            continue;
+        };
+        if row["outcome"] == "not_attempted" {
+            continue;
+        }
+        // The deduplication owner emits rows in attempt-ID order.
+        let retained = refreshed
+            .binary_search_by(|entry| entry.attempt_id.as_str().cmp(id))
+            .ok()
+            .map(|index| &refreshed[index]);
+        if !retained.is_some_and(|entry| {
+            row["canonical_gap_id"] == entry.canonical_gap_id
+                && row["receipt_path"]
+                    .as_str()
+                    .is_none_or(|path| entry.receipt_path.as_deref() == Some(path))
+        }) {
+            return Err(format!(
+                "refresh would replace registered attempt {id} with a different gap or receipt"
             ));
         }
     }
