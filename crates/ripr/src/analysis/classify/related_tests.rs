@@ -36,7 +36,6 @@ mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
-pub(in crate::analysis) use operator_dispatch::operator_assertions_skip_branch;
 mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
@@ -45,6 +44,8 @@ pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
     assertion_pins_display_string, changes_only_string_literals, is_display_fmt_owner,
 };
+
+pub(in crate::analysis) use operator_dispatch::operator_assertions_skip_branch;
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
