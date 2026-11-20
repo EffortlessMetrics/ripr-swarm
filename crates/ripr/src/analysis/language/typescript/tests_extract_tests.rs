@@ -2236,3 +2236,57 @@ fn deno_ignore_false_and_aliased_std_assertions_still_register() {
         );
     }
 }
+
+#[test]
+fn a_shadowed_deno_namespace_registers_no_test() {
+    let header = "import { assertEquals } from \"jsr:@std/assert\";\n";
+    for shadow in [
+        "const Deno = { test(name, callback) {} };\n",
+        "import { Deno } from \"./fake_deno.ts\";\n",
+        "function Deno() {}\n",
+    ] {
+        let source = format!(
+            "{header}{shadow}Deno.test(\"rate\", () => {{ assertEquals(rate(1), 2); }});\n"
+        );
+        assert!(deno_tests(&source).is_empty(), "{shadow}");
+    }
+    // The unshadowed control registers.
+    let source = format!("{header}Deno.test(\"rate\", () => {{ assertEquals(rate(1), 2); }});\n");
+    assert_eq!(deno_tests(&source).len(), 1);
+}
+
+#[test]
+fn an_unused_closure_in_a_deno_callback_is_masked_for_reach() {
+    for (label, body) in [
+        (
+            "object fn",
+            "Deno.test({ name: \"rate\", fn() { const unused = () => rate(1); } });",
+        ),
+        (
+            "object fn arrow",
+            "Deno.test({ name: \"rate\", fn: () => { const unused = () => rate(1); } });",
+        ),
+        (
+            "named function",
+            "Deno.test(function rate_test() { const unused = () => rate(1); });",
+        ),
+        (
+            "options then fn",
+            "Deno.test(\"rate\", { permissions: {} }, () => { const unused = () => rate(1); });",
+        ),
+    ] {
+        let tests = deno_tests(&format!("{body}\n"));
+        assert_eq!(tests.len(), 1, "{label}");
+        let reach = tests[0].reach_body_text.as_deref();
+        assert!(
+            reach.is_some_and(|text| !text.contains("rate(1)")),
+            "{label}: {reach:?}"
+        );
+    }
+    // A closure the callback calls keeps the ordinary reach text.
+    let tests = deno_tests(
+        "Deno.test({ name: \"rate\", fn() { const used = () => rate(1); used(); } });\n",
+    );
+    assert_eq!(tests.len(), 1);
+    assert!(tests[0].reach_body_text.is_none());
+}
