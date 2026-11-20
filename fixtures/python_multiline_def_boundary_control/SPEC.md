@@ -20,6 +20,10 @@ Exactly one finding is reported for line 5, owned by
 `python:src/fx/core.py::over`, classified `exposed`: skipping the header
 (#15292) still credits a test that places the boundary.
 
+```expected-classes
+probe:src_fx_core.py:python_preview:9e50cd52 -> exposed
+```
+
 ## Must Not
 
 Demote this finding below `exposed` because the parameters sit on a multi-line

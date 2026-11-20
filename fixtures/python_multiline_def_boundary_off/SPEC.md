@@ -23,6 +23,10 @@ Exactly one finding is reported for line 7, owned by
 header's continuation lines are not body rebindings of `max_age`, so the
 boundary gate applies and finds no test input at the changed boundary.
 
+```expected-classes
+probe:src_fx_core.py:python_preview:c1582ce6 -> weakly_exposed
+```
+
 ## Must Not
 
 Read the multi-line header's `max_age: int | None = None,` line as a rebinding
