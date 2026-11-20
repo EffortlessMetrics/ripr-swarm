@@ -7,6 +7,22 @@ fn only_an_exact_boundary_result_closes_the_predicate_gap() -> Result<(), String
     let source = "pub fn discount(qty: u32) -> u32 { if qty >= 10 { 5 } else { 0 } }";
     for (body, expected) in [
         ("discount(10);", SeamGripClass::WeaklyGripped),
+        (
+            "check(discount(1), 0, discount(10));",
+            SeamGripClass::WeaklyGripped,
+        ),
+        (
+            "check(discount(10), 5, discount(1));",
+            SeamGripClass::StronglyGripped,
+        ),
+        (
+            "check(prices::discount(10), 5, discount(1));",
+            SeamGripClass::StronglyGripped,
+        ),
+        (
+            "check(discount(10), discount(10), 0);",
+            SeamGripClass::WeaklyGripped,
+        ),
         ("assert!(discount(10) >= 0);", SeamGripClass::WeaklyGripped),
         (
             "assert!(discount(10).checked_add(1).is_some());",
@@ -28,7 +44,7 @@ fn only_an_exact_boundary_result_closes_the_predicate_gap() -> Result<(), String
         ),
     ] {
         let tests = format!(
-            "use prices::discount;\n#[test]\nfn low() {{ assert_eq!(discount(1), 0); }}\n\
+            "use prices::discount;\nfn check(got: u32, want: u32, _unused: u32) {{\n    assert_eq!(got, want);\n}}\n#[test]\nfn low() {{ assert_eq!(discount(1), 0); }}\n\
              #[test]\nfn boundary() {{\n{body}\n}}\n"
         );
         let file = PathBuf::from("src/lib.rs");

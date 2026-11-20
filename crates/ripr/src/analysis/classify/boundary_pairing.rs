@@ -1303,7 +1303,10 @@ pub(in crate::analysis) fn helper_argument_is_boundary_call(
     let argument = argument.trim();
     let expression = argument.strip_prefix("||").unwrap_or(argument).trim();
     let expression = expression.strip_suffix(".clone()").unwrap_or(expression);
-    if super::owner_pin::direct_call_name(expression) != Some(&owner.name)
+    let whole_call = super::owner_pin::direct_call_name(expression) == Some(&owner.name)
+        || (owner.item.container == FunctionContainer::Free
+            && path_qualified_whole_call(expression, &owner.name).is_some());
+    if !whole_call
         || !super::call_identity::boundary_owner_calls_resolve(index, owner, test, expression, line)
     {
         return false;

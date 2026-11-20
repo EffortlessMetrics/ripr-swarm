@@ -5492,7 +5492,7 @@ fn boundary_oracle_paired(
                                 call.name == helper.name
                                     && call_arguments(&call.text, &helper.name).is_some_and(
                                         |args| {
-                                            args.iter().any(|arg| {
+                                            compared_helper_arguments(helper, oracle, &args).any(|arg| {
                                                 super::classify::helper_argument_is_boundary_call(
                                                     &probe, owner, test, arg, call.line, index,
                                                 )
@@ -5503,6 +5503,60 @@ fn boundary_oracle_paired(
                         },
                     )
             }))
+    })
+}
+
+/// Project this exact helper assertion back to the argument it reads. The
+/// helper body is the equality alone, optionally preceded by a single
+/// binding of a callback's result. Neither a discarded argument nor an
+/// oracle comparing two copies of the same value establishes a pairing.
+fn compared_helper_arguments<'a>(
+    helper: &FunctionSummary,
+    oracle: &OracleFact,
+    arguments: &'a [String],
+) -> impl Iterator<Item = &'a str> {
+    let parameters = whole_signature_parameters(helper);
+    let operands = super::classify::assertion_comparison_operands(&oracle.text);
+    let body = helper
+        .body
+        .split_once('{')
+        .and_then(|(_, body)| body.trim_end().strip_suffix('}'));
+    let equality = oracle.text.trim().trim_end_matches(';').trim();
+    let prefix = body.and_then(|body| {
+        body.trim()
+            .trim_end_matches(';')
+            .trim_end()
+            .strip_suffix(equality)
+    });
+    let pair = operands.zip(prefix).filter(|(operands, _)| {
+        equality.starts_with("assert_eq!") && operands[0].trim() != operands[1].trim()
+    });
+    [0, 1].into_iter().filter_map(move |side| {
+        let (operands, prefix) = pair?;
+        let position = |name: &str| parameters.iter().position(|param| param == name.trim());
+        let expected = operands[1 - side].trim();
+        let expected = position(expected)
+            .and_then(|at| arguments.get(at))
+            .map_or(expected, String::as_str);
+        if !matches!(expected.trim(), "true" | "false") && !is_plain_literal_pattern(expected) {
+            return None;
+        }
+        let subject = operands[side].trim();
+        let prefix = prefix.trim();
+        if prefix.is_empty() {
+            let actual = arguments.get(position(subject)?)?.trim();
+            return (!actual.starts_with("||")).then_some(actual);
+        }
+        let (binding, value) = prefix
+            .strip_prefix("let ")?
+            .strip_suffix(';')?
+            .split_once('=')?;
+        if binding.trim() != subject {
+            return None;
+        }
+        let callback = value.trim().strip_suffix("()")?.trim();
+        let actual = arguments.get(position(callback)?)?.trim();
+        actual.starts_with("||").then_some(actual)
     })
 }
 
