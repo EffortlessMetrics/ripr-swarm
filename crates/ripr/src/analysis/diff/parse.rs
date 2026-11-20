@@ -399,10 +399,10 @@ mod parser_state {
 
     /// The header line `git log` writes before each commit's patch:
     /// `commit <object id>`, optionally followed by ` (decorations)` or the
-    /// parent ids `--parents` adds.
+    /// parent ids `--parents` adds, or the tab-separated ref `--source` adds.
     fn is_log_commit_header(raw: &str) -> bool {
         raw.strip_prefix("commit ").is_some_and(|rest| {
-            let object_id = rest.split(' ').next().unwrap_or_default();
+            let object_id = rest.split_whitespace().next().unwrap_or_default();
             matches!(object_id.len(), 40 | 64)
                 && object_id.bytes().all(|byte| byte.is_ascii_hexdigit())
         })

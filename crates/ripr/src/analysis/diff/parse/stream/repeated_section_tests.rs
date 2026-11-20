@@ -74,6 +74,7 @@ fn a_file_edited_in_two_sections_reads_none_of_its_lines() -> Result<(), String>
     let parsed = parse_unbounded(&oneline);
     if !paths(&parsed).is_empty()
         || repeated_limitation_paths(&parsed) != [Some("src/a.rs".to_string())]
+        || parsed.limitations.len() != 1
     {
         return Err(format!("headerless log series was read: {parsed:?}"));
     }
@@ -111,6 +112,19 @@ fn sections_of_one_diff_that_repeat_a_path_are_read() -> Result<(), String> {
         return Err(format!(
             "one old blob in two sections was refused: {parsed:?}"
         ));
+    }
+    // A file -> symlink type change is one diff's deletion plus a creation
+    // from the all-zero blob: both sections stay readable.
+    let type_change = "diff --git a/src/x.rs b/src/x.rs\ndeleted file mode 100644\nindex aaaaaaa..0000000\n--- a/src/x.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-pub fn x() {}\ndiff --git a/src/x.rs b/src/x.rs\nnew file mode 100644\nindex 0000000..bbbbbbb\n--- /dev/null\n+++ b/src/x.rs\n@@ -0,0 +1 @@\n+pub fn y() {}\n";
+    let parsed = parse_unbounded(type_change);
+    if !parsed.limitations.is_empty()
+        || !parsed.changed_files.iter().any(|file| {
+            file.added_lines
+                .iter()
+                .any(|line| line.text == "pub fn y() {}")
+        })
+    {
+        return Err(format!("a type change was refused: {parsed:?}"));
     }
     // A boundary before the first edit separates nothing.
     let parsed = parse_unbounded(&format!("{LOG}{EDIT}{SHIFT}"));
