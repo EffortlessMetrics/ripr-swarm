@@ -3809,6 +3809,27 @@ fn early_error() -> Result<(), String> {
         Ok(())
     }
 
+    #[test]
+    fn lexical_placeholder_reads_follow_the_assertion_scope() -> Result<(), String> {
+        use crate::domain::OracleStrength::{Strong, Unknown};
+        for assertion in ["assert_eq!(price(10), expected);", "ensure!(price(10) == expected);"] {
+            for (opening, closing) in [
+                ("let other = |unused: i32,\nexpected: i32| {", "};"),
+                ("match pair { (expected, _) => {", "} }"),
+                ("match pair { (_, expected) => {", "} }"),
+                ("{ let Pair { expected, other } = pair();", "}"),
+            ] {
+                let source = format!("#[test]\nfn t() {{\nlet expected: &dyn Iterator <Item = u8> = todo!();\n{opening}\n{assertion}\n{closing}\n{assertion}\n}}");
+                let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+                let readings: Vec<_> = facts.tests.iter().flat_map(|t| &t.assertions)
+                    .filter(|f| f.text.trim_end_matches(';') == assertion.trim_end_matches(';'))
+                    .map(|f| f.strength).collect();
+                assert_eq!(readings, [Strong, Unknown], "{source}");
+            }
+        }
+        Ok(())
+    }
+
     /// The control: the same line-scanned shape with a real expected value
     /// keeps its strong credit.
     #[test]
