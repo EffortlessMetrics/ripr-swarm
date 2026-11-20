@@ -11,13 +11,17 @@
 //! fails closed:
 //!
 //! - the owner is the `from` of a non-generic, top-level
-//!   `impl From<S> for T` in its file, with plain type names `S` and `T`
-//!   that the file declares once each as a struct or enum. `From` is the
+//!   `impl From<S> for T` in its file, with no `cfg` or `cfg_attr` on the
+//!   impl or its `fn from`, and plain type names `S` and `T` that the file
+//!   declares once each as a struct or enum with no generic parameters (a
+//!   defaulted `Celsius<T = i32>` has other instances). `From` is the
 //!   standard trait: no workspace file declares a `trait From` or imports a
-//!   `From` by a non-standard path, and it is the only indexed `from` of a
-//!   `From<S>` impl for `T`;
+//!   `From` by a non-standard path. No other workspace impl of a trait named
+//!   `From`, however its path is spelled (`crate::S`, `::core::convert`,
+//!   `self::T`), mentions both `S` in its argument and `T` in its self type;
 //! - the test sits in the owner's own file and no scope between the test and
-//!   the file declares or renames another `S` or `T`;
+//!   the file declares or renames another `S` or `T`, as a type or as a
+//!   value (`fn S`, `const S`, also local to a test body);
 //! - the call is a statement at the test's top level, written
 //!   `let [mut] name: T = receiver.into();` with the bare target type as the
 //!   annotation (the only target spelling read for now). An unannotated
@@ -26,7 +30,9 @@
 //!   struct, an associated call whose declared return type is `S`, or a
 //!   binding whose one `let` is built by one of those. A reference, a
 //!   dereference or a binding written with `&` or `*` relates nothing,
-//!   since `From<&S>` is another impl;
+//!   since `From<&S>` is another impl, and so does a receiver that may leave
+//!   the test before the conversion (`return`, `break`, `continue`, `?`, a
+//!   macro or a block inside it);
 //! - nothing else can answer `.into()` on an `S`: no workspace file writes a
 //!   `fn into` (an inherent `into` wins over the blanket `Into`, and a
 //!   workspace `impl Into` must write one), and none opts out of the prelude
@@ -64,9 +70,6 @@ pub(super) struct IntoOwner<'a> {
     source_type: &'a str,
     /// The `From` impl's self type, the conversion target (`Fahrenheit`).
     target_type: &'a str,
-    /// File-level and workspace refusals are the same for every test of the
-    /// owner's file, so they are computed once per owner on first use.
-    file_level_clear: std::cell::OnceCell<bool>,
 }
 
 /// The source type of a standard `From<S>` trait spelling, when `S` is a
@@ -123,10 +126,9 @@ pub(super) fn into_owner<'a>(
         .iter()
         .filter(|function| from_impl_types(function) == Some((source_type, target_type)))
         .count();
-    (impls == 1).then(|| IntoOwner {
+    (impls == 1).then_some(IntoOwner {
         source_type,
         target_type,
-        file_level_clear: std::cell::OnceCell::new(),
     })
 }
 
@@ -177,9 +179,15 @@ pub(super) fn test_converts_into_owner(
     {
         return false;
     }
-    *into
-        .file_level_clear
-        .get_or_init(|| file_and_workspace_are_clear(source, owner, into, index))
+    // Both verdicts depend on the indexed sources alone, so they are read
+    // once per run, not once per (probe, test).
+    let memos = &index.call_identity_memos;
+    memos.into_owner_clear(&owner.id.0, || {
+        owner_file_is_clear(source, owner, into, index)
+    }) && memos.into_workspace_clear(|| {
+        !workspace_may_answer_into(index)
+            && crate::analysis::classify::element_field_pin::field_workspace_is_closed(index)
+    })
 }
 
 /// One `let [mut] name: T = receiver.into();` statement.
@@ -302,7 +310,11 @@ fn receiver_has_source_type(
 ) -> bool {
     // A reference or a dereference converts through another impl, and a
     // closure or a turbofish is not a value ripr reads.
-    if receiver.starts_with(['&', '*']) || receiver.contains('|') || receiver.contains("::<") {
+    if receiver.starts_with(['&', '*'])
+        || receiver.contains('|')
+        || receiver.contains("::<")
+        || may_leave_early(receiver)
+    {
         return false;
     }
     let before = &masked[..let_at];
@@ -317,11 +329,29 @@ fn receiver_has_source_type(
         let Some(statement) = binding_statement(before, receiver) else {
             return false;
         };
-        if statement.contains(['&', '*', '{']) {
+        if statement.contains(['&', '*', '{']) || may_leave_early(statement) {
             return false;
         }
     }
     operand_has_type(receiver, source_type, before, returns_source)
+}
+
+/// Whether evaluating `text` may leave the test, or run code ripr does not
+/// read, before its value exists: a `return`, `break`, `continue` or `?`, a
+/// macro call (`!`), or a block (`{`) other than a struct literal's own
+/// braces (`S { field: v }` with no `{` inside it).
+fn may_leave_early(text: &str) -> bool {
+    let words = text
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| matches!(word, "return" | "break" | "continue" | "await" | "yield"));
+    let braces = text.matches('{').count();
+    let literal_braces = braces == 1
+        && text.ends_with('}')
+        && text.split_once('{').is_some_and(|(head, _)| {
+            let head = head.trim_end();
+            !head.is_empty() && head.bytes().all(|byte| is_ident_byte(byte) || byte == b':')
+        });
+    words || text.contains(['?', '!']) || (braces > 0 && !literal_braces)
 }
 
 /// The text of the one `let [mut] name` statement in `before`, from `let`
@@ -356,8 +386,10 @@ fn declares_unit_struct(masked: &str, name: &str) -> bool {
     })
 }
 
-/// File-level and workspace refusals of the reading.
-fn file_and_workspace_are_clear(
+/// File-level refusals of the reading for the owner's file, and the
+/// spelling-insensitive count of `From` impls that may also convert an `S`
+/// into a `T`.
+fn owner_file_is_clear(
     source: &str,
     owner: &FunctionSummary,
     into: &IntoOwner<'_>,
@@ -375,8 +407,7 @@ fn file_and_workspace_are_clear(
         && file_is_clear(source, owner, into.source_type, index)
         && !imports_other_type(&masked, into.target_type, &owner.file)
         && one_plain_top_level_impl(source, into.source_type, into.target_type)
-        && !workspace_may_answer_into(index)
-        && crate::analysis::classify::element_field_pin::field_workspace_is_closed(index)
+        && workspace_from_impls_mentioning(index, into.source_type, into.target_type) == Some(1)
 }
 
 /// Whether the file holds exactly one `impl From<S> for T`, written at its
@@ -410,17 +441,103 @@ fn one_plain_top_level_impl(source: &str, source_type: &str, target_type: &str) 
     let [item] = matching.as_slice() else {
         return false;
     };
-    item.syntax()
-        .parent()
-        .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+    // A defaulted or other generic parameter (`struct Celsius<T = i32>`)
+    // makes the bare name one instance among several, each with its own
+    // `From` impl.
+    let declarations_plain = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(|node| {
+            ast::Struct::cast(node.clone())
+                .map(|item| (item.name(), item.generic_param_list().is_some()))
+                .or_else(|| {
+                    ast::Enum::cast(node.clone())
+                        .map(|item| (item.name(), item.generic_param_list().is_some()))
+                })
+                .or_else(|| {
+                    ast::Union::cast(node)
+                        .map(|item| (item.name(), item.generic_param_list().is_some()))
+                })
+        })
+        .filter(|(name, _)| {
+            name.as_ref()
+                .is_some_and(|name| name.text() == source_type || name.text() == target_type)
+        })
+        .all(|(_, generic)| !generic);
+    let from_fn_plain = item.assoc_item_list().is_some_and(|items| {
+        items.assoc_items().any(|assoc| {
+            matches!(&assoc, ast::AssocItem::Fn(function)
+                if function.name().is_some_and(|name| name.text() == "from")
+                    && !has_cfg_attribute(function))
+        })
+    });
+    declarations_plain
+        && item
+            .syntax()
+            .parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
         && item.generic_param_list().is_none()
         && item.where_clause().is_none()
-        && item.assoc_item_list().is_some_and(|items| {
-            items.assoc_items().any(|assoc| {
-                matches!(&assoc, ast::AssocItem::Fn(function)
-                    if function.name().is_some_and(|name| name.text() == "from"))
-            })
+        && !has_cfg_attribute(item)
+        && from_fn_plain
+}
+
+/// Whether `item` carries a `cfg` or `cfg_attr` attribute, which may leave
+/// it out of the test build while another impl takes its place.
+fn has_cfg_attribute(item: &impl ast::HasAttrs) -> bool {
+    item.attrs().any(|attribute| {
+        attribute.path().is_some_and(|path| {
+            matches!(path.syntax().text().to_string().trim(), "cfg" | "cfg_attr")
         })
+    })
+}
+
+/// How many impls in the indexed sources may convert an `S` into a `T`
+/// through a trait whose last path segment is `From`: the trait's generic
+/// argument mentions `S` and its self type mentions `T`, however either path
+/// is spelled (`crate::S`, `(S)`, `self::T`, `::core::convert::From`).
+/// `None` when a source does not parse, so the count proves nothing.
+fn workspace_from_impls_mentioning(
+    index: &RustIndex,
+    source_type: &str,
+    target_type: &str,
+) -> Option<usize> {
+    let mentions = |text: &str, name: &str| {
+        text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| word == name || word.strip_prefix("r#") == Some(name))
+    };
+    let mut count = 0usize;
+    for facts in index.files().values() {
+        let text = facts.data().source.as_ref();
+        if !text.contains("From") {
+            continue;
+        }
+        let parse = parse_clean_source_file(text)?;
+        for item in parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Impl::cast)
+        {
+            let (Some(trait_ty), Some(self_ty)) = (item.trait_(), item.self_ty()) else {
+                continue;
+            };
+            let trait_text = trait_ty.syntax().text().to_string();
+            let (path, argument) = trait_text.split_once('<').unwrap_or((&trait_text, ""));
+            let last = path
+                .rsplit("::")
+                .next()
+                .map(|segment| segment.trim().trim_start_matches("r#"));
+            if last == Some("From")
+                && mentions(argument, source_type)
+                && mentions(&self_ty.syntax().text().to_string(), target_type)
+            {
+                count += 1;
+            }
+        }
+    }
+    Some(count)
 }
 
 /// Whether any workspace file may give a value another `into` than the
@@ -462,7 +579,7 @@ fn writes_fn_into(masked: &str) -> bool {
 mod tests {
     use super::{
         IntoSite, annotated_into_sites, binding_statement, declares_unit_struct, from_trait_source,
-        writes_fn_into,
+        may_leave_early, one_plain_top_level_impl, writes_fn_into,
     };
     use crate::analysis::extract::mask_comments_and_strings;
 
@@ -570,5 +687,33 @@ mod tests {
         assert!(writes_fn_into("trait MyInto { fn r#into(&self); }"));
         assert!(!writes_fn_into("fn into_inner(self) {}"));
         assert!(!writes_fn_into("let f: F = c.into();"));
+    }
+
+    #[test]
+    fn a_receiver_that_may_leave_the_test_early_is_refused() {
+        assert!(!may_leave_early("Celsius(100)"));
+        assert!(!may_leave_early("Celsius { deg: 100 }"));
+        assert!(!may_leave_early("Celsius::new(1)"));
+        assert!(may_leave_early(
+            "Celsius(if early() { return } else { 100 })"
+        ));
+        assert!(may_leave_early("Celsius(read()?)"));
+        assert!(may_leave_early("Celsius(panic!())"));
+        assert!(may_leave_early("Celsius { deg: { 1 } }"));
+        assert!(may_leave_early("Celsius(loop { break 1 })"));
+    }
+
+    #[test]
+    fn the_impl_and_its_types_must_be_plain_and_unconditional() {
+        let plain = "pub struct C(pub i32);\npub struct F(pub i32);\nimpl From<C> for F {\n    fn from(c: C) -> Self {\n        F(c.0)\n    }\n}\n";
+        assert!(one_plain_top_level_impl(plain, "C", "F"));
+        let defaulted = plain.replace("pub struct C(pub i32);", "pub struct C<T = i32>(pub T);");
+        assert!(!one_plain_top_level_impl(&defaulted, "C", "F"));
+        let gated = plain.replace("impl From<C>", "#[cfg(not(test))]\nimpl From<C>");
+        assert!(!one_plain_top_level_impl(&gated, "C", "F"));
+        let gated_fn = plain.replace("    fn from", "    #[cfg(not(test))]\n    fn from");
+        assert!(!one_plain_top_level_impl(&gated_fn, "C", "F"));
+        let generic = plain.replace("impl From<C>", "impl<X> From<C>");
+        assert!(!one_plain_top_level_impl(&generic, "C", "F"));
     }
 }

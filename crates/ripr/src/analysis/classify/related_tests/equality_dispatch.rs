@@ -309,6 +309,12 @@ pub(super) fn test_asserts_equality_through_owner(
 
 /// Whether no scope between `test` and the owner's file declares or renames
 /// another `impl_type`, so the name means the owner's impl type there.
+///
+/// #15277 review: a value item of the same name (`fn Key(..) -> Other`,
+/// `const Unit: Other`, also local to a test body) shadows a tuple-struct
+/// constructor or a unit struct's value in its scope without touching the
+/// type namespace, so `Key(1)` there is an `Other`. Any `fn`, `const` or
+/// `static` of that name anywhere in the file refuses.
 pub(super) fn type_scope_is_clear(
     test: &TestSummary,
     owner: &FunctionSummary,
@@ -326,7 +332,35 @@ pub(super) fn type_scope_is_clear(
         index,
     ) || file_renames_to(source, impl_type)
         || file_renames_to(source, raw_impl_type.as_str())
-        || parent_chain_shadows_type(test, impl_type, owner_scope, index))
+        || parent_chain_shadows_type(test, impl_type, owner_scope, index)
+        || declares_value_named(&mask_comments_and_strings(source), impl_type))
+}
+
+/// Whether the masked source declares a `fn`, `const` or `static` (also
+/// `static mut`, `const fn`) named `name` or `r#name`, at any depth.
+pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    masked.match_indices(name).any(|(at, _)| {
+        if !ident_boundary(masked, at, at + name.len()) {
+            return false;
+        }
+        let before = masked[..at].strip_suffix("r#").unwrap_or(&masked[..at]);
+        let before = before.trim_end();
+        let before = match before.strip_suffix("mut") {
+            Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
+            _ => before,
+        };
+        ["fn", "const", "static"].iter().any(|keyword| {
+            before.strip_suffix(keyword).is_some_and(|head| {
+                !head
+                    .bytes()
+                    .last()
+                    .is_some_and(|byte| is_ident_byte(byte) || byte == b'#')
+            })
+        })
+    })
 }
 
 /// Whether the file may bring a different `T` into scope. The owner id
@@ -968,5 +1002,30 @@ mod tests {
             2
         );
         assert_eq!(count_lets("let a = 1;", "a"), 1);
+    }
+
+    #[test]
+    fn a_value_item_of_the_type_name_shadows_its_constructor() {
+        assert!(declares_value_named(
+            "fn Key(v: i32) -> Other { Other(v) }",
+            "Key"
+        ));
+        assert!(declares_value_named(
+            "    const Key: Other = Other(1);",
+            "Key"
+        ));
+        assert!(declares_value_named("static mut Key: u8 = 0;", "Key"));
+        assert!(declares_value_named(
+            "pub const fn Key() -> u8 { 0 }",
+            "Key"
+        ));
+        assert!(declares_value_named("fn r#Key() {}", "Key"));
+        // A type item, a call, a longer name or another keyword is no value
+        // item of that name.
+        assert!(!declares_value_named("pub struct Key(pub i32);", "Key"));
+        assert!(!declares_value_named("let k = Key(1);", "Key"));
+        assert!(!declares_value_named("fn KeyMaker() {}", "Key"));
+        assert!(!declares_value_named("fn make() -> Key { Key(1) }", "Key"));
+        assert!(!declares_value_named("let myfn Key = 1;", "Key"));
     }
 }

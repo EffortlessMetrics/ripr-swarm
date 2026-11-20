@@ -213,6 +213,13 @@ pub(crate) struct CallIdentityMemos {
     /// macros, built on first use by a gap that needs it.
     assertion_wrapper_visibility:
         std::sync::OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
+    /// #15277: whether no workspace source may answer `.into()` another way
+    /// and the workspace is closed, read once per index by the `.into()`
+    /// through `From` reading.
+    into_workspace_clear: std::sync::OnceLock<bool>,
+    /// #15277: per `From` owner id, the file-level refusals of the `.into()`
+    /// reading, which depend on the owner and the indexed sources alone.
+    into_owner_clear: Mutex<BTreeMap<String, bool>>,
 }
 
 impl CallIdentityMemos {
@@ -534,6 +541,27 @@ fn scan_call_identity_shapes(
 }
 
 impl CallIdentityMemos {
+    /// #15277: the memoized workspace verdict of the `.into()` reading.
+    pub(super) fn into_workspace_clear(&self, compute: impl FnOnce() -> bool) -> bool {
+        *self.into_workspace_clear.get_or_init(compute)
+    }
+
+    /// #15277: the memoized file-level verdict of the `.into()` reading for
+    /// the `From` owner `owner_id` (recomputed, not cached, if the lock is
+    /// poisoned).
+    pub(super) fn into_owner_clear(&self, owner_id: &str, compute: impl FnOnce() -> bool) -> bool {
+        if let Ok(cache) = self.into_owner_clear.lock()
+            && let Some(&found) = cache.get(owner_id)
+        {
+            return found;
+        }
+        let clear = compute();
+        if let Ok(mut cache) = self.into_owner_clear.lock() {
+            cache.insert(owner_id.to_string(), clear);
+        }
+        clear
+    }
+
     /// Forget every memo: an index mutation (a new or replaced file, new
     /// functions) can change both the workspace shape answers and each
     /// owner's rival set, so a memo computed earlier must not survive it.
