@@ -4575,6 +4575,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_turbofish_block_tail_meets_the_local_binding_refusal() {
+        // #15277: `gate::<u8>(5)` is the same bare call as `gate(5)`, so a
+        // test-local `gate` that could capture it refuses the block tail. A
+        // module-path call cannot be captured by a local binding.
+        let mut owner = gate_owner();
+        owner.item.container = crate::analysis::facts::FunctionContainer::Free;
+        let shadowed = "fn t() { let gate = |x: u32| x > 3; let n = { gate::<u8>(5) }; }";
+        let clean = "fn t() { let n = { gate::<u8>(5) }; }";
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, shadowed).is_none(),
+            "a turbofish block tail beside a local `gate` must not bind the owner result"
+        );
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, clean)
+                .is_some_and(|result| result.block_tail && result.text == "gate::<u8>(5)"),
+            "a turbofish block tail with no local `gate` binds the owner result"
+        );
+        assert!(
+            bound_result::boundary_call(
+                "let n = { m::gate(5) }",
+                &owner,
+                "fn t() { let gate = |x: u32| x > 3; let n = { m::gate(5) }; }",
+            )
+            .is_some_and(|result| result.block_tail),
+            "a module-path block tail is not captured by a local `gate`"
+        );
+    }
+
     fn call(name: &str, text: &str) -> CallFact {
         CallFact {
             line: 1,

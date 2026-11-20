@@ -10713,6 +10713,21 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert_eq!(reason(&float), RelationReason::DirectOwnerCall);
         assert_eq!(reason(&byte), RelationReason::WeakTokenSubstring);
         assert_eq!(reason(&other_trait), RelationReason::WeakTokenSubstring);
+
+        // A trait-path call names no impl, so it settles none of them.
+        let trait_path = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![float.clone(), byte.clone(), other_trait.clone()],
+            tests: vec![test_with_call(
+                "tests/convert.rs",
+                "t",
+                "let x = FromF64::from_f64(2.5f64); assert_eq!(x, 2.5);",
+                "from_f64",
+            )],
+            ..Default::default()
+        });
+        let related = find_related_tests(&probe, Some(&float), &trait_path, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
 
     /// #9172: a Rust keyword in the changed expression is syntax, not a name

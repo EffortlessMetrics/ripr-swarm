@@ -9036,6 +9036,13 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
     )
 }
 
+/// Whether `operand` is exactly a bare (unqualified) call of `name`, plain or
+/// through a turbofish (`name::<u8>(..)`, #15277). A module-path call
+/// (`m::name(..)`) is excluded: a local binding cannot capture it.
+pub(super) fn is_bare_owner_call(operand: &str, name: &str) -> bool {
+    matches!(owner_call_shape(operand, name), Some(CallShape::Bare))
+}
+
 /// #12796: the tuple struct `T` when the changed tail is exactly `T(e)` or
 /// `Self(e)`, the owner declares that type (or `Self`) as its return, and the
 /// constructor takes one argument. A tuple constructor's arity is its field
