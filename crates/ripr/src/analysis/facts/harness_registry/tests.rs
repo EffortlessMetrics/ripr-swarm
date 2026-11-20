@@ -456,7 +456,12 @@ fn temp_dir(name: &str) -> Result<TempDir, Box<dyn std::error::Error>> {
         .duration_since(UNIX_EPOCH)
         .map(|time| time.as_nanos())
         .unwrap_or(0);
-    create_owned_dir(&std::env::temp_dir(), name, stamp, || {
+    // `.cargo/config.toml` redirects the temp parent into the checkout's
+    // `target/`, which may not exist yet; create it, then create the child
+    // exclusively (docs/agent-context/validation.md).
+    let parent = std::env::temp_dir();
+    fs::create_dir_all(&parent)?;
+    create_owned_dir(&parent, name, stamp, || {
         TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     })
 }
