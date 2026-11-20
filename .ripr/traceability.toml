@@ -6977,6 +6977,7 @@ tests = [
   "xtask::tests::ripr_swarm_attempt_dry_run_renders_bounded_packet_context",
   "xtask::tests::ripr_swarm_attempt_dry_run_reports_blocked_packet_context",
   "xtask::tests::ripr_swarm_attempt_ledger_preserves_prior_attempts_and_highlights_latest",
+  "xtask/tests/swarm_attempt_retention.rs::retains_registered_receipts_across_replay_and_refuses_incomplete_history",
   "xtask::tests::ripr_swarm_attempt_ledger_imports_real_repair_attempts",
   "xtask::tests::ripr_swarm_attempt_ledger_real_corpus_supersedes_unchanged_attempts",
   "xtask::tests::ripr_swarm_repair_route_quality_samples_attempts_and_classifies_failures",
