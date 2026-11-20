@@ -1,0 +1,122 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_inline_operator_branch_not_taken/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:c73814719d20e86d5ea831dbff17a088abbe99c518a58759128fd9c458fa50c1","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:633a7b96",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Add for Money::add:return_value:return_value:money_self.0+other.0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Add for Money::add:return_value:return_value:money_self.0+other.0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Add for Money::add",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "money_self.0+other.0"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:633a7b96",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "Money(self.0 + other.0)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach add: operator_under_test"},
+        "infect": {"state":"weak","confidence":"medium","summary":"The related operator assertions use receivers that select the other branch of `self.0 > 100`, so they do not activate the changed return value"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: Money(self.0 + other.0)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach add: operator_under_test", "infection weak: The related operator assertions use receivers that select the other branch of `self.0 > 100`, so they do not activate the changed return value", "propagation yes: Complete propagation witness reaches returned value: Money(self.0 + other.0)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: Money(self.0 + other.0) (line 7)", "related test src/lib.rs:14 operator_under_test uses strong exact value oracle: assert_eq!(Money(2) + Money(3), Money(0));", "source assertion argument value 0 at line 15", "source assertion argument value 2 at line 15", "source assertion argument value 3 at line 15"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Money(self.0 + other.0)","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: Money(self.0 + other.0)", "Related tests appear to reach add: operator_under_test", "Strong oracle found: exact value or pattern assertion", "The related operator assertions use receivers that select the other branch of `self.0 > 100`, so they do not activate the changed return value"],
+      "missing": [],
+      "assertion_texts": {
+        "15": "assert_eq!(Money(2) + Money(3), Money(0));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 15,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 15,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 15,
+            "value": "3",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 15,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 15,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 15,
+          "value": "3",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "operator_under_test",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(Money(2) + Money(3), Money(0));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `operator_under_test` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "suggested_next_action": "The related test `operator_under_test` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

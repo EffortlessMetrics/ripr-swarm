@@ -36,6 +36,7 @@ mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+pub(in crate::analysis) use operator_dispatch::operator_assertions_skip_branch;
 mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;

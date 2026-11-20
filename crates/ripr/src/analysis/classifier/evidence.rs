@@ -649,6 +649,21 @@ impl ClassifiedProbeEvidence {
             owner_has_other_callers,
             assertion_macros_rebound,
         );
+        let infect = if infect.state == StageState::Yes
+            && context.probe.family == ProbeFamily::ReturnValue
+            && !owner_has_other_callers
+            && !assertion_macros_rebound
+            && let Some(owner) = context.owner_fn
+            && let Some(reason) = crate::analysis::classify::operator_assertions_skip_branch(
+                context.probe,
+                owner,
+                &test_summaries,
+                context.index,
+            ) {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, reason)
+        } else {
+            infect
+        };
         // #15034: the #8659 invisibility reading declines when another
         // function holds the owner, since that caller may feed other inputs.
         // A pure forwarding wrapper (`pub fn w(a) -> T { owner(a) }`, the
