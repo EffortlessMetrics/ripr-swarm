@@ -130,7 +130,8 @@ limitation: with no preview-language advisory, or for Rust switched off in
 pointer names languages that are off, one line names each of them
 (`1 changed TypeScript file and 1 changed Python file`), and with more than one
 off language a single `[languages] enabled = [...]` block after all notes
-enables every one of them (#15288). The static-limited `State:` line reads `ripr cannot tell from reading
+enables every one of them (#15288). A limitation from an enabled adapter
+whose run was unavailable or invalid keeps its own pointer line. The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
 effect)`). The canonical gap id is labelled `Gap ID (for scripts)`; because the id

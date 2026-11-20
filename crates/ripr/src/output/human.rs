@@ -879,17 +879,21 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             };
             if note_follows {
                 // #15288: one line naming every language that is off, not one
-                // identical anonymous line per language. When no off language
-                // can be named (an enabled adapter whose run failed), each
-                // limitation keeps its own count line.
-                match not_analyzed_languages_line(output) {
-                    Some(line) => {
+                // identical anonymous line per language. Only the
+                // advisory-derived limitations (they carry a file count) fold
+                // into it; an enabled adapter whose run was unavailable or
+                // invalid (no count) keeps its own line.
+                match (
+                    not_analyzed_languages_line(output),
+                    limitation.affected_items,
+                ) {
+                    (Some(line), Some(_)) => {
                         if !named_not_analyzed_printed {
                             named_not_analyzed_printed = true;
                             out.push_str(&line);
                         }
                     }
-                    None => out.push_str(&format!(
+                    _ => out.push_str(&format!(
                         "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
                     )),
                 }
@@ -2981,6 +2985,64 @@ mod tests {
             full.contains("combined_hunk_unsupported at diff_parse"),
             "human-full must retain limitation schema tokens:\n{full}"
         );
+        Ok(())
+    }
+
+    /// #15288: an off language's limitation folds into the named line, but a
+    /// limitation from an enabled adapter whose run was unavailable or
+    /// invalid (no file count) keeps its own pointer line.
+    #[test]
+    fn a_failed_enabled_adapter_keeps_its_own_line_beside_the_named_one() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let limitation = || -> Result<AnalysisLimitation, String> {
+            Ok(AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageAdapterUnavailable,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::EnableLanguage,
+                    "Inspect the adapter result and re-run the analysis.",
+                )?,
+            ))
+        };
+        let mut off = limitation()?;
+        off.affected_items = Some(1);
+        let failed_run = limitation()?;
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![off, failed_run],
+        )?;
+        let mut output = partial_outcome_output(Vec::new())?;
+        output.analysis_outcome = Some(outcome);
+        output.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "python".to_string(),
+            file_count: 1,
+            sample_paths: vec!["over.py".to_string()],
+            javascript_file_count: 0,
+            enabled: false,
+            nested_packages: Vec::new(),
+        }];
+
+        let rendered = render(&output);
+        assert_eq!(
+            rendered
+                .matches("  Not analyzed: 1 changed Python file, a language ripr is not set up to analyze (see the note below).\n")
+                .count(),
+            1,
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "  Not analyzed: changed files in a language ripr is not set up to analyze (see the note below).\n"
+            ),
+            "the failed run's limitation must keep its own line:\n{rendered}"
+        );
+        assert_eq!(rendered.matches("Not analyzed:").count(), 2, "{rendered}");
         Ok(())
     }
 
