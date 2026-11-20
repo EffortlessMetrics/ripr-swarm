@@ -858,7 +858,7 @@ mod archive_compression_tests {
                 fs::write(staged.join(name), bytes).map_err(|e| e.to_string())?;
             }
             let asset = root.join(server_asset_name("0.11.0", target, kind));
-            assert_eq!(asset.file_name().unwrap(), expected_asset);
+            assert_eq!(asset, root.join(expected_asset));
             if kind == "zip" {
                 create_zip_archive(&staged, &asset)?;
             } else {
