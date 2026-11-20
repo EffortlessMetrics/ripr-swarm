@@ -41,6 +41,12 @@ Consumes:
   `textDocument/didSave` (saved content is the analysis input; the options
   form's `save` member requests save notifications and `includeText: false`
   avoids resending the whole document on each save)
+- incremental change positions resolved as LSP 3.17 defines them: a
+  character past the line end is the line end (#7316) and a line past the
+  last line is the end of the document (#15430), so a client appending below
+  the last line keeps its document; reversed ranges and positions inside a
+  multi-unit character are refused and quarantine the document until a full
+  resync
 - `MethodNotFound` (`-32601`, method named in `data`) for any unhandled
   request whose method starts with `$/`; unhandled `$/` notifications stay
   silent (LSP 3.17 "$ Notifications and Requests", #4456)
@@ -290,6 +296,10 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
 - `tests/lsp_lifecycle.rs::initialize_advertises_incremental_sync_with_save_notifications`
   verifies over the real wire that the document-sync advertisement requests
   incremental changes and `didSave` without resending the document (#1746).
+- `lsp/state.rs::tests::incremental_line_past_end_clamps_to_document_end`
+  verifies that a line past the last line resolves to the document end in
+  every negotiated encoding, while reversed and mid-surrogate ranges stay
+  refused (#15430).
 - `tests/lsp_lifecycle.rs::dollar_request_is_answered_method_not_found`
   verifies over the real wire that a `$/` request gets `-32601` naming the
   method, while the same `$/` notification gets no response.
