@@ -498,18 +498,24 @@ fn row_writes_withhold_each_literals_and_disclose_for_registrations() {
 
 #[test]
 fn object_each_row_writes_keep_dynamic_expected_values() {
-    for (binding, value, write) in [
-        ("row", "row.out", "[row.out] = [5]"),
-        ("row", "row.out", "delete row.out"),
-        ("{out}", "out", "[out] = [5]"),
+    // Both substitutions parse. Only the role of `actual` distinguishes
+    // writing the callback binding from reading it on the right-hand side.
+    for (statement, observed, expected, dynamic) in [
+        ("[actual] = [5]", "f(actual)", None, true),
+        ("[other] = [actual]", "f(undefined)", Some("17"), false),
     ] {
         let source = format!(
-            "test.each([{{out: 17}}])('result', ({binding}) => {{\n  {write};\n  expect(f()).toBe({value});\n}});"
+            "test.each([{{out: undefined, want: 17}}])('result', ({{out: actual, want}}) => {{\n  {statement};\n  expect(f(actual)).toBe(want);\n}});"
         );
         assert_eq!(
             observed_and_expected(&source),
-            vec![(Some("f()".into()), None, true, 3)],
-            "{write}"
+            vec![(
+                Some(observed.into()),
+                expected.map(str::to_owned),
+                dynamic,
+                3
+            )],
+            "{statement}"
         );
     }
 }
