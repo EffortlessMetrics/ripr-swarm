@@ -4136,7 +4136,8 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(windows))]
+    // The pytest probe is only registered with the Python adapter compiled in.
+    #[cfg(all(not(windows), feature = "lang-python"))]
     #[test]
     fn venv_missing_pytest_gives_one_install_message_with_unchanged_severity() -> Result<(), String>
     {
