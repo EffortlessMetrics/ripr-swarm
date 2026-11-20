@@ -1829,7 +1829,10 @@ fn is_slid_function_closer(index: &RustIndex, changed: &ChangedFile, added_index
     }) else {
         return false;
     };
-    context_text.trim() == added.text.trim()
+    // A slide needs byte-identical lines: indentation must match, so a nested
+    // closer never pairs with an outer one. Only a CRLF carriage return is
+    // ignored (`lines()` already strips it from the context side).
+    context_text.trim_end_matches('\r') == added.text.trim_end_matches('\r')
         && is_item_level_closing_brace(index, &changed.path, context_line, &context_text)
 }
 
@@ -3986,15 +3989,21 @@ mod tests {
                 ..Default::default()
             })
         };
-        let probe_lines = |index: &RustIndex, added: std::ops::RangeInclusive<usize>| {
+        // `closer` overrides the added text of line 3 (the function closer).
+        let probe_lines_with = |index: &RustIndex, added: &[usize], closer: &str| {
             let lines = source.lines().collect::<Vec<_>>();
             let changed = ChangedFile {
                 path: path.clone(),
                 added_lines: added
-                    .map(|line| ChangedLine {
+                    .iter()
+                    .map(|&line| ChangedLine {
                         line,
                         new_side_line: line,
-                        text: lines.get(line - 1).copied().unwrap_or_default().to_string(),
+                        text: if line == 3 {
+                            closer.to_string()
+                        } else {
+                            lines.get(line - 1).copied().unwrap_or_default().to_string()
+                        },
                     })
                     .collect(),
                 removed_lines: vec![],
@@ -4003,6 +4012,9 @@ mod tests {
                 .iter()
                 .map(|probe| probe.location.line)
                 .collect::<Vec<_>>()
+        };
+        let probe_lines = |index: &RustIndex, added: std::ops::RangeInclusive<usize>| {
+            probe_lines_with(index, &added.collect::<Vec<_>>(), "}")
         };
 
         let appended = index(vec![function("is_adult", 1, 3), function("t", 8, 10)]);
@@ -4036,6 +4048,15 @@ mod tests {
             lines.contains(&3),
             "a closer before the function's end: {lines:?}"
         );
+        // A slide needs identical lines: an indented closer never pairs with
+        // the item-level `}` that follows, so it keeps its probe.
+        let lines = probe_lines_with(&appended, &(2..=10).collect::<Vec<_>>(), "    }");
+        assert!(lines.contains(&3), "indentation differs: {lines:?}");
+        // A gap ends the added run early (at line 5), so the context closer
+        // after the last added line is not the one the run slides onto.
+        let gapped = [2, 3, 4, 5, 7, 8, 9, 10];
+        let lines = probe_lines_with(&appended, &gapped, "}");
+        assert!(lines.contains(&3), "gap in the added run: {lines:?}");
     }
 
     #[test]
