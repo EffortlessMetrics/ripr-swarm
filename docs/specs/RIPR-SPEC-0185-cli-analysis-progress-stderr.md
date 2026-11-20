@@ -75,7 +75,9 @@ second stage vocabulary.
    or cancelled terminal still prints, preceded by the stage in flight.
    `RIPR_PROGRESS` removes the hold (immediate lines); `--quiet` and
    `RIPR_QUIET` still win.
-4. Heartbeats repeat only the current producer stage, start after 2s, and are
+4. Heartbeats repeat only the current producer stage, start after 2s (on a
+   held non-TTY stream, one `heartbeat_every` after the disclosed stage line,
+   about 10s into the run), and are
    time-throttled to at most one line every 8 seconds of stage activity for as
    long as the stage stays active (#4957). There is no per-run count ceiling on
    the STANDARD policy, so a minutes-long repo walk never goes silent; line
