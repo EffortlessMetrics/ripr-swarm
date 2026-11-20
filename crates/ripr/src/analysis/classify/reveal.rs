@@ -13651,7 +13651,7 @@ return Err(\"typed pin\".into());
             discriminate.summary
         );
         assert_eq!(
-            rows.first().and_then(|row| row.miss.clone()),
+            rows.first().and_then(|row| row.miss),
             Some(RelatedTestMiss::AssertionNotObserving)
         );
         let (observe, discriminate, _) =
