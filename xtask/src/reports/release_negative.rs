@@ -462,12 +462,18 @@ fn run_negative_corpus_with_input(
             &version_result.stdout,
             version,
         )?;
+        // The rendered-help harness is a development test, so it is not in
+        // the published package (#15216); its cases run here, against the
+        // exact executable installed from the qualified archive.
+        let help_contract = qualified.run_help_contract(&corpus_root.join("help-contract"))?;
         let identity = CandidateIdentity {
             path: crate::normalize_path(qualified.binary()),
             version_output: version_result.stdout.trim().to_string(),
             sha256: format!("sha256:{}", sha256_file(qualified.binary())?),
         };
-        (execution, identity, Some(qualified.custody_json()))
+        let mut custody = qualified.custody_json();
+        custody["installed_help_contract"] = help_contract;
+        (execution, identity, Some(custody))
     } else {
         let (binary, identity) = resolve_candidate(version)?;
         legacy = binary;
