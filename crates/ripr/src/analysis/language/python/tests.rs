@@ -1452,6 +1452,54 @@ fn classify_probe_shape_recognizes_python_field_and_call_shapes() {
     assert_eq!(delta, DeltaKind::Effect);
 }
 
+// #15357: a changed entry of a multi-line `return {` literal names an exact
+// read of its key; the shape is closed.
+#[test]
+fn multiline_return_dict_entry_names_an_exact_key_read() -> Result<(), String> {
+    let source = "def default_headers():\n    return {\n        \"User-Agent\": USER_AGENT,\n        \"Accept-Encoding\": \"gzip, deflate, br\",\n        \"Extra\": {\n            \"inner\": 1,\n        },\n        \"Call\": make(),\n    }\n";
+    let owners = extract_owners(Path::new("src/h.py"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "default_headers")
+        .ok_or_else(|| "owner must be extracted".to_string())?;
+    let line_text = |line: usize| source.lines().nth(line - 1).unwrap_or_default();
+    let value = |line: usize, span: Option<(usize, usize)>, src: Option<&str>| {
+        super::discriminators::python_multiline_return_dict_entry_discriminator(
+            line,
+            line_text(line),
+            span,
+            src,
+            owner,
+            None,
+        )
+        .map(|fact| fact.value)
+    };
+    let span = Some((2, 9));
+    assert_eq!(
+        value(4, span, Some(source)).as_deref(),
+        Some("result[\"Accept-Encoding\"] == \"gzip, deflate, br\"")
+    );
+    // A non-literal value names the placeholder, never the computation.
+    assert_eq!(
+        value(8, span, Some(source)).as_deref(),
+        Some("result[\"Call\"] == <expected value>")
+    );
+    // Inside a nested literal, on the opening or closing line, or without a
+    // bracket span or source: no key read is named.
+    assert_eq!(value(6, span, Some(source)), None);
+    assert_eq!(value(2, span, Some(source)), None);
+    assert_eq!(value(9, span, Some(source)), None);
+    assert_eq!(value(4, None, Some(source)), None);
+    assert_eq!(value(4, span, None), None);
+    // A statement that is not a bare `return {` (a keyword argument dict, a
+    // plain assignment) keeps the generic path.
+    let assigned = source.replace("    return {", "    headers = {");
+    assert_eq!(value(4, span, Some(&assigned)), None);
+    let called = source.replace("    return {", "    return dict(a={");
+    assert_eq!(value(4, span, Some(&called)), None);
+    Ok(())
+}
+
 // #13630: the field-value missing check localizes a `return {...}` change
 // against the paired old line; without one the unlocalized pick stands.
 #[test]

@@ -29,6 +29,98 @@ pub(super) fn python_missing_discriminators(
     )]
 }
 
+/// A changed entry of a multi-line `return {` literal (#15357): the entry is
+/// the changed value, so the missing check is an exact read of its key in the
+/// returned dict. A related test that reads a different key leaves it open.
+///
+/// Closed shape: the statement the line continues opens with a bare
+/// `return {`, the line sits at the literal's own depth (not inside a nested
+/// bracket), and it is exactly one `"key": value` entry with a plain quoted
+/// key and no comment. Anything else keeps the generic path. A non-literal
+/// value names the placeholder, never the computation itself.
+pub(super) fn python_multiline_return_dict_entry_discriminator(
+    line: usize,
+    line_text: &str,
+    span: Option<(usize, usize)>,
+    source: Option<&str>,
+    owner: &PythonOwner,
+    flow_sink: Option<&FlowSinkFact>,
+) -> Option<MissingDiscriminatorFact> {
+    let (open, close) = span?;
+    if line <= open || line >= close {
+        return None;
+    }
+    let lines: Vec<&str> = source?
+        .lines()
+        .skip(open.checked_sub(1)?)
+        .take(line - open)
+        .collect();
+    let rest = lines.first()?.trim().strip_prefix("return {")?.trim();
+    if !(rest.is_empty() || rest.starts_with('#')) {
+        return None;
+    }
+    let mut depth = 1usize;
+    for text in &lines[1..] {
+        depth = python_line_bracket_depth(text, depth)?;
+    }
+    if depth != 1 || line_text.contains('#') {
+        return None;
+    }
+    let segments: Vec<&str> = top_level_python_segments(line_text.trim())
+        .into_iter()
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let [segment] = segments.as_slice() else {
+        return None;
+    };
+    if !(segment.starts_with('"') || segment.starts_with('\'')) {
+        return None;
+    }
+    let (key, value) = python_dict_field_segment_parts(segment)?;
+    if key.contains(['"', '\'', '\\']) {
+        return None;
+    }
+    let value = python_expected_value_or_placeholder(value);
+    let read = if owner.route_paths.is_empty() {
+        format!("result[\"{key}\"]")
+    } else {
+        format!("response.json()[\"{key}\"]")
+    };
+    Some(MissingDiscriminatorFact::equality_spelled(
+        format!("{read} == {value}"),
+        format!("changed Python returned-dict entry at line {line} needs an exact read of its key"),
+        flow_sink.cloned(),
+    ))
+}
+
+/// The bracket depth after one source line, starting at `depth`. `None` when
+/// the line does not scan cleanly (unterminated string, triple quote, a
+/// bracket closed below the start): the caller then refuses.
+fn python_line_bracket_depth(text: &str, mut depth: usize) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, ch) {
+            (Some(_), '\\') => escaped = true,
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, '#') => break,
+            (None, '(' | '[' | '{') => depth += 1,
+            (None, ')' | ']' | '}') => depth = depth.checked_sub(1)?,
+            (None, _) => {}
+        }
+    }
+    if quote.is_some() || text.contains("\"\"\"") || text.contains("'''") {
+        return None;
+    }
+    Some(depth)
+}
+
 fn python_missing_discriminator_value(
     probe_family: &ProbeFamily,
     line_text: &str,
