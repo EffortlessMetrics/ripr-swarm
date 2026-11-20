@@ -1,0 +1,11 @@
+# The job summary says why the PR analysis did not run (#14148).
+[[extend]]
+id = "RIPR-SPEC-0038"
+tests = [
+  "crates/ripr/src/output/ci_summary/tests.rs::a_blocked_start_here_packet_shows_its_reason",
+  "crates/ripr/src/output/ci_summary/tests.rs::a_run_without_a_pull_request_says_so",
+  "crates/ripr/tests/generated_review_workflow.rs::a_manual_run_summary_says_there_is_no_pull_request",
+]
+code = [
+  "crates/ripr/src/output/ci_summary.rs",
+]

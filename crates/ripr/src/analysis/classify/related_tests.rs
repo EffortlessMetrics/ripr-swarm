@@ -30,12 +30,14 @@ use ra_ap_syntax::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod dispatch_target;
 mod drop_dispatch;
 mod equality_dispatch;
 mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
@@ -348,6 +350,27 @@ impl RelatedTestCandidateIndex {
         self
     }
 
+    /// #15104: record a module declaration reading of every index file that
+    /// may declare a module, for a run without a diff (a repo scan): no
+    /// declaration changed.
+    pub(in crate::analysis) fn with_unchanged_module_declarations(
+        self,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> Self {
+        let modules = crate::analysis::diff::ModuleDeclarations::read(
+            index
+                .files()
+                .iter()
+                .filter(|(_, facts)| {
+                    !facts.module_declarations.is_empty()
+                        || crate::analysis::diff::may_declare_module(&facts.source)
+                })
+                .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+            std::iter::empty(),
+        );
+        self.with_module_declarations(modules)
+    }
+
     /// The run's module declaration reading; an unread one when the run did
     /// not compute it.
     pub(in crate::analysis) fn module_declarations(
@@ -440,8 +463,8 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator, loop and scope-end syntax has no token worth indexing;
-        // same-file tests of such an impl are scanned in full.
+        // Operator, loop, scope-end and `str::parse` syntax has no token worth
+        // indexing; same-file tests of such an impl are scanned in full.
         if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
         }
@@ -4926,7 +4949,9 @@ pub(super) fn path_is_absolute_form(path: &Path) -> bool {
 }
 
 /// The workspace-package scope of a source path (`crates/foo/src/lib.rs`
-/// -> `crates/foo/`), or `None` when the path carries no package scope:
+/// -> `crates/foo/`; a relative path keeps the directories above `crates/`,
+/// so `rust/crates/foo/src/lib.rs` -> `rust/crates/foo/`, #15299), or `None`
+/// when the path carries no package scope:
 /// single-crate relative paths (`src/lib.rs`, `tests/basic.rs`) and
 /// absolute paths are unscopable (#3235). Shared with the classifier's
 /// evidence stage, whose cross-package same-name defeat gate (#3731 review
@@ -4935,12 +4960,24 @@ pub(in crate::analysis) fn package_prefix(path: &Path) -> Option<String> {
     let normalized = normalize_path(path);
     let crate_relative = normalized
         .strip_prefix("crates/")
-        .or_else(|| normalized.rsplit_once("/crates/").map(|(_, rest)| rest));
-    if let Some(crate_relative) = crate_relative
+        .map(|rest| ("", rest))
+        .or_else(|| normalized.rsplit_once("/crates/"));
+    if let Some((leading, crate_relative)) = crate_relative
         && let Some((crate_name, package_relative)) = crate_relative.split_once('/')
         && (package_relative.starts_with("src/") || package_relative.starts_with("tests/"))
     {
-        return Some(format!("crates/{crate_name}/"));
+        // Keep the directories above `crates/`: a workspace nested below the
+        // analysis root (`rust/crates/x`) or two workspaces that both have a
+        // `crates/x` are distinct packages, not one.
+        if path_is_absolute_form(path) {
+            return Some(format!("crates/{crate_name}/"));
+        }
+        let leading = if leading.is_empty() {
+            String::new()
+        } else {
+            format!("{leading}/")
+        };
+        return Some(format!("{leading}crates/{crate_name}/"));
     }
     if path_is_absolute_form(path) {
         return None;
@@ -5984,79 +6021,116 @@ fn text_resolves_method_to_type(
     scope_body: &str,
     whole_body: bool,
 ) -> bool {
-    let bytes = text.as_bytes();
+    method_call_sites(text, method).any(|at| {
+        call_site_resolves_to_type(
+            text,
+            at,
+            method,
+            impl_type,
+            impl_trait,
+            body_for_lets,
+            scope_body,
+            whole_body,
+        )
+    })
+}
+
+/// Byte offsets of every `method` token in `text` at an identifier boundary
+/// and followed (after whitespace) by `(`: each spelling that may call it.
+fn method_call_sites<'t>(text: &'t str, method: &'t str) -> impl Iterator<Item = usize> + 't {
     let mut search = 0usize;
-    while let Some(relative) = text[search..].find(method) {
-        let at = search + relative;
-        let after = at + method.len();
-        // A binding is read only from `let`s before this call, so a later
-        // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
-        // line has no position in the body, so it does not consult `let`s.
-        // Only `let`s finished (`;`) before the call count, so the statement
-        // being declared (`let s = Site { x: s.build() }`) cannot type `s`.
-        let body_for_lets = if whole_body {
-            body_for_lets
-                .get(..at)
-                .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
-                .unwrap_or("")
-        } else {
-            ""
-        };
-        if ident_boundary(text, at, after) && skip_ws_if_paren(text, after) {
-            if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
-                let qualifier = ident_ending_at(text, at - 2);
-                if qualifier.is_some_and(|ty| ty == impl_type) {
-                    return true;
-                }
-                // `<f64 as Render>::render(..)` names the impl outright;
-                // `Render::render(&-0.0f64)` dispatches on its first
-                // argument's type. A raw call line is unmasked, so a form
-                // quoted in a string or comment there must not count: only
-                // the masked body reads these.
-                if whole_body
-                    && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
-                        || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
-                            && first_argument_has_type(
-                                text,
-                                after,
-                                impl_type,
-                                body_for_lets,
-                                text,
-                                scope_body,
-                                at,
-                            )))
-                {
-                    return true;
-                }
-            } else if at > 0 && bytes[at - 1] == b'.' {
-                if let Some(recv) = ident_ending_at(text, at - 1) {
-                    if recv == impl_type
-                        // `1.5f64.m()` reads only the fragment after the `.`
-                        // (`5f64`), which still carries the literal's suffix.
-                        // A raw call line is unmasked, so a literal quoted in
-                        // a string or comment there must not type a receiver.
-                        || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
-                        || let_binding_mentions_type_at(
-                            body_for_lets,
-                            text,
-                            scope_body,
-                            at,
-                            recv,
-                            impl_type,
-                        )
-                    {
-                        return true;
-                    }
-                } else if whole_body
-                    && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
-                {
-                    return true;
-                }
+    std::iter::from_fn(move || {
+        if method.is_empty() {
+            return None;
+        }
+        while let Some(relative) = text.get(search..)?.find(method) {
+            let at = search + relative;
+            let after = at + method.len();
+            search = at + method.chars().next().map_or(1, char::len_utf8);
+            if ident_boundary(text, at, after) && skip_ws_if_paren(text, after) {
+                return Some(at);
             }
         }
-        search = at + method.chars().next().map_or(1, char::len_utf8);
+        None
+    })
+}
+
+/// Whether the call of `method` spelled at byte `at` of `text` resolves its
+/// receiver (or its trait-qualified first argument) to `impl_type`, as
+/// [`text_resolves_method_to_type`] reads one site.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site of text_resolves_method_to_type, which takes the same inputs"
+)]
+fn call_site_resolves_to_type(
+    text: &str,
+    at: usize,
+    method: &str,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+    body_for_lets: &str,
+    scope_body: &str,
+    whole_body: bool,
+) -> bool {
+    let bytes = text.as_bytes();
+    let after = at + method.len();
+    // A binding is read only from `let`s before this call, so a later
+    // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
+    // line has no position in the body, so it does not consult `let`s.
+    // Only `let`s finished (`;`) before the call count, so the statement
+    // being declared (`let s = Site { x: s.build() }`) cannot type `s`.
+    let body_for_lets = if whole_body {
+        body_for_lets
+            .get(..at)
+            .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
+            .unwrap_or("")
+    } else {
+        ""
+    };
+    if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
+        let qualifier = ident_ending_at(text, at - 2);
+        if qualifier.is_some_and(|ty| ty == impl_type) {
+            return true;
+        }
+        // `<f64 as Render>::render(..)` names the impl outright;
+        // `Render::render(&-0.0f64)` dispatches on its first
+        // argument's type. A raw call line is unmasked, so a form
+        // quoted in a string or comment there must not count: only
+        // the masked body reads these.
+        whole_body
+            && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
+                || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
+                    && first_argument_has_type(
+                        text,
+                        after,
+                        impl_type,
+                        body_for_lets,
+                        text,
+                        scope_body,
+                        at,
+                    )))
+    } else if at > 0 && bytes[at - 1] == b'.' {
+        if let Some(recv) = ident_ending_at(text, at - 1) {
+            recv == impl_type
+                // `1.5f64.m()` reads only the fragment after the `.`
+                // (`5f64`), which still carries the literal's suffix.
+                // A raw call line is unmasked, so a literal quoted in
+                // a string or comment there must not type a receiver.
+                || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
+                || let_binding_mentions_type_at(
+                    body_for_lets,
+                    text,
+                    scope_body,
+                    at,
+                    recv,
+                    impl_type,
+                )
+        } else {
+            whole_body && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
+        }
+    } else {
+        false
     }
-    false
 }
 
 /// `<f64 as Render>::m(..)`: the qualified path ending at `colons` names
@@ -8477,6 +8551,14 @@ fn owner_call_relation_reason_gated(
             {
                 return RelationReason::WeakTokenSubstring;
             }
+            // #15273: a default method never runs for a type whose impl
+            // overrides it. When every call in the test resolves to such a
+            // type, the name match reaches only the overrides.
+            if indexed_same_name_count > 1
+                && dispatch_target::every_call_runs_an_override(test, owner, same_name_ids, index)
+            {
+                return RelationReason::WeakTokenSubstring;
+            }
             return RelationReason::DirectOwnerCall;
         }
         if !free_function_call_spells_free_call(test, owner_name) {
@@ -8562,6 +8644,11 @@ fn owner_call_relation_reason_gated(
     // and trait, and refused a second `fmt` for the same pair.
     if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
         return RelationReason::DirectOwnerCall;
+    }
+    // #15273: an inherent `area(&self)` on the impl's own type takes
+    // `Square(3).area()` before the trait impl does.
+    if dispatch_target::inherent_twin_takes_every_call(test, owner, same_name_ids, index) {
+        return RelationReason::WeakTokenSubstring;
     }
     let impl_trait = owner_dispatch_trait(owner);
     if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref()) {
@@ -14795,6 +14882,20 @@ fn crate_c_score_test() {
         assert_eq!(
             package_prefix(Path::new("crates/ripr/examples/sample/src/lib.rs")).as_deref(),
             Some("crates/ripr/examples/sample/")
+        );
+        // A workspace below the analysis root keeps the directories above
+        // `crates/`, so two workspaces' `crates/alpha` stay two packages (#15299).
+        assert_eq!(
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs")).as_deref(),
+            Some("w2/crates/alpha/")
+        );
+        assert_eq!(
+            package_prefix(Path::new("rust/crates/alpha/tests/a.rs")).as_deref(),
+            Some("rust/crates/alpha/")
+        );
+        assert_ne!(
+            package_prefix(Path::new("w1/crates/alpha/src/lib.rs")),
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs"))
         );
     }
 

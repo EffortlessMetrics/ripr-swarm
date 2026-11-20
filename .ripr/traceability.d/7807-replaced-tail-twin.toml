@@ -1,0 +1,8 @@
+# Registers the #7807 control under RIPR-SPEC-0001: a replaced line whose
+# value-modeling replacement carries its whole text as `before` is reported
+# once, and a deletion or a second statement keeps its removed-side probe.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_replaced_tail_expression_adds_no_base_side_static_unknown_twin",
+]

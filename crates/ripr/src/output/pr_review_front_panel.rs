@@ -466,11 +466,17 @@ pub(crate) fn pr_review_front_panel_input_warnings(
                     // so do not append the path again (#14553).
                     Some(warning.message.trim_end_matches('.').to_string())
                 }
-                // An explicit `--assistant-proof` that could not be read is
-                // promoted to this required-input warning, which drops the
-                // read detail, so name the path here.
+                // The generic "Assistant proof artifact is missing." sentence
+                // names no path, so name it here. An unreadable proof promoted
+                // to this kind keeps its read cause, which already names the
+                // path, so appending it again would print it twice (#14631).
                 "missing_required_input" => {
-                    Some(format!("{}: {path}", warning.message.trim_end_matches('.')))
+                    let message = warning.message.trim_end_matches('.');
+                    if message.contains(path) {
+                        Some(message.to_string())
+                    } else {
+                        Some(format!("{message}: {path}"))
+                    }
                 }
                 _ => None,
             }
@@ -3826,6 +3832,58 @@ mod tests {
             coverage_frontier_path: coverage_frontier,
             receipt_path: receipt,
         })
+    }
+
+    // ── #14631: the stderr warning line names the proof path once ────────
+
+    const PROMOTED_PROOF_PATH: &str = "work/test-oracle-assistant-proof.json";
+
+    fn proof_warning_line(input: PrReviewFrontPanelInput) -> Result<String, String> {
+        let report = build_pr_review_front_panel_report(input);
+        pr_review_front_panel_input_warnings(&report)
+            .into_iter()
+            .find(|line| line.starts_with("Assistant proof artifact is "))
+            .ok_or_else(|| format!("no assistant proof warning line: {:?}", report.warnings))
+    }
+
+    /// An unreadable proof promoted to `missing_required_input` keeps a read
+    /// cause that already names the path; the renderer must not append it.
+    #[test]
+    fn promoted_unreadable_proof_line_names_its_path_once() -> Result<(), String> {
+        let mut input = blank_panel_input();
+        input.assistant_proof_path = Some(PROMOTED_PROOF_PATH.to_string());
+        input.assistant_proof_json = Some(Err(PanelInputError {
+            not_found: false,
+            message: format!("read assistant proof {PROMOTED_PROOF_PATH} failed: is a directory"),
+        }));
+        let line = proof_warning_line(input)?;
+        assert_eq!(
+            line,
+            format!(
+                "Assistant proof artifact is unreadable: read assistant proof \
+                 {PROMOTED_PROOF_PATH} failed: is a directory"
+            )
+        );
+        assert_eq!(line.matches(PROMOTED_PROOF_PATH).count(), 1, "{line}");
+        Ok(())
+    }
+
+    /// Negative control: the generic absent-proof sentence names no path, so
+    /// the renderer still appends it exactly once.
+    #[test]
+    fn generic_missing_proof_line_still_appends_its_path() -> Result<(), String> {
+        let mut input = blank_panel_input();
+        input.assistant_proof_path = Some(PROMOTED_PROOF_PATH.to_string());
+        input.assistant_proof_json = Some(Err(PanelInputError {
+            not_found: true,
+            message: format!("read assistant proof {PROMOTED_PROOF_PATH} failed: not found"),
+        }));
+        let line = proof_warning_line(input)?;
+        assert_eq!(
+            line,
+            format!("Assistant proof artifact is missing: {PROMOTED_PROOF_PATH}")
+        );
+        Ok(())
     }
 
     // ── #3906: carried repair start, never a synthesized one ─────────────

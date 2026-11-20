@@ -268,6 +268,38 @@ pub(super) struct InitTarget {
     pub(super) body: String,
 }
 
+/// The CI file only runs from the repository root: GitHub reads workflows from
+/// `<toplevel>/.github/workflows` and GitLab reads `<toplevel>/.gitlab-ci.yml`,
+/// and the generated commands analyze `--root .` from the checkout root with
+/// repo-root `target/ripr` paths. A `--root` below the Git top level would
+/// plan a file that never runs (or, moved, analyzes the wrong directory), so
+/// refuse instead of writing it. A root outside Git has no top level to
+/// compare and keeps its advisory warning.
+fn ci_subdirectory_root_refusal(root: &Path, ci: &InitCi) -> Result<(), String> {
+    let Ok(canonical) = std::fs::canonicalize(root) else {
+        return Ok(());
+    };
+    let Some(toplevel) =
+        crate::git::discovered_work_tree_toplevel(&canonical, std::time::Duration::from_secs(5))
+    else {
+        return Ok(());
+    };
+    if toplevel == canonical {
+        return Ok(());
+    }
+    let provider = ci.as_str();
+    let (reads, file) = match ci {
+        InitCi::Github => ("GitHub Actions", ".github/workflows/ripr.yml"),
+        InitCi::Gitlab => ("GitLab CI", ".gitlab-ci.yml"),
+    };
+    let shown_root = output::path::human_path(root);
+    let shown_top = output::path::human_path(&toplevel);
+    let top_arg = crate::agent::loop_commands::shell_arg(&shown_top);
+    Err(format!(
+        "init --ci {provider} cannot use the root `{shown_root}`: it is inside the repository at `{shown_top}`, {reads} reads `{file}` only from the repository root, and the generated workflow analyzes the checkout root, not a subdirectory. Run `ripr init --ci {provider} --root {top_arg}` at the repository root (or drop --ci to write only `ripr.toml` here)"
+    ))
+}
+
 /// Resolve what the run would do, or fail with the reason it cannot run.
 ///
 /// This is the single authority for `ripr init` preconditions: both
@@ -279,6 +311,9 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
             "init root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             options.root.display()
         ));
+    }
+    if let Some(ci) = options.ci.as_ref() {
+        ci_subdirectory_root_refusal(&options.root, ci)?;
     }
     let config_path = options.root.join(CONFIG_FILE_NAME);
     let workflow_path = options
@@ -777,6 +812,19 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 Some(output::doctor::DOCTOR_TOOL_TIMEOUT),
             ) {
                 crate::analysis::HeadRefState::Unborn => InitNextStep::NoCommits,
+                // `check` and `doctor` share one default-base search, so a
+                // repository whose default branch is neither `main` nor
+                // `master` (and has no `origin/HEAD`) is told here, not
+                // promised a comparison `check` will refuse.
+                crate::analysis::HeadRefState::Resolved
+                    if crate::analysis::default_base_unresolved_message(
+                        root,
+                        Some(output::doctor::DOCTOR_TOOL_TIMEOUT),
+                    )
+                    .is_some() =>
+                {
+                    InitNextStep::NoDefaultBase
+                }
                 _ => InitNextStep::Ready,
             }
         } else {
@@ -785,7 +833,7 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         println!("{}", init_next_step_line(next, &doctor, &check));
         let commands: &[&String] = match next {
             InitNextStep::Ready | InitNextStep::NoCommits => &[&doctor, &check],
-            InitNextStep::NoGit => &[&doctor],
+            InitNextStep::NoGit | InitNextStep::NoDefaultBase => &[&doctor],
         };
         for command in commands.iter().copied() {
             if let Some(powershell) = output::markdown::powershell_text_variant(command) {
@@ -805,6 +853,10 @@ enum InitNextStep {
     /// Inside a work tree with an unborn `HEAD`: the state right after
     /// `git init`, where `ripr check` has no base and exits 2.
     NoCommits,
+    /// Inside a work tree whose `HEAD` resolves but where a bare `ripr check`
+    /// finds no default base (default branch not `main`/`master`, no
+    /// `origin/HEAD`; a shallow CI checkout): it exits 2 until one is named.
+    NoDefaultBase,
     /// Not established as inside a work tree.
     NoGit,
 }
@@ -818,6 +870,9 @@ fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String 
         ),
         InitNextStep::NoCommits => format!(
             "Next: run `{doctor}` to verify your setup. This repository has no commits yet, so `ripr check` has no base to compare: commit once, then edit a tracked source file and run `{check}`."
+        ),
+        InitNextStep::NoDefaultBase => format!(
+            "Next: run `{doctor}` to verify your setup. `ripr check` cannot find a default branch to compare against here (no origin/HEAD, origin/main, origin/master, main or master): run `git remote set-head origin --auto` if `origin` has a default branch (offline: `git remote set-head origin <branch>`), or run `{check} --base <ref>`."
         ),
         InitNextStep::NoGit => format!(
             "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
@@ -1670,6 +1725,18 @@ mod tests {
         assert!(!no_git.contains("no commits yet"), "{no_git}");
     }
 
+    /// A repository whose default branch is not `main`/`master` (and has no
+    /// `origin/HEAD`) makes `ripr check` exit 2, so the closing line must not
+    /// promise a default-branch comparison; it names the durable fix and the
+    /// per-run `--base`.
+    #[test]
+    fn next_step_line_does_not_promise_a_default_branch_check_that_will_refuse() {
+        let line = init_next_step_line(InitNextStep::NoDefaultBase, "ripr doctor", "ripr check");
+        assert!(!line.contains("against its default branch"), "{line}");
+        assert!(line.contains("git remote set-head origin --auto"), "{line}");
+        assert!(line.contains("`ripr check --base <ref>`"), "{line}");
+    }
+
     #[test]
     fn non_git_root_warning_names_only_the_established_outside() {
         use output::doctor::WorkTreeProbe;
@@ -1896,6 +1963,7 @@ mod tests {
     #[test]
     fn plan_adds_the_workflow_target_for_ci_github() -> Result<(), String> {
         let root = temp_root("ci")?;
+        git_init_fixture(&root)?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Github);
         let plan = init_plan(&opts)?;
@@ -1912,6 +1980,7 @@ mod tests {
     #[test]
     fn plan_adds_gitlab_ci_for_ci_gitlab() -> Result<(), String> {
         let root = temp_root("ci-gitlab")?;
+        git_init_fixture(&root)?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Gitlab);
         let plan = init_plan(&opts)?;
@@ -2019,6 +2088,7 @@ mod tests {
     #[test]
     fn plan_leaves_an_existing_config_alone_when_ci_still_has_work() -> Result<(), String> {
         let root = temp_root("leave")?;
+        git_init_fixture(&root)?;
         write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Github);
@@ -2036,6 +2106,7 @@ mod tests {
     #[test]
     fn plan_ci_force_refreshes_the_workflow_and_keeps_the_config() -> Result<(), String> {
         let root = temp_root("ci-force")?;
+        git_init_fixture(&root)?;
         write(
             &root.join(CONFIG_FILE_NAME),
             "[lsp]\nseam_diagnostics = false\n",
@@ -2068,6 +2139,7 @@ mod tests {
     #[test]
     fn plan_rejects_an_existing_workflow_without_force() -> Result<(), String> {
         let root = temp_root("wf-exists")?;
+        git_init_fixture(&root)?;
         let workflow = root.join(".github/workflows/ripr.yml");
         if let Some(parent) = workflow.parent() {
             std::fs::create_dir_all(parent)
@@ -2116,6 +2188,7 @@ mod tests {
     #[test]
     fn plan_rejects_a_workflow_parent_that_is_a_file() -> Result<(), String> {
         let root = temp_root("parent-file")?;
+        git_init_fixture(&root)?;
         write(&root.join(".github"), "not a directory\n")?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Github);
