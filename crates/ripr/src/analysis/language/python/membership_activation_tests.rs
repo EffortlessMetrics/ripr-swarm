@@ -479,7 +479,14 @@ fn a_walrus_or_while_body_rebinding_withholds_credit_even_when_a_row_passes_the_
     let walrus_old = "    if (val := normalize(val)) and val in (True, \"yes\", \"y\", \"on\"):";
     let looped = "def to_bool(val):\n    while val in (True, \"yes\", \"on\"):\n        val = normalize(val)\n    return False\n";
     let looped_old = "    while val in (True, \"yes\", \"y\", \"on\"):";
-    for (owner, old) in [(walrus, walrus_old), (looped, looped_old)] {
+    let chained =
+        "def to_bool(val):\n    val = normalize(val); return val in (True, \"yes\", \"on\")\n";
+    let chained_old = "    val = normalize(val); return val in (True, \"yes\", \"y\", \"on\")";
+    for (owner, old) in [
+        (walrus, walrus_old),
+        (looped, looped_old),
+        (chained, chained_old),
+    ] {
         let finding = finding_at(owner, 2, old, &truthy_cases(CASES.1))?;
         assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{owner}");
         assert_eq!(discriminators(&finding), vec!["val == \"y\"".to_string()]);

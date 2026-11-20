@@ -1873,8 +1873,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     surrounding whitespace); a non-string counts under a normalization only
     when each normalization line sits directly under
     `if isinstance(<subject>, str):`, and never under a transforming
-    subject. Any other rebinding of the parameter before the comparison, or
-    any rebinding inside a loop around it, places no input. Every altered
+    subject. Any other rebinding of the parameter before the comparison, a
+    walrus or `;`-separated statement binding it on the comparison line, any
+    rebinding inside a loop around it, and any rebinding after a `while`
+    comparison places no input. A plain `val = val in (...)` assigns after
+    the comparison reads the call input, so it keeps the input. Every altered
     member needs a hit, or the change reads `weakly_exposed` with the first
     unhit member named as the boundary discriminator (`val == "y"`),
     including when no strong row binds a literal, some strong call goes
@@ -1888,10 +1891,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     line changed, a non-literal or computed display (`TRUTHY + ("t",)`, a
     named constant), a subject that is not a parameter or one of the
     transforms above (an alias bound from the parameter, `self.attr`,
-    `cfg["key"]`), an owner source that does not parse, and a `match` arm
-    pattern edit
-    (`case "yes" | "y":` -> `case "yes":` still reads `exposed` with rows
-    that skip `"y"`; a separate gap).
+    `cfg["key"]`), and an owner source that does not parse. The membership
+    rule does not govern `match` arm patterns. See RIPR-SPEC-0260 and #15691
+    for match-arm evidence.
 
 ### Verdict ladder
 

@@ -706,10 +706,12 @@ fn subject_rebinding(
     let compare_is_loop = lines.get(compare_index)?.trim_start().starts_with("while ");
     let mut normalization: Option<Normalization> = None;
     for (index, line) in owner_binding_lines(owner_source, owner, subject) {
-        if loop_enclosed || (index == compare_index && line.contains(":=")) {
-            // Inside a loop, or a walrus on the comparison line itself, which
-            // binds before `in` reads the subject. A plain `val = val in (...)`
-            // assigns only after the comparison has read the call input.
+        if loop_enclosed || (index == compare_index && (line.contains(":=") || line.contains(';')))
+        {
+            // Inside a loop, or a walrus or `;`-separated earlier statement on
+            // the comparison line itself, which can bind before `in` reads the
+            // subject. A plain `val = val in (...)` assigns only after the
+            // comparison has read the call input.
             return Some(Rebinding::Unmodelled);
         }
         if index > compare_index && compare_is_loop {
