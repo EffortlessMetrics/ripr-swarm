@@ -251,6 +251,53 @@ impl Groups {
         self.close.get(&open).copied()
     }
 
+    /// Only claim a bare item in the very block that declares it. An
+    /// associated item in an enclosing impl is not a method-local binding.
+    fn local_variant_item(&self, masked: &str, at: usize, variant: &str) -> bool {
+        if self.variant_items.is_empty() {
+            return false;
+        }
+        let scope = self
+            .close
+            .iter()
+            .filter_map(|(&open, &close)| (open < at && at < close).then_some(open))
+            .max();
+        if !self
+            .variant_items
+            .iter()
+            .any(|&(owner, name)| owner == scope && name == variant)
+        {
+            return false;
+        }
+        // A completed let in this block can rebind a function name, even
+        // when the item declaration appears later. Skip nested blocks and
+        // look only at the binding pattern, never the initializer.
+        let bytes = masked.as_bytes();
+        let mut pos = scope.map_or(0, |open| open + 1);
+        while pos < at {
+            if let Some(close) = self.close_of(pos) {
+                pos = close + 1;
+            } else if (pos == 0 || !is_ident_byte(bytes[pos - 1]))
+                && let Some(end) = word_end(bytes, pos, "let")
+            {
+                if let Some(semi) = statement_semicolon(bytes, end, self)
+                    && semi < at
+                {
+                    let pattern_end = top_level_assignment(bytes, end, semi, self).unwrap_or(semi);
+                    if names_word(&masked[end..pattern_end], variant) {
+                        return false;
+                    }
+                    pos = semi + 1;
+                } else {
+                    pos = end;
+                }
+            } else {
+                pos += 1;
+            }
+        }
+        true
+    }
+
     fn inside_macro_input(&self, start: usize, end: usize) -> bool {
         self.macro_inputs
             .iter()
@@ -451,12 +498,7 @@ fn variant_head(masked: &str, start: usize, groups: &Groups) -> Option<(&'static
     }
     let name_end = ident_end(bytes, start);
     let variant = variant_name(&bytes[start..name_end])?;
-    if groups.variant_items.iter().any(|&(scope, name)| {
-        name == variant
-            && scope.is_none_or(|open| {
-                open < start && groups.close_of(open).is_some_and(|close| start < close)
-            })
-    }) {
+    if groups.local_variant_item(masked, start, variant) {
         return None;
     }
     let mut at = name_end;

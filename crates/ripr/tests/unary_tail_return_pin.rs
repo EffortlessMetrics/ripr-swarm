@@ -262,6 +262,7 @@ fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrev
         "let _ = vec![stringify!(f(5))];",
         "let Some(_x) = None::<i32> else { return; };\n        let _ = f(5);",
         "let Ok(_x) = Err::<i32, i32>(1) else { return; };\n        let _ = f(5);",
+        "fn Err(_: ()) -> Result<(), ()> { Ok(()) }\n        { let Err = Result::<(), ()>::Err; Err(())?;\n        let _ = f(5); }",
         "Err::<(), i32>(1)?;\n        let _ = f(5);",
         "None::<i32>?;\n        let _ = f(5);",
         // #14968 review: an assertion message is formatted only on failure,

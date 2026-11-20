@@ -246,6 +246,32 @@ fn spec_0231_rule_8_constant_diverging_statements_end_the_block() {
 }
 
 #[test]
+fn a_rebinding_or_an_associated_item_preserves_builtin_divergence() {
+    for (head, tail) in [
+        (
+            "fn t() -> Result<(), ()> { fn Err(_: ()) -> Result<(), ()> { Ok(()) } { let Err = Result::<(), ()>::Err; Err(())?;",
+            "} Ok(()) }",
+        ),
+        (
+            "fn t() -> Result<(), ()> { fn Err(_: ()) -> Result<(), ()> { Ok(()) } let Err = Result::<(), ()>::Err; Err(())?;",
+            "Ok(()) }",
+        ),
+        (
+            "fn t() { struct H; impl H { const None: Option<()> = Some(()); fn p() -> Option<()> { None?;",
+            "Some(()) } } }",
+        ),
+        (
+            "fn t() { struct H; impl H { fn Err(_: ()) -> Result<(), ()> { Ok(()) } fn p() -> Result<(), ()> { Err(())?;",
+            "Ok(()) } } }",
+        ),
+    ] {
+        let body = format!("{head}\ncheck(300).unwrap_err();\n{tail}");
+        assert_eq!(unreached(&body), vec![(2, Unreached::Unrefused)], "{head}");
+        assert_not_credited(&[&body], "check(300)", head);
+    }
+}
+
+#[test]
 fn spec_0231_rule_8_leaves_admission_governed_assertions_to_their_refusal() {
     // A strong `assert_eq!` (or strong `assert!`) in a literal-false block, an
     // uncalled closure or after a `return` stays: RIPR-SPEC-0197 refuses
