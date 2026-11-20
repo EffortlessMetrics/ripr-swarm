@@ -724,7 +724,7 @@ fn opaque_boundary_input(
             if !local_macro_calls(&test.body, name, owner) {
                 continue;
             }
-            let literals = extract_literals(&arguments);
+            let literals = extract_literals(arguments);
             if let Some(boundary) = probe_literals
                 .iter()
                 .find(|literal| literals.contains(literal))
