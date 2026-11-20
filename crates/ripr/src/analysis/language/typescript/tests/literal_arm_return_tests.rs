@@ -266,20 +266,42 @@ fn an_assertion_expecting_the_arms_old_result_keeps_exposed() -> Result<(), Stri
 /// value, a snapshot, and a structural matcher on the owner's result.
 #[test]
 fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
-    let each = "import { it, expect } from 'vitest';\nimport { dir } from '../src/dir';\n\nit.each([[2, 'two'], [3, 'other']])('dir(%i)', (n, want) => {\n  expect(dir(n)).toBe(want);\n});\n";
-    let baseline = finding_at(
-        "arm-each-baseline",
+    // An it.each table row expecting the arm's old result pins it.
+    let each = |rows: &str| {
+        format!(
+            "import {{ it, expect }} from 'vitest';\nimport {{ dir }} from '../src/dir';\n\nit.each([{rows}])('dir(%i)', (n, want) => {{\n  expect(dir(n)).toBe(want);\n}});\n"
+        )
+    };
+    let pinned = finding_at(
+        "arm-each-pinned",
         DIR,
         4,
         "      return 'one';",
         "      return 'uno';",
-        each,
+        &each("[1, 'one'], [2, 'two']"),
     )?;
     assert_eq!(
-        baseline.class,
+        pinned.class,
         ExposureClass::Exposed,
-        "it.each: {:?}",
-        baseline.missing
+        "it.each pinned: {:?}",
+        pinned.missing
+    );
+    // Rows expecting only other arms' results leave it unpinned.
+    let unpinned = finding_at(
+        "arm-each-unpinned",
+        DIR,
+        4,
+        "      return 'one';",
+        "      return 'uno';",
+        &each("[2, 'two'], [3, 'other']"),
+    )?;
+    assert!(
+        unpinned
+            .missing
+            .iter()
+            .any(|line| line.contains("expects another arm's result")),
+        "it.each unpinned: {:?}",
+        unpinned.missing
     );
     let snapshot = finding_at(
         "arm-snapshot",
