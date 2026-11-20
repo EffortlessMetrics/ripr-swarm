@@ -325,13 +325,13 @@ type SelectedShape<'a> = (ParserProbeShape<'a>, Option<(u8, bool, usize)>);
 /// F1: an edit on an `if`'s condition line that misses the condition and
 /// lies inside a branch block (`if price > 100 { 10 } else { 0 }` to
 /// `{ 15 }`) did not change the predicate, so the predicate's boundary is not
-/// the discriminator for it: a `price == 100` test passes on both sides. The
-/// unchanged predicate shape leaves the line. When the edit is inside a value
-/// the owner returns, that value is the line's `return_value` shape, as it is
-/// when it sits on its own line (#14385). Otherwise another selected shape
-/// that spans the edit (`return 15`) stands for it, or, with none, the
-/// changed value or block is a `static_unknown` shape, so the change stays
-/// visible without an actionable boundary claim.
+/// the discriminator for it: a `price == 100` test passes on both sides.
+/// When the edit is inside a value the owner returns, the unchanged
+/// predicate shape leaves the line and that value is the line's
+/// `return_value` shape, as it is when it sits on its own line (#14385).
+/// Otherwise another selected shape that spans the edit (`return 15`) stands
+/// for it; with none, the line keeps its predicate shape (a non-returned value
+/// has no shape of its own to take its place).
 fn retarget_inline_branch_value_edit<'a>(
     source: &'a str,
     line: usize,
@@ -372,42 +372,43 @@ fn retarget_inline_branch_value_edit<'a>(
     ) else {
         return;
     };
-    let shape_at = |family: ProbeFamily, range: Range<usize>| -> Option<SelectedShape<'a>> {
-        Some((
+    let spans_edit = |shape: &ParserProbeShape<'_>| {
+        shape.start_byte <= edit.start && edit.end <= shape.start_byte + shape.text.len()
+    };
+    let Some((value, true)) = branch.value else {
+        // Not a returned value: the predicate leaves only when another shape
+        // on the line (`return 15`) spans the edit and stands for it. With
+        // none, the line keeps today's reading rather than an unmodeled one.
+        if selected
+            .iter()
+            .enumerate()
+            .any(|(at, (shape, _))| at != position && spans_edit(shape))
+        {
+            selected.remove(position);
+        }
+        return;
+    };
+    let Some(value_text) = source.get(value.clone()) else {
+        return;
+    };
+    selected.remove(position);
+    // A returned-value shape elsewhere on the line is not this edit's.
+    selected.retain(|(shape, _)| shape.family != ProbeFamily::ReturnValue || spans_edit(shape));
+    if !selected
+        .iter()
+        .any(|(shape, _)| shape.family == ProbeFamily::ReturnValue)
+    {
+        selected.push((
             ParserProbeShape {
-                family,
+                family: ProbeFamily::ReturnValue,
                 start_line: line,
-                start_byte: range.start,
-                text: source.get(range)?.trim(),
+                start_byte: value.start,
+                text: value_text,
                 standalone_call: true,
                 unsafe_boundary: false,
             },
             None,
-        ))
-    };
-    let spans_edit = |shape: &ParserProbeShape<'_>| {
-        shape.start_byte <= edit.start && edit.end <= shape.start_byte + shape.text.len()
-    };
-    let replacement = match &branch.value {
-        Some((value, true)) => shape_at(ProbeFamily::ReturnValue, value.clone()),
-        Some((value, false)) => shape_at(ProbeFamily::StaticUnknown, value.clone()),
-        None => shape_at(ProbeFamily::StaticUnknown, branch.block.clone()),
-    };
-    let Some(replacement) = replacement else {
-        return;
-    };
-    selected.remove(position);
-    if replacement.0.family == ProbeFamily::ReturnValue {
-        // A returned-value shape elsewhere on the line is not this edit's.
-        selected.retain(|(shape, _)| shape.family != ProbeFamily::ReturnValue || spans_edit(shape));
-        if !selected
-            .iter()
-            .any(|(shape, _)| shape.family == ProbeFamily::ReturnValue)
-        {
-            selected.push(replacement);
-        }
-    } else if !selected.iter().any(|(shape, _)| spans_edit(shape)) {
-        selected.push(replacement);
+        ));
     }
 }
 

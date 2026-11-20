@@ -97,7 +97,9 @@ fn an_own_line_branch_value_edit_keeps_its_return_value_probe() -> Result<(), St
 }
 
 #[test]
-fn a_non_returned_inline_branch_value_edit_claims_no_predicate_boundary() -> Result<(), String> {
+fn a_non_returned_inline_branch_value_edit_keeps_its_prior_probe() -> Result<(), String> {
+    // A value bound by `let` has no shape of its own to stand for the edit, so
+    // the line keeps the reading it had rather than a new, unmodeled one.
     let rows = rows(
         &owner("    let cut = if price > 100 { 10 } else { 0 };\n    log(cut);\n    0\n"),
         &owner("    let cut = if price > 100 { 15 } else { 0 };\n    log(cut);\n    0\n"),
@@ -105,7 +107,7 @@ fn a_non_returned_inline_branch_value_edit_claims_no_predicate_boundary() -> Res
     assert!(!rows.is_empty(), "the changed line keeps a probe");
     assert!(
         rows.iter()
-            .all(|(family, _, _)| *family != ProbeFamily::Predicate),
+            .all(|(family, _, _)| *family != ProbeFamily::ReturnValue),
         "{rows:?}"
     );
     Ok(())

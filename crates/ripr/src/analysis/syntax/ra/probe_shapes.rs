@@ -187,9 +187,7 @@ fn returnable_branch_value(value: &ast::Expr, value_text: &str) -> bool {
 /// `if price > 100 { 10 } else { 0 }` to `{ 15 }`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InlineBranchEdit {
-    /// Byte range of the branch block holding the edit.
-    pub(crate) block: std::ops::Range<usize>,
-    /// The block's tail value when it holds the edit and shares the
+    /// The branch block's tail value when it holds the edit and shares the
     /// condition's line, with whether the owner returns it.
     pub(crate) value: Option<(std::ops::Range<usize>, bool)>,
 }
@@ -241,8 +239,6 @@ pub(crate) fn inline_branch_edit(
     let block = blocks
         .into_iter()
         .find(|block| covers(block.syntax().text_range()))?;
-    let block_range = block.syntax().text_range();
-    let block_range = usize::from(block_range.start())..usize::from(block_range.end());
     let value = block
         .tail_expr()
         .filter(|value| covers(value.syntax().text_range()))
@@ -260,10 +256,7 @@ pub(crate) fn inline_branch_edit(
                 && if_is_owner_tail(&if_expr);
             Some((range, returned))
         });
-    Some(InlineBranchEdit {
-        block: block_range,
-        value,
-    })
+    Some(InlineBranchEdit { value })
 }
 
 /// Whether `if_expr` is what its owner `fn` returns as its body's tail,

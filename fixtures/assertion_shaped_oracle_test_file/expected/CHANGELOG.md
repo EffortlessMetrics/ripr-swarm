@@ -565,15 +565,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — assertion_shaped_oracle_test_file (39)
-
-Reason:
-RIPR-SPEC-0001: an edit inside a non-returned inline branch value under an unchanged predicate reads static_unknown on the changed value, not an infection_unknown predicate (F1); owner_shape reframing unchanged
-
-Command:
-`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
