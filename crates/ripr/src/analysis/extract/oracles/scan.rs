@@ -6160,6 +6160,30 @@ fn price_boundary_discriminator() {
     }
 
     #[test]
+    fn raw_literal_braces_only_read_in_format_arguments() -> Result<(), String> {
+        for (operand, reads) in [
+            (r##"r#"{"expected":1}"#"##, false),
+            (r#"r"{expected}""#, false),
+            (r#"format!("{expected}")"#, true),
+            (r#"format!("{{expected}}")"#, false),
+            (r#"format!(r"{expected}")"#, true),
+            (r#"format!("{}", r"{expected}")"#, false),
+        ] {
+            let body = format!(
+                "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
+            );
+            let fact = only_fact(&body)?;
+            let wanted = if reads {
+                (OracleKind::Unknown, OracleStrength::Unknown)
+            } else {
+                (OracleKind::ExactValue, OracleStrength::Strong)
+            };
+            assert_eq!((fact.kind, fact.strength), wanted, "{operand}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_placeholder_read_through_a_format_interpolation_still_lowers() -> Result<(), String> {
         // #14810 round 3: `format!("{expected}")` reads the placeholder, so
         // masking the literal must not hide it.
