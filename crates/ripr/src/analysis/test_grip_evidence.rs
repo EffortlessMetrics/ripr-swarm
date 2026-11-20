@@ -5390,6 +5390,7 @@ fn discriminate_evidence(
     if state == StageState::Yes
         && boundary_activated
         && seam.kind() == SeamKind::PredicateBoundary
+        && comparison_operands(seam.expression()).is_some()
         && let Some(owner) = owner_fn
         && related
             .iter()

@@ -5,6 +5,11 @@ use super::*;
 #[test]
 fn only_an_exact_boundary_result_closes_the_predicate_gap() -> Result<(), String> {
     let source = "pub fn discount(qty: u32) -> u32 { if qty >= 10 { 5 } else { 0 } }";
+    let root = authority_fixture_root("predicate-boundary-pairing")?;
+    let owner_file = PathBuf::from("src/lib.rs");
+    let test_file = PathBuf::from("tests/pricing.rs");
+    fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    fs::write(root.join(&owner_file), source).map_err(|error| error.to_string())?;
     for (body, expected) in [
         ("discount(10);", SeamGripClass::WeaklyGripped),
         (
@@ -16,7 +21,7 @@ fn only_an_exact_boundary_result_closes_the_predicate_gap() -> Result<(), String
             SeamGripClass::StronglyGripped,
         ),
         (
-            "check(prices::discount(10), 5, discount(1));",
+            "check(fixture::discount(10), 5, discount(1));",
             SeamGripClass::StronglyGripped,
         ),
         (
@@ -44,16 +49,13 @@ fn only_an_exact_boundary_result_closes_the_predicate_gap() -> Result<(), String
         ),
     ] {
         let tests = format!(
-            "use prices::discount;\nfn check(got: u32, want: u32, _unused: u32) {{\n    assert_eq!(got, want);\n}}\n#[test]\nfn low() {{ assert_eq!(discount(1), 0); }}\n\
+            "use fixture::discount;\nfn check(got: u32, want: u32, _unused: u32) {{\n    assert_eq!(got, want);\n}}\n#[test]\nfn low() {{ assert_eq!(discount(1), 0); }}\n\
              #[test]\nfn boundary() {{\n{body}\n}}\n"
         );
-        let file = PathBuf::from("src/lib.rs");
-        let mut index = index_from_files(&[
-            (file.clone(), source),
-            (PathBuf::from("tests/pricing.rs"), &tests),
-        ])?;
-        index.package_names = ["prices".to_string()].into_iter().collect();
-        let seams = inventory_seams_from_index(&[file], &index);
+        fs::write(root.join(&test_file), tests).map_err(|error| error.to_string())?;
+        // The full index transfers the test-local helper's assertion to its caller.
+        let index = build_index(&root, &[owner_file.clone(), test_file.clone()])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&owner_file), &index);
         let seam = seams
             .iter()
             .find(|seam| {
