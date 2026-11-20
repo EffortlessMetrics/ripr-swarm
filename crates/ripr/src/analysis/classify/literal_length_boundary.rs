@@ -1,4 +1,4 @@
-//! One literal-owned byte-length operand, not general expression evaluation.
+//! Closed string length operands over literal call rows.
 //! Typed rows, rather than rendered ValueFact text, authorize both infection
 //! and the oracle paired to the exact call occurrence.
 
@@ -30,7 +30,32 @@ pub(in crate::analysis) struct LiteralLengthBoundary {
     expression: String,
     predicate_line: usize,
     local: String,
+    measure: LengthMeasure,
     rows: Vec<LiteralLengthRow>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LengthMeasure {
+    StringBytes,
+    FirstCharBytes,
+}
+
+impl LengthMeasure {
+    fn value(self, input: &str) -> usize {
+        match self {
+            Self::StringBytes => input.len(),
+            Self::FirstCharBytes => input.chars().next().map_or(0, char::len_utf8),
+        }
+    }
+
+    fn evidence(self, length: usize) -> String {
+        match self {
+            Self::StringBytes => format!("has byte length {length} via as_bytes().len()"),
+            Self::FirstCharBytes => {
+                format!("has leading character width {length} via first char len_utf8()")
+            }
+        }
+    }
 }
 
 struct LiteralLengthRow {
@@ -64,7 +89,10 @@ impl LiteralLengthBoundary {
                 StageEvidence::new(
                     StageState::Yes,
                     Confidence::Medium,
-                    "A literal-owned call row reaches the string byte-length boundary",
+                    match self.measure {
+                        LengthMeasure::StringBytes => "A literal-owned call row reaches the string byte-length boundary",
+                        LengthMeasure::FirstCharBytes => "Literal calls exercise both sides of the leading character width equality",
+                    },
                 )
             })
     }
@@ -126,8 +154,10 @@ pub(in crate::analysis) fn refine_literal_length_boundary(
             file: Some(row.test_file.clone()),
             line: row.call_line,
             text: format!(
-                "{} | immutable string literal {:?} has byte length {} via as_bytes().len()",
-                row.call_text, row.input, row.byte_length
+                "{} | immutable string literal {:?} {}",
+                row.call_text,
+                row.input,
+                boundary.measure.evidence(row.byte_length)
             ),
             value: format!("{} = {}", boundary.local, row.byte_length),
             // A derived local is not an owner-call input or an equality
@@ -151,7 +181,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
             .probe
             .after
             .as_deref()
-            .is_none_or(|after| !compact(after).ends_with(".as_bytes().len()"))
+            .is_none_or(|after| !after.contains("as_bytes") && !after.contains("len_utf8"))
     {
         return None;
     }
@@ -201,14 +231,48 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
     if local == text_name || local == width_name {
         return None;
     }
-    let initializer = binding.initializer()?;
-    if compact(&initializer.syntax().text().to_string()) != format!("{text_name}.as_bytes().len()")
+    let initializer = binding.initializer()?.syntax().text().to_string();
+    let before = context.probe.before.as_deref()?;
+    let after = context.probe.after.as_deref()?;
+    let (measure, comparison) = if compact(&initializer) == format!("{text_name}.as_bytes().len()")
+        && compact(after) == compact(&initializer)
+        && compact(before) == format!("{text_name}.len()")
     {
+        (LengthMeasure::StringBytes, "<=")
+    } else if initializer == after
+        && leading_width_parameter(before, &text_name)
+            .zip(leading_width_parameter(after, &text_name))
+            .is_some_and(|(old, new)| old != new)
+    {
+        // `next` is a trait method. Restrict its scope to a file-level free
+        // function with no file-level trait imports. owner_reference_count
+        // below already refuses local traits, impls, macros and aliases.
+        let source = &context.index.files().get(&owner.file)?.source;
+        let file = parse_clean_source_file(source)?.tree();
+        if file
+            .syntax()
+            .children()
+            .any(|node| ast::Use::can_cast(node.kind()))
+            || !file
+                .syntax()
+                .children()
+                .filter_map(ast::Fn::cast)
+                .any(|item| {
+                    item.name()
+                        .is_some_and(|name| name.text() == owner.name.as_str())
+                        && item.syntax().text().to_string().trim() == owner.body.trim()
+                })
+        {
+            return None;
+        }
+        (LengthMeasure::FirstCharBytes, "==")
+    } else {
         return None;
-    }
+    };
+    let predicate = format!("{local}{comparison}{width_name}");
     let tail = statements.tail_expr()?;
-    if compact(&tail.syntax().text().to_string()) != format!("{local}<={width_name}")
-        || compact(&context.probe.expression) != format!("{local}<={width_name}")
+    if compact(&tail.syntax().text().to_string()) != predicate
+        || compact(&context.probe.expression) != predicate
         || context.probe.location.line
             != owner.start_line
                 + owner
@@ -217,14 +281,6 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
                     .bytes()
                     .filter(|b| *b == b'\n')
                     .count()
-        || context.probe.after.as_deref().map(compact)
-            != Some(format!("{text_name}.as_bytes().len()"))
-        // Only the `len()` spelling is a known no-op rewrite. Any other old
-        // initializer (`chars().count()`, a trimmed length) may have computed
-        // a different value, so the edit could change behavior and the rows
-        // were never evaluated against it.
-        || context.probe.before.as_deref().map(compact)
-            != Some(format!("{text_name}.len()"))
     {
         return None;
     }
@@ -261,21 +317,48 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
                 return None;
             }
             let (input, width) = literal_arguments(&site.text)?;
-            rows.push(LiteralLengthRow {
+            let row = LiteralLengthRow {
                 test_file: test.file.clone(),
                 test_name: test.name.clone(),
                 test_start: test.start_line,
                 call_range: range,
                 call_line: site.line,
                 call_text: site.text,
-                byte_length: input.len(),
+                byte_length: measure.value(&input),
                 input,
                 width,
-            });
+            };
+            if measure == LengthMeasure::FirstCharBytes {
+                let file = context.index.files().get(&test.file)?;
+                let negation = if row.byte_length == row.width {
+                    ""
+                } else {
+                    "!"
+                };
+                let expected = format!("assert!({negation}{})", row.call_text);
+                if !test.assertions.iter().any(|assertion| {
+                    assertion.text.trim().trim_end_matches(';') == expected
+                        && row_is_asserted(&row, assertion, &file.source)
+                }) {
+                    return None;
+                }
+            }
+            rows.push(row);
             if rows.len() > MAX_ROWS {
                 return None;
             }
         }
+    }
+    if measure == LengthMeasure::FirstCharBytes
+        && (!rows
+            .iter()
+            .any(|row| row.input.is_empty() && row.width == 0)
+            || !rows
+                .iter()
+                .any(|row| row.byte_length > 1 && row.byte_length == row.width)
+            || !rows.iter().any(|row| row.byte_length != row.width))
+    {
+        return None;
     }
     let references = context
         .index
@@ -310,8 +393,25 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
         expression: context.probe.expression.clone(),
         predicate_line: context.probe.location.line,
         local,
+        measure,
         rows,
     })
+}
+
+/// Only the closure parameter spelling may vary between the two initializers.
+/// Keep token boundaries intact: `|mut c| mutc.len_utf8()` refers to another name.
+fn leading_width_parameter<'a>(initializer: &'a str, text: &str) -> Option<&'a str> {
+    let closure = initializer
+        .strip_prefix(text)?
+        .strip_prefix(".chars().next().map_or(0,")?
+        .trim_start()
+        .strip_prefix('|')?;
+    let (name, body) = closure.split_once('|')?;
+    let name = name.trim();
+    (name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && body.trim() == format!("{name}.len_utf8())"))
+    .then_some(name)
 }
 
 fn plain_parameter(parameter: &ast::Param, ty: &str) -> Option<String> {

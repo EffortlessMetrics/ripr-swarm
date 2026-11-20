@@ -216,6 +216,15 @@ exercised boundary from a missing one.
   The Rust canonical gap discriminator reads the same single comparison
   (#14719), so `a && s.len() > 1` mints `s.len==1`; every other predicate
   shape keeps the whole-line discriminator it minted before.
+- For a file-level function on an immutable `&str` and `usize`, a renamed
+  closure parameter in `text.chars().next().map_or(0, |c| c.len_utf8())`
+  preserves the byte width of the first Unicode scalar (zero for empty input).
+  The owner must bind only this value and return its equality with the width
+  parameter. Every admitted call must be a direct assertion on string and
+  decimal literals. The assertions must pin zero on empty input, a multibyte
+  leading character's width, and an unequal row. This case
+  uses the closed literal-row and owner checks below. A different closure,
+  default, receiver, old initializer or unreadable row keeps the refusal.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,
