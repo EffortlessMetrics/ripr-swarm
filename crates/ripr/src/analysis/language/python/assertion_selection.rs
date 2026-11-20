@@ -133,13 +133,13 @@ impl PythonAssertionFocus {
         // message-only logging edit. A relational read (`"x" in msgs` through a
         // captured-log alias) stays applicable: it is weak, so it never credits
         // on its own, and the caplog evaluation decides it.
-        // Only a pin on a call's result is withheld: an assertion that also
-        // reads `caplog` (`f(5) is False and "x" in caplog.text`) or compares a
-        // plain name (a captured-log alias, `msgs == [...]`) stays applicable
-        // for the caplog evaluation and its limits.
+        // An assertion that also reads `caplog` (`f(5) is False and "x" in
+        // caplog.text`) stays applicable for the caplog evaluation and its
+        // limits. A pin on a bound result (`r = f(5)`, `assert r is False`) is
+        // withheld like a direct one; so is an exact compare of a captured-log
+        // alias (`msgs == [...]`), which the evaluation does not read.
         if self.message_only_log_call
             && !assertion.text.contains("caplog")
-            && assertion.gate_text.contains('(')
             && matches!(
                 assertion.oracle_shape,
                 PythonOracleShape::ExactAssertion

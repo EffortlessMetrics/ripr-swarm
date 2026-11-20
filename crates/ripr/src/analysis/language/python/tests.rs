@@ -11092,6 +11092,7 @@ fn caplog_an_exact_return_pin_does_not_credit_a_message_only_log_edit() -> Resul
     for pin in [
         "assert check_balance(5) is False",
         "assert check_balance(5) == False",
+        "result = check_balance(5)\n        assert result is False",
     ] {
         let kept = format!(
             "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {pin}\n    assert \"deprecated warning\" not in caplog.text\n"
