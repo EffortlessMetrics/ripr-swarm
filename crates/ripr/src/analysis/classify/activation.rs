@@ -2460,6 +2460,9 @@ fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line:
     } else {
         lines.get(probe_index).copied().unwrap_or("")
     };
+    // In a plain let initializer the binding is outside the RHS. Its
+    // presence alone cannot rebind a parameter read by that initializer.
+    let probe_text = simple_let_initializer(probe_text.trim()).unwrap_or(probe_text);
     if !tokens(probe_text).is_empty()
         && ["let ", "|", "=>", " in ", "match "]
             .iter()
@@ -2932,9 +2935,9 @@ pub(in crate::analysis) struct GuardedComparison {
     comparison: String,
     /// `(parameter, value it must hold)`; `!express` requires `false`.
     guards: Vec<(String, bool)>,
-    /// Whether a guard parameter may be rebound before the changed line, so
-    /// a test's argument is not the value the guard holds there.
-    rebound_guard: bool,
+    /// A rebound parameter, unsupported conjunct, or changed guard makes
+    /// the guarded boundary unreadable from the test arguments.
+    unreadable_guard: bool,
     /// The old comparison when the edit changed only the comparison; `None`
     /// for a pure insertion.
     before: Option<String>,
@@ -2978,7 +2981,7 @@ impl GuardedComparison {
         helper_chain: Option<&super::helper_transfer::HelperChain>,
         index: &crate::analysis::rust_index::RustIndex,
     ) -> GuardedReading {
-        if self.rebound_guard {
+        if self.unreadable_guard {
             return GuardedReading::Unread;
         }
         let Some((parameter, boundary, boundary_value)) =
@@ -3120,7 +3123,7 @@ impl GuardedComparison {
         parameters: &[String],
         arguments: &[Vec<String>],
     ) -> bool {
-        !self.rebound_guard
+        !self.unreadable_guard
             && self.guards.iter().all(|(guard, required)| {
                 parameters
                     .iter()
@@ -3144,7 +3147,7 @@ impl GuardedComparison {
         index: &crate::analysis::rust_index::RustIndex,
         arguments: &[Vec<String>],
     ) -> Option<bool> {
-        if self.rebound_guard {
+        if self.unreadable_guard {
             return None;
         }
         let (parameter, _, value) = self.resolved_boundary(probe, owner, index)?;
@@ -3169,14 +3172,9 @@ impl GuardedComparison {
     }
 }
 
-/// The comparison and guards of a changed `comparison && guard && ...`
-/// predicate. `None` for anything else: no top-level `&&`, an `||` anywhere
-/// at top level, more or fewer than one comparison, a guard that is not a
-/// bare owner parameter (optionally negated), or an edit that touches the
-/// guards (`a >= T` to `a >= T && !x`, or a flipped or added guard): rows
-/// that hold the new guards may not see that change. A guard the owner may
-/// rebind is recognized but marked, so the shape is declined rather than
-/// read without its guards.
+/// Read the single comparison in a conjunction. Unknown conjuncts and
+/// potentially rebound parameters keep the guard unreadable. The old
+/// comparison is admissible only for a guard-preserving edit.
 pub(in crate::analysis) fn guarded_comparison(
     probe: &Probe,
     owner: &FunctionSummary,
@@ -3189,7 +3187,7 @@ pub(in crate::analysis) fn guarded_comparison(
         ),
         None => text.to_string(),
     };
-    let (comparison, guards, rebound_guard) = split_guarded(
+    let (comparison, guards, mut unreadable_guard) = split_guarded(
         &with_continuation(&probe.expression),
         owner,
         probe.location.line,
@@ -3197,7 +3195,7 @@ pub(in crate::analysis) fn guarded_comparison(
     let before = match probe.before.as_deref() {
         None => None,
         Some(before) => {
-            let Some((old_comparison, old_guards, _)) =
+            let Some((old_comparison, old_guards, old_unreadable)) =
                 split_guarded(&with_continuation(before), owner, probe.location.line)
             else {
                 // A wrapped guard the old line cannot be read with (`if a > T {`
@@ -3208,7 +3206,7 @@ pub(in crate::analysis) fn guarded_comparison(
                     return Some(GuardedComparison {
                         comparison,
                         guards,
-                        rebound_guard: true,
+                        unreadable_guard: true,
                         before: None,
                     });
                 }
@@ -3219,7 +3217,8 @@ pub(in crate::analysis) fn guarded_comparison(
                 guards.sort();
                 guards
             };
-            if sorted(&old_guards) != sorted(&guards) {
+            unreadable_guard |= old_unreadable;
+            if !unreadable_guard && sorted(&old_guards) != sorted(&guards) {
                 return None;
             }
             Some(old_comparison)
@@ -3228,7 +3227,7 @@ pub(in crate::analysis) fn guarded_comparison(
     Some(GuardedComparison {
         comparison,
         guards,
-        rebound_guard,
+        unreadable_guard,
         before,
     })
 }
@@ -3247,18 +3246,11 @@ fn comparison_operator(comparison: &str) -> Option<&'static str> {
         .find(|operator| comparison.contains(operator))
 }
 
-/// The comparison, each guard with the value it must hold, and whether a
-/// guard may be rebound before the changed line.
+/// Comparison, guard requirements, and whether any requirement is unreadable.
 type GuardedSplit = (String, Vec<(String, bool)>, bool);
 
-/// The bare bool parameter guards of the predicate on one source line
-/// (`if order_cents >= FREE_OVER_CENTS && !express {`) whose comparison is
-/// `comparison`, each with the value it must hold, and whether a guard may
-/// be rebound before that line. `None` when the line is not exactly one
-/// comparison joined by top-level `&&` to bare owner parameters, or its
-/// comparison is a different one. The repo-wide seam view reads the same
-/// guards the diff reading does (#13037), so a row that misses a guard
-/// never lends the comparison a boundary row there either.
+/// Repo exposure uses the same conjunction as the diff reader. A seam
+/// for another comparison on this line cannot borrow these requirements.
 pub(in crate::analysis) fn predicate_line_bool_guards(
     line_text: &str,
     comparison: &str,
@@ -3289,13 +3281,8 @@ pub(in crate::analysis) fn predicate_line_bool_guards(
     (squash(&found) == squash(comparison)).then_some((guards, rebound))
 }
 
-/// The `&& guard` lines rustfmt wraps under a condition (`if a >= T` then
-/// `    && !express` then `{`), joined, so `check` and the repo-wide seam view
-/// read a wrapped guard as they read a one-line one (#14873). The head may
-/// already carry guards (`if a >= T && member`); its continuation adds the
-/// rest. Only lines that each open with `&&` count, up to the opening
-/// brace, with comments masked; a `||` or any other continuation is not
-/// read, which leaves the comparison as its one-line spelling reads.
+/// Read a continued conjunction through its conditional opening brace or
+/// statement terminator. Mask comments before joining the source lines.
 fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<String> {
     let offset = line.checked_sub(owner.start_line)?;
     // Comments masked to spaces, so `&& !express // note` reads its guard
@@ -3306,35 +3293,40 @@ fn wrapped_guard_continuation(owner: &FunctionSummary, line: usize) -> Option<St
     }
     let mut lines = masked.lines().skip(offset);
     let head = lines.next()?.trim();
-    let opens_condition = ["if ", "} else if ", "else if ", "while "]
+    let statement = simple_let_initializer(head).is_some() || head.starts_with("return ");
+    let condition = ["if ", "} else if ", "else if ", "while "]
         .iter()
         .any(|prefix| head.starts_with(prefix));
-    if !opens_condition || head.ends_with('{') || head.contains("||") {
+    let terminator = if statement { ';' } else { '{' };
+    if !(condition || statement) || head.contains(terminator) {
         return None;
     }
-    let mut guards = Vec::new();
-    for next in lines {
-        let next = next.trim();
-        if next == "{" {
-            break;
+    let mut continuation = Vec::new();
+    for next in lines.map(str::trim).filter(|text| !text.is_empty()) {
+        let (part, ended) = next
+            .split_once(terminator)
+            .map_or((next, false), |(part, _)| (part, true));
+        if !part.trim().is_empty() {
+            continuation.push(part.trim());
         }
-        let rest = next.strip_prefix("&&")?;
-        let (rest, done) = match rest.trim_end().strip_suffix('{') {
-            Some(rest) => (rest, true),
-            None => (rest, false),
-        };
-        if rest.contains("||") {
-            return None;
-        }
-        guards.push(format!("&& {}", rest.trim()));
-        if done {
-            break;
+        if ended {
+            let rest = continuation.join(" ");
+            return (!rest.is_empty() && (head.ends_with("&&") || rest.starts_with("&&")))
+                .then_some(rest);
         }
     }
-    (!guards.is_empty()).then(|| guards.join(" "))
+    None
+}
+
+fn simple_let_initializer(statement: &str) -> Option<&str> {
+    crate::analysis::language::changed_let_binding(statement).map(|(_, initializer)| initializer)
 }
 
 fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Option<GuardedSplit> {
+    let expression = expression.trim();
+    let expression = simple_let_initializer(expression)
+        .or_else(|| expression.strip_prefix("return "))
+        .unwrap_or(expression);
     let expression = clean_operand(expression);
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&expression);
     if masked.len() != expression.len() {
@@ -3367,7 +3359,8 @@ fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Opti
     let parameters = function_parameters(owner);
     let mut comparison = None;
     let mut guards = Vec::new();
-    let mut rebound = false;
+    let mut unreadable = false;
+
     for part in cuts {
         let (negated, name) = match part.strip_prefix('!') {
             Some(rest) => (true, rest.trim()),
@@ -3379,17 +3372,24 @@ fn split_guarded(expression: &str, owner: &FunctionSummary, line: usize) -> Opti
             .iter()
             .any(|parameter| parameter.strip_prefix("mut ").map(str::trim) == Some(name));
         if mutable || parameters.iter().any(|parameter| parameter == name) {
-            rebound |= mutable || parameter_may_be_rebound(owner, name, line);
+            unreadable |= mutable || parameter_may_be_rebound(owner, name, line);
             guards.push((name.to_string(), !negated));
             continue;
         }
-        if comparison.is_some() || comparison_operands(part).is_none() {
+        if comparison_operands(part).is_none() {
+            // This conjunct must hold as well. Keep its spelling for the
+            // reason, but never use a test argument as its value.
+            guards.push((name.to_string(), !negated));
+            unreadable = true;
+            continue;
+        }
+        if comparison.is_some() {
             return None;
         }
         comparison = Some(part.to_string());
     }
     let comparison = comparison?;
-    (!guards.is_empty()).then_some((comparison, guards, rebound))
+    (!guards.is_empty()).then_some((comparison, guards, unreadable))
 }
 
 #[allow(

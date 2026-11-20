@@ -431,6 +431,8 @@ tests = [
   "crates/ripr/tests/guarded_boundary_repo_seam.rs::a_mut_guard_is_not_read_from_the_test_argument",
   "crates/ripr/tests/guarded_boundary_repo_seam.rs::guard_and_boundary_must_hold_on_the_same_call",
   "crates/ripr/tests/guarded_boundary_repo_seam.rs::a_call_naming_the_boundary_constant_holds_the_boundary",
+  "crates/ripr/tests/guarded_boundary_repo_seam.rs::statement_predicates_require_a_boundary_row_that_holds_every_guard",
+  "crates/ripr/tests/guarded_boundary_repo_seam.rs::a_constant_on_the_left_is_held_by_a_guard_holding_boundary_call",
 ]
 fixtures = [
   "crates/ripr/tests/cli_smoke/sample_output.rs",
