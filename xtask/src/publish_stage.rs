@@ -81,6 +81,11 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
         &[
             "clone",
             "--quiet",
+            // Stage the committed bytes on every host: a global
+            // `core.autocrlf=true` would otherwise rewrite the checkout to
+            // CRLF and `verify_stage` compares against `git show` (LF).
+            "-c",
+            "core.autocrlf=false",
             "--shared",
             "--no-checkout",
             workspace_arg.as_str(),
@@ -345,6 +350,7 @@ mod tests {
             fs::write(&file, body).map_err(io)?;
         }
         git_output(&workspace, &["init", "-q"])?;
+        git_output(&workspace, &["config", "core.autocrlf", "false"])?;
         for (path, _) in files {
             git_output(&workspace, &["add", "--", path])?;
         }

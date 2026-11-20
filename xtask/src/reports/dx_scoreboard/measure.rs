@@ -1026,6 +1026,10 @@ fn isolated_checkout(
         &[
             "clone",
             "--quiet",
+            // The pin is verified byte-for-byte; a host `core.autocrlf=true`
+            // would materialize CRLF working files.
+            "-c",
+            "core.autocrlf=false",
             "--no-checkout",
             "--dissociate",
             "--",
