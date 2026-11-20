@@ -12726,6 +12726,7 @@ marker = "libtest_mimic::Trial"
             root,
             &RiprConfig::default(),
             None,
+            None,
             &mut failures,
         )?;
         Ok((report, failures))
