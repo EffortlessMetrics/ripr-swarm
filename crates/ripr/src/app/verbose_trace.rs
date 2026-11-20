@@ -52,7 +52,13 @@ fn verdict_line(finding: &Finding) -> String {
         .join(" ");
     let mut line = format!(
         "ripr: verdict {}:{} {} [{states}]",
-        crate::analysis::stable_source_path_text(&finding.probe.location.file),
+        // Identity-preserving encoding first (a Unix `\` stays `%5C`), then
+        // the shared human display rule, which folds a Windows verbatim
+        // prefix from a canonicalized root (`//?/C:/..` renders `C:/..`).
+        crate::output::path::human_path_text(
+            &crate::analysis::stable_source_path_text(&finding.probe.location.file),
+            cfg!(windows),
+        ),
         finding.probe.location.line,
         finding.class.as_str(),
     );
@@ -144,6 +150,16 @@ mod tests {
         let line = verdict_line_for(".\\src/lib.rs");
         assert!(line.starts_with("ripr: verdict ./src/lib.rs:7 "), "{line}");
         assert!(!line.contains('\\'), "{line}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_verdict_line_folds_a_windows_verbatim_root_prefix() {
+        let line = verdict_line_for("\\\\?\\C:\\repo\\src\\lib.rs");
+        assert!(
+            line.starts_with("ripr: verdict C:/repo/src/lib.rs:7 "),
+            "{line}"
+        );
     }
 
     // On Unix `\` is a literal filename byte: rewriting it to `/` would name a
