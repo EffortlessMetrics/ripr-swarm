@@ -458,3 +458,46 @@ fn a_mocked_source_or_a_non_call_mention_stays_unlinked() -> Result<(), String> 
         "var qs = require('../lib/index.js');\nvar other = require('../lib/other.js');\n\ntest('parses', () => {\n  expect(other.parse('a=1')).toEqual(['a=1']);\n});\n",
     )
 }
+
+/// `this` inside a function or class body is not `module.exports`, so it
+/// leaves the barrel readable; a top-level arrow inherits module `this`, so
+/// a write there refuses the barrel.
+#[test]
+fn only_module_scope_this_refuses_the_barrel() -> Result<(), String> {
+    linked(
+        "cjs-b-this-fn",
+        NAMED_OWNER,
+        "exports.parse = require('./parse').parse;\nfunction F() { this.parse = 1; }\nclass C { m() { this.parse = 1; } }\n",
+        QS_TEST,
+    )?;
+    unlinked(
+        "cjs-r-this-arrow",
+        NAMED_OWNER,
+        "exports.parse = require('./parse').parse;\nconst f = () => { this.parse = require('./other'); };\nf();\n",
+        QS_TEST,
+    )
+}
+
+/// A whole forward into a source that exports through a shorthand object
+/// literal reaches the named owner.
+#[test]
+fn whole_forward_reaches_a_shorthand_object_export() -> Result<(), String> {
+    linked(
+        "cjs-b-fwd-short",
+        "function parse(str) {\n  // parse\n  return str.split('&');\n}\nmodule.exports = { parse };\n",
+        "module.exports = require('./parse');\n",
+        QS_TEST,
+    )
+}
+
+/// `require()` of an ES module is its namespace object, so calling the
+/// forwarded whole value is not a call of the ES default export.
+#[test]
+fn whole_forward_of_an_es_default_is_not_the_owner() -> Result<(), String> {
+    unlinked(
+        "cjs-r-es-default",
+        "export default function parse(str) {\n  // parse\n  return str.split('&');\n}\n",
+        "module.exports = require('./parse');\n",
+        "var qs = require('../lib/index.js');\n\ntest('parses', () => {\n  expect(qs('a=1')).toEqual(['a=1']);\n});\n",
+    )
+}

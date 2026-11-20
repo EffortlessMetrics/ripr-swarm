@@ -910,27 +910,28 @@ impl ReExportIndex {
         exposed
     }
 
+    /// Whether `source` exports `name` itself: its whole value (`default`), an
+    /// ES declaration export, or a CommonJS `exports.NAME` write (#15284).
+    /// `require()` of an ES module returns its namespace object, not the
+    /// default export, so the whole value of a module with ES exports and no
+    /// CommonJS writes is never the default declaration.
+    fn source_exports_name(&self, source: &str, name: &str) -> bool {
+        let canonical = self.canonical_module(source);
+        let es_names = self.local_exports.get(&canonical);
+        let commonjs_names = self.commonjs_own_names.get(&canonical);
+        if name == "default" {
+            return es_names.is_none_or(HashSet::is_empty) || commonjs_names.is_some();
+        }
+        [es_names, commonjs_names]
+            .into_iter()
+            .any(|names| names.is_some_and(|names| names.contains(name)))
+    }
+
     /// Resolve a normalized module specifier path to the workspace module it
     /// names. A file module (`src.ts` → `src`) wins; otherwise a directory
     /// with an index file (`src/index.ts` → `src/index`) is used. When
     /// neither is known the path is returned unchanged (it then matches no
     /// indexed module and nothing is credited through it).
-    /// Whether `source` exports `name` itself: its whole value (`default`), an
-    /// ES declaration export, or a CommonJS `exports.NAME` write (#15284).
-    fn source_exports_name(&self, source: &str, name: &str) -> bool {
-        if name == "default" {
-            return true;
-        }
-        let canonical = self.canonical_module(source);
-        [&self.local_exports, &self.commonjs_own_names]
-            .iter()
-            .any(|names| {
-                names
-                    .get(&canonical)
-                    .is_some_and(|names| names.contains(name))
-            })
-    }
-
     fn canonical_module(&self, module: &str) -> String {
         if self.modules.contains(module) {
             return module.to_string();
@@ -1074,6 +1075,11 @@ impl ReExportIndex {
         if let Some(source) = self.commonjs_forwards.get(module) {
             if hops >= MAX_REEXPORT_HOPS {
                 return ExportResolution::Unknown;
+            }
+            // The whole value of an ES source is its namespace object, never
+            // its default declaration.
+            if name == "default" && !self.source_exports_name(source, name) {
+                return ExportResolution::NotFound;
             }
             return match self.resolve_export_with_context(
                 source,
