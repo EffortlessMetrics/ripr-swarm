@@ -85,27 +85,36 @@ pub(super) fn python_multiline_return_dict_entry_discriminator(
     if key.contains(['"', '\'', '\\']) {
         return None;
     }
-    // A later `for`/`if` clause makes the body a comprehension, and a later
-    // `**spread` or duplicate of the key overrides this entry: the entry is then
-    // not the returned value for its key.
-    let quoted = [format!("\"{key}\""), format!("'{key}'")];
-    let comprehension_head = |text: &str| {
-        text.starts_with("for ") || text.starts_with("async for ") || text.starts_with("if ")
-    };
-    if line_text.contains(" for ")
+    // The value must end on this line: without a trailing comma (or the
+    // closing brace next) it may continue, e.g. an implicitly concatenated
+    // string or a `+` on the next line, and the literal here is only a part.
+    if python_line_bracket_depth(line_text, 1)? != 1
+        || !(line_text.trim_end().ends_with(',') || line + 1 == close)
+        || line_text.contains(" for ")
         || line_text.contains(" async for ")
-        || source?
-            .lines()
-            .skip(line)
-            .take(close - line - 1)
-            .map(str::trim)
-            .any(|text| {
-                comprehension_head(text)
-                    || text.contains("**")
-                    || quoted.iter().any(|q| text.contains(q.as_str()))
-            })
     {
         return None;
+    }
+    // Every later entry must start with a plain quoted key distinct from this
+    // one. A comprehension clause, a `**spread`, a dynamic or escaped key, a
+    // comment, or a duplicate may override this entry, so it would then not
+    // be the returned value for its key.
+    let mut depth = 1usize;
+    for text in source?.lines().skip(line).take(close - line - 1) {
+        let trimmed = text.trim();
+        if depth == 1 && !trimmed.is_empty() {
+            let first = top_level_python_segments(trimmed)
+                .into_iter()
+                .find(|segment| !segment.is_empty())?;
+            if !(first.starts_with('"') || first.starts_with('\'')) || first.contains('#') {
+                return None;
+            }
+            let (later, _) = python_dict_field_segment_parts(first)?;
+            if later.contains(['"', '\'', '\\']) || later == key {
+                return None;
+            }
+        }
+        depth = python_line_bracket_depth(text, depth)?;
     }
     let value = python_expected_value_or_placeholder(value);
     let read = if owner.route_paths.is_empty() {

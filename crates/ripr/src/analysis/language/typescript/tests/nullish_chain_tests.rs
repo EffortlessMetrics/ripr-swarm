@@ -411,3 +411,47 @@ fn changed_default_reader_is_closed() {
         .is_none()
     );
 }
+
+// #15357 review: with `p = {}`, an explicit `undefined` binds `{}`, whose
+// inherited `constructor` the changed operand reads, so the call can tell the
+// versions apart and the verdict stays put.
+#[test]
+fn empty_object_default_keeps_inherited_reads_for_undefined() -> Result<(), String> {
+    const DEFAULT_OWNER: &str = "export function displayName(person = {}) {\n  return person?.nick ?? person?.constructor ?? \"x\";\n}\n";
+    const DEFAULT_LINE: &str = "  return person?.nick ?? person?.constructor ?? \"x\";";
+    const DEFAULT_OLD: &str = "  return person?.nick ?? person?.name ?? \"x\";";
+    let finding_for = |label: &str, body: &str| -> Result<Finding, String> {
+        let test = format!(
+            "import {{ displayName }} from \"../src/settings\";\ntest(\"name\", () => {{\n  {body}\n}});\n"
+        );
+        nested_callback_tests::settings_finding_in(
+            label,
+            DEFAULT_OWNER,
+            (2, DEFAULT_LINE),
+            &test,
+            DEFAULT_OLD,
+        )
+    };
+    let inherited = finding_for(
+        "default-undefined-inherited",
+        "expect(displayName(undefined)).toBe(\"x\");",
+    )?;
+    assert_eq!(inherited.class, ExposureClass::Exposed);
+    // Control: the same owner without a default reads both operands as
+    // nullish for `undefined`, so the downgrade still applies.
+    let control = nested_callback_tests::settings_finding_in(
+        "default-undefined-control",
+        &DEFAULT_OWNER.replace("person = {}", "person"),
+        (2, DEFAULT_LINE),
+        "import { displayName } from \"../src/settings\";\ntest(\"name\", () => {\n  expect(displayName(undefined)).toBe(\"x\");\n});\n",
+        DEFAULT_OLD,
+    )?;
+    assert_eq!(control.class, ExposureClass::WeaklyExposed);
+    assert!(parameter_has_empty_object_default(DEFAULT_OWNER, "person"));
+    assert!(!parameter_has_empty_object_default(
+        "function f(p = { a: 1 }) {}",
+        "p"
+    ));
+    assert!(!parameter_has_empty_object_default("function f(p) {}", "p"));
+    Ok(())
+}

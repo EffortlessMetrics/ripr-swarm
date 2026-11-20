@@ -1859,6 +1859,16 @@ otherwise. Python emits `reachable_unrevealed` only for row 2a, where every
 related test replaces the owner itself so none runs the changed code; the
 class never carries credit. Python never emits `infection_unknown`. The ladder is the existing behavior and is normative.
 
+A `weakly_exposed` finding on one entry of a multi-line `return {` dict
+(the statement opens with a bare `return {`, the entry sits at the
+literal's top level, is the only entry on its line with a plain quoted key,
+ends on that line, and no later entry can override it: every later
+top-level entry has a distinct plain quoted key and the literal closes on a
+bare `}`) carries the missing check `result["key"] == <literal>` (or
+`response.json()["key"]` for a route owner; a non-literal value names
+`<expected value>`). Any other shape keeps the generic missing check. This
+names a check only; it never changes the class (#15357).
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable documented

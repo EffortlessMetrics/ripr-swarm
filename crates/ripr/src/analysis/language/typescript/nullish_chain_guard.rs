@@ -211,6 +211,49 @@ const OBJECT_PROTOTYPE_MEMBERS: [&str; 8] = [
 /// the list cannot be read. An omitted or `undefined` argument is then not
 /// nullish in the body.
 pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
+    let Some(entries) = parameter_entries(source) else {
+        return true;
+    };
+    entries.iter().any(|entry| {
+        parameter_entry_default(entry, name).is_some_and(|default| {
+            // `options: T = {}` only makes an omitted argument an empty
+            // object, so a property read on it is still nullish (#15357).
+            default != "{}"
+        })
+    })
+}
+
+/// `true` when the owner's parameter list reads and gives `name` exactly the
+/// `= {}` default: an explicit `undefined` argument then binds `{}`, whose
+/// inherited members a `?.` read can still reach (#15357).
+pub(crate) fn parameter_has_empty_object_default(source: &str, name: &str) -> bool {
+    parameter_entries(source).is_some_and(|entries| {
+        entries
+            .iter()
+            .any(|entry| parameter_entry_default(entry, name) == Some("{}"))
+    })
+}
+
+/// The default text of the parameter entry `entry` when it declares `name`
+/// with `=`.
+fn parameter_entry_default<'a>(entry: &'a str, name: &str) -> Option<&'a str> {
+    let entry = entry.trim();
+    if !entry.contains('=') {
+        return None;
+    }
+    let rest = entry.strip_prefix(name)?;
+    if rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$') {
+        return None;
+    }
+    Some(
+        rest.rsplit_once('=')
+            .map_or("", |(_, default)| default.trim()),
+    )
+}
+
+/// The top-level entries of the owner's parameter list. No list reads as no
+/// entries; an unclosed list is `None` (unreadable).
+fn parameter_entries(source: &str) -> Option<Vec<String>> {
     // Skip a generic list (`<T = {}>`) before the parameter list.
     let mut angle = 0usize;
     let Some(open) = source.char_indices().find_map(|(at, ch)| match ch {
@@ -225,7 +268,7 @@ pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
         '(' if angle == 0 => Some(at),
         _ => None,
     }) else {
-        return false;
+        return Some(Vec::new());
     };
     let mut depth = 0usize;
     let mut entries = vec![String::new()];
@@ -255,20 +298,7 @@ pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
             entry.push(ch);
         }
     }
-    if !closed {
-        return true;
-    }
-    entries.iter().any(|entry| {
-        let entry = entry.trim();
-        entry.contains('=')
-            && entry.strip_prefix(name).is_some_and(|rest| {
-                !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$')
-                    // `options: T = {}` only makes an omitted argument an
-                    // empty object, so a property read on it is still
-                    // nullish (#15357).
-                    && rest.rsplit_once('=').is_none_or(|(_, default)| default.trim() != "{}")
-            })
-    })
+    closed.then_some(entries)
 }
 
 /// `param?.prop` or `param.prop`, with plain identifiers only.

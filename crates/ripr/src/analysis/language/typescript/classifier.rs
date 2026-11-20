@@ -9849,6 +9849,10 @@ pub(crate) fn ts_nullish_operand_unreached(
     }) {
         return false;
     }
+    let empty_object_default = owner
+        .source_text
+        .as_deref()
+        .is_some_and(|source| parameter_has_empty_object_default(source, &change.subject));
     let mut observed = false;
     for candidate in candidates
         .iter()
@@ -9891,12 +9895,15 @@ pub(crate) fn ts_nullish_operand_unreached(
             let Some(argument) = arguments.get(index).map(|argument| argument.trim()) else {
                 return false;
             };
-            let object =
-                if argument.starts_with('{') || argument == "undefined" || argument == "null" {
-                    Some(argument.to_string())
-                } else {
-                    ts_test_local_object(&candidate.test.body_text, argument, &callees)
-                };
+            // `p = {}` binds `{}` for an explicit `undefined`, so its
+            // inherited members stay readable (#15357).
+            let object = if argument == "undefined" && empty_object_default {
+                Some("{}".to_string())
+            } else if argument.starts_with('{') || argument == "undefined" || argument == "null" {
+                Some(argument.to_string())
+            } else {
+                ts_test_local_object(&candidate.test.body_text, argument, &callees)
+            };
             match object.map_or(ChainInput::Unknown, |object| change.input(&object)) {
                 ChainInput::Unreached => {}
                 ChainInput::Differs | ChainInput::Unknown => return false,

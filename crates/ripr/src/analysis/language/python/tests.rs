@@ -1564,6 +1564,35 @@ fn multiline_return_dict_entry_refuses_what_it_cannot_prove() -> Result<(), Stri
     assert_eq!(check("        \"k\\\"q\": 1,\n", 1)?, None);
     // A set literal with quoted elements has no key to read.
     assert_eq!(check("        \"a\",\n        \"b\",\n", 1)?, None);
+    // A value that continues on the next line (implicit string concatenation,
+    // a `+` continuation) is only partly spelled on the changed line.
+    assert_eq!(
+        check("        \"m\": \"hello\"\n        \" world\",\n", 1)?,
+        None
+    );
+    assert_eq!(check("        \"m\": 1\n        + 2,\n", 1)?, None);
+    // The last entry may omit its trailing comma: the closing brace follows.
+    assert_eq!(
+        check("        \"j\": 2,\n        \"m\": \"hello\"\n", 2)?.as_deref(),
+        Some("result[\"m\"] == \"hello\"")
+    );
+    // A later dynamic key (a parameter may equal `k`), an escaped spelling of
+    // the same key, or a later comment line can override or hide an override.
+    assert_eq!(check("        \"k\": 1,\n        items: 2,\n", 1)?, None);
+    assert_eq!(
+        check("        \"k\": 1,\n        \"\\x6b\": 2,\n", 1)?,
+        None
+    );
+    assert_eq!(check("        \"k\": 1,\n        # \"k\": 2,\n", 1)?, None);
+    // Later nested values are skipped; only their entry keys are read.
+    assert_eq!(
+        check(
+            "        \"k\": 1,\n        \"n\": {\n            \"k\": 2,\n        },\n",
+            1
+        )?
+        .as_deref(),
+        Some("result[\"k\"] == 1")
+    );
     Ok(())
 }
 

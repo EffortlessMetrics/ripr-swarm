@@ -252,7 +252,7 @@ does not tie (#9354).
 
 **Rule 5. An edit to a fallback `??` operand needs an input that reaches it.**
 (Added 2026-10-22, #9437.) When the changed line's removed and added text are
-both `return a ?? b ?? ...;` (operands are `param?.prop`, `param.prop` or a
+both `return a ?? b ?? ...;`, or both `const x = a ?? ...;` / `let x = a ?? ...;` with the same head (#15357) (operands are `param?.prop`, `param.prop` or a
 literal; no `||`, `&&`, ternary, call or bracket; at least two operands) and
 exactly one operand after the first differs, the change decides the result
 only for an input whose earlier operands are all nullish. Every earlier
@@ -270,7 +270,10 @@ through to a later one; for the final operand, whose value is returned,
 they differ. A missing key that names an `Object.prototype` member
 (`constructor`, `toString`, ...) is unreadable, not absent, and a
 parameter with a default value (`function f(person = {...})`) or an
-unreadable parameter list fails open. Only direct owner calls with a strong whole-result assertion count, so a
+unreadable parameter list fails open. An empty-object default
+(`person = {}`) is read: an explicit `undefined` argument then reads as
+`{}` (so an inherited member stays unreadable), and an omitted argument is
+unreadable (#15357). Only direct owner calls with a strong whole-result assertion count, so a
 test routed through a wrapper is ignored (a false gap, never a false
 credit). A `__proto__` entry in an argument literal is unreadable. If one observed input tells them apart, or any observed input cannot be read
 (a spread, a non-literal value, a non-literal argument, a non-optional read
@@ -281,6 +284,10 @@ that reaches the changed operand. With no observed whole-result call the
 ladder result stands. `||` chains are not read (falsy values differ from
 nullish ones) and keep the ladder result. Rule 5 runs after rule 3 and before
 RIPR-SPEC-0248 rule 1, on the same value seams, and removes credit only.
+When a `weakly_exposed` finding has no other missing check and the change
+is a single literal default operand (`a ?? <literal>`) that every observed
+call leaves unreached, the missing check names a call of the owner without
+that property, asserting the result of the new default (#15357).
 
 **Rule 6. A `catch` arm no related test can reach needs a throwing call.**
 (Added 2026-10-22, #9437.) When the changed line is located exactly in the
