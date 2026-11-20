@@ -12485,6 +12485,7 @@ fn ts_fieldconstruction_multi_value_change_plain_chain_changed_or_compound_stays
         // compound, so the guard does not apply.
         ("limit < f().timeout", "toBe(true)"),
         ("cond ? f().timeout : 0", "toBe(30)"),
+        ("limit < f() > (bounds).minimum", "toBe(true)"),
     ] {
         let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
         assert!(
@@ -12541,6 +12542,10 @@ fn ts_chain_is_plain_projection_accepts_chains_and_rejects_compounds() {
         "f() !== g()",
         "a + f()",
         "a ! b",
+        // Devin review: a call inside a would-be type-argument list is a
+        // chained comparison, not a generic call.
+        "limit < f() > (bounds)",
+        "a < g(x) > (y)",
     ] {
         assert!(!plain(base), "`{base}` is not a plain chain");
     }

@@ -1000,9 +1000,15 @@ fn ts_chain_matches_plain_grammar(base: &str) -> bool {
         let mut angle = 0i32;
         let mut depth = 0i32;
         let mut i = at;
+        let mut previous: Option<char> = None;
         while let Some(&ch) = chars.get(i) {
             let next = chars.get(i + 1).copied();
             match ch {
+                // A call inside the list (`limit < f() > (b)`) is a value
+                // expression, not a type: the `<` was a comparison.
+                '(' if previous.is_some_and(|p| is_ident_char(p) || p == ')' || p == ']') => {
+                    return None;
+                }
                 '(' | '[' | '{' => depth += 1,
                 ')' | ']' | '}' => {
                     depth -= 1;
@@ -1022,6 +1028,9 @@ fn ts_chain_matches_plain_grammar(base: &str) -> bool {
                 '&' if next == Some('&') => return None,
                 '=' | '+' | '-' | '*' | '/' | '%' | '!' if depth == 0 => return None,
                 _ => {}
+            }
+            if !ch.is_whitespace() {
+                previous = Some(ch);
             }
             i += 1;
         }
