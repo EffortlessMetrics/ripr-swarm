@@ -291,6 +291,20 @@ a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
 line (`&self,`) has no type and is not classified by this rule, and a fn nested
 inside another fn body in a macro keeps `field_construction`.
 
+A complete Rust item moved within its file and its owner, with no other
+change, seeds no probe on either side (#15110). The removed run and the added
+run must hold the same text and the same code once comments and strings are
+blanked, no other run may hold that text, the block must be one or more
+complete items starting at an item boundary, and both copies must sit in the
+same owner: the file's top level, or the same chain of `mod` headers ending in
+a `mod`, `impl` or `trait` header. An owner block that opens with an inner
+attribute is never that owner. A file where order or source position is
+observable keeps every move probed: `macro_rules!` or `#[macro_use]`,
+`std::panic::Location`, `line` or `column` imported under another name, or a
+macro invocation outside a short list of position-free standard macros. A
+statement, field or variant reordered inside its parent, a move into another
+owner, a fragment of an item and a move with an edit keep their probes.
+
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
 files do not change those inputs. Formatting whitespace outside Rust literals
