@@ -861,6 +861,9 @@ impl WorkspaceSession {
         // The refusal precedes the ineligible (negative) documents too. An
         // item with no bound seam (admission can ready an unbound item) is
         // checked over its own file and fix-site file instead of skipped.
+        // Facts the custody check could not establish; disclosed in the ready
+        // packet's limitations instead of implied current.
+        let mut custody_notes: Vec<String> = Vec::new();
         if let Some(producers) = &snapshot.card_producers {
             let Some(root) = root else {
                 return Err(AttemptFailure::new(
@@ -869,6 +872,7 @@ impl WorkspaceSession {
                     "restart the server with `ripr mcp --stdio --root <repository>` and retry",
                 ));
             };
+            let fix_file = fix_site_file(item);
             match producers
                 .bindings
                 .iter()
@@ -883,31 +887,13 @@ impl WorkspaceSession {
                     "repair preparation",
                 )?,
                 None => {
-                    // Item files can arrive as `./src/x.rs` while the captured
-                    // digests are keyed without the prefix: normalize both
-                    // sides so a spelling difference never skips the check.
-                    let item_file = normalize_item_path(&item.file);
+                    // An item with no bound seam is checked over its own file
+                    // and its fix-site file (normalized like the digests).
+                    let item_file =
+                        super::repair_card::normalize_item_path(Path::new(&item.file));
                     let mut paths = vec![item_file.clone()];
-                    let fix_file = fix_site_file(item);
                     if !fix_file.is_empty() {
-                        paths.push(normalize_item_path(&fix_file));
-                    }
-                    // A ready Rust item whose own file has no captured digest
-                    // cannot be shown current: refuse rather than skip.
-                    if item.repair_readiness.ready
-                        && item_file.extension().is_some_and(|ext| ext == "rs")
-                        && producers.consumed_sources.digest(&item_file).is_none()
-                    {
-                        return Err(AttemptFailure::new(
-                            super::workspace::CODE_STALE_SNAPSHOT,
-                            format!(
-                                "repair preparation for canonical item {} is unavailable: the snapshot captured no source digest for `{}`, so it cannot be shown current",
-                                item.canonical_id,
-                                item_file.display()
-                            ),
-                            "run ripr_refresh again to analyze the current source, then retry",
-                        )
-                        .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+                        paths.push(std::path::PathBuf::from(&fix_file));
                     }
                     super::repair_card::verify_consumed_paths(
                         root,
@@ -917,6 +903,41 @@ impl WorkspaceSession {
                         &paths,
                         "repair preparation",
                     )?;
+                    if item_file.extension().is_none_or(|ext| ext != "rs") {
+                        custody_notes.push(format!(
+                            "source custody is not checked for `{}`: only Rust source files carry captured digests, so a change after the snapshot is not detected for this item",
+                            item_file.display()
+                        ));
+                    } else if item.repair_readiness.ready
+                        && producers.consumed_sources.digest(&item_file).is_none()
+                    {
+                        // The path cannot be captured at all (absolute, `..`,
+                        // unavailable or conflicting capture, empty custody):
+                        // a refresh cannot clear it, so say so and fail closed.
+                        return Err(AttemptFailure::new(
+                            super::workspace::CODE_STALE_SNAPSHOT,
+                            format!(
+                                "repair preparation for canonical item {} is refused: source custody cannot be verified for `{}` because the snapshot holds no captured digest for it",
+                                item.canonical_id,
+                                item_file.display()
+                            ),
+                            "ripr_refresh will not clear this: the file is outside the captured Rust corpus or its capture was unavailable; read the item with ripr_get_gap, or run `ripr agent packet` in the repository",
+                        )
+                        .with_data(json!({
+                            "current_snapshot_id": snapshot.snapshot_id,
+                            "custody": "not_verifiable",
+                            "path": item_file.display().to_string(),
+                        })));
+                    }
+                }
+            }
+            if !fix_file.is_empty() {
+                let fix_path = super::repair_card::normalize_item_path(Path::new(&fix_file));
+                if producers.consumed_sources.digest(&fix_path).is_none() {
+                    custody_notes.push(format!(
+                        "source custody is not checked for the fix-site file `{}`: the snapshot holds no captured digest for it (for example a proposed new test file)",
+                        fix_path.display()
+                    ));
                 }
             }
         }
@@ -1049,7 +1070,11 @@ impl WorkspaceSession {
             },
             "command_routes": Value::Array(Vec::new()),
             "command_route_limitation": "concrete typed CommandSpec routes are published only by the durable CLI before phase (`ripr agent repair --phase before`); this session never executes commands and never reconstructs argv from display prose",
-            "limitations": prepare_limitations(&fix_site),
+            "limitations": prepare_limitations(&fix_site)
+                .into_iter()
+                .map(str::to_string)
+                .chain(custody_notes)
+                .collect::<Vec<String>>(),
             "non_claims": NON_CLAIMS,
             "links": {
                 "gap": format!("ripr://gap/{}", item.canonical_id),
@@ -1317,17 +1342,6 @@ fn must_not_change(fix_site: &RepairFixSite) -> Vec<String> {
 
 /// The allowed edit surface file of one ready item; the readiness gate
 /// already established that the fix site is a shared test-surface path.
-/// Repo-relative spelling used by the captured digests: no leading `./`,
-/// forward slashes.
-fn normalize_item_path(file: &str) -> std::path::PathBuf {
-    let unified = file.replace('\\', "/");
-    let mut rest = unified.as_str();
-    while let Some(stripped) = rest.strip_prefix("./") {
-        rest = stripped;
-    }
-    std::path::PathBuf::from(rest)
-}
-
 fn fix_site_file(item: &GapItem) -> String {
     item.repair_readiness
         .fix_site
@@ -2148,6 +2162,130 @@ pub(super) mod tests {
             other => return Err(format!("uncaptured ready item must be refused: {other:?}")),
         }
         std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// #15240: spelling variants (`./`, `.//`, backslash) of the item file and
+    /// the fix-site file still hit their captured digests; drift carries the
+    /// current snapshot id; an uncapturable ready Rust path refuses with a
+    /// recovery that does not promise a refresh; a non-Rust item discloses
+    /// that custody was not checked; the shared check normalizes bound paths.
+    #[test]
+    fn custody_normalizes_spellings_splits_refusals_and_discloses_gaps() -> Result<(), String> {
+        let dir = unique_test_dir("custody-variants")?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        let src = dir.join("src/lib.rs");
+        let test_file = dir.join("tests/checkout.rs");
+        std::fs::write(&src, b"fn a() {}\n").map_err(|e| e.to_string())?;
+        std::fs::write(&test_file, b"fn t() {}\n").map_err(|e| e.to_string())?;
+        let build = |item_file: &str,
+                     fix_file: &str,
+                     capture: &[(&str, &[u8])]|
+         -> Result<WorkspaceSession, String> {
+            let mut session =
+                session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for item in &mut snapshot.items {
+                item.file = item_file.to_string();
+                if let Some(site) = item.repair_readiness.fix_site.as_mut() {
+                    site.file = fix_file.to_string();
+                }
+            }
+            let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+            for (path, bytes) in capture {
+                consumed.record(Path::new(path), Some(bytes));
+            }
+            snapshot.card_producers = Some(super::super::repair_card::SnapshotCardProducers {
+                repository_head: "head".to_string(),
+                bindings: Vec::new(),
+                candidate_seams: Vec::new(),
+                completeness: super::super::repair_admission::InventoryCompleteness::Complete,
+                config: crate::config::RiprConfig::default(),
+                consumed_sources: consumed,
+            });
+            Ok(session)
+        };
+        let both: [(&str, &[u8]); 2] = [
+            ("src/lib.rs", b"fn a() {}\n"),
+            ("tests/checkout.rs", b"fn t() {}\n"),
+        ];
+        let prepare = |session: &mut WorkspaceSession| {
+            session.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+        };
+        // Spelling variants of the item file and the fix-site file: control
+        // prepares unchanged, then each is stale after an edit.
+        for (item_file, fix_file) in [
+            ("./src/lib.rs", "./tests/checkout.rs"),
+            (".//src/lib.rs", "tests/checkout.rs"),
+            ("src\\lib.rs", ".\\tests\\checkout.rs"),
+        ] {
+            let mut session = build(item_file, fix_file, &both)?;
+            prepare(&mut session)
+                .map_err(|failure| format!("{item_file}: control must prepare: {}", failure.detail))?;
+            let original = std::fs::read(&test_file).map_err(|e| e.to_string())?;
+            std::fs::write(&test_file, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+            let result = prepare(&mut session);
+            std::fs::write(&test_file, original).map_err(|e| e.to_string())?;
+            match result {
+                Err(failure)
+                    if failure.code == CODE_STALE_SNAPSHOT
+                        && failure.recovery.contains("run ripr_refresh")
+                        && failure.data.get("current_snapshot_id").is_some() => {}
+                other => return Err(format!("{item_file}/{fix_file}: fix-site drift: {other:?}")),
+            }
+        }
+        // Uncapturable ready Rust path: refused, but not as a refreshable drift.
+        for bad in ["/abs/src/lib.rs", "../src/lib.rs"] {
+            let mut session = build(bad, "tests/checkout.rs", &both)?;
+            match prepare(&mut session) {
+                Err(failure)
+                    if failure.code == CODE_STALE_SNAPSHOT
+                        && !failure.recovery.contains("run ripr_refresh")
+                        && failure.detail.contains(bad)
+                        && failure.data.get("custody") == Some(&json!("not_verifiable")) => {}
+                other => return Err(format!("{bad}: must refuse as not verifiable: {other:?}")),
+            }
+        }
+        // Non-Rust item: prepares, and says custody was not checked.
+        let mut session = build("app/pricing.py", "tests/checkout.rs", &both)?;
+        let packet = prepare(&mut session).map_err(|failure| failure.detail)?;
+        let notes = packet["limitations"].to_string();
+        if !notes.contains("source custody is not checked for `app/pricing.py`") {
+            return Err(format!("non-Rust item must disclose unchecked custody: {notes}"));
+        }
+        // A fix-site file with no captured digest is disclosed too.
+        let mut session = build("src/lib.rs", "tests/new_test.rs", &both[..1])?;
+        let packet = prepare(&mut session).map_err(|failure| failure.detail)?;
+        if !packet["limitations"]
+            .to_string()
+            .contains("source custody is not checked for the fix-site file `tests/new_test.rs`")
+        {
+            return Err(format!("uncaptured fix site must be disclosed: {packet}"));
+        }
+        // The shared check the bound-seam path uses normalizes its paths.
+        let session = build("src/lib.rs", "tests/checkout.rs", &both)?;
+        let snapshot = session.last_good.as_ref().ok_or("snapshot")?;
+        let producers = snapshot.card_producers.as_ref().ok_or("producers")?;
+        let item = snapshot.require_item("gap:test:1").map_err(|f| f.detail)?;
+        std::fs::write(&src, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+        let drift = super::super::repair_card::verify_consumed_paths(
+            &dir,
+            snapshot,
+            item,
+            producers,
+            &[std::path::PathBuf::from(".//src/lib.rs")],
+            "repair card",
+        );
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        match drift {
+            Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+            other => return Err(format!("bound-path spelling must be checked: {other:?}")),
+        }
         Ok(())
     }
 

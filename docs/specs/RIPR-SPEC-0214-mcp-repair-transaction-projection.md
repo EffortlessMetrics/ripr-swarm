@@ -264,7 +264,7 @@ read-only and without execution authority (ADR 0022):
   deleted after the snapshot refuses with `stale_snapshot` through the same
   consumed-source custody check the repair card uses, ahead of the ineligible
   documents, and never creates or replays a ready transaction; a proposed new
-  test file with no captured digest is not checked (#15240); attempt identity is root-bound; a refresh that changes
+  test file with no captured digest is not checked and is disclosed in the packet's `limitations`, as are non-Rust items; a ready Rust item whose own path cannot be captured refuses with `data.custody: not_verifiable` and no refresh promise (#15240); attempt identity is root-bound; a refresh that changes
   the evidence supersedes the prior transaction; session receipt status
   stays `awaiting_edit`; unknown and canonically invalid durable attempts
   fail closed in a temporary store.

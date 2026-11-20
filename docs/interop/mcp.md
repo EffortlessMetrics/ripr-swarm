@@ -366,7 +366,7 @@ the same typed `stale_snapshot` (#15240) when a checked file changed or was
 deleted. The checked files are those with a captured digest that the item's
 evidence is bound to (an item without a bound seam is checked over its own
 file and fix-site file); a proposed new test file with no captured digest is
-not checked. A committed refresh whose findings and checkout Rust files were not
+not checked. Paths are compared after normalizing `./` and backslash spellings. A ready Rust item whose own file has no captured digest (an absolute or `..` path, or an unavailable capture) is refused with `stale_snapshot`, `data.custody: "not_verifiable"` and a recovery that does not promise `ripr_refresh` will clear it. Non-Rust items and fix-site files with no captured digest are not custody-checked; a ready packet says so in `limitations`. A committed refresh whose findings and checkout Rust files were not
 shown to agree (a consumed file edited, staged, deleted or changed during the
 refresh, or any uncommitted or untracked Rust source or test file, including
 one outside the diff) likewise withholds repair cards (`incomplete_inventory`)
