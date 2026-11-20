@@ -15,6 +15,10 @@ use std::process::Command;
 
 const WORKFLOW: &str = ".github/workflows/pr-staleness-watchdog.yml";
 const OURS_FAILURE: &str = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
+const RESULT_JOB: &str = r#"{"total_count":1,"jobs":[{"id":278,"run_id":277,"run_attempt":2,"head_sha":"{head}","name":"Ripr Rust Small Result","check_run_url":"https://api.github.com/repos/o/r/check-runs/278"}]}"#;
+const RESULT_CHECK: &str =
+    r#"{"id":278,"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":277}}"#;
+const RESULT_SUITE: &str = r#"{"total_count":1,"check_runs":[{"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":277}}]}"#;
 
 const FAKE_GH: &str = r#"#!/bin/bash
 printf 'CALL %s\n' "$*" >> "$FAKE_DIR/log"
@@ -43,8 +47,12 @@ case "$all" in
     if [ -f "$FAKE_DIR/suite.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     serve "$FAKE_DIR/suite.json" '{"total_count":0,"check_runs":[]}' ;;
   *"/check-suites/"*) echo "Unexpected suite: $all" >&2; exit 1 ;;
+  *"/actions/runs/277/attempts/2/jobs?"*)
+    if [ -f "$FAKE_DIR/jobs.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/jobs.json" '{"total_count":0,"jobs":[]}' ;;
+  *"/actions/runs/"*) echo "Unexpected run or attempt: $all" >&2; exit 1 ;;
+  *"/check-runs/278"*) serve "$FAKE_DIR/result.json" '{}' ;;
   *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
-    if [ -f "$FAKE_DIR/checks.$sha.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
   *"/workflows/routed-rust.yml/runs"*)
     # A `.later.json` fixture answers every look after the first (delayed run visibility).
@@ -60,7 +68,10 @@ case "$all" in
   *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
     if [ -f "$FAKE_DIR/statuses.$sha.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     serve "$FAKE_DIR/statuses.$sha.json" '[]' ;;
-  *"/comments?"*) serve "$FAKE_DIR/comments.json" '[]' ;;
+  *"/comments?"*)
+    n="${all#*/issues/}"; n="${n%%/*}"
+    if [ -f "$FAKE_DIR/comments.$n.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/comments.json" '[]' ;;
 esac
 "#;
 
@@ -78,6 +89,9 @@ struct Pr {
     in_flight: bool,
     completed_run: bool,
     suite: Option<&'static str>,
+    jobs: Option<&'static str>,
+    result: Option<&'static str>,
+    association: Option<&'static str>,
     runs_response: Option<&'static str>,
     fresh: bool,
     late_run: Option<&'static str>,
@@ -86,10 +100,10 @@ struct Pr {
     withdrawn: Option<&'static str>,
     late_withdrawn: Option<&'static str>,
     late_pull_fail: bool,
+    comments_fail: bool,
     head_of: Option<u32>,
     status_fail: bool,
     pull_fail: bool,
-    checks_fail: bool,
     runs_fail: bool,
 }
 
@@ -109,6 +123,9 @@ impl Pr {
             in_flight: false,
             completed_run: false,
             suite: None,
+            jobs: None,
+            result: None,
+            association: None,
             runs_response: None,
             fresh: false,
             late_run: None,
@@ -117,10 +134,10 @@ impl Pr {
             withdrawn: None,
             late_withdrawn: None,
             late_pull_fail: false,
+            comments_fail: false,
             head_of: None,
             status_fail: false,
             pull_fail: false,
-            checks_fail: false,
             runs_fail: false,
         }
     }
@@ -130,10 +147,12 @@ impl Pr {
 
     fn runs(&self, status: &str) -> String {
         let sha = self.sha();
+        let target = format!(r#"[{{"number":{}}}]"#, self.number);
+        let association = self.association.unwrap_or(&target);
         // Include an older exact request and a newer label-metadata run. The watchdog
         // must select suite 277 from the newest exact request regardless of list order.
         format!(
-            r#"{{"total_count":3,"workflow_runs":[{{"run_number":1,"check_suite_id":111,"status":"completed","head_sha":"{sha}","display_title":"Merge-ready request {sha}"}},{{"run_number":3,"check_suite_id":333,"status":"completed","head_sha":"{sha}","display_title":"Label metadata 3"}},{{"run_number":2,"check_suite_id":277,"status":"{status}","head_sha":"{sha}","display_title":"Merge-ready request {sha}"}}]}}"#
+            r#"{{"total_count":3,"workflow_runs":[{{"id":111,"run_number":1,"run_attempt":1,"check_suite_id":111,"status":"completed","head_sha":"{sha}","display_title":"Merge-ready request {sha}","pull_requests":[{{"number":99999}}]}},{{"id":333,"run_number":3,"check_suite_id":333,"status":"completed","head_sha":"{sha}","display_title":"Label metadata 3"}},{{"id":277,"run_number":2,"run_attempt":2,"check_suite_id":277,"status":"{status}","head_sha":"{sha}","display_title":"Merge-ready request {sha}","pull_requests":{association}}}]}}"#
         )
     }
 }
@@ -224,15 +243,15 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(dir.join(format!("pull.{}.fail", pr.number)), "")
                 .map_err(|e| e.to_string())?;
         }
-        if pr.checks_fail {
-            fs::write(dir.join(format!("checks.{}.fail", pr.sha())), "")
-                .map_err(|e| e.to_string())?;
-        }
         if pr.runs_fail {
             fs::write(dir.join("runs.fail"), "").map_err(|e| e.to_string())?;
         }
         if pr.late_pull_fail {
             fs::write(dir.join(format!("pull.{}.later.fail", pr.number)), "")
+                .map_err(|e| e.to_string())?;
+        }
+        if pr.comments_fail {
+            fs::write(dir.join(format!("comments.{}.fail", pr.number)), "")
                 .map_err(|e| e.to_string())?;
         }
         fs::write(
@@ -277,7 +296,7 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
         if let Some(response) = pr.runs_response {
             fs::write(dir.join(format!("runs.{}.json", pr.sha())), response)
                 .map_err(|e| e.to_string())?;
-        } else if pr.in_flight || pr.completed_run {
+        } else if pr.in_flight || pr.completed_run || pr.covered {
             fs::write(
                 dir.join(format!("runs.{}.json", pr.sha())),
                 pr.runs(if pr.in_flight {
@@ -295,6 +314,19 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                 fs::write(dir.join("suite.json"), suite.replace("{head}", &pr.sha()))
                     .map_err(|e| e.to_string())?;
             }
+        }
+        let jobs = pr.jobs.or(pr.covered.then_some(RESULT_JOB));
+        if let Some(jobs) = jobs {
+            if jobs == "HTTP 502" {
+                fs::write(dir.join("jobs.fail"), "").map_err(|e| e.to_string())?;
+            } else {
+                fs::write(dir.join("jobs.json"), jobs.replace("{head}", &pr.sha()))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        if let Some(result) = pr.result.or(pr.covered.then_some(RESULT_CHECK)) {
+            fs::write(dir.join("result.json"), result.replace("{head}", &pr.sha()))
+                .map_err(|e| e.to_string())?;
         }
         if pr.late_fail {
             fs::write(dir.join("runs.later.fail"), "").map_err(|e| e.to_string())?;
@@ -814,7 +846,10 @@ fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_a
         outcome.log
     );
     assert_eq!(
-        outcome.log.matches("/check-suites/277/check-runs?").count(),
+        outcome
+            .log
+            .matches("/actions/runs/277/attempts/2/jobs?")
+            .count(),
         2
     );
 
@@ -839,15 +874,113 @@ fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_a
 }
 
 #[test]
-fn a_result_visible_only_in_the_canonical_suite_suppresses_relabel_advice() -> Result<(), String> {
+fn shared_sha_checks_cannot_replace_the_target_pr_and_attempt() -> Result<(), String> {
+    for (case, association, covered) in [
+        ("other-pr", Some(r#"[{"number":99999}]"#), false),
+        (
+            "other-pr-commit-census",
+            Some(r#"[{"number":99999}]"#),
+            true,
+        ),
+        ("missing-pr", Some("[]"), false),
+        (
+            "ambiguous-pr",
+            Some(r#"[{"number":274},{"number":99999}]"#),
+            false,
+        ),
+        ("older-attempt", None, true),
+    ] {
+        let pr = Pr {
+            state: "clean",
+            completed_run: true,
+            covered,
+            association,
+            // Both commit and suite legacy paths can see a Result. Attempt 2 has none.
+            jobs: Some(r#"{"total_count":0,"jobs":[]}"#),
+            suite: Some(RESULT_SUITE),
+            ..Pr::dirty(274)
+        };
+        let outcome = run(&[pr], case)?;
+        assert!(
+            !outcome.summary.contains("covered ("),
+            "{case}: {}",
+            outcome.summary
+        );
+        if matches!(case, "missing-pr" | "ambiguous-pr") {
+            assert_eq!(outcome.comments, 0, "{}", outcome.log);
+            assert!(outcome.summary.contains("deferred to the next sweep"));
+            assert!(
+                outcome
+                    .summary
+                    .contains("dark merge-ready heads reported: 0")
+            );
+        } else {
+            assert_eq!(outcome.comments, 1, "{}", outcome.log);
+            assert_eq!(
+                outcome.log.contains("/attempts/2/jobs?"),
+                case == "older-attempt"
+            );
+        }
+        assert!(!outcome.log.contains("/check-runs/278"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_late_comment_or_eligibility_read_failure_defers_all_writes_and_dark_output()
+-> Result<(), String> {
+    for (case, comments_fail, expected) in [
+        ("late-comments", true, "comment census"),
+        ("late-eligibility", false, "final eligibility"),
+    ] {
+        let pr = Pr {
+            state: "clean",
+            prior_statuses: OURS_FAILURE,
+            comments_fail,
+            late_pull_fail: !comments_fail,
+            ..Pr::dirty(275)
+        };
+        let outcome = run(&[pr, Pr::dirty(276)], case)?;
+        assert_eq!(
+            (outcome.comments, outcome.failures, outcome.successes),
+            (1, 1, 0),
+            "{}",
+            outcome.log
+        );
+        assert!(outcome.summary.contains(expected), "{}", outcome.summary);
+        assert!(
+            outcome.summary.contains("API reads failed: 1"),
+            "{}",
+            outcome.summary
+        );
+        // Only the healthy conflicted head contributes to the dark count.
+        assert!(
+            outcome
+                .summary
+                .contains("dark merge-ready heads reported: 1"),
+            "{}",
+            outcome.summary
+        );
+        assert!(
+            !outcome
+                .summary
+                .lines()
+                .any(|line| line.contains("| #275 |") && line.contains("DARK"))
+        );
+        assert!(!outcome.stdout.contains("title=Dark merge-ready PR head"));
+    }
+    Ok(())
+}
+
+#[test]
+fn the_current_attempts_verified_result_suppresses_relabel_advice() -> Result<(), String> {
     for late in [false, true] {
         let pr = Pr {
             state: "clean",
             completed_run: !late,
             late_run: late.then_some("completed"),
-            suite: Some(
-                r#"{"total_count":1,"check_runs":[{"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":277}}]}"#,
-            ),
+            jobs: Some(RESULT_JOB),
+            result: Some(RESULT_CHECK),
             ..Pr::dirty(270)
         };
         let outcome = run(&[pr], &format!("suite-covered-{late}"))?;
@@ -863,27 +996,39 @@ fn a_result_visible_only_in_the_canonical_suite_suppresses_relabel_advice() -> R
                 .contains("dark merge-ready heads reported: 0")
         );
         assert!(!outcome.stdout.contains("title=Dark merge-ready PR head"));
-        assert_eq!(outcome.log.matches("/check-suites/").count(), 1);
-        assert!(outcome.log.contains("/check-suites/277/check-runs?"));
+        assert_eq!(outcome.log.matches("/attempts/2/jobs?").count(), 1);
+        assert_eq!(outcome.log.matches("/check-runs/278").count(), 1);
+        assert!(!outcome.log.contains("/check-suites/"));
     }
     Ok(())
 }
 
 #[test]
-fn unreadable_or_incomplete_suite_evidence_defers_the_head_and_preserves_the_sweep()
+fn unreadable_or_mismatched_attempt_evidence_defers_the_head_and_preserves_the_sweep()
 -> Result<(), String> {
-    for (case, suite) in [
-        ("unreadable", "HTTP 502"),
-        ("incomplete", r#"{"total_count":101,"check_runs":[]}"#),
+    for (case, jobs, result) in [
+        ("unreadable", "HTTP 502", RESULT_CHECK),
         (
-            "wrong-head",
-            r#"{"total_count":1,"check_runs":[{"name":"Ripr Rust Small Result","head_sha":"other","check_suite":{"id":277}}]}"#,
+            "incomplete",
+            r#"{"total_count":101,"jobs":[]}"#,
+            RESULT_CHECK,
+        ),
+        (
+            "wrong-suite",
+            RESULT_JOB,
+            r#"{"id":278,"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":111}}"#,
+        ),
+        (
+            "wrong-attempt",
+            r#"{"total_count":1,"jobs":[{"run_id":277,"run_attempt":1,"head_sha":"{head}","name":"Ripr Rust Small Result","check_run_url":"https://api.github.com/repos/o/r/check-runs/278"}]}"#,
+            RESULT_CHECK,
         ),
     ] {
         let pr = Pr {
             state: "clean",
             completed_run: true,
-            suite: Some(suite),
+            jobs: Some(jobs),
+            result: Some(result),
             ..Pr::dirty(271)
         };
         let outcome = run(&[pr, Pr::dirty(272)], case)?;
@@ -893,7 +1038,7 @@ fn unreadable_or_incomplete_suite_evidence_defers_the_head_and_preserves_the_swe
             "{}",
             outcome.summary
         );
-        assert!(outcome.summary.contains("Result suite verification"));
+        assert!(outcome.summary.contains("Result attempt verification"));
         assert!(outcome.summary.contains("deferred to the next sweep"));
         assert!(outcome.summary.contains("conflict reported"));
         assert!(!outcome.log.contains("merge-ready-dark:"));
@@ -964,7 +1109,7 @@ fn a_failed_lookup_before_the_notice_posts_nothing_and_is_reported() -> Result<(
     let outcome = run(&[failing], "late-fail")?;
     assert_eq!(outcome.comments, 0, "{}", outcome.summary);
     assert!(
-        outcome.summary.contains("re-apply notice failed")
+        outcome.summary.contains("deferred to the next sweep")
             && outcome.summary.contains("re-apply notices: 0")
             && outcome
                 .summary
@@ -1206,7 +1351,14 @@ fn a_request_withdrawn_or_moved_after_the_initial_live_read_receives_no_write() 
     };
     let outcome = run(&[failed_recheck], "late-pull-fail-dirty")?;
     if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0)
-        || !outcome.summary.contains("conflict report failed")
+        || !outcome
+            .summary
+            .contains("API read failed (final eligibility)")
+        || !outcome
+            .summary
+            .contains("dark merge-ready heads reported: 0")
+        || !outcome.summary.contains("API reads failed: 1")
+        || outcome.stdout.contains("title=Dark conflicted PR head")
     {
         return Err(format!(
             "failed write-boundary recheck wrote or misreported: {}",
@@ -1273,9 +1425,10 @@ fn a_failed_read_of_one_head_defers_it_and_the_sweep_still_reports_the_rest() ->
             },
         ),
         (
-            "check-runs-read",
+            "attempt-jobs-read",
             Pr {
-                checks_fail: true,
+                completed_run: true,
+                jobs: Some("HTTP 502"),
                 ..Pr::dirty(701)
             },
         ),

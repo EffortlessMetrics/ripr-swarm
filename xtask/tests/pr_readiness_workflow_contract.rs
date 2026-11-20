@@ -228,8 +228,8 @@ fn staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
 /// Calling that head dark tells the author to re-apply merge-ready, which
 /// cancels the real run (`cancel-in-progress` for pull_request).
 const WATCHDOG_IN_FLIGHT_QUERY: &str =
-    "actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$1";
-const WATCHDOG_IN_FLIGHT_LOOKUP: &str = r#"request="$(routed_result "$head_sha")""#;
+    "actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2";
+const WATCHDOG_IN_FLIGHT_LOOKUP: &str = r#"request="$(routed_result "$number" "$head_sha")""#;
 
 fn watchdog_reports_in_flight_before_dark(source: &str) -> bool {
     let Some(lookup) = source.find(WATCHDOG_IN_FLIGHT_LOOKUP) else {

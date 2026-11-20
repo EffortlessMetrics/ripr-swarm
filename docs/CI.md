@@ -1525,19 +1525,16 @@ and must not be qualified by a lighter branch-head dispatch (which skips the
 `pull_request`-scoped PR-evidence steps). Before re-applying the label, check
 merge conflicts first: query the PR's `mergeable_state`; `dirty` means repair
 the conflict, then re-apply `merge-ready` for the composed head. That handoff also governs recovery from a
-dropped delivery. The required check, not run existence, is the
-discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
-real qualification attempt on that exact head. That check run is created only
-when the `result` job starts, after every implementation job (up to 120
-minutes), so before calling a head dark the watchdog also lists
-`routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
-in-progress run is reported as in flight. Re-applying `merge-ready` on such a
-head would cancel the real run, so the watchdog never recommends it. The
-commit check listing can omit checks once the head exceeds 1,000 suites.
-If it misses the Result and the newest exact request completed, the watchdog
-reads one page from that request's own suite. A matching Result counts as
-covered. An unreadable or ambiguous run or suite read defers the head to the
-next sweep (#15577). Mergeability is read once per head and never retried
+dropped delivery. The watchdog lists `routed-rust.yml` PR runs for the head
+SHA and matches each request to the target PR. It reports queued or in-progress
+requests as in flight because re-applying the label would cancel them. For the
+newest completed request, it reads one page of jobs from the current attempt
+and verifies the Result job's exact check-run ID, head and suite. The commit
+check listing can omit older suites, and an older attempt in the same suite
+can retain its Result. An unreadable or ambiguous read defers the head. When
+preparing a re-apply notice, the watchdog finishes its comment census and final
+eligibility read before publishing the verdict or writing on that head
+(#15577). Mergeability is read once per head and never retried
 in-sweep (#14636): `mergeable_state` is not resolved for heads in the merge
 queue, which read `unknown` on repeated polls, and the former in-sweep retry
 spent 10 s of sleep per queued head, which alone exceeded the job cap once most
