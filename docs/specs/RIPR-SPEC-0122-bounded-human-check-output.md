@@ -153,6 +153,14 @@ digest, limitation, and outcome schema forms it already rendered (the
 bounded-only triage sentence was never part of that surface), JSON is
 unchanged, and `ripr explain` keeps the exact schema tokens.
 
+`ripr explain`'s Evidence window skips a function-argument source-value row
+when a missing-discriminator reason already lists the same name and value in
+its `observed <name> values:` segment, since the Weakness line right below
+prints that fact (#15421). The skip applies only while the source-value window
+is untruncated, so a `showing N of M` row stays true, and a skipped row still
+counts as an added row, so the literal evidence fallback stays off.
+`human-full`, JSON and agent output keep every row.
+
 The trailing block is state-dependent, because a `Hidden:` heading over a
 literal `0 lower-priority finding(s) omitted` line claims a suppressed
 remainder that does not exist:
