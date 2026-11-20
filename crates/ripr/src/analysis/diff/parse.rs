@@ -348,6 +348,7 @@ mod parser_state {
         parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
         parse_rename_to_path, source_line_text,
     };
+    use crate::analysis::diff::path::parse_prefixless_binary_path;
     use crate::analysis::diff::side_prefix::MnemonicSides;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -901,7 +902,13 @@ mod parser_state {
             let path = self
                 .current_path
                 .clone()
-                .or_else(|| self.section_old_path.clone());
+                .or_else(|| self.section_old_path.clone())
+                .or_else(|| {
+                    // #15665: a `--no-prefix` section has no `a/` identity.
+                    self.section_git_header
+                        .as_deref()
+                        .and_then(|header| parse_prefixless_binary_path(header, raw))
+                });
             if let Some(path) = path
                 && !self.binary_paths.contains(&path)
             {
