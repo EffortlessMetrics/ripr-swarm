@@ -65,27 +65,65 @@ pub(crate) fn changed_source_files_absent_from_worktree<'a>(
 
 /// Shared admission disclosure for a changed source path with no regular worktree file.
 pub(crate) fn limitations_for_absent_changed_files(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
     paths
         .iter()
         .map(|path| {
             let display = super::classify::normalize_path(path);
+            let (recovery, detail) = match unread_side_prefix(root, path) {
+                Some(prefix) => (
+                    format!(
+                        "If the patch was written with a custom side prefix{prefix}, ripr does not read it: write the patch with `git diff --src-prefix=a/ --dst-prefix=b/` (or `--no-prefix`). Otherwise check out the missing file or disable sparse checkout for it. Then re-run the analysis."
+                    ),
+                    format!(
+                        "changed file is absent from the working tree under the name the patch gives, but the same path without its first component{prefix} is a regular source file under the selected root, which a custom patch side prefix would explain; probes for this file were withheld"
+                    ),
+                ),
+                None => (
+                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.".to_string(),
+                    "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld".to_string(),
+                ),
+            };
             AnalysisLimitation::new(
                 AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
                 AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.",
-                )?,
+                AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery)?,
             )
             .with_path(&display)?
             .with_affected_items(1)?
-            .with_detail(
-                "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
-            )
+            .with_detail(detail)
         })
         .collect()
+}
+
+/// The first component of an absent changed path, as a parenthesized quote
+/// for display (or empty when it is not echoed), when the path without it is a regular source file under `root` (#15103). A
+/// patch written with custom side prefixes (`--src-prefix=old/
+/// --dst-prefix=new/`) keeps the prefix in every path ripr reads; git's
+/// default and mnemonic prefixes are already stripped by the diff parser.
+/// A long first component, or one with a backtick or control character, is
+/// not echoed, so the hint never carries unbounded or markup-breaking text.
+fn unread_side_prefix(root: &Path, path: &Path) -> Option<String> {
+    let mut components = path.components();
+    let first = match components.next()? {
+        std::path::Component::Normal(first) => first.to_str()?,
+        _ => return None,
+    };
+    let rest = components.as_path();
+    // The exact stripped path only: the crate-subdirectory suffix matching
+    // of `worktree_regular_source_file` would let a real directory pass.
+    if rest.as_os_str().is_empty() || !is_regular_source_below_root(root, rest) {
+        return None;
+    }
+    let echoable =
+        first.chars().count() <= 32 && !first.chars().any(|c| c == '`' || c.is_control());
+    Some(if echoable {
+        format!(" (`{first}/`)")
+    } else {
+        String::new()
+    })
 }
 
 /// Absent-file disclosure for a consumer that keeps earlier evidence, such as
@@ -95,9 +133,10 @@ pub(crate) fn limitations_for_absent_changed_files(
 /// canonical per-file limitations, or one bounded, path-less limitation
 /// naming the refusal so the withheld coverage stays disclosed.
 pub(crate) fn supplement_absent_file_limitations(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
-    match limitations_for_absent_changed_files(paths) {
+    match limitations_for_absent_changed_files(root, paths) {
         Ok(limitations) => Ok(limitations),
         Err(error) => {
             // `bounded_detail` rejects over-long text instead of truncating,
@@ -388,7 +427,7 @@ pub(crate) fn discover_preview_language_files(root: &Path) -> Vec<(LanguageId, P
 /// that may include non-production files (fail-closed).
 pub(crate) fn discover_routed_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
     let mut out: Vec<(LanguageId, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &route);
+    visit_classified(root, root, &mut out, &route, false);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -404,8 +443,8 @@ pub(crate) struct UnlinkedPythonTests {
 }
 
 /// Directories holding installed third-party Python packages or tool caches,
-/// whose `tests/` folders are not the repository's own tests. Skipped only by
-/// [`discover_python_test_files`].
+/// whose files are not the repository's own source. Skipped by
+/// [`discover_python_test_files`] and [`discover_unanalyzed_source_files`].
 const PYTHON_VENDOR_DIRS: &[&str] = &[
     ".venv",
     "venv",
@@ -416,6 +455,13 @@ const PYTHON_VENDOR_DIRS: &[&str] = &[
     ".mypy_cache",
     ".pytest_cache",
 ];
+
+/// Whether a directory holds installed dependencies or tool caches rather than
+/// repository source: a known vendor name, or any virtualenv (a `pyvenv.cfg`
+/// marker, which also covers custom names such as `env/` or `.uv-venv/`).
+fn is_vendored_dir(path: &Path, name: &str) -> bool {
+    PYTHON_VENDOR_DIRS.contains(&name) || path.join("pyvenv.cfg").is_file()
+}
 
 /// Upper bound on directory entries inspected by [`discover_python_test_files`].
 const PYTHON_TEST_WALK_ENTRY_CAP: usize = 50_000;
@@ -525,11 +571,13 @@ pub(crate) fn discover_python_test_files(
 
 /// Discover source files in languages no ripr adapter reads (Go, Java, C,
 /// shell, ...), with their language names, skipping the same directories as
-/// the other discovery walks. Pilot uses it so a repository written in such a
-/// language gets a named non-claim instead of an empty "complete" ranking.
+/// the other discovery walks plus virtualenv and tool-cache directories (a
+/// `.venv`'s `activate.ps1` is not repository source). Pilot uses it so a
+/// repository written in such a language gets a named non-claim instead of an
+/// empty "complete" ranking.
 pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str, PathBuf)> {
     let mut out: Vec<(&'static str, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &unanalyzed_source_language);
+    visit_classified(root, root, &mut out, &unanalyzed_source_language, true);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -539,8 +587,12 @@ pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str
 /// One short-circuiting walk with the same ignored directories as the other
 /// discovery walks; only regular files count, so a dangling link or FIFO
 /// named like a source file does not make a root look inspectable (#9922).
+/// Inside virtualenv and tool-cache directories an unanalyzed-language file
+/// does not count, matching [`discover_unanalyzed_source_files`] (#15283); a
+/// Rust or preview-language file there still counts, as routed discovery
+/// still reads it.
 pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
-    fn inspectable(path: &Path) -> bool {
+    fn inspectable(path: &Path, in_vendored: bool) -> bool {
         RustAdapter.accepts_path(path)
             || route(path).is_some_and(|language| {
                 matches!(
@@ -551,9 +603,9 @@ pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
                         | LanguageId::Perl
                 )
             })
-            || unanalyzed_source_language(path).is_some()
+            || (!in_vendored && unanalyzed_source_language(path).is_some())
     }
-    fn walk(dir: &Path) -> bool {
+    fn walk(dir: &Path, in_vendored: bool) -> bool {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return false;
         };
@@ -567,16 +619,18 @@ pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
             };
             if kind.is_dir() {
                 let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if !DEFAULT_IGNORED_DIRS.contains(&name) && walk(&path) {
+                if !DEFAULT_IGNORED_DIRS.contains(&name)
+                    && walk(&path, in_vendored || is_vendored_dir(&path, name))
+                {
                     return true;
                 }
-            } else if kind.is_file() && inspectable(&path) {
+            } else if kind.is_file() && inspectable(&path, in_vendored) {
                 return true;
             }
         }
         false
     }
-    walk(root)
+    walk(root, false)
 }
 
 fn visit_classified<T>(
@@ -584,6 +638,7 @@ fn visit_classified<T>(
     dir: &Path,
     out: &mut Vec<(T, PathBuf)>,
     classify: &dyn Fn(&Path) -> Option<T>,
+    skip_vendored: bool,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -598,10 +653,12 @@ fn visit_classified<T>(
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            if DEFAULT_IGNORED_DIRS.contains(&name) {
+            if DEFAULT_IGNORED_DIRS.contains(&name)
+                || (skip_vendored && is_vendored_dir(&path, name))
+            {
                 continue;
             }
-            visit_classified(root, &path, out, classify);
+            visit_classified(root, &path, out, classify, skip_vendored);
         } else if let Some(class) = classify(&path) {
             let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             out.push((class, relative));
@@ -680,6 +737,12 @@ mod tests {
             ("python", "app.py", true),
             ("go", "main.go", true),
             ("ignored", "node_modules/pkg/index.js", false),
+            // #15283: an unanalyzed-language file inside a virtualenv is not
+            // repository source, by name or by `pyvenv.cfg` marker; a Python
+            // file there still routes, matching routed discovery.
+            ("venv-script", ".venv/bin/activate.ps1", false),
+            ("marked-venv", "env/pyvenv.cfg", false),
+            ("venv-python", ".venv/lib/site.py", true),
         ] {
             let case = root.join(dir);
             let path = case.join(file);
@@ -687,6 +750,9 @@ mod tests {
                 fs::create_dir_all(parent).map_err(io)?;
             }
             fs::write(&path, "x\n").map_err(io)?;
+            if dir == "marked-venv" {
+                fs::write(case.join("env/run.sh"), "x\n").map_err(io)?;
+            }
             assert_eq!(has_inspectable_source_file(&case), expected, "{dir}");
         }
         #[cfg(unix)]
@@ -698,6 +764,37 @@ mod tests {
             assert!(
                 !has_inspectable_source_file(&dangling),
                 "a dangling link named like a source file is not a source"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unread_side_prefix_echoes_only_a_short_plain_first_component() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-side-prefix-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "fn a() {}\n").map_err(io)?;
+        let long = "p".repeat(33);
+        for (path, expected) in [
+            ("new/src/lib.rs".to_string(), Some(" (`new/`)".to_string())),
+            (
+                format!("{}/src/lib.rs", "q".repeat(32)),
+                Some(format!(" (`{}/`)", "q".repeat(32))),
+            ),
+            (format!("{long}/src/lib.rs"), Some(String::new())),
+            ("n`w/src/lib.rs".to_string(), Some(String::new())),
+            ("new/src/missing.rs".to_string(), None),
+            ("new/src".to_string(), None),
+            ("lib.rs".to_string(), None),
+            ("../src/lib.rs".to_string(), None),
+        ] {
+            assert_eq!(
+                unread_side_prefix(&root, Path::new(&path)),
+                expected,
+                "{path}"
             );
         }
         let _ = fs::remove_dir_all(&root);
@@ -915,7 +1012,10 @@ mod tests {
     #[test]
     fn supplement_absent_file_limitations_keeps_canonical_per_file_disclosure() -> Result<(), String>
     {
-        let limitations = supplement_absent_file_limitations(&[PathBuf::from("src/z_hidden.rs")])?;
+        let limitations = supplement_absent_file_limitations(
+            Path::new("/nonexistent-ripr-root"),
+            &[PathBuf::from("src/z_hidden.rs")],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some("src/z_hidden.rs"));
         assert_eq!(
@@ -934,7 +1034,8 @@ mod tests {
         // running instead of failing, so the refused disclosure degrades to
         // one bounded, path-less stand-in naming the refusal (#6976).
         let absent = [PathBuf::from("src/kept.rs"), PathBuf::from("C:missing.rs")];
-        let limitations = supplement_absent_file_limitations(&absent)?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &absent)?;
         assert_eq!(limitations.len(), 1, "one bounded stand-in, not an error");
         let fallback = &limitations[0];
         assert_eq!(fallback.path, None, "the refused name cannot be a path");
@@ -951,7 +1052,8 @@ mod tests {
     #[test]
     fn supplement_absent_file_limitations_names_nothing_when_no_file_is_absent()
     -> Result<(), String> {
-        let limitations = supplement_absent_file_limitations(&[])?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &[])?;
         assert!(limitations.is_empty());
         Ok(())
     }

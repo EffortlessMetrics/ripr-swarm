@@ -145,6 +145,9 @@ fn rust_switched_off_prints_its_recovery_instead_of_a_pointer() -> Result<(), St
 #[test]
 fn a_preview_language_keeps_the_pointer_and_its_note() -> Result<(), String> {
     let repo = Repo::create()?;
+    // A root-level Python file now auto-enables Python (#13342); an explicit
+    // Rust-only opt-in keeps Python a preview language that is not enabled.
+    repo.write("ripr.toml", "[languages]\nenabled = [\"rust\"]\n")?;
     repo.write("over.py", NEW_PYTHON)?;
     let screen = repo.check_change()?;
     require(

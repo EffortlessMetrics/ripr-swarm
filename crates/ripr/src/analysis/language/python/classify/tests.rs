@@ -4736,6 +4736,84 @@ fn loop_boundary_integer_list_is_infection_unknown() -> Result<(), String> {
 }
 
 #[test]
+fn loop_boundary_issue_repro_with_annotations_is_infection_unknown() -> Result<(), String> {
+    // #12954's own repro: a generic annotated signature over the iterator
+    // selector. The annotations do not change the closed body.
+    let source = "from typing import TypeVar\nT = TypeVar('T')\n\ndef largest(xs: list[T]) -> T | None:\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest_of_three():\n    assert largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        11,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_full_list_loop_from_the_first_element_is_infection_unknown() -> Result<(), String>
+{
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    for (before, after, expected) in [
+        ("        if x > best:", "        if x >= best:", 5),
+        ("        if x < best:", "        if x <= best:", 1),
+    ] {
+        let source = source.replace("        if x >= best:", after);
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{before} -> {after}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_full_list_loop_keeps_identity_and_other_bodies() -> Result<(), String> {
+    // Identity can tell `>` from `>=` on equal keys, so it keeps its class.
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        identity,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    // A loop over another sequence than the parameter is not the selector.
+    let other = "def largest(xs, ys):\n    best = xs[0]\n    for x in ys:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], [2]) == 2\n";
+    let finding = classify_edit_case(
+        other,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_edit_that_also_changes_the_rest_of_the_condition_keeps_prior_class()
 -> Result<(), String> {
     let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";

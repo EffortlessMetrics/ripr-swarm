@@ -55,6 +55,37 @@ pub(super) fn test_run_line(reading: &AgentReceiptReading) -> String {
     }
 }
 
+/// The same line for one of several finished attempts in the aggregate
+/// status (#14146): it names the attempt it speaks for.
+pub(super) fn attempt_test_run_line(attempt_id: &str, reading: &AgentReceiptReading) -> String {
+    let line = test_run_line(reading);
+    match line.strip_prefix("Test run: ") {
+        Some(rest) => format!("Test run (attempt `{attempt_id}`): {rest}"),
+        None => line,
+    }
+}
+
+/// How telling a reading is for the aggregate status (#14146), lowest first:
+/// a caller-reported failure, then no recorded run, then a caller-reported
+/// pass. A failure must never sit behind another attempt's reading.
+pub(super) fn aggregate_rank(reading: &AgentReceiptReading) -> u8 {
+    match &reading.reported_test_run {
+        Some(run) if run.failed > 0 => 0,
+        None => 1,
+        Some(_) => 2,
+    }
+}
+
+/// The aggregate JSON `test_run` object: the per-attempt object plus the
+/// `attempt_id` it speaks for (#14146).
+pub(super) fn aggregate_test_run_json(attempt_id: &str, reading: &AgentReceiptReading) -> Value {
+    let mut value = test_run_json(reading);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("attempt_id".to_string(), Value::from(attempt_id));
+    }
+    value
+}
+
 /// The JSON `test_run` object for the same axis. `not_recorded` keeps its
 /// prior shape; `caller_reported` adds the reported counts.
 pub(super) fn test_run_json(reading: &AgentReceiptReading) -> Value {

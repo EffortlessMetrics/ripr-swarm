@@ -160,6 +160,19 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+Both carriers screen later lines the same way, so a residual written as plain
+narration (`Residual: the hosted lane on this head has not run.`) admits under
+either, while a retraction word used as narration (`the withdrawn attribution`)
+refuses under either. A `| Verdict | Notes |` column header row above a table
+delimiter states nothing under either carrier (the VERDICT carrier used to refuse
+it). A later refused body from the same login supersedes that
+login's earlier attesting review even at an unchanged head. A refusal therefore
+prints `source review refusal detail:` lines after the generic message, naming
+the review, the refusing line and the phrase it matched (or the short, overlong,
+uppercase or wrong VERDICT SHA), and saying when that review superseded an
+earlier attesting review at the same head. Review text, logins and timestamps
+are folded to one line with `::` split and `%` escaped before they are printed. The details only explain the decision; they never change it
+(#14929).
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
@@ -626,7 +639,7 @@ and single-platform CI was the root cause enabling both.
   (#5044). A sidecar from another report cannot qualify changed bytes even when
   both reports have valid coverage rows. Uploading
   the path with `if-no-files-found: ignore` is not admission.
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): two `cargo nextest run --workspace --profile ci --partition hash:N/2` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 2`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, restored opportunistically from compatible existing default-branch entries. A miss rebuilds dependencies and all workspace tests; only an already-selected manual main qualification lets shard 1 save. No recurring cache warmer is retained. The shards set `CARGO_PROFILE_DEV_DEBUG=0` for every Cargo call, so their test binaries carry no debug info: generating and linking it for about 345 test executables pushed a 16 GB runner deep into swap and past its build limit (#11566). A failing test still reports its panic location; only backtrace frames lose file and line. Each shard writes its partition list (shard 1 also the workspace list) from the prepared binaries before it runs the tests; listing after the run cost shard 4 four to six minutes on every run (#12915). Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): two `cargo nextest run --workspace --profile ci --partition hash:N/2` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 2`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. A single matched download may extract directly into the destination rather than an artifact-named child directory; the verifier discovers that shard from its unique canonical attempt and partition receipt, then applies the same checks. Mixed flat and artifact-named layouts fail closed, and a present shard never substitutes for missing partitions. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, restored opportunistically from compatible existing default-branch entries. A miss rebuilds dependencies and all workspace tests; only an already-selected manual main qualification lets shard 1 save. No recurring cache warmer is retained. The shards set `CARGO_PROFILE_DEV_DEBUG=0` for every Cargo call, so their test binaries carry no debug info: generating and linking it for about 345 test executables pushed a 16 GB runner deep into swap and past its build limit (#11566). A failing test still reports its panic location; only backtrace frames lose file and line. Each shard writes its partition list (shard 1 also the workspace list) from the prepared binaries before it runs the tests; listing after the run cost shard 4 four to six minutes on every run (#12915). Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
   #8194 removes two private workspace builds, preserving complete coverage,
   profile, retries and doctests. Measure total occupancy and the complete critical
   path; fewer workers alone does not prove a shorter qualification.
@@ -1192,7 +1205,10 @@ cargo xtask release-readiness --version "$release_version"
 ```
 
 `cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
-`ripr-contract`, packages `ripr` against a vendored source tree, then builds
+`ripr-contract`, packages `ripr` from the publish stage (a copy of the
+workspace whose `ripr` source has no inline `#[cfg(test)]` modules, #14198)
+against a vendored source tree, fails when a packaged crate is over the
+crates.io default upload limit, then builds
 the packaged crate the way `cargo install ripr` without `--locked` does: it
 unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
 catches a dependency that only compiles under the committed lock (#3787). A
@@ -1207,7 +1223,10 @@ cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail
 ```
 
 It runs on manual dispatch or a validated frozen-subject call selecting
-`run_rust_only`. It is not a required check. The Windows advisory lane runs the
+`run_rust_only`. It is not a required check. The required run lints the
+Rust-only library with warnings denied (#14263, see
+[Clippy policy](CLIPPY_POLICY.md#required-feature-coverage)); it does not
+run the Rust-only tests. The Windows advisory lane runs the
 same command on Windows. The retained PR diff selector is legacy handling,
 not an active subscription: callable selection comes from explicit admitted
 inputs, and manual dispatch runs the lane unconditionally.
@@ -3170,6 +3189,15 @@ unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
 one docs-only way to break a `proof_refs` entry).
+
+Markdown contract tests (#14986, #14998): the docs-gate always runs the `xtask`
+test binaries that pin agent/public-guide markdown. When a docs-only PR changes
+`README.md`, a top-level `docs/*.md`, `docs/interop/*.md`, `docs/status/*.md`,
+`docs/how-to/first-rust-test.md` or `docs/ci/coverage.md`, it also runs the
+`ripr` binaries `cli_reference_doc`, `troubleshooting_guide`, `user_journeys`,
+`documented_commands` and `generated_review_workflow` (which pins this file's
+`Run RIPR` step) and the `repo-policy` binary `future_clippy`; other docs-only
+PRs skip those test builds.
 
 ## Changelog Fold
 

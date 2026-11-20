@@ -1,0 +1,2 @@
+crates/ripr/tests/refusal_envelope_schemas.rs|Command::new|1|cli-tests|#3920: the refusal-envelope schema conformance tests run the worktree-built binary (CARGO_BIN_EXE_ripr) with `rerun --json`, `agent brief --json` and `agent packet --json` against isolated temporary fixture repositories or a missing temporary root; no shell, network or mutation outside the fixture root.
+crates/ripr/tests/refusal_envelope_schemas.rs|use std::process::Command|1|cli-tests|#3920: import for the exact-binary refusal invocations described above.

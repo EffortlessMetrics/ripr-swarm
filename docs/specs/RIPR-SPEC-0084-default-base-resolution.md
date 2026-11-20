@@ -131,6 +131,17 @@ clone it replaces the plain unshallow advice, and in a full clone it
 precedes the branch list, because no fetch there ever creates another
 branch's `origin/<name>` (#14104).
 
+When an `origin` remote exists but `refs/remotes/origin/HEAD` does not (a
+repository built with `git remote add`, which never writes the pointer `git
+clone` does, and where a later fetch did not create it either: Git before 2.48
+or `followRemoteHEAD=never`), the context ends with the literal next steps `git
+fetch origin` followed by `git remote set-head origin --auto`. The fetch comes
+first because `set-head --auto` refuses when the default branch's tracking ref
+was never fetched. Together they create `origin/HEAD`, so a bare check, such as
+a pre-commit hook that cannot pass `--base`, resolves the remote's default
+branch. The `--base` example is kept, and the sentence is omitted when there is
+no `origin` remote.
+
 A damaged repository is not a missing base. When the `HEAD` probe itself
 fails with a Git `fatal:` line (exit 128, for example a corrupt
 `.git/packed-refs`), the default-base failure is the unreadable-repository
