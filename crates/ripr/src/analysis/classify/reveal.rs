@@ -3280,8 +3280,7 @@ fn analyze_related_assertions(
                 // The owner-identity defeats the owner pin applies hold
                 // here too: a same-name import or a package's own `owner`
                 // may be another function.
-                let bool_field_pin = matches!(assertion.kind, OracleKind::RelationalCheck)
-                    && !import_defeats_owner
+                let record_field_identity = !import_defeats_owner
                     && !cross_package_defeats_owner
                     && return_admission
                         .record_field_line
@@ -3291,6 +3290,8 @@ fn analyze_related_assertions(
                             bool_field_assertion(test, &assertion.text, owner, field)
                         })
                     });
+                let bool_field_pin =
+                    matches!(assertion.kind, OracleKind::RelationalCheck) && record_field_identity;
                 let mut relative_strength = if strength_raising_pin || bool_field_pin {
                     OracleStrength::Strong
                 } else {
@@ -3331,6 +3332,7 @@ fn analyze_related_assertions(
                             | RelationReason::AssertionTargetAffinity
                             | RelationReason::OwnerNamedTest
                     ))
+                    || record_field_identity
                     || owner_return_pin_holds(
                         &assertion_context,
                         assertion,
