@@ -273,6 +273,30 @@ fn a_tuple_without_standard_equality_cannot_pin_the_owner() -> Result<(), String
 fn all_tuple_and_scalar_assertions_must_allow_the_same_version() -> Result<(), String> {
     for (body, expected) in [
         (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_eq!(over(10), false);",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_ne!((over(10), over(9)), (true, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_ne!(over(10), true);",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_ne!(over(10), false);",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nif false { assert_ne!(over(10), true); }",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nlet _ = || { assert_ne!(over(10), true); };",
+            "exposed",
+        ),
+        (
             "assert_eq!(over(10) as u8, 1); assert_eq!((over(10), over(9)), (false, false));",
             "infection_unknown",
         ),

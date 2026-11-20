@@ -19,8 +19,9 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<(bool, bool)> {
+    let unequal = is_plain_or_std_macro(&assertion.text, "assert_ne");
     if !matches!(owner.item.container, FunctionContainer::Free)
-        || !is_plain_or_std_macro(&assertion.text, "assert_eq")
+        || !(is_plain_or_std_macro(&assertion.text, "assert_eq") || unequal)
     {
         return None;
     }
@@ -32,7 +33,8 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         tuple_cells(compared)?
     } else {
         let normalized = super::primitive_bool_negated_operands(compared)
-            .or_else(|| super::bool_to_u8_operands(compared, index, syntax, test, assertion))?;
+            .or_else(|| super::bool_to_u8_operands(compared, index, syntax, test, assertion))
+            .unwrap_or(compared);
         let [left, right] = normalized;
         let (call, expected) = match left.parse::<bool>() {
             Ok(expected) => (right, expected),
@@ -65,7 +67,7 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
         before_matches &= before == expected;
         after_matches &= after == expected;
     }
-    Some((before_matches, after_matches))
+    Some((before_matches != unequal, after_matches != unequal))
 }
 
 fn tuple_cells([left, right]: [&str; 2]) -> Option<Vec<(String, bool)>> {
