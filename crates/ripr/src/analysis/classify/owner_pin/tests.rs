@@ -8217,7 +8217,10 @@ fn a_clone_field_pin_refuses_competitors_and_unreadable_shapes() {
     let other_type = WINDOW_LIB.to_string()
         + "pub struct Other;\nimpl Other {\n    pub fn clone(&self) -> u8 {\n        0\n    }\n}\n";
     let (index, pin) = clone_field_pin(&other_type, WINDOW_TESTS);
-    assert!(pin.is_some(), "a `clone` on another named type does not compete");
+    assert!(
+        pin.is_some(),
+        "a `clone` on another named type does not compete"
+    );
     if let Some(pin) = pin {
         assert!(!admitted_texts(&index, &pin).is_empty());
     }
