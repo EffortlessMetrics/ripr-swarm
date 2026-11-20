@@ -15,6 +15,7 @@ mod boolean_boundary_pin;
 mod call_budget;
 mod claims_payload_pin;
 mod framework_snapshot;
+mod local_operand_alias;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -27,6 +28,7 @@ pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
+use local_operand_alias::boundary_local_operand_parameter_index;
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
     ExactValueVerdict, boolean_assertion_verdict_for_test, contradiction_summary,
@@ -3984,12 +3986,12 @@ fn boundary_operand_argument(
             projection: None,
         })
         .or_else(|| {
-            boundary_local_operand_parameter_index(owner_fn, parameters, operand).map(|index| {
-                ObservedArgumentOperand {
+            boundary_local_operand_parameter_index(&owner_fn.body, parameters, operand).map(
+                |index| ObservedArgumentOperand {
                     index,
                     projection: None,
-                }
-            })
+                },
+            )
         })
         .or_else(|| boundary_parameter_field_projection(parameters, operand))
 }
@@ -4030,95 +4032,6 @@ fn projected_argument_expression(arg: &str, projection: Option<&str>) -> String 
     } else {
         arg.to_string()
     }
-}
-
-fn boundary_local_operand_parameter_index(
-    owner_fn: &FunctionSummary,
-    parameters: &[String],
-    operand: &str,
-) -> Option<usize> {
-    if operand.is_empty() {
-        return None;
-    }
-    for (index, parameter) in parameters.iter().enumerate() {
-        if body_contains_wrapped_local_alias(&owner_fn.body, "Some", operand, parameter)
-            || body_contains_wrapped_local_alias(&owner_fn.body, "Ok", operand, parameter)
-            || body_contains_direct_local_alias(&owner_fn.body, operand, parameter)
-        {
-            return Some(index);
-        }
-    }
-    None
-}
-
-fn body_contains_wrapped_local_alias(
-    body: &str,
-    wrapper: &str,
-    operand: &str,
-    parameter: &str,
-) -> bool {
-    // Built once per body: this runs per seam, related test and parameter.
-    let prefix = format!("if let {wrapper}({operand}) = ");
-    body.lines().any(|line| {
-        let line = code_line_before_comment(line);
-        line.strip_prefix(&prefix)
-            .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
-    }) || (body_contains_match_parameter(body, parameter)
-        && body_contains_wrapper_pattern(body, wrapper, operand))
-}
-
-fn body_contains_match_parameter(body: &str, parameter: &str) -> bool {
-    body.lines().any(|line| {
-        let line = code_line_before_comment(line);
-        if is_comment_line(line) {
-            return false;
-        }
-        line.find("match ")
-            .map(|index| &line[index + "match ".len()..])
-            .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
-    })
-}
-
-fn body_contains_wrapper_pattern(body: &str, wrapper: &str, operand: &str) -> bool {
-    let pattern = format!("{wrapper}({operand})");
-    body.lines().any(|line| {
-        let line = code_line_before_comment(line);
-        !is_comment_line(line) && line.contains(&pattern)
-    })
-}
-
-fn code_line_before_comment(line: &str) -> &str {
-    let line = line.trim();
-    let line = line.split_once("//").map_or(line, |(code, _comment)| code);
-    line.split_once("/*")
-        .map_or(line, |(code, _comment)| code)
-        .trim()
-}
-
-fn is_comment_line(line: &str) -> bool {
-    line.starts_with("//") || line.starts_with("/*") || line.starts_with('*')
-}
-
-fn starts_with_identifier_token(text: &str, token: &str) -> bool {
-    let text = text.trim_start();
-    let end = text
-        .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .unwrap_or(text.len());
-    end > 0 && &text[..end] == token
-}
-
-fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) -> bool {
-    body.lines().any(|line| {
-        let line = line.trim().trim_end_matches(';').trim();
-        let Some(binding) = line.strip_prefix("let ") else {
-            return false;
-        };
-        let Some((left, right)) = binding.split_once('=') else {
-            return false;
-        };
-        let local_name = left.split_once(':').map(|(name, _)| name).unwrap_or(left);
-        local_name.trim() == operand && right.trim() == parameter
-    })
 }
 
 /// The seam's owner function and its argument selection, resolved once

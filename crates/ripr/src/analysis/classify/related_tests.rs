@@ -36,6 +36,7 @@ mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
@@ -348,6 +349,27 @@ impl RelatedTestCandidateIndex {
         self
     }
 
+    /// #15104: record a module declaration reading of every index file that
+    /// may declare a module, for a run without a diff (a repo scan): no
+    /// declaration changed.
+    pub(in crate::analysis) fn with_unchanged_module_declarations(
+        self,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> Self {
+        let modules = crate::analysis::diff::ModuleDeclarations::read(
+            index
+                .files()
+                .iter()
+                .filter(|(_, facts)| {
+                    !facts.module_declarations.is_empty()
+                        || crate::analysis::diff::may_declare_module(&facts.source)
+                })
+                .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+            std::iter::empty(),
+        );
+        self.with_module_declarations(modules)
+    }
+
     /// The run's module declaration reading; an unread one when the run did
     /// not compute it.
     pub(in crate::analysis) fn module_declarations(
@@ -440,8 +462,8 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator, loop and scope-end syntax has no token worth indexing;
-        // same-file tests of such an impl are scanned in full.
+        // Operator, loop, scope-end and `str::parse` syntax has no token worth
+        // indexing; same-file tests of such an impl are scanned in full.
         if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
         }

@@ -33,6 +33,7 @@ import type {
   RiprStatusContext,
   RiprReceiptArtifactStatus
 } from './client';
+import { blockedRepairStart, REPAIR_START_ACTION_NAME, type BlockedRepairStart } from './repairStart';
 
 export interface AgentHandoffHost {
   readonly runtime: RiprClientRuntime;
@@ -486,7 +487,7 @@ function selectedCommandRoots(
       continue;
     }
     const displayRoot = path.normalize(root).replace(/\\/g, '/');
-    if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
+    if (/[\r\n\0\x60\\"'\u2018-\u201f]/.test(displayRoot)) {
       continue;
     }
     roots.push({ displayRoot, commandRoot: serverShellArg(displayRoot) });
@@ -514,10 +515,30 @@ function boundedPayloadString(value: unknown): value is string {
 }
 
 function nearestGapDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | undefined {
+  return nearestDiagnostic(editor, isRiprGapDiagnostic);
+}
+
+/**
+ * The diagnostic Start Current Repair works from: the gap or seam diagnostic
+ * under or nearest the selection (#13636). Seam diagnostics carry the
+ * seam-bound repair start, so a Rust file with seam evidence and no gap
+ * record still reaches the start (or its blocked reason).
+ */
+function nearestRepairDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | undefined {
+  return nearestDiagnostic(
+    editor,
+    (diagnostic) => isRiprGapDiagnostic(diagnostic) || isRiprSeamDiagnostic(diagnostic)
+  );
+}
+
+function nearestDiagnostic(
+  editor: vscode.TextEditor,
+  accept: (diagnostic: vscode.Diagnostic) => boolean
+): vscode.Diagnostic | undefined {
   const position = editor.selection.active;
   return vscode.languages
     .getDiagnostics(editor.document.uri)
-    .filter(isRiprGapDiagnostic)
+    .filter(accept)
     .map((diagnostic) => ({
       diagnostic,
       containsSelection: diagnostic.range.contains(position),
@@ -529,6 +550,45 @@ function nearestGapDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | un
       left.lineDistance - right.lineDistance ||
       left.characterDistance - right.characterDistance
     )[0]?.diagnostic;
+}
+
+function isRiprSeamDiagnostic(diagnostic: vscode.Diagnostic): boolean {
+  return diagnostic.source === 'ripr' && diagnosticCodeText(diagnostic).startsWith('ripr-seam-');
+}
+
+/**
+ * The LSP wire form of an editor diagnostic for a direct
+ * `textDocument/codeAction` request (#13636). The server binds seam and gap
+ * actions through `data`, which the language client keeps on the diagnostic
+ * it published.
+ */
+function protocolDiagnostic(diagnostic: vscode.Diagnostic): Record<string, unknown> {
+  const wire: Record<string, unknown> = {
+    range: protocolRange(diagnostic.range),
+    severity: diagnostic.severity + 1,
+    message: diagnostic.message,
+  };
+  if (diagnostic.source !== undefined) {
+    wire.source = diagnostic.source;
+  }
+  const code = diagnostic.code;
+  if (typeof code === 'string' || typeof code === 'number') {
+    wire.code = code;
+  } else if (code && typeof code === 'object' && 'value' in code) {
+    wire.code = code.value;
+  }
+  const data = (diagnostic as { data?: unknown }).data;
+  if (data !== undefined) {
+    wire.data = data;
+  }
+  return wire;
+}
+
+function protocolRange(range: vscode.Range): Record<string, unknown> {
+  return {
+    start: { line: range.start.line, character: range.start.character },
+    end: { line: range.end.line, character: range.end.character },
+  };
 }
 
 function containingGapDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | undefined {
@@ -830,7 +890,7 @@ export class AgentHandoffController {
       this.host.runtime.showInformationMessage(setupBlocker);
       return;
     }
-    const diagnostic = nearestGapDiagnostic(editor);
+    const diagnostic = nearestRepairDiagnostic(editor);
     if (!diagnostic) {
       this.host.runtime.showInformationMessage('No current ripr repair gap is available near the active selection.');
       return;
@@ -860,9 +920,31 @@ export class AgentHandoffController {
       return;
     }
 
+    // #13636: no enabled start here. Ask the server why before falling back
+    // to another action: when the start itself is inert (for example while
+    // source files are uncommitted), say so instead of silently opening the
+    // related test or suggesting a refresh that cannot help.
+    const generation = this.host.getStartGeneration();
+    const blocked = await this.serverBlockedStart(editor.document.uri, diagnostic.range);
+    if (
+      !this.host.actionRootStillCurrent(generation, editor.document.uri, (target) =>
+        this.host.copyActionRootBlocker(target)
+      )
+    ) {
+      return;
+    }
+    if (blocked?.actionName === REPAIR_START_ACTION_NAME) {
+      this.host.runtime.showInformationMessage(`ripr cannot start this repair yet. ${blocked.reason}`);
+      return;
+    }
+
     const candidates = startRepairActions(actions ?? []);
     if (candidates.length === 0) {
-      this.host.runtime.showInformationMessage('No bounded ripr repair action is available for the current gap. Refresh saved-workspace analysis if this looks stale.');
+      this.host.runtime.showInformationMessage(
+        blocked
+          ? `ripr cannot start this repair yet. ${blocked.reason}`
+          : 'No bounded ripr repair action is available for the current gap. Refresh saved-workspace analysis if this looks stale.'
+      );
       return;
     }
 
@@ -876,6 +958,36 @@ export class AgentHandoffController {
       selected.command.command,
       ...(selected.command.arguments ?? [])
     );
+  }
+
+  /**
+   * Why the server withholds the repair start at `range`, read from its inert
+   * code actions (#13636). `vscode.executeCodeActionProvider` drops
+   * `CodeAction.disabled`, so this asks the language server directly with
+   * the same ripr diagnostics VS Code would attach. `undefined` when no
+   * client is running, the request fails, or no inert action names a reason.
+   */
+  private async serverBlockedStart(uri: vscode.Uri, range: vscode.Range): Promise<BlockedRepairStart | undefined> {
+    const client = this.host.getClient();
+    if (!client) {
+      return undefined;
+    }
+    const diagnostics = vscode.languages
+      .getDiagnostics(uri)
+      .filter((diagnostic) => diagnostic.source === 'ripr' && diagnostic.range.intersection(range) !== undefined)
+      .map(protocolDiagnostic);
+    try {
+      const actions = await client.sendRequest('textDocument/codeAction', {
+        textDocument: { uri: uri.toString() },
+        range: protocolRange(range),
+        context: { diagnostics, triggerKind: 1 },
+      });
+      return blockedRepairStart(actions);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.host.output.appendLine(`ripr start current repair could not read the blocked-start reason: ${message}`);
+      return undefined;
+    }
   }
 
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {

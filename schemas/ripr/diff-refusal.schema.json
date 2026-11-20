@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.effortlessmetrics.dev/ripr/diff-refusal.schema.json",
   "title": "RIPR Diff Refusal",
-  "description": "The refusal envelope `ripr diff --json` writes to stdout, with exit code 2, when it cannot produce a `ripr_diff` report after argument parsing (for example an unresolvable base, no work tree, or an unreadable config). It is the envelope shape `ripr check --format json` uses for a refusal, keyed with the diff report's `schema_version`: no `kind`, no findings, a zeroed summary, and exactly one `run_limitations` entry naming the refusal and its remedy. Argument usage errors write no JSON. The `summary`, `run_limitation` and `refusal_remedy` definitions are copies of the same definitions in `check.schema.json` and are held equal to them by test.",
+  "description": "The refusal envelope `ripr diff --json` writes to stdout, with exit code 2, when it cannot produce a `ripr_diff` report after argument parsing (for example an unresolvable base, no work tree, or an unreadable config). It is the envelope shape `ripr check --format json` uses for a refusal, keyed with the diff report's `schema_version`: no `kind`, no findings, a zeroed summary, and exactly one `run_limitations` entry naming the refusal and its remedy. Argument usage errors never write this envelope; the classes `cli-refusal.schema.json` covers write that document instead. The `summary`, `run_limitation` and `refusal_remedy` definitions are copies of the same definitions in `check.schema.json` and are held equal to them by test.",
   "type": "object",
   "additionalProperties": false,
   "required": [

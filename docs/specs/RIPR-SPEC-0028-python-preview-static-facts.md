@@ -2177,3 +2177,29 @@ adapter contributes:
 - `language_adapter_python_static_limit_unresolved_pytest_fixture`
 - `language_adapter_python_static_limit_unsupported_syntax`
 - `language_adapter_python_static_limit_transitive_reach`
+
+### Unresolved loop-comparison boundary (#12954)
+
+For a changed adjacent relational comparison in the closed iterator and
+accumulator selection shape (either `best = next(it)` followed by `for x in it`,
+or `best = xs[0]` followed by `for x in xs[1:]` or `for x in xs`, both with conditional
+`best = x` and `return best`), an unresolved boundary is
+`infection_unknown` when each oracle-eligible test has one or more assertions
+and each has a strong direct comparison of the owner call on an integer list
+or tuple with an integer. The owner may have a second parameter unused by this
+closed body, bound positionally, by name, or by an integer-literal default.
+When there are two parameters, every default must be an integer literal even
+when explicitly overridden, because defaults are evaluated at definition time. Such a scalar
+does not resolve the loop's comparison operands. A
+single line with multiple assertions or `and`
+conjuncts qualifies only when every statement and conjunct is such a direct
+pin. A test with exactly one direct owner-call assignment followed by one
+integer equality assertion on that local also qualifies when test facts show
+no implicit setup, substitution, opaque module or edited-test uncertainty.
+Qualified calls must resolve to the owner through test imports. The changed
+condition must be the comparison alone: a further `and` or `or` operand can run
+on different iterations after the edit, so the selector is not closed. The
+result-alias form reads the test's own assignment; an earlier test's call
+assigned to a local of the same name does not stand in for it. The finding carries an infection stop
+reason and no repair suggestion. Other source and test shapes retain their
+existing behavior.

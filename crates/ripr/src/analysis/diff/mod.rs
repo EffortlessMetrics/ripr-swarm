@@ -10,7 +10,9 @@ mod parse;
 mod path;
 mod side_prefix;
 mod source;
-pub(crate) use base_owner::{ModuleDeclarations, verified_base_owner};
+pub(crate) use base_owner::{
+    ModuleDeclarations, may_declare_module, owner_may_be_swapped, verified_base_owner,
+};
 pub(crate) use copy_section::expand_copy_destinations;
 pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_source};
 pub mod records;
@@ -35,6 +37,7 @@ pub use load::{
 };
 pub(crate) use parse::parse_unified_diff_with_metadata;
 
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use model::lines_look_alike;
 #[allow(
     unused_imports,
