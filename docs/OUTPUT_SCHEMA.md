@@ -1948,8 +1948,8 @@ message is the redacted config summary (path and parse location, no TOML
 source excerpt) per RIPR-SPEC-0007, followed by the human next step: `fix the
 error in ripr.toml and rerun, then check it with `ripr config validate --root
 <root>``, so `remedy.command` (and `error.next` on `check`) is that command
-(#15260; the `--root` part is omitted for the current directory or a root that
-would need shell quoting). No other caller-unsupplied value enters the
+(#15260; `<root>` is the bound absolute root, shell-quoted when needed, and
+`next` is `null` when that command cannot be lifted as one runnable command). No other caller-unsupplied value enters the
 document.
 
 Every `check` refusal document (scope guards and typed failures, including

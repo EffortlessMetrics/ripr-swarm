@@ -125,9 +125,9 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
-// Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
 #[path = "cli_smoke/json_refusal_next_steps.rs"]
 mod json_refusal_next_steps;
+// Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
