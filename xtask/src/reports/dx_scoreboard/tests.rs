@@ -4803,10 +4803,17 @@ fn scoreboard_test_ripr_binary() -> Result<String, String> {
 }
 
 fn run_measured_check(args: &[String], cache: &Path) -> Result<MeasuredOutput, String> {
-    let binary = scoreboard_test_ripr_binary()?;
+    run_measured_check_with_binary(&scoreboard_test_ripr_binary()?, args, cache)
+}
+
+fn run_measured_check_with_binary(
+    binary: &str,
+    args: &[String],
+    cache: &Path,
+) -> Result<MeasuredOutput, String> {
     let cache_text = cache.display().to_string();
     capture_output_measured(
-        &binary,
+        binary,
         args,
         None,
         &[("RIPR_CACHE_DIR", cache_text.as_str())],

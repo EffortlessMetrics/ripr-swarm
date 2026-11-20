@@ -2,10 +2,32 @@
 
 use super::*;
 
+/// Analytics keeps its default-feature fixture product apart from the suite's
+/// all-features executable. Let Cargo validate that same default build before
+/// launching either the wrong-root control or the measured consumers.
+fn consumer_ripr_binary() -> Result<String, String> {
+    if std::env::var_os(crate::reports::FIXTURE_BINARY_ISOLATE_ENV).is_none_or(|value| value != "1")
+    {
+        return scoreboard_test_ripr_binary();
+    }
+    let shared = crate::repo_root()?.join(crate::ripr_debug_binary());
+    let target = crate::reports::fixtures::isolated_default_target_dir(&shared)?;
+    let target_text = crate::path_to_utf8(&target, "scoreboard fixture target")?;
+    crate::run::run_with_envs(
+        "cargo",
+        &["build", "-p", "ripr"],
+        &[("CARGO_TARGET_DIR", target_text)],
+    )?;
+    let binary = crate::ripr_debug_binary_in(Some(target));
+    fs::canonicalize(&binary)
+        .map(|path| path.display().to_string())
+        .map_err(|err| format!("resolve scoreboard binary {}: {err}", binary.display()))
+}
+
 #[test]
 fn measured_consumers_use_the_private_pin_and_preserve_the_cached_source() -> Result<(), String> {
     let _cwd = crate::acquire_test_cwd_read_guard();
-    let binary = scoreboard_test_ripr_binary()?;
+    let binary = consumer_ripr_binary()?;
     struct Fixture(PathBuf);
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -76,7 +98,8 @@ fn measured_consumers_use_the_private_pin_and_preserve_the_cached_source() -> Re
     // Exercise the proposed wrong-root command against the same real binary.
     // Its failure must be the malformed cached config, not a setup/timeout.
     let wrong_args = warm_check_args(&source.display().to_string(), &base);
-    let wrong_root = run_measured_check(&wrong_args, &fixture.0.join("wrong-root-cache"))?;
+    let wrong_root =
+        run_measured_check_with_binary(&binary, &wrong_args, &fixture.0.join("wrong-root-cache"))?;
     assert!(!wrong_root.output.timed_out, "wrong-root control timed out");
     assert!(
         wrong_root
