@@ -3872,6 +3872,7 @@ fn nullish_argument_reaches_read_argument(
         ReadPosition::Index(read) => idx == read,
         ReadPosition::Bounded(arity) => idx < arity,
         ReadPosition::Any => true,
+        ReadPosition::Unknown => false,
     };
     arguments
         .iter()
@@ -5709,6 +5710,9 @@ enum ReadPosition {
     Bounded(usize),
     /// No resolvable parameter facts — every position is plausible.
     Any,
+    /// The operand is a derived local that is not an identity alias of one
+    /// parameter (#15358): no argument position is known to feed it.
+    Unknown,
 }
 
 fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosition {
@@ -5716,10 +5720,94 @@ fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosit
     if let Some(idx) = owner.params.iter().position(|name| name == segment) {
         return ReadPosition::Index(idx);
     }
+    // #15358: a bare derived local feeds from a parameter only when it is an
+    // identity alias of exactly one (`const a = p;`, `const a = Math.abs(p);`).
+    // Any other initializer (`Math.abs(p) / 2`, `-p`, `p + other`) can move
+    // the value away from the argument, so no position is credited.
+    // An owner with neither parameter facts nor recorded text keeps the
+    // legacy every-position reading.
+    if is_bare_identifier(operand.trim()) && (owner.arity.is_some() || owner.source_text.is_some())
+    {
+        return match identity_alias_parameter(operand.trim(), owner) {
+            Some(idx) => ReadPosition::Index(idx),
+            None => ReadPosition::Unknown,
+        };
+    }
     match owner.arity {
         Some(arity) => ReadPosition::Bounded(arity),
         None => ReadPosition::Any,
     }
+}
+
+/// The index of the owner parameter `name` is an identity alias of: a single
+/// `const name = p;` or `const name = Math.abs(p);` (the argument is credited
+/// only for a non-negative literal, which `Math.abs` leaves unchanged) in the
+/// owner's own text, where `name` is bound nowhere else and the parameter is
+/// never written.
+fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize> {
+    let source = owner.source_text.as_deref()?;
+    let mut initializer: Option<&str> = None;
+    for line in source.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("const ")
+            && let Some(after) = rest.trim_start().strip_prefix(name)
+            && let Some(init) = after.trim_start().strip_prefix('=')
+            && !init.starts_with('=')
+            && !after.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        {
+            if initializer.is_some() {
+                return None;
+            }
+            initializer = Some(init.trim().trim_end_matches(';').trim());
+        }
+    }
+    let initializer = initializer?;
+    let parameter = initializer
+        .strip_prefix("Math.abs(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .unwrap_or(initializer)
+        .trim();
+    let idx = owner.params.iter().position(|param| param == parameter)?;
+    // Every occurrence of the alias name must be the one declaration or a
+    // read, and the parameter must not be written.
+    let declarations = identifier_occurrences(source, name)
+        .filter(|(_, after)| {
+            let after = after.trim_start();
+            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+        })
+        .count();
+    let parameter_written = identifier_occurrences(source, parameter).any(|(before, after)| {
+        let after = after.trim_start();
+        let assign = after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+        let compound = [
+            "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", "&=", "|=", "^=", "&&=", "||=",
+            "??=", "++", "--",
+        ]
+        .iter()
+        .any(|op| after.starts_with(op));
+        let prefixed = before.trim_end().ends_with("++") || before.trim_end().ends_with("--");
+        // The signature's own `p = default` is an assignment-looking token
+        // before the body opens; a default never rewrites the argument.
+        let in_signature = before.rfind('{').is_none() && before.contains('(');
+        (assign && !in_signature) || compound || prefixed
+    });
+    (declarations == 1 && !parameter_written).then_some(idx)
+}
+
+/// `(text before, text after)` of each whole-word occurrence of `name`.
+fn identifier_occurrences<'t>(
+    text: &'t str,
+    name: &'t str,
+) -> impl Iterator<Item = (&'t str, &'t str)> + 't {
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = &text[..at];
+        let after = &text[at + name.len()..];
+        let boundary = |ch: Option<char>| {
+            !ch.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.')
+        };
+        (boundary(before.chars().next_back()) && boundary(after.chars().next()))
+            .then_some((before, after))
+    })
 }
 
 fn last_identifier_segment(operand: &str) -> &str {
@@ -5785,6 +5873,7 @@ fn boundary_literal_reaches_read_argument(
         ReadPosition::Index(read) => idx == read,
         ReadPosition::Bounded(arity) => idx < arity,
         ReadPosition::Any => true,
+        ReadPosition::Unknown => false,
     };
     arguments.iter().enumerate().any(|(idx, argument)| {
         readable(idx)

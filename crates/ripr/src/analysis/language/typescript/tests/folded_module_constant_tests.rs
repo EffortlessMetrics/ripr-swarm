@@ -121,8 +121,12 @@ fn folded_finding(label: &str, source: &str, argument: &str) -> Result<Finding, 
 }
 
 fn duration_source(constants: &str) -> String {
+    duration_source_with(constants, "ms: number", "const msAbs = Math.abs(ms);")
+}
+
+fn duration_source_with(constants: &str, signature: &str, local: &str) -> String {
     format!(
-        "{constants}\nexport function formatShort(ms: number): string {{\n  const msAbs = Math.abs(ms);\n  if (msAbs >= h) {{\n    return `${{Math.round(ms / h)}}h`;\n  }}\n  return `${{ms}}ms`;\n}}\n"
+        "{constants}\nexport function formatShort({signature}): string {{\n  {local}\n  if (msAbs >= h) {{\n    return `${{Math.round(ms / h)}}h`;\n  }}\n  return `${{ms}}ms`;\n}}\n"
     )
 }
 
@@ -152,6 +156,67 @@ fn a_refused_chain_never_witnesses_the_boundary_input() -> Result<(), String> {
             "3_600_000",
         )?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{constants}");
+    }
+    Ok(())
+}
+
+const CHAIN: &str = "const s = 1000;\nconst m = s * 60;\nconst h = m * 60;";
+
+/// The derived local is credited only as an identity alias of exactly one
+/// parameter, with the literal at that parameter's position (#15358).
+#[test]
+fn an_identity_alias_of_the_parameter_witnesses_at_its_own_position() -> Result<(), String> {
+    for (index, local) in ["const msAbs = ms;", "const msAbs = Math.abs(ms);"]
+        .into_iter()
+        .enumerate()
+    {
+        let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);
+        let hit = folded_finding(&format!("alias-hit-{index}"), &source, "3_600_000")?;
+        assert_eq!(
+            hit.class,
+            ExposureClass::Exposed,
+            "{local}: {:?}",
+            hit.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_literal_in_another_parameters_position_does_not_witness() -> Result<(), String> {
+    let source = duration_source_with(
+        CHAIN,
+        "ms: number, other: number = 0",
+        "const msAbs = Math.abs(ms);",
+    );
+    let finding = folded_finding("diffarg", &source, "5, 3_600_000")?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String> {
+    let cases = [
+        ("div2", "const msAbs = Math.abs(ms) / 2;"),
+        ("neg", "const msAbs = -ms;"),
+        ("plus", "const msAbs = ms + other;"),
+        ("written", "ms = ms / 2;\n  const msAbs = ms;"),
+        ("redeclared", "const msAbs = ms;\n  { const msAbs = 1; }"),
+    ];
+    for (label, local) in cases {
+        let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);
+        let finding = folded_finding(label, &source, "3_600_000")?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.evidence
+        );
     }
     Ok(())
 }
