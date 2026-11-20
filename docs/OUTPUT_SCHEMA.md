@@ -5349,9 +5349,15 @@ one. It is emitted between `tool` and `source_currentness`.
 ## Check Findings Artifact
 
 `ripr check --format check-findings-json` emits the complete diff-scoped
-`check --format json` document (the Output section above, never
+generic check JSON document (the Output section above, never
 findings-bounded) with one additive top-level member, `artifact`, as its
-first member (ADR 0020 amendment, #9103). The envelope is the same shared
+first member (ADR 0020 amendment, #9103). Because it is rendered by the
+generic renderer rather than the navigation-aware `--format json` adapter, it
+carries neither `finding_routes` nor `canonical_next_action`; every other
+member of the check document is present under the same conditions as in
+`--format json`. `schemas/ripr/check.schema.json` admits `artifact` as an
+optional member (the `check_findings_artifact` definition), so both documents validate
+against it. The envelope is the same shared
 projection `repo-exposure-json` carries with these token differences: `kind`
 is `"check_findings"` and `analysis.format` / `analysis.command` name
 `check-findings-json` / `ripr check --format check-findings-json`. The
