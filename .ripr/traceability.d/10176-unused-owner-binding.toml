@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/indirect_owner_limit.rs::an_unused_owner_binding_after_the_weak_direct_assertion_keeps_the_gap",
+  "crates/ripr/tests/indirect_owner_limit.rs::an_asserted_indirect_result_before_an_unused_binding_keeps_the_limit",
+]
+code = [
+  "crates/ripr/src/analysis/classify/indirect_owner.rs",
+]

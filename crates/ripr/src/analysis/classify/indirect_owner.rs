@@ -196,14 +196,19 @@ fn judged_for_owner(
         // A test that names the owner as a value is a candidate only where it
         // can see the owner: its own file, or an integration test.
         let sees_owner = test.file == owner.file || is_test_file(&test.file);
+        let related_direct = is_related(test, true);
         if sees_owner
             && (!called || is_related(test, false))
             && names_owner_as_value(&code, owner, test, index)
+            && !(related_direct
+                && finding.class == ExposureClass::WeaklyExposed
+                && finding.probe.family == ProbeFamily::ReturnValue
+                && before_unused_owner_binding(test, &owner.name, &code)
+                    .is_some_and(|prefix| !names_owner_as_value(prefix, owner, test, index)))
         {
             judged.push((label(test), Form::FunctionValue));
             continue;
         }
-        let related_direct = is_related(test, true);
         // A sync owner's bare call is its value, not a future an executor
         // drives: `block_on(owner(..))` on one stays a plain gap (#10143).
         if related_direct
@@ -214,6 +219,48 @@ fn judged_for_owner(
         }
     }
     judged
+}
+
+/// A bare function item bound after the test's sole weak assertion cannot
+/// feed it. Recheck the prefix for other value mentions before keeping a gap.
+fn before_unused_owner_binding<'a>(test: &TestFact, owner: &str, code: &'a str) -> Option<&'a str> {
+    use crate::analysis::extract::outer_assertion_condition;
+    use crate::analysis::syntax::parse_clean_source_file_memoized;
+    use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
+
+    let [oracle] = test.assertions.as_slice() else {
+        return None;
+    };
+    if test.generated.is_some()
+        || oracle.kind != OracleKind::RelationalCheck
+        || oracle.strength != OracleStrength::Weak
+        || !super::helper_transfer::condition_is_weak(&outer_assertion_condition(&oracle.text)?)
+    {
+        return None;
+    }
+    let tree = parse_clean_source_file_memoized(&test.body)?.tree();
+    let function = tree.syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    let mut statements = list.statements();
+    let assertion = statements.next()?;
+    let ast::Stmt::LetStmt(binding) = statements.next()? else {
+        return None;
+    };
+    let ast::Pat::IdentPat(pattern) = binding.pat()? else {
+        return None;
+    };
+    if statements.next().is_some()
+        || list.tail_expr().is_some()
+        || assertion.syntax().text() != oracle.text.trim()
+        || binding.attrs().next().is_some()
+        || binding.ty().is_some()
+        || binding.let_else().is_some()
+        || pattern.syntax().text() != pattern.name()?.text()
+        || binding.initializer()?.syntax().text() != owner
+    {
+        return None;
+    }
+    code.get(..usize::from(binding.syntax().text_range().start()))
 }
 
 /// The changed line is an item-position macro invocation: no function in its

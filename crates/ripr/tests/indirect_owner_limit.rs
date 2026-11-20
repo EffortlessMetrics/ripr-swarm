@@ -328,6 +328,65 @@ fn a_direct_weak_assertion_keeps_the_gap() -> Result<(), String> {
     keeps_gap(&lib, BEFORE, AFTER, "direct weak assertion")
 }
 
+/// Changing the return to `x + 2` still satisfies the only assertion.
+#[test]
+fn an_unused_owner_binding_after_the_weak_direct_assertion_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        assert!(inc(1) > 0);
+        let _f = inc;
+    }
+",
+    );
+    let findings = edited(&lib, BEFORE, AFTER)?;
+    let [finding] = findings.as_slice() else {
+        return Err(format!(
+            "expected one changed return, got {:?}",
+            summary(&findings)
+        ));
+    };
+    assert_eq!(finding.probe.family, ripr::ProbeFamily::ReturnValue);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(finding.static_limit_kind.is_none());
+    let [related] = finding.related_tests.as_slice() else {
+        return Err(format!(
+            "expected only the direct assertion, got {:?}",
+            finding.related_tests
+        ));
+    };
+    assert_eq!(related.name, "positive");
+    assert_eq!(
+        related.relation_reason,
+        Some(ripr::domain::RelationReason::DirectOwnerCall)
+    );
+    assert_eq!(related.oracle_strength, ripr::domain::OracleStrength::Weak);
+    Ok(())
+}
+
+/// The direct bound still passes with `x + 2`, but the mapped equality fails.
+#[test]
+fn an_asserted_indirect_result_before_an_unused_binding_keeps_the_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        assert!(inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+        let _f = inc;
+    }
+",
+    );
+    let findings = edited(&lib, BEFORE, AFTER)?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.class == ExposureClass::StaticUnknown && limited(finding)),
+        "expected the unresolved indirect route, got {:?}",
+        summary(&findings)
+    );
+    Ok(())
+}
+
 /// A `use super::inc;` inside a `macro_rules!` body is token text. A macro that
 /// is defined but never invoked is inert, so it must not read as the owner
 /// passed as a value and withhold the direct weak test's gap (#12231).

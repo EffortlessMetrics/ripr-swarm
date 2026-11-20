@@ -2403,7 +2403,7 @@ fn caller_oracles_are_all_weak(
 }
 
 /// See [`caller_oracles_are_all_weak`]: the condition of a plain `assert!`.
-fn condition_is_weak(condition: &str) -> bool {
+pub(super) fn condition_is_weak(condition: &str) -> bool {
     use ra_ap_syntax::AstNode;
     use ra_ap_syntax::ast::{self, BinaryOp, CmpOp, HasArgList};
     let source = format!("fn __condition() {{ {} }}", condition.trim());
