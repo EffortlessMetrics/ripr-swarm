@@ -90,6 +90,22 @@ fn explicit_default_barrel_reaches_only_the_original_owner() -> Result<(), Strin
 }
 
 #[test]
+fn explicit_default_barrel_follows_a_locally_renamed_default() -> Result<(), String> {
+    let files = [
+        (
+            "src/owner.ts",
+            "function original(n: number) { return n > 4; }\nexport { original as default };",
+        ),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    assert_credited(
+        &related_through_barrel(&files, "src/owner.ts", "original", DEFAULT_CALL)?,
+        "owner exported locally as default",
+    );
+    Ok(())
+}
+
+#[test]
 fn explicit_default_barrel_preserves_direct_and_named_calls() -> Result<(), String> {
     let files = [
         ("src/owner.ts", DEFAULT_OWNER),
@@ -137,6 +153,17 @@ fn explicit_default_barrel_requires_a_static_unambiguous_binding() -> Result<(),
                 "{barrel} must not reach {owner}"
             );
         }
+    }
+    let collisions = [
+        ("src/owner.ts", DEFAULT_OWNER),
+        (
+            "src/owner.js",
+            "export default function original(n) { return n > 4; }",
+        ),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    for file in ["src/owner.ts", "src/owner.js"] {
+        assert!(related_through_barrel(&collisions, file, "original", DEFAULT_CALL)?.is_empty());
     }
     let computed = "test('calls', async () => { const { default: invoke } = await import(specifier); expect(invoke(5)).toBe(true); });";
     let files = [

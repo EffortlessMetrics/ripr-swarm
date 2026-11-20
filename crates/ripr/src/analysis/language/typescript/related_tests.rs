@@ -74,8 +74,8 @@ pub(crate) struct ReExportIndex {
     /// export. Kept separate from discovery, which still owns path precedence.
     indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
-    /// discovery keeps its existing behavior; strict enum identity refuses.
-    ambiguous_enum_modules: HashSet<String>,
+    /// discovery keeps its existing behavior; default-import and enum identity refuse.
+    ambiguous_modules: HashSet<String>,
     /// Actual runtime enum declarations and their statically named members.
     /// Export-list mentions and unresolved re-exports cannot create these facts.
     enum_bindings: HashMap<(String, String), Vec<String>>,
@@ -122,6 +122,22 @@ enum ExportResolution {
     Found(String, String),
     /// The chain is too deep, ambiguous, or otherwise not decidable.
     Unknown,
+}
+
+#[derive(Clone, Copy)]
+enum ExportLookup<'a> {
+    Owner,
+    DeclaredDefault,
+    Enum(&'a EnumBindingContext<'a>),
+}
+
+impl<'a> ExportLookup<'a> {
+    fn enum_context(self) -> Option<&'a EnumBindingContext<'a>> {
+        match self {
+            Self::Enum(context) => Some(context),
+            Self::Owner | Self::DeclaredDefault => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -234,7 +250,7 @@ impl ReExportIndex {
             .collect();
         let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
-        let mut ambiguous_enum_modules = HashSet::new();
+        let mut ambiguous_modules = HashSet::new();
         let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
@@ -243,7 +259,7 @@ impl ReExportIndex {
                 .insert(module.clone(), path.clone())
                 .is_some_and(|previous| previous != path)
             {
-                ambiguous_enum_modules.insert(module);
+                ambiguous_modules.insert(module);
             }
         }
         for relative in workspace_files {
@@ -309,7 +325,7 @@ impl ReExportIndex {
             local_exports,
             modules,
             indexed_modules,
-            ambiguous_enum_modules,
+            ambiguous_modules,
             enum_bindings,
             enum_imports,
             unstable_enum_roots,
@@ -606,7 +622,7 @@ impl ReExportIndex {
             return None;
         };
         let module = normalized_module_path(file);
-        if self.ambiguous_enum_modules.contains(&module) {
+        if self.ambiguous_modules.contains(&module) {
             return None;
         }
         // Owner.imports also carries synthetic re-export records for call
@@ -675,7 +691,7 @@ impl ReExportIndex {
                 0,
                 &mut stack,
                 &mocked,
-                Some(&context),
+                ExportLookup::Enum(&context),
             )
         } else {
             self.enum_local_binding(&binding_module, &name, 0, &mut stack, &context)
@@ -720,7 +736,7 @@ impl ReExportIndex {
     ) -> ExportResolution {
         let module = self.canonical_module(module);
         if (context.mocked)(&module)
-            || self.ambiguous_enum_modules.contains(&module)
+            || self.ambiguous_modules.contains(&module)
             || (context.check_stability
                 && self
                     .unstable_enum_roots
@@ -764,7 +780,7 @@ impl ReExportIndex {
             hops + 1,
             stack,
             context.mocked,
-            Some(context),
+            ExportLookup::Enum(context),
         )
     }
 
@@ -810,7 +826,7 @@ impl ReExportIndex {
                         0,
                         &mut Vec::new(),
                         context.mocked,
-                        Some(&raw_context),
+                        ExportLookup::Enum(&raw_context),
                     ) {
                         ExportResolution::Found(module, name) => {
                             module == desired.0 && name == desired.1
@@ -920,7 +936,7 @@ impl ReExportIndex {
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
     ) -> ExportResolution {
-        self.resolve_export_with_context(module, name, hops, stack, mocked, None)
+        self.resolve_export_with_context(module, name, hops, stack, mocked, ExportLookup::Owner)
     }
 
     fn resolve_export_with_context(
@@ -930,8 +946,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         let module = self.canonical_module(module);
         if !self.indexed_modules.contains(&module) {
             // Unknown is contagious across star siblings; NotFound would
@@ -939,7 +956,7 @@ impl ReExportIndex {
             return ExportResolution::Unknown;
         }
         if mocked(&module)
-            || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
+            || (!matches!(lookup, ExportLookup::Owner) && self.ambiguous_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)
                 && self
                     .unstable_enum_roots
@@ -956,8 +973,7 @@ impl ReExportIndex {
             return ExportResolution::NotFound;
         }
         stack.push(frame);
-        let mut resolution =
-            self.resolve_export_frame(&module, name, hops, stack, mocked, enum_context);
+        let mut resolution = self.resolve_export_frame(&module, name, hops, stack, mocked, lookup);
         if let (Some(context), ExportResolution::Found(target_module, target_name)) =
             (enum_context, &resolution)
             && context.check_stability
@@ -991,8 +1007,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
         {
             if source == module {
@@ -1011,13 +1028,16 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // An explicit `export { N } from './A'` asserts that A
                 // exports N; when A records no deeper fact for it, A's own
                 // binding is the named target.
-                ExportResolution::NotFound if enum_context.is_none() => {
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::Owner) => {
                     ExportResolution::Found(self.canonical_module(source), original.clone())
+                }
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::DeclaredDefault) => {
+                    ExportResolution::Unknown
                 }
                 resolved => resolved,
             };
@@ -1051,7 +1071,7 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 ExportResolution::NotFound => {}
                 ExportResolution::Unknown => return ExportResolution::Unknown,
@@ -1117,9 +1137,21 @@ impl ReExportIndex {
         };
         let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
         let mut stack = Vec::new();
-        let ExportResolution::Found(target_module, target_name) =
-            self.resolve_export(&import_module, imported_name, 0, &mut stack, &mocked)
-        else {
+        // Default imports need an observed export at the end of the chain.
+        // An explicit forwarding clause can request a name its source never exports.
+        let lookup = if imported_name == "default" {
+            ExportLookup::DeclaredDefault
+        } else {
+            ExportLookup::Owner
+        };
+        let ExportResolution::Found(target_module, target_name) = self.resolve_export_with_context(
+            &import_module,
+            imported_name,
+            0,
+            &mut stack,
+            &mocked,
+            lookup,
+        ) else {
             return false;
         };
         // The chain must land on the owner's file and the owner's name.
@@ -1127,7 +1159,7 @@ impl ReExportIndex {
         // resolves to THIS owner exactly when the owner is the owner module's
         // default export (#4103 under-credit).
         target_module == owner_module
-            && ((target_name == owner.name && imported_name != "default")
+            && (target_name == owner.name
                 || (target_name == "default" && owner.exported_as_default))
     }
 
