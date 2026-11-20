@@ -1,3 +1,4 @@
 <!-- section: Fixed -->
-- Python analysis withholds literal-instance credit for a coroutine fixture when
-  a preceding conditional import can switch its decorator to plain `pytest.fixture` (#14846).
+- Python analysis recognizes parenthesized owner-result assignments, including
+  `result = await(f(...))` for coroutine owners, and withholds coroutine fixture
+  credit when a preceding compound statement may rebind its decorator alias (#14846).

@@ -2303,7 +2303,7 @@ pub(super) fn owner_result_locals(
         let mut value = value.trim_start();
         if awaited
             && let Some(rest) = value.strip_prefix("await")
-            && rest.starts_with([' ', '\t'])
+            && rest.starts_with([' ', '\t', '('])
         {
             value_start += value.len() - rest.trim_start().len();
             value = rest.trim_start();
@@ -2345,7 +2345,8 @@ fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<
             }
         }
     }
-    for wrapper in MATERIALIZING_WRAPPERS {
+    // An empty prefix is an ordinary parenthesized expression.
+    for wrapper in std::iter::once("").chain(MATERIALIZING_WRAPPERS) {
         let Some(rest) = value.strip_prefix(wrapper) else {
             continue;
         };
@@ -2357,7 +2358,8 @@ fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<
         let close = super::no_behavior::matching_call_paren(body, open)?;
         let inner = open + 1 + (body[open + 1..].len() - body[open + 1..].trim_start().len());
         let inner_end = whole_owner_call_end(body, inner, callees)?;
-        return body[inner_end..close]
+        return body
+            .get(inner_end..close)?
             .trim()
             .is_empty()
             .then_some(close + 1);
