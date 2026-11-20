@@ -3840,7 +3840,10 @@ Implementation: `substitute_owner_call`.
   including `path = "tests/../tests/gate.rs"`, is not `HarnessEnabled`;
   `cargo_test_collection_skipped` is the producer skip query. Unavailable
   metadata is not a skip. ripr does not thread `--features` /
-  `--all-features` into the metadata probe.
+  `--all-features` into the metadata probe. Since #15079 the analyzed set
+  also holds the features other workspace members' path dependencies
+  request, as a workspace-wide `cargo test` unifies them (RIPR-SPEC-0356
+  owns that rule).
 - `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
   crediting. Rule 7 (#7125) also credits a unique top-level `Production`
   helper in a crate-root integration-test target (`tests/<name>.rs` or

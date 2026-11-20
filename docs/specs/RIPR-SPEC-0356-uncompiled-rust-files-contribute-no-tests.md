@@ -27,6 +27,8 @@ Linked issues:
   `required-features`)
 - #14972 (targets `cargo test` never runs: a conventional crate root under
   `autolib`/`autobins`/... `= false`, and an example's default `test = false`)
+- #15079 (`required-features` met only through another workspace member's
+  dependency on the package)
 - #15262 (a bench's default `test = false`: plain `cargo test` never builds
   or runs it)
 
@@ -119,7 +121,8 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
 2. Every execution root is the `src_path` of at least one cargo metadata
    target, and `cargo test` runs none of them: each is a `lib`-family or
    `bin` target whose metadata `test` flag is false or whose
-   `required-features` are unmet under cargo defaults. The query is
+   `required-features` are unmet under the analyzed feature set (cargo
+   defaults unified across the workspace, below). The query is
    `ManifestInventory::crate_root_unit_tests_skipped`, the same metadata
    owner that already decides `[[test]] test = false` (#7265) and
    `required-features` (#7266). A skipped `[[test]]` target keeps those
@@ -231,6 +234,60 @@ bench's tests.
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.
 
+### Workspace feature unification (#15079)
+
+Scope decision: ripr reads the tests of every workspace member as run, so its
+assumed build is `cargo test --workspace`, or a plain `cargo test` at a
+virtual workspace root without `workspace.default-members`. That build
+selects every member with its default features and unifies each package's
+features across them. A narrower build (`cargo test -p <member>`, a virtual
+root with `default-members`, or a plain `cargo test` at a non-virtual root,
+which tests only the root package) is outside this scope; see Known Limits. The `required-features` check (for a `[[bin]]` or a `test =
+true` `[[example]]` here, and a `[[test]]` under #7266) therefore compares
+against a member's unified set, computed from the same `cargo metadata
+--no-deps --offline` document:
+
+1. Each member starts from its own `default` closure.
+2. A normal or dev dependency of any member whose metadata `path` is a member
+   directory requests, on that member, its `features`, `default` unless
+   `default-features = false`, and every `key/feature` or `key?/feature`
+   enable among the dependent's enabled features, where `key` is the rename
+   or package name. An optional dependency counts only when the dependent's
+   enabled features name `dep:key` (metadata lists the implicit `key =
+   ["dep:key"]` feature when no `dep:` syntax hides it) or a `key/feature`
+   enable; an explicit feature that only shares the dependency's name does
+   not activate it. For an optional dependency, a strong `key/feature` enable also
+   activates the dependent's own feature named `key` when present. A required
+   dependency can share a local feature's name without activating it. A weak
+   `key?/feature` leaves local activation unchanged. Requests expand through the receiving member's
+   feature table, and the pass repeats until no set grows, so a chain
+   through several members resolves.
+3. A build dependency does not count: under resolver 2 its features are
+   built apart from the target build that runs the tests. A platform-specific
+   (`[target.'cfg(..)'.dependencies]`) edge does not count either: ripr does
+   not evaluate the cfg, so the edge keeps the base reading. Nor does an
+   edge from another member into a proc-macro member: cargo builds that
+   proc-macro for the host, so the features requested on it, and what they
+   chain onward, never reach the tested build. A proc-macro member's own
+   features still count, since `cargo test` builds it as a tested root.
+4. Doubt fails toward no skip. A dependency entry whose `path` names a
+   member but whose other fields cannot be read, or a member's unreadable
+   `features` table, puts that member in doubt; a `dependencies` field that
+   is not an array, or an entry whose `path` is present but not a string,
+   puts every member in doubt, since the entry's member is unknown. A target
+   of a member in doubt establishes no `required-features` skip, unless its
+   own `required-features` value is malformed, which still fails closed as
+   before. The doubt carries over an edge whose request
+   depends on the doubtful member's features: an optional edge, or one its
+   feature table chains through (`dep:key`, `key/feature`, `key?/feature`).
+
+This only re-admits a target Cargo builds in that workspace build: a request
+for another feature, an inactive optional edge, a chain the dependent leaves
+off, a build dependency, a platform-specific edge and a request that
+reaches the bin only through a proc-macro member's host build keep the
+skip. The query and its owner do not
+change.
+
 ## Required Evidence
 
 - Positive: a haystack `#[test]` is not a related test of the changed owner,
@@ -292,6 +349,23 @@ running test; no named stop reason is added on this issue.
   discriminator in every mode except `instant`, as on base (#14972
   review).
 
+- Feature unification (#15079): a `[[bin]]` whose required feature only a
+  member's renamed dev dependency, a normal dependency, a default-enabled
+  `a/special` chain, an enabled optional dependency or a chain through a
+  third member requests reads `exposed` with its test related, as do a
+  `[[test]]` target and a `test = true` example under the same request. A
+  `workspace = true` inherited edge, a self dev dependency and an old-style
+  `x = ["a"]` enable of an optional dependency also read `exposed`, as do
+  a proc-macro member's own request, a proc-macro requester's chain through
+  a normal member, and a strong `a/other` chain that turns on the
+  dependent's feature `a = ["dep:a", "a/special"]`. A
+  request for another feature, no request, a chain behind a feature left
+  off, an inactive optional or weak `a?/special` edge, an explicit feature
+  that only shares the optional dependency's name, a build dependency, a
+  `cfg(windows)` edge, a request into a proc-macro member that chains to
+  `a/special`, and a strong-chain dependent whose `x` nothing enables keep
+  the skip.
+
 ## Known Limits
 
 - Only the `.rs` file name is matched, not its directory: another file of the
@@ -340,14 +414,11 @@ running test; no named stop reason is added on this issue.
   `test = false` lib or bin, a bench, or an undiscovered test file) keeps
   its credit, as on base. The same mount through `#[path]` is an indexed
   edge, so the skipped holder is seen and the credit is withheld.
-- Undiscovered and example targets, under-credit (#14972 review): the
-  `required-features` check reads only the package's own default feature
-  closure, the same owner bins use (#7266). A `test = true` example (or a
-  `[[bin]]`) whose required feature is enabled only through another
-  workspace member's dependency edge (`a = { path = "../a", features =
-  ["special"] }`) runs under a workspace `cargo test` by feature
-  unification, but reads as skipped here and loses its credit. Tracked for
-  both target kinds in #15079.
+- Undiscovered and example targets (#14972 review, resolved by #15079): the
+  `required-features` check of a `test = true` example uses the same
+  workspace-unified feature set as bins and `[[test]]` targets, so an
+  example whose required feature only another member's dependency edge
+  enables keeps its credit (see Workspace feature unification).
 - `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
   lists the library, which keeps the credit.
 - Undiscovered and example targets, over-credit (#14972 review): cargo
@@ -355,6 +426,19 @@ running test; no named stop reason is added on this issue.
   harness = false` or a `[[bin]] harness = false` reads as a running target,
   and its `#[test]` functions keep their credit on base and here alike,
   although the harness-less binary runs none of them.
+- Feature unification (#15079), under-credit kept from #7266: a resolver 1
+  workspace also unifies build-dependency features; a non-member path
+  dependency or a `[patch]` entry can request a member's features where
+  `--no-deps` metadata does not show it; and a platform-specific edge whose
+  cfg matches the host (`cfg(unix)` on Linux) does request its features.
+  Those targets stay skipped, as on base.
+- Feature unification (#15079), over-credit outside the assumed scope: a
+  narrower build skips a target this rule re-admits. That covers a
+  per-package run (`cargo test -p a`), a virtual root with
+  `workspace.default-members` that leaves the requesting member out, a
+  plain `cargo test` at a non-virtual root (only the root package is
+  tested), and a `.cargo/config.toml` that narrows unification
+  (`resolver.feature-unification = "package"`), which is not read.
 
 ## Non-Goals
 
@@ -387,6 +471,9 @@ running test; no named stop reason is added on this issue.
   `mount_operand_doubt_needs_a_dynamic_mount_operand` (#14962 review).
 - `crates/ripr/src/analysis/seam_inventory.rs`:
   `reuse_reviving_cargo_test_skipped_tests_matches_fresh` (#14962).
+- `crates/ripr/tests/workspace_feature_unification.rs` (#15079).
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
+  `workspace_features_unify_member_requests_and_record_doubt` (#15079).
 
 ## Implementation Mapping
 
@@ -397,7 +484,8 @@ running test; no named stop reason is added on this issue.
   `files_in_skipped_unit_test_targets` (#14962).
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: `scan_macro_sites` (#14768).
 - `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
-  `ManifestInventory::crate_root_unit_tests_skipped` (#14962).
+  `ManifestInventory::crate_root_unit_tests_skipped` (#14962),
+  `workspace_enabled_features` (#15079).
 
 ## Metrics
 
