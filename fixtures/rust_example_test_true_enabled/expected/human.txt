@@ -2,14 +2,14 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_example_test_true_enabled/input
 
-Summary: 2 changed behaviors checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
+Summary: 1 changed behavior checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: none for this change; a test appears to notice it. 1 other finding did not read as noticed; see below. This is a static reading of the code, not a test run
+  State: no test gap found
+  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run
   File: ./src/lib.rs:2
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:f:return_value:return_value:a+2
@@ -36,10 +36,6 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/rust_example_test_true_enabled/input --diff <cwd>/fixtures/rust_example_test_true_enabled/diff.patch --mode fast --at probe:src_lib.rs:return_value:c50f7064
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
-Hidden:
-  All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:2 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
-  Hidden classes:
-    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
+More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

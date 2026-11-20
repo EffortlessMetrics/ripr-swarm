@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_bin_explicit_path_enabled/input
 
-Summary: 2 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Summary: 1 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
   only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
   no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
@@ -10,7 +10,7 @@ Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach
   unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 INFO ./src/main.rs:2
   id: probe:src_main.rs:return_value:5bcf3219
@@ -43,47 +43,3 @@ Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_bin_explicit_path_enabled/input --diff <cwd>/fixtures/rust_bin_explicit_path_enabled/diff.patch --mode fast probe:src_main.rs:return_value:5bcf3219
   ripr context --root <cwd>/fixtures/rust_bin_explicit_path_enabled/input --diff <cwd>/fixtures/rust_bin_explicit_path_enabled/diff.patch --mode fast --at probe:src_main.rs:return_value:5bcf3219
-
-NOTE ./src/main.rs:2
-  id: probe:src_main.rs:static_unknown:c3711bae
-
-Changed
-  before: a + 1
-  expr:   a + 1
-  source:  base_deleted — base-side evidence, not a candidate edit target
-
-Change type
-  a change ripr could not classify
-  family: static_unknown
-  delta:  unknown (kind of change not determined)
-  owner:  src/main.rs::f
-  gap id (for scripts): gap:rust:src/main.rs:f:static_unknown:static_unknown:a+1
-
-Static exposure
-  static_unknown (note, confidence 0.50)
-
-Evidence
-  - reach yes: Related tests appear to reach f: t
-  - infection unknown: Changed syntax is not mapped to a high-confidence change type
-  - propagation unknown: No propagation model is available for this changed syntax
-  - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test src/main.rs:12 t uses exact value oracle, not graded against this probe: assert_eq!(f(5), 7);
-  - source assertion argument value 7 at line 13
-  - source function argument value a = 5 at line 13
-
-Weakness
-  - No strong discriminator was detected
-  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
-
-Stop reasons:
-  - ripr could not model this change well enough to classify it (static_probe_unknown)
-    Next: Add a test that calls the changed code and asserts an exact result.
-
-Next step
-  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
-Drill in:
-  (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/rust_bin_explicit_path_enabled/input --diff <cwd>/fixtures/rust_bin_explicit_path_enabled/diff.patch --mode fast probe:src_main.rs:static_unknown:c3711bae
-  ripr context --root <cwd>/fixtures/rust_bin_explicit_path_enabled/input --diff <cwd>/fixtures/rust_bin_explicit_path_enabled/diff.patch --mode fast --at probe:src_main.rs:static_unknown:c3711bae
