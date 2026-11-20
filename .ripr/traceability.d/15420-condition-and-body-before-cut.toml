@@ -1,0 +1,8 @@
+# Cut `before` to the old condition when a block's condition and body both change (#15420).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::predicate_before_is_cut_to_the_old_condition_when_the_body_changes_too",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::removed_before_span_matches_granularity_when_operator_literal_and_body_change",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::removed_before_span_keeps_the_whole_line_without_a_faithful_head_cut",
+]

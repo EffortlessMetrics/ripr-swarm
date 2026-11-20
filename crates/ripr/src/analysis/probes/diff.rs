@@ -3178,8 +3178,41 @@ fn removed_head_span(added_line: &str, shape_text: &str, removed_line: &str) -> 
     if !crate::analysis::extract::delimiters_balance(masked_removed.get(start..open)?) {
         return None;
     }
+    // The chosen `{` must open the same block as the added line's: outside
+    // their brace groups, the two tails agree (`{} else {}`). A brace that
+    // opens an operand (`n >= const { 100 } { .. }`) or a struct pattern
+    // (`let Foo { a } = x { .. }`) leaves an extra group or text behind.
+    if brace_skeleton(masked_added.get(end..)?) != brace_skeleton(masked_removed.get(open..)?) {
+        return None;
+    }
     let span = removed_line.get(start..open)?.trim();
     (!span.is_empty() && span != shape_text.trim()).then(|| span.to_string())
+}
+
+/// The text outside `{ .. }` groups with whitespace dropped, each top-level
+/// group kept as its braces: `{ a } else { b }` reads `{}else{}`.
+fn brace_skeleton(masked: &str) -> String {
+    let mut depth = 0_usize;
+    let mut skeleton = String::new();
+    for character in masked.chars() {
+        match character {
+            '{' => {
+                if depth == 0 {
+                    skeleton.push('{');
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    skeleton.push('}');
+                }
+            }
+            _ if depth == 0 && !character.is_whitespace() => skeleton.push(character),
+            _ => {}
+        }
+    }
+    skeleton
 }
 
 /// Byte lengths of the text the two lines share at the start and at the
@@ -5341,6 +5374,24 @@ mod tests {
         assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
     }
 
+    #[test]
+    fn predicate_before_is_cut_to_the_old_condition_when_the_body_changes_too() {
+        // #15420: the condition and the block body both changed.
+        let probes = single_shape_probes(
+            "if total > 200 { total - 25 } else { total }",
+            "if total >= 100 { total - 10 } else { total }",
+            ProbeShapeKind::Predicate,
+            "total > 200",
+            "",
+        );
+
+        assert_eq!(probes.len(), 1);
+        let probe = &probes[0];
+        assert_eq!(probe.family, ProbeFamily::Predicate);
+        assert_eq!(probe.after.as_deref(), Some("total > 200"));
+        assert_eq!(probe.before.as_deref(), Some("total >= 100"));
+    }
+
     /// `with_old_arm_body` over the old source rebuilt from `index`, as the
     /// probe builder shares it per file.
     fn joined_old_arm(line: &str, changed: &ChangedFile, index: &RustIndex) -> String {
@@ -6341,6 +6392,35 @@ mod tests {
                 "if v.is_empty() { b }",
                 "v.is_empty()",
                 "if v.iter().any(|x| { *x > 1 }) { a }"
+            ),
+            None
+        );
+        // A brace that opens an operand or a struct pattern is not the
+        // block brace (#15584 review).
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "if n > 200 { n - 25 } else { n }",
+                "n > 200",
+                "if n >= const { 100 } { n - 10 } else { n }"
+            ),
+            None
+        );
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "if n > 200 { n - 25 } else { n }",
+                "n > 200",
+                "if n >= { 100 } { n - 10 } else { n }"
+            ),
+            None
+        );
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "if let Foo { b } = x { 2 }",
+                "let Foo { b } = x",
+                "if let Foo { a } = y { 1 }"
             ),
             None
         );
