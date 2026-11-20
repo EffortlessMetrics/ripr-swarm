@@ -587,6 +587,55 @@ fn an_arrow_on_the_next_line_locates_the_changed_return() -> Result<(), String> 
     Ok(())
 }
 
+/// Both consumers of the changed line (the return locator and the selector
+/// reader) use the arrow text's origin. Neighboring arms return the same
+/// candidate text `return 7;` with opposite selector outcomes: `silver`
+/// takes the changed arm, `gold` the unchanged one. A selector read skewed
+/// onto the neighbor would credit `gold` and withdraw `silver`.
+#[test]
+fn a_multiline_arrow_reads_the_changed_arms_own_selector() -> Result<(), String> {
+    const BODY: &str = "    if (kind === 'silver') {\n      return 5;\n    }\n    if (kind === 'gold') {\n      return 7;\n    }\n    return 0;\n  };\n";
+    for (label, head, line) in [
+        (
+            "selector-next-line",
+            "export const dir =\n  (kind: string): number => {\n",
+            4,
+        ),
+        (
+            "selector-same-line",
+            "export const dir = (kind: string): number => {\n",
+            3,
+        ),
+    ] {
+        let source = format!("{head}{BODY}");
+        let run = |suffix: &str, body: &str| {
+            finding_at(
+                &format!("{label}-{suffix}"),
+                &source,
+                line,
+                "      return 5;",
+                "      return 7;",
+                &vitest(body),
+            )
+        };
+        let gold = run("gold", "    expect(dir('gold')).toBe(7);\n")?;
+        assert_eq!(
+            gold.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {:?}",
+            gold.missing
+        );
+        let silver = run("silver", "    expect(dir('silver')).toBe(7);\n")?;
+        assert_eq!(
+            silver.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            silver.missing
+        );
+    }
+    Ok(())
+}
+
 /// Unreadable expected sides keep the existing verdict: an `it.each` row
 /// value, a snapshot, and a structural matcher on the owner's result.
 #[test]

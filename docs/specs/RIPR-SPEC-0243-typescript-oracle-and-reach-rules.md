@@ -2692,9 +2692,9 @@ keys); do not take the next number.
   arm closed (the #8569 condition reader) and the owner's module names it
   once (no recursion or re-export); otherwise it keeps the verdict. The rule
   applies only to a lone one-for-one line replacement in the file. The changed
-  line is located from the owner text's own first line (an arrow after
-  `export const dir =` starts one line later) and must hold the changed text
-  there. Argument slots skip commas inside comments; an unterminated comment
+  line is located, and its selector read, from the owner text's own first
+  line (an arrow after `export const dir =` starts one line later), and the
+  text must hold the changed line there. Argument slots skip commas inside comments; an unterminated comment
   or string leaves them unreadable. A `return undefined` with an `undefined`
   binding in scope, and a BigInt literal (`5n !== 5`), are refused.
   When every strong assertion on a direct owner call expects another arm's
@@ -2716,6 +2716,7 @@ keys); do not take the next number.
   `a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result`,
   `an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return`,
   `an_arrow_on_the_next_line_locates_the_changed_return`,
+  `a_multiline_arrow_reads_the_changed_arms_own_selector`,
   `a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused`,
   `a_bigint_return_is_not_a_readable_scalar`,
   `an_unreadable_expected_side_keeps_the_verdict` and

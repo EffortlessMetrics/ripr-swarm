@@ -9,6 +9,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_recursive_owner_keeps_a_shared_new_result",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_bigint_return_is_not_a_readable_scalar",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::an_arrow_on_the_next_line_locates_the_changed_return",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_multiline_arrow_reads_the_changed_arms_own_selector",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused",
