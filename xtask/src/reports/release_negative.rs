@@ -3812,8 +3812,9 @@ mod tests {
                 }
             ]
         });
-        let err = select_retained_loyalty_boundary_seam(&ambiguous)
-            .expect_err("two unchanged predicate_boundary seams must fail closed");
+        let Err(err) = select_retained_loyalty_boundary_seam(&ambiguous) else {
+            return Err("two unchanged predicate_boundary seams must fail closed".to_string());
+        };
         assert!(
             err.contains("expected exactly one retained predicate_boundary seam, got 2"),
             "{err}"
@@ -3831,8 +3832,9 @@ mod tests {
                 }
             ]
         });
-        let err = select_retained_loyalty_boundary_seam(&strengthened)
-            .expect_err("strongly_gripped retained seam must fail closed");
+        let Err(err) = select_retained_loyalty_boundary_seam(&strengthened) else {
+            return Err("strongly_gripped retained seam must fail closed".to_string());
+        };
         assert!(
             err.contains("the retained seam is not the unchanged loyalty seam"),
             "{err}"
