@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- `ripr check` on a clean checkout of any default branch (`master`, `trunk`) whose base resolves to `origin/<name>` now says you are on the comparison base, like `main`, instead of suggesting `--worktree` (#15326).
+- `ripr check` on a clean checkout whose base resolves to `origin/<same branch>` at the same commit now says you are on the comparison base instead of suggesting `--worktree`, for `master` and for any other branch name (such as `trunk`) when no other base candidate exists (#15326).
