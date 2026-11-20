@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check`: run from a directory below the workspace root, the human report's `File:` rows (and the other human location rows) now print paths relative to the directory you ran in, such as `../crates/core/src/lib.rs:2`, so a copied path opens. They used to print `./crates/core/src/lib.rs:2`, which names nothing under that directory. Output run from the root, and JSON paths, are unchanged (#15473).

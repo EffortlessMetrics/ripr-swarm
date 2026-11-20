@@ -265,7 +265,7 @@ pub(crate) fn render_finding_digest_with_config(
     let severity = display_severity(finding, config);
     out.push_str(&format!(
         "  File: {}:{}\n",
-        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        crate::output::path::human_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ));
     if should_render_language_metadata(finding) {
@@ -662,7 +662,7 @@ fn match_arm_head_only_note(
     }
     Some(format!(
         "          (arm head only; open the arm at {}:{} to read its new body)\n",
-        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        crate::output::path::human_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ))
 }
