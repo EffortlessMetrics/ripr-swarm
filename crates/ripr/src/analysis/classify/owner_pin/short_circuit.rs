@@ -397,65 +397,76 @@ impl GuardOperandChange {
     }
 }
 
-/// `text` as its sequence of Rust tokens. Layout whitespace separates tokens
-/// but is not one, so `n % 2 == 0` and `n%2==0` are the same sequence. It
-/// still splits words: `a as u8` is three tokens and `aasu8` one, so an edit
-/// that merges an identifier, keyword or type across a space is a rewritten
-/// operand, not a retained one (#15149). Punctuation is read by longest
-/// match (`&&` is one token, `& &` two). Every literal is one token copied
-/// verbatim, since whitespace inside it is content. The literal ranges come
-/// from the shared lexical scanner, so a quote inside a char literal (`'"'`)
-/// or a raw string cannot flip the string tracking (#14194 review).
-fn operand_tokens(text: &str) -> Vec<&str> {
+/// `text` as the sequence of words, literals and punctuation runs it holds.
+/// Layout whitespace separates words but is not part of an operand's
+/// identity, so `n % 2 == 0` and `n%2==0` are the same sequence. Word
+/// boundaries stay significant: `a as u8` is three words and `aasu8` one, so
+/// an edit that merges an identifier, keyword, type or number across a space
+/// is a rewritten operand, not a retained one (#15149). Adjacent punctuation
+/// is one run whatever the spacing inside it (`Vec<Vec<u8> >` and
+/// `Vec<Vec<u8>>`, `> =` and `>=`), because splitting it into Rust tokens
+/// would read some layout-only edits as rewrites and so drop the
+/// withholding (#15537 review). Every literal is one entry copied verbatim,
+/// since whitespace inside it is content. The literal ranges come from the
+/// shared lexical scanner, so a quote inside a char literal (`'"'`) or a raw
+/// string cannot flip the string tracking (#14194 review).
+fn operand_tokens(text: &str) -> Vec<String> {
     let spans = rust_identity_spans(text);
     let mut tokens = Vec::new();
+    let mut punctuation = String::new();
     let mut at = 0;
     for (start, end) in spans.literal_ranges {
         if start < at || end >= text.len() {
             continue;
         }
-        push_code_tokens(&text[at..start], &mut tokens);
-        tokens.push(&text[start..=end]);
+        push_code_tokens(&text[at..start], &mut punctuation, &mut tokens);
+        flush_punctuation(&mut punctuation, &mut tokens);
+        tokens.push(text[start..=end].to_string());
         at = end + 1;
     }
-    push_code_tokens(&text[at..], &mut tokens);
+    push_code_tokens(&text[at..], &mut punctuation, &mut tokens);
+    flush_punctuation(&mut punctuation, &mut tokens);
     tokens
 }
 
-/// Multi-character Rust punctuation, longest first so a longest match wins.
-const PUNCTUATION: &[&str] = &[
-    "<<=", ">>=", "...", "..=", "::", "->", "=>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=",
-    "*=", "/=", "%=", "^=", "&=", "|=", "<<", ">>", "..",
-];
+fn flush_punctuation(punctuation: &mut String, tokens: &mut Vec<String>) {
+    if !punctuation.is_empty() {
+        tokens.push(std::mem::take(punctuation));
+    }
+}
 
-/// The tokens of `code`, a stretch of operand text that holds no literal.
-/// A word is a run of identifier characters; a number may also hold a `.`
-/// followed by a digit (`1.5`). Anything else is punctuation.
-fn push_code_tokens<'a>(code: &'a str, tokens: &mut Vec<&'a str>) {
+/// The words of `code`, a stretch of operand text that holds no literal,
+/// with the punctuation between them gathered into `punctuation` runs. A
+/// word is a run of identifier characters; a number may also hold a `.`
+/// followed by a digit (`1.5`). Whitespace inside a punctuation run is
+/// dropped, so the run continues across it.
+fn push_code_tokens(code: &str, punctuation: &mut String, tokens: &mut Vec<String>) {
     let is_word = |ch: char| ch == '_' || ch.is_alphanumeric();
-    let mut rest = code.trim_start();
+    let mut rest = code;
     while let Some(first) = rest.chars().next() {
-        let length = if is_word(first) {
-            let mut end = 0;
-            let mut chars = rest.char_indices().peekable();
-            while let Some((offset, ch)) = chars.next() {
-                let decimal_point = ch == '.'
-                    && first.is_ascii_digit()
-                    && chars.peek().is_some_and(|(_, next)| next.is_ascii_digit());
-                if !is_word(ch) && !decimal_point {
-                    break;
-                }
-                end = offset + ch.len_utf8();
+        if first.is_whitespace() {
+            rest = &rest[first.len_utf8()..];
+            continue;
+        }
+        if !is_word(first) {
+            punctuation.push(first);
+            rest = &rest[first.len_utf8()..];
+            continue;
+        }
+        let mut end = 0;
+        let mut chars = rest.char_indices().peekable();
+        while let Some((offset, ch)) = chars.next() {
+            let decimal_point = ch == '.'
+                && first.is_ascii_digit()
+                && chars.peek().is_some_and(|(_, next)| next.is_ascii_digit());
+            if !is_word(ch) && !decimal_point {
+                break;
             }
-            end
-        } else {
-            PUNCTUATION
-                .iter()
-                .find(|punct| rest.starts_with(**punct))
-                .map_or(first.len_utf8(), |punct| punct.len())
-        };
-        tokens.push(&rest[..length]);
-        rest = rest[length..].trim_start();
+            end = offset + ch.len_utf8();
+        }
+        flush_punctuation(punctuation, tokens);
+        tokens.push(rest[..end].to_string());
+        rest = &rest[end..];
     }
 }
 
@@ -1370,13 +1381,41 @@ mod tests {
     }
 
     #[test]
-    fn operand_tokens_split_words_and_read_punctuation_by_longest_match() {
+    fn a_layout_only_generic_close_keeps_the_dropped_guard_read() -> Result<(), String> {
+        // #15537 review: splitting `>>` and `> >` into different tokens read
+        // this layout-only edit of the retained operand as a rewrite, so the
+        // withholding was dropped (fail-open toward exposed).
+        let function = "fn f(n: u32, a: usize) -> bool {\n    a == size_of::<Vec<Vec<u8>>>()\n}";
+        let change = GuardOperandChange::read(
+            function,
+            "a == size_of::<Vec<Vec<u8>>>()",
+            "n != 0 && a == size_of::<Vec<Vec<u8> > >()",
+        )
+        .ok_or("the layout-only retained operand must read as retained")?;
+        assert_eq!(change.differing.len(), 1);
+        // Every run leaves the dropped `n != 0` true: the pin is withheld.
+        assert!(change.runs_agree(&[run(&["1", "24"]), run(&["7", "0"])]));
+        Ok(())
+    }
+
+    #[test]
+    fn operand_tokens_split_words_and_merge_punctuation_runs() {
         assert_eq!(operand_tokens("a as u8"), ["a", "as", "u8"]);
         assert_eq!(operand_tokens("aasu8"), ["aasu8"]);
+        assert_ne!(operand_tokens("a as u8"), operand_tokens("aasu8"));
         assert_eq!(operand_tokens("a%2"), operand_tokens("a % 2"));
-        assert_eq!(operand_tokens("x==-1"), ["x", "==", "-", "1"]);
+        assert_eq!(operand_tokens("x == -1"), ["x", "==-", "1"]);
+        assert_eq!(operand_tokens("x==-1"), operand_tokens("x == -1"));
         assert_eq!(operand_tokens("x&&y"), ["x", "&&", "y"]);
-        assert_ne!(operand_tokens("x & &y"), operand_tokens("x&&y"));
+        // Spacing inside a punctuation run is layout only (#15537 review):
+        // reading these as different would drop the withholding.
+        assert_eq!(operand_tokens("x & &y"), operand_tokens("x&&y"));
+        assert_eq!(operand_tokens("a > = b"), operand_tokens("a >= b"));
+        assert_eq!(operand_tokens("a < < 2"), operand_tokens("a << 2"));
+        assert_eq!(
+            operand_tokens("Vec<Vec<u8> >"),
+            operand_tokens("Vec<Vec<u8>>")
+        );
         assert_eq!(operand_tokens("v < 1.5"), ["v", "<", "1.5"]);
         assert_eq!(
             operand_tokens("check(n, \"a  b\")"),

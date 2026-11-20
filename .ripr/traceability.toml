@@ -15728,7 +15728,8 @@ tests = [
   "crates/ripr/tests/short_circuit_or_tail.rs::an_or_tail_whose_changed_operand_never_runs_stays_below_exposed",
   "crates/ripr/tests/short_circuit_or_tail.rs::a_word_merged_across_a_space_is_a_rewritten_operand_not_a_dropped_guard",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_space_that_separates_words_is_part_of_the_retained_operand",
-  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::operand_tokens_split_words_and_read_punctuation_by_longest_match",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::operand_tokens_split_words_and_merge_punctuation_runs",
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::a_layout_only_generic_close_keeps_the_dropped_guard_read",
 
 
 

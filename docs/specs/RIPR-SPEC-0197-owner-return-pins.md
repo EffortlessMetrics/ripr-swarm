@@ -2204,11 +2204,13 @@ and only per pinned call:
    it inside a parenthesis, bracket or brace; each operand only one version
    holds must be an item 1 operand; the operands both versions keep are
    compared as text and never read, so they may be any expression. Retained
-   operands are compared as Rust token sequences (#15149): whitespace
-   between tokens is layout, so `a % 2` and `a%2` match, but it still
-   separates words, so `a as u8` (three tokens) and `aasu8` (one) do not;
-   punctuation is read by longest match (`&&` is one token, `& &` two), and
-   each literal is one token compared exactly, contents included. Fail open to today's
+   operands are compared as sequences of words, literals and punctuation
+   runs (#15149): whitespace is layout, so `a % 2` and `a%2` match, but it
+   still separates words, so `a as u8` (three words) and `aasu8` (one) do
+   not; adjacent punctuation is one run whatever the spacing inside it, so
+   `Vec<Vec<u8> >` and `Vec<Vec<u8>>` (and `> =` and `>=`) match, which keeps
+   a layout-only edit withheld; and each literal is one entry compared
+   exactly, contents included. Fail open to today's
    reading: a rewritten operand, an unreadable argument, a
    call with no run, or any shape outside this one keeps its current
    result. This is a withholding rule only and admits no new pin.
@@ -3646,8 +3648,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `layout_whitespace_does_not_hide_a_retained_operand`,
   `a_char_literal_operator_is_not_an_arithmetic_split`,
   `a_quote_char_literal_does_not_flip_the_literal_scan`,
-  `a_space_that_separates_words_is_part_of_the_retained_operand` and
-  `operand_tokens_split_words_and_read_punctuation_by_longest_match`;
+  `a_space_that_separates_words_is_part_of_the_retained_operand`,
+  `a_layout_only_generic_close_keeps_the_dropped_guard_read` and
+  `operand_tokens_split_words_and_merge_punctuation_runs`;
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
   `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,

@@ -719,10 +719,15 @@ pub(in crate::analysis) fn bool_owner_exact_result_next_step(
         })
         .peekable();
     reaching.peek()?;
+    // A row annotated `missing_exact_assertion` says the assertion shape IS
+    // the gap (the same exclusion `exact_oracle_gap_next_step` makes), so it
+    // keeps the family template here rather than being read as exact.
     if !reaching.all(|test| {
-        test.oracle
-            .as_deref()
-            .is_some_and(|oracle| asserts_bool_owner_result(oracle, &owner.name))
+        test.miss != Some(RelatedTestMiss::MissingExactAssertion)
+            && test
+                .oracle
+                .as_deref()
+                .is_some_and(|oracle| asserts_bool_owner_result(oracle, &owner.name))
     }) {
         return None;
     }
@@ -735,6 +740,9 @@ pub(in crate::analysis) fn bool_owner_exact_result_next_step(
 /// Whether `text` is `assert!(owner(..))` or `assert!(!owner(..))` (plain,
 /// `std::` or `core::` rooted, with optional message arguments), where the
 /// condition is exactly one call of `owner` through an optional plain path.
+/// The owner is matched by the path's last segment only: the row's relation
+/// reason, not this text, establishes that the call reaches the changed
+/// owner, and this step is guidance that changes no class.
 fn asserts_bool_owner_result(text: &str, owner: &str) -> bool {
     let text = text.trim().trim_end_matches(';').trim_end();
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
@@ -1940,6 +1948,9 @@ mod tests {
             bool_row("one_is_small", "assert!(is_small(1));"),
             bool_row("three_is_not_small", "assert!(!is_small(3), \"3, {}\", 3);"),
             bool_row("pathed", "std::assert!(crate::is_small(4));"),
+            bool_row("core_rooted", "core::assert!(is_small(1));"),
+            bool_row("abs_std", "::std::assert!(!is_small(3));"),
+            bool_row("abs_core", "::core::assert!(super::is_small(1));"),
         ];
         let step = bool_owner_exact_result_next_step(
             &probe(ProbeFamily::ReturnValue, "n == 1 || n == 2"),
@@ -1973,6 +1984,11 @@ mod tests {
             "assert!(x.is_small(1));",
             "debug_assert!(is_small(1));",
             "assert_ne!(is_small(1), false);",
+            "assert!(is_small::<u32>(1));",
+            "assert!(r);",
+            "assert!(!!is_small(1));",
+            "assert!((|| is_small(1))());",
+            "assert!((|n| is_small(n))(1));",
         ] {
             let rows = [exact.clone(), bool_row("broad", broad)];
             assert_eq!(
@@ -1988,6 +2004,18 @@ mod tests {
         }
         let mut no_oracle = exact.clone();
         no_oracle.oracle = None;
+        let mut shape_gap = exact.clone();
+        shape_gap.miss = Some(RelatedTestMiss::MissingExactAssertion);
+        assert_eq!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &[exact.clone(), shape_gap],
+            ),
+            None,
+            "a missing_exact_assertion row keeps the family template"
+        );
         let rows = [exact.clone()];
         for (label, step) in [
             (

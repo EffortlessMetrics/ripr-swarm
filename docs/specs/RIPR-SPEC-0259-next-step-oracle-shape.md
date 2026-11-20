@@ -89,8 +89,11 @@ alone:
   test with an input whose boolean result differs between the old and new
   code. It names no input value, since the return-value finding carries no
   deciding-input fact. Any other row on the owner (a compound condition, a
-  method receiver, a turbofish, a bound result, an unreadable oracle)
-  keeps the family template.
+  method receiver, a turbofish, a bound result, a double negation, a
+  closure call, an unreadable oracle, or a row annotated
+  `missing_exact_assertion`) keeps the family template. The owner is matched
+  by the call path's last segment; the row's relation reason establishes
+  reach.
 - Shapes with dedicated guidance are untouched: boxed wrapper-error seams
   keep the typed `wrapper_error_binding_unresolved` limitation step, and a
   changed `Err(...)` construction keeps the "reaches the changed error path"
@@ -118,9 +121,13 @@ reach-based eligibility refinement re-blesses
 The boolean-owner step is covered by
 `bool_owner_exact_result_rows_name_the_deciding_input` and its controls
 `bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result`
-(a compound, wrapped, method-receiver, renamed, `debug_assert!` or
-`assert_ne!` row, a non-`bool` owner, a non-weak class, a predicate probe,
-no owner, no rows, an unreadable oracle, and a proximity-only row). It
+(a compound, wrapped, method-receiver, renamed, turbofish, bound-result,
+double-negation, closure, `debug_assert!` or `assert_ne!` row, a
+`missing_exact_assertion` row, a non-`bool` owner, a non-weak class, a
+predicate probe, no owner, no rows, an unreadable oracle, and a
+proximity-only row); the positive case covers the plain, `std::`, `core::`,
+`::std::` and `::core::` rooted forms, a message argument and a path-qualified
+call. It
 re-blesses `fixtures/rust_predicate_appended_int_arm_old_input`,
 `fixtures/rust_predicate_appended_str_arm_false_side_only`,
 `fixtures/rust_nested_use_owner` and `fixtures/guard_operand_dropped_agreement`,
