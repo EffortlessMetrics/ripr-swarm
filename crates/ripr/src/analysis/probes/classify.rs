@@ -353,7 +353,10 @@ fn retarget_inline_branch_value_edit<'a>(
     };
     let lead = line_range.start + (head.len() - head.trim_start().len());
     let (head, removed) = (head.trim(), removed.trim());
-    if head == removed {
+    // A whitespace-only edit (`{ 10 }` to `{ 10}`) changes no value; the line
+    // keeps its prior reading.
+    let unspaced = |text: &str| text.split_whitespace().collect::<String>();
+    if unspaced(head) == unspaced(removed) {
         return;
     }
     let (prefix, suffix) = super::diff::common_prefix_suffix(head, removed);

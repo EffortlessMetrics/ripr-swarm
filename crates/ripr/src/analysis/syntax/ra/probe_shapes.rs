@@ -195,9 +195,9 @@ pub(crate) struct InlineBranchEdit {
 /// The branch an edit on an `if`'s condition line changed, when the edit
 /// missed the condition. The `if` is the one whose condition starts at
 /// `condition_start`; `edit` is the changed byte range of the head line.
-/// `Some` only when the edit starts past the condition's end and lies wholly
-/// inside the `then` block or a plain `else` block (an `else if` link is a
-/// predicate of its own and is not read here). A tail value is reported only
+/// `Some` only when the edit starts past the condition's end and lies
+/// strictly inside the braces of the `then` block or a plain `else` block (an
+/// `else if` link is a predicate of its own and is not read here). A tail value is reported only
 /// on the condition's line; its flag says whether the owner returns it: the
 /// `if` is the owner body's tail, possibly through `else if` links and branch
 /// tails, it has an `else`, and the value passes [`returnable_branch_value`],
@@ -236,9 +236,16 @@ pub(crate) fn inline_branch_edit(
     if let Some(ast::ElseBranch::Block(block)) = if_expr.else_branch() {
         blocks.push(block);
     }
+    // The edit must lie strictly between the block's `{` and `}`. The shared
+    // ` { 1 }` tail of `if a && b { 1 }` to `if a { 1 }` puts the deletion
+    // on the `{` byte as an empty edit; that is the condition's change, and
+    // reading it as the block's would hand the line to a spanning shape.
+    let inside = |range: ra_ap_syntax::TextRange| {
+        usize::from(range.start()) < edit.start && edit.end < usize::from(range.end())
+    };
     let block = blocks
         .into_iter()
-        .find(|block| covers(block.syntax().text_range()))?;
+        .find(|block| inside(block.syntax().text_range()))?;
     let value = block
         .tail_expr()
         .filter(|value| covers(value.syntax().text_range()))
