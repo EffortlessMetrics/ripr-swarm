@@ -274,8 +274,8 @@ MCP envelope byte budget. Follow `continuation.next_page.arguments`, which pins
 `inventory_id` and advances by the number actually returned. The identity binds
 root, observed HEAD and all summary rows. Changed observations return typed
 `stale_inventory` with `current_inventory_id`; restart at offset zero without
-the old identity. A missing store is an empty inventory, an unavailable root is
-`workspace_unavailable`, and a store-level read refusal is `attempt_invalid`.
+the old identity. A missing store is an empty inventory, an unavailable root (never
+started, or deleted after start) is `workspace_unavailable` with restart recovery, and a store-level read refusal is `attempt_invalid`.
 
 This is a live observation, not an atomic filesystem snapshot. Output is bounded;
 canonical validation still reads the whole store. Receipt status retains the
@@ -378,6 +378,9 @@ roots at equivalent inputs share one portable identity, while the concrete
 root evidence stays a separate
 host-local hash), `failed` with a typed failure code and bounded detail (the
 last-known-good snapshot is kept), `in_flight`, or `workspace_unavailable`.
+A failed attempt's `recovery` follows the cause: a deleted root says restart the server with
+a valid `--root`, a shallow clone says fetch history before retrying, an oversized diff scope says pick a nearer base or raise the limit, and only a failure with no
+such cause says to retry `ripr_refresh`.
 An attempt runs to a terminal state; cancelling the MCP request never rolls
 an attempt back or manufactures a snapshot. A cancelled attempt still commits
 as a completed snapshot when it finishes and only transport teardown abandons
