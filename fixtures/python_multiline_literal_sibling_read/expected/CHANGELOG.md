@@ -164,3 +164,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_multiline_literal_sibling_read (14)
+
+Reason:
+RIPR-SPEC-0238: a changed multi-line return-dict entry now names an exact key read as its missing check (#15357)
+
+Command:
+`cargo xtask goldens bless python_multiline_literal_sibling_read --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

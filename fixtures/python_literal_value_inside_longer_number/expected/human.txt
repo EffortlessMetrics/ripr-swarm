@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing check), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
   File: ports.py:3
   Language: python
   Language status: preview
@@ -21,12 +21,14 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:ports.py:ranges:predicate_boundary:predicate:lo_80
   Changed behavior: "lo": 80,
-  Missing check: Related Python test reaches `ranges` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed boundary
+  Missing check (1 of 2): Related Python test reaches `ranges` but the strongest extracted oracle is
+    `relational_check`; add or strengthen a focused assertion for the changed boundary
   Related test: tests/test_ports.py:3 test_hi_is_8080 (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_ports.py
   Suggested test: test_hi_is_8080
   Test node: tests/test_ports.py::test_hi_is_8080
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_literal_value_inside_longer_number/input && python -m pytest tests/test_ports.py::test_hi_is_8080) (high)
+  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `result["lo"] == 80`
   Evidence: reach yes · infection yes · propagation weak · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
