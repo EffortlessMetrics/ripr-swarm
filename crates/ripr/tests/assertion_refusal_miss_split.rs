@@ -33,13 +33,26 @@ fn shadowed_assert_macro_emits_inert_miss() -> Result<(), String> {
     Ok(())
 }
 
+fn recipe_bullets(explanation: &str) -> Result<Vec<&str>, String> {
+    let (_, recipe) = explanation
+        .split_once("  To change the verdict, a test needs to:\n")
+        .ok_or_else(|| format!("missing verdict-change list in {explanation}"))?;
+    Ok(recipe
+        .lines()
+        .map_while(|line| line.strip_prefix("  - "))
+        .collect())
+}
+
 #[test]
 fn explain_recommends_replacing_only_the_inert_assertion() -> Result<(), String> {
-    let recipe = "use a plain, always-run `assert_eq!`/`assert!`";
     let inert =
         explain_finding_with_input(fixture_input("match_arm_shadowed_assert"), "src/lib.rs:61")?;
     assert!(inert.contains("checks_unknown"), "{inert}");
-    assert!(inert.contains(recipe), "{inert}");
+    assert!(inert.contains("assertion inert"), "{inert}");
+    assert_eq!(
+        recipe_bullets(&inert)?,
+        ["use a plain, always-run `assert_eq!`/`assert!` ripr can resolve"]
+    );
 
     let unknown = explain_finding_with_input(
         fixture_input("rust_macro_wrapped_assertion_limitation"),
@@ -53,10 +66,9 @@ fn explain_recommends_replacing_only_the_inert_assertion() -> Result<(), String>
         unknown.contains("assertion admission unproven"),
         "{unknown}"
     );
-    assert!(!unknown.contains(recipe), "{unknown}");
-    assert!(
-        unknown.contains("use an input that reaches `a == b`"),
-        "{unknown}"
+    assert_eq!(
+        recipe_bullets(&unknown)?,
+        ["use an input that reaches `a == b`"]
     );
     Ok(())
 }
