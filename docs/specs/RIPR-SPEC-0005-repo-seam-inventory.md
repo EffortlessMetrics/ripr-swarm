@@ -295,6 +295,31 @@ boundary's strong grade.
 Full, sharded and compact classified cache generations change with this
 reader; old classifications cannot satisfy a warm read (#10839).
 
+### Owner Opt-Outs (#14139, #15000)
+
+The repo-scope formats (`repo-exposure-*`, `repo-seams-*`, `repo-badge*`)
+withhold a seam whose owner cargo-mutants would skip: the owner function
+carries `#[mutants::skip]` (directly or through `cfg_attr`), or it sits inside
+an `impl` block, `trait` block, inline module or function that carries it, or
+in a file whose inner `#![mutants::skip]` skips it. The decision is the one
+diff scope applies to findings (`owner_opt_out::decide_in_file`,
+RIPR-SPEC-0450), made once per production file at extraction, so `ripr check`
+and the repo formats withhold the same owners. It shares diff scope's
+fail-closed rules: only parser-backed attributes count, an owner the parsed
+tree does not name exactly once on its `fn` line gets no enclosing scope, and a
+`#[mutants::skip] mod name;` declaration is not followed into the module's own
+file. Repo scope adds one rule of its own, from its line-based owner lookup: a
+seam on a line another function starts or ends on keeps reporting. A same-named owner outside the skipped scope keeps its seams. Withheld
+seams leave every count and are disclosed in `owner_opt_outs`
+(`docs/OUTPUT_SCHEMA.md`, "Repo scope owner opt-outs").
+
+Evidence: `crates/ripr/tests/repo_scope_enclosing_mutants_skip.rs` drives the
+built binary once per enclosing kind (impl, trait, inline module, file) against
+a byte-identical baseline, checks that diff and repo scope agree on the
+skipped owner and its sibling with and without the attribute, and pins the
+out-of-line `mod` bound in both scopes; `owner_opt_out.rs` unit tests pin the
+same decision on parsed facts.
+
 ### Static-Language Boundaries
 
 All static output must use the conservative vocabulary defined in
@@ -617,8 +642,8 @@ against fixture repos.
   owner-result field observation completes the producer-owned missing
   `field_value` fact after known activation; exact field equality stays
   already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
-  field, token coincidence, unknown activation, failed target authority,
-  mutable field borrow, assertion-message-only field credit, assertion-local
+  field (as a weak observation), token coincidence, unknown activation,
+  failed target authority, mutable field borrow, assertion-message-only field credit, assertion-local
   shadow, and same-name local or imported callees stay non-ready. A grouped
   nested-`super` import of the unique owner completes the route; a foreign
   module, cfg-ambiguous same-name pair, or leading `::` extern-prelude import
@@ -626,6 +651,34 @@ against fixture repos.
   refused DirectOwnerCall related test does not fall through to a Proposed
   target; an advisory related observer does not block an independently
   admitted proposal.
+  When the only related test binds the direct owner result once, every
+  other mention of the binding is a plain `binding.<other_field>` read
+  ended by a closing delimiter, a separator or a comparison, logical or
+  arithmetic operator (a call, turbofish, index, assignment, cast, further
+  `.` chain or `..binding` struct-update base refuses), at least one such
+  read appears in the condition of an `assert!` or in the compared
+  operands of an `assert_eq!` or `assert_ne!` that starts on a line after
+  the binding (appearing there, not deciding the assertion), and the test
+  never reads the changed field (#13700), the same fact completes the
+  route if the field's declared visibility reaches that test file (the
+  binding's name in a string literal, a comment, a format or message
+  argument, a `debug_assert!` or another value's field is not such a read;
+  a sibling-field-only
+  assertion is such a test, and an integration test's `use package::owner`
+  import counts when the shared call-identity authority settles it on the
+  owner); a strong or aliased read, a second candidate test, a binding passed
+  elsewhere, shadowed or format-captured, any other mention of the owner's
+  name in the test (a second call compared whole or snapshotted), a `use`
+  alias of the owner anywhere in the test file, a changed field outside the
+  owner's top-level return construction (a nested record such as
+  `Wrapper { inner: Inner { .. } }`), an owner name imported from
+  a rival module or crate, and a field the test file cannot name stay
+  non-ready, as do a changed literal returned from an `async`, `const`,
+  `try` or `gen` block inside the owner and a declared return type that only
+  aliases the constructed struct. Only the test body is scanned: a helper,
+  constant, macro or trait delegation defined outside it that calls the
+  owner is not seen, and neither is an alias re-exported from the
+  production crate (`pub use config::default_config as dc;`).
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining

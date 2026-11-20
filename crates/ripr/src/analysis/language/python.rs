@@ -388,6 +388,7 @@ mod loop_walk;
 mod may_reach;
 mod message_pin;
 mod module_value;
+mod range_activation;
 mod test_local_literal;
 mod type_checking_block;
 mod type_guard;
@@ -414,6 +415,7 @@ mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
+mod owner_result_field;
 mod owners_tests;
 mod package_aliases;
 mod param_fixtures;
@@ -449,15 +451,14 @@ use discriminators::{
     python_return_dict_field_discriminator, python_string_literal_value, split_python_assignment,
     top_level_python_segments,
 };
+use no_behavior::{
+    BracketEvidence, header_param_line_defaults, is_python_import_line, is_python_structural_line,
+    is_structural_def_header_text, multi_line_def_header_span, python_quiet_lines_covered_by_run,
+};
 #[cfg(test)]
 use no_behavior::{
     analyze_call_args, changed_default_value_params, free_function_call_arglists,
-    is_annotation_only_def_change, is_annotation_only_var_change,
-};
-use no_behavior::{
-    header_param_line_defaults, is_python_import_line, is_python_no_behavior_line,
-    is_python_structural_line, is_structural_def_header_text, multi_line_def_header_span,
-    python_quiet_lines_covered_by_run,
+    is_annotation_only_def_change, is_annotation_only_var_change, is_python_no_behavior_line,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -509,7 +510,7 @@ mod term_activation;
 mod test_activation;
 mod truthiness_swap;
 use static_limits::{
-    PythonStaticLimit, has_identifier_boundary, line_prefix_before,
+    PrefixScan, PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
 mod cli_runner;
@@ -727,6 +728,21 @@ struct PythonOwner {
     /// click-alias decorators require this; reassigned aliases stay fail-closed.
     #[serde(default)]
     trusted_stdlib_click_alias: bool,
+    /// The owner is a route handler whose response body is its returned dict
+    /// (#13869): every static route decorator takes only keywords that leave
+    /// the body alone (no `response_model` or `response_class`), the return
+    /// annotation is absent or a bare `dict`, and the function has exactly one
+    /// `return`, of a dict literal with distinct string-literal keys, and no
+    /// `yield` or `raise`. A workspace post-pass may withdraw it.
+    /// `false` by default, which grants no response-read credit.
+    #[serde(default)]
+    route_returns_body: bool,
+    /// The route handler's return annotation is a bare `dict` (#13869). The
+    /// workspace post-pass withdraws `route_returns_body` from such an owner
+    /// when any source may rebind `dict`, which would make the annotation a
+    /// response model; an unannotated handler keeps its credit.
+    #[serde(default)]
+    route_dict_annotation: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1781,6 +1797,38 @@ impl PythonAdapter {
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
+        // A rival route in an unread file cannot be ruled out, so a partial
+        // walk or read refuses the route-response credit, as does any source
+        // that reshapes responses or registers unrecorded routes (#13869).
+        // Every route decorator line of every read source (test files
+        // included, whose owners are not collected) is counted against the
+        // routes the owners record; a file that failed to parse records none.
+        related_tests::apply_route_overlaps(
+            &mut all_owners,
+            refused_files != 0
+                || !workspace_read.limits.is_empty()
+                || !workspace_read.io_failures.is_empty()
+                || !parse_failure_paths.is_empty()
+                || workspace_read
+                    .sources
+                    .values()
+                    .any(|source| related_tests::workspace_reshapes_responses(source))
+                || related_tests::workspace_registers_routes_indirectly(
+                    workspace_read.sources.values().map(String::as_str),
+                ),
+            workspace_read
+                .sources
+                .values()
+                .map(|source| related_tests::route_decorator_lines(source))
+                .sum(),
+        );
+        related_tests::withdraw_dict_annotated_routes(
+            &mut all_owners,
+            workspace_read
+                .sources
+                .values()
+                .any(|source| related_tests::rebinds_builtin_dict(source)),
+        );
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -1894,7 +1942,10 @@ impl PythonAdapter {
                 .iter()
                 .map(|changed| changed.path.as_path()),
         );
-        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
+        limitations.extend(limitations_for_absent_changed_files(
+            &options.root,
+            &absent_changed_files,
+        )?);
         let absent_changed_paths = absent_changed_files
             .iter()
             .map(|path| normalized_path(path))
@@ -2150,13 +2201,27 @@ impl PythonAdapter {
                 }
                 continue;
             }
-            let (old_docstring_ranges, old_import_ranges) = old_source
+            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
                 .as_deref()
                 .map(|source| {
                     let old_facts = extract_source_facts(&changed.path, source);
                     (
                         old_facts.docstring_line_ranges,
                         old_facts.import_line_ranges,
+                        old_facts.owners,
+                    )
+                })
+                .unwrap_or_default();
+            let compound_loop_owners = workspace_read
+                .sources
+                .get(&changed.path)
+                .map(|source| {
+                    range_activation::compound_loop_owners(
+                        changed,
+                        source,
+                        &all_owners,
+                        old_source.as_deref(),
+                        &old_owners,
                     )
                 })
                 .unwrap_or_default();
@@ -2192,6 +2257,7 @@ impl PythonAdapter {
                     type_checking_block::type_checking_only_line_ranges(&changed.path, source)
                 })
                 .unwrap_or_default();
+            let brackets = BracketEvidence::of(&workspace_read, &changed.path, &old_source);
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -2235,11 +2301,11 @@ impl PythonAdapter {
                                 || line_is_in_ranges(removed.line, &old_docstring_ranges)
                                 || line_is_in_ranges(removed.line, &old_import_ranges)
                                 || is_python_import_line(&removed.text)
-                                || is_python_no_behavior_line(&removed.text)
+                                || brackets.old_quiet(&removed.text, removed.line)
                                 || is_python_structural_line(&removed.text)
                         }))
                     || is_added_import(added)
-                    || is_python_no_behavior_line(&added.text)
+                    || brackets.new_quiet(&added.text, added.line)
                     || is_python_structural_line(&added.text)
                     // A decorator that opens a newly added function is part of
                     // its definition; the function's own lines carry the change.
@@ -2304,6 +2370,7 @@ impl PythonAdapter {
                     old_line_type_checking_only: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_type_checking_ranges)
                     }),
+                    brackets: brackets.line(added.line, old_line.map(|old| old.line)),
                     opens_owner_with_added_body: owner_for_changed_line(
                         &changed.path,
                         added.line,
@@ -2322,7 +2389,7 @@ impl PythonAdapter {
                                 other.line > owner.start_line
                                     && other.line <= owner.end_line
                                     && !line_is_in_ranges(other.line, new_docstring_ranges)
-                                    && !is_python_no_behavior_line(&other.text)
+                                    && !brackets.new_quiet(&other.text, other.line)
                             })
                     }),
                     structural_def_header_line: in_multi_line_def_header
@@ -2336,6 +2403,12 @@ impl PythonAdapter {
                     ),
                     module_import_unshadowed: unshadowed_modules.contains(&changed.path),
                     pytest_import_unshadowed,
+                    compound_loop_edit: owner_for_changed_line(
+                        &changed.path,
+                        added.line,
+                        &all_owners,
+                    )
+                    .is_some_and(|owner| compound_loop_owners.contains(&owner.symbol_id())),
                 };
                 if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
@@ -2379,6 +2452,7 @@ impl PythonAdapter {
                     docstrings: &old_docstring_ranges,
                     imports: &old_import_ranges,
                     type_checking_only: &old_type_checking_ranges,
+                    brackets: brackets.old_ranges_for_deleted(),
                     source: old_source.as_deref(),
                 },
                 workspace_read
@@ -2386,6 +2460,7 @@ impl PythonAdapter {
                     .get(&changed.path)
                     .map(String::as_str),
                 &all_owners,
+                &compound_loop_owners,
                 &all_tests,
                 &findings,
                 &mut value_origins,
@@ -2598,6 +2673,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod swallowing_wrapper_tests;
+
+#[cfg(test)]
 mod helper_module_attribute_tests;
 
 #[cfg(test)]
@@ -2617,11 +2695,15 @@ mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
 #[cfg(test)]
+mod cross_module_caller_tests;
+#[cfg(test)]
 mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
+#[cfg(test)]
+mod owner_result_field_tests;
 #[cfg(test)]
 mod repo_module_identity_tests;
 #[cfg(test)]
@@ -2682,6 +2764,8 @@ mod tests;
 mod import_adds_binding_tests;
 #[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod range_activation_tests;
 #[cfg(test)]
 mod type_checking_block_tests;
 #[cfg(test)]

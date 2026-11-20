@@ -164,6 +164,29 @@ fn assert_several_eligible_without_scope(
     Ok(())
 }
 
+/// Contrast for a refusal on the scoped change: read without a diff scope,
+/// the same change still starts a repair, so the scoped refusal comes from the
+/// narrowing rather than from having nothing to repair.
+fn assert_starts_without_scope(
+    label: &str,
+    base: &str,
+    changed: &str,
+    test: &str,
+) -> Result<(), String> {
+    let repo = repo(&format!("{label}-pre"), base, changed, test, false)?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let (out, err) = (text(&repair.stdout), text(&repair.stderr));
+    if repair.status.code() != Some(0)
+        || !out.contains("Ready to repair")
+        || attempts(&repo.root) != 1
+    {
+        return Err(format!(
+            "{label}: precondition needs a start without a diff scope:\n{out}\n{err}"
+        ));
+    }
+    Ok(())
+}
+
 fn assert_starts_check_recommendation(repo: &Repo, label: &str) -> Result<(), String> {
     let root = &repo.root;
     let id = check_start_id(root)?.ok_or_else(|| format!("{label}: check printed no start"))?;
@@ -221,10 +244,13 @@ fn error_variant_change_starts_the_changed_branch_check_recommends() -> Result<(
 /// #12849: check reads one finding as noticed (the returned value is pinned)
 /// and the other as unknown, and offers no start. Bare repair agrees: it lists
 /// no start, says why for both spots, and starts no attempt. Without a diff
-/// scope the same change still lists two starts (the discriminating contrast).
+/// scope the same change still starts a repair (the discriminating contrast).
+/// Since #14872 that unscoped read offers one start, not two: the `stock > 0`
+/// boundary sits under `blocked`, which no test holds true, so a boundary row
+/// alone cannot tell the change apart and is not offered as a start.
 #[test]
 fn a_change_check_reads_as_noticed_and_unknown_lists_no_start() -> Result<(), String> {
-    assert_several_eligible_without_scope("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST)?;
+    assert_starts_without_scope("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST)?;
     let repo = repo("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST, true)?;
     let root = &repo.root;
     if let Some(id) = check_start_id(root)? {
@@ -241,7 +267,13 @@ fn a_change_check_reads_as_noticed_and_unknown_lists_no_start() -> Result<(), St
     {
         return Err(format!("must refuse without listing starts:\n{err}"));
     }
-    if !err.contains("already noticed by a test") || !err.contains("cannot tell from reading") {
+    // The boundary spot says why too: since #14872 it is not an eligible
+    // start (no test holds `blocked` true at the boundary), so its reason is
+    // the unreached input rather than check's unknown read.
+    if !err.contains("already noticed by a test")
+        || !(err.contains("cannot tell from reading")
+            || err.contains("cannot show that its input reaches the changed branch"))
+    {
         return Err(format!("must say why for both spots:\n{err}"));
     }
     if attempts(root) != 0 {
@@ -276,7 +308,12 @@ fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
 
 const FIELD_BASE: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n";
 const FIELD_NEW: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n";
-const FIELD_TEST: &str = "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n";
+/// A refusing field fixture: the only test reads a sibling field straight off
+/// the owner call. Binding the result first (`let c = default_config();
+/// assert!(!c.verbose);`) is the #13700 unread-field shape, which now starts
+/// (`tests/unread_owner_result_field_repair_start.rs`), so these refusal
+/// tests keep the unbound spelling that still refuses for the same reason.
+const FIELD_TEST: &str = "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    assert!(!default_config().verbose);\n}\n";
 
 /// #12861: a scoped change with open spots that cannot start closes on the
 /// per-spot reasons, not on a repository tour that sends the reader back to
@@ -295,11 +332,16 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
     }
     let unscoped = repo("nx-unscoped", FLIP_BASE, FLIP_NEW, FLIP_TEST, false)?;
     let repair = ripr(&unscoped.root, &["repair"])?;
-    let err = text(&repair.stderr);
-    if repair.status.code() != Some(3) || err.contains("each changed spot below says") {
-        return Err(format!("unscoped read must not use the new step:\n{err}"));
+    let (out, err) = (text(&repair.stdout), text(&repair.stderr));
+    if repair.status.code() != Some(0)
+        || out.contains("each changed spot below says")
+        || err.contains("each changed spot below says")
+    {
+        return Err(format!(
+            "unscoped read must not use the new step:\n{out}\n{err}"
+        ));
     }
-    // The unscoped FLIP fixture lists starts instead of refusing, so the
+    // The unscoped FLIP fixture starts a repair instead of refusing, so the
     // old-route contrast uses a refusing fixture read without a diff scope.
     let field = repo("nx-field", FIELD_BASE, FIELD_NEW, FIELD_TEST, false)?;
     let repair = ripr(&field.root, &["repair"])?;
@@ -637,10 +679,21 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
         write_test(&format!("{run}    assert!(c.count > 0);"))
     );
     assert_no_write_start("writetwo", WRITE_BASE, &changed, &two, "static_unknown")?;
+    // The field is written and only other fields are read: a gap
+    // (RIPR-SPEC-0228 example 4), but nothing weak to strengthen, so no start.
+    for (label, body) in [
+        ("writeonly", format!("{run}    assert!(c.other == 0);")),
+        ("writesibling", format!("{run}    assert!(c.other > 0);")),
+    ] {
+        assert_no_write_start(
+            label,
+            WRITE_BASE,
+            &changed,
+            &write_test(&body),
+            "weakly_exposed",
+        )?;
+    }
     for (label, base, new, body) in [
-        // The field is written and never read: nothing weak to strengthen.
-        ("writeonly", WRITE_BASE, changed.clone(), format!("{run}    assert!(c.other == 0);")),
-        ("writesibling", WRITE_BASE, changed.clone(), format!("{run}    assert!(c.other > 0);")),
         (
             "writeotherbinding",
             WRITE_BASE,

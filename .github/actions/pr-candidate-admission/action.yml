@@ -35,6 +35,10 @@ inputs:
     description: 'admit or self-test'
     required: false
     default: 'admit'
+  trusted-sha:
+    description: 'The commit the trusted admission bundle was checked out at; the enforcement packet and generated-path declaration are read from it when set (#14932)'
+    required: false
+    default: ''
 
 outputs:
   status:
@@ -101,6 +105,7 @@ runs:
         ADMISSION_MAX_CHANGED_FILES: ${{ inputs.max-changed-files }}
         ADMISSION_MAX_CHANGED_LINES: ${{ inputs.max-changed-lines }}
         ADMISSION_MODE: ${{ inputs.mode }}
+        ADMISSION_TRUSTED_SHA: ${{ inputs.trusted-sha }}
       run: |
         set -euo pipefail
         action_root="${GITHUB_ACTION_PATH}"
@@ -174,6 +179,8 @@ runs:
             and (.status as $status | ($allowed | split(",") | index($status)) != null)
             and (.history_sync == null or (.history_sync | type == "object" and (.status | type == "string")))
             and ((.reason == "history_sync_admitted") == (.status == "admitted" and .history_sync.status == "validated"))
+            and (.relocation == null or (.relocation | type == "object" and (.status | type == "string")))
+            and (.reason != "mechanical_relocation_admitted" or (.status == "admitted" and .relocation.status == "validated" and .history_sync.status != "validated"))
           ' "$file" >/dev/null; then
             refuse_early "candidate_result_invalid" "candidate admission produced no valid result; refresh the exact PR/head evidence and retry"
           fi
@@ -238,22 +245,36 @@ runs:
 
           base_ref="$(jq -r '.base.ref // empty' "$current")"
           [ -n "$base_ref" ] || refuse_early "base_ref_missing" "candidate admission received no base ref from the PR snapshot; refresh the exact PR evidence and retry"
+          # #14932: the trusted bundle was checked out at the commit the workflow
+          # resolved, and the judged tree is that commit plus the PR head. The
+          # enforcement packet, the generated-path declaration and the base commit
+          # must come from that same commit, or a base that advanced after the
+          # merge ref was built would judge one tree by another commit's rules.
+          # Pin every one of them to the handed anchor: there is no second read
+          # left to disagree with, so no comparison and no refusal on movement.
+          trusted_sha="${ADMISSION_TRUSTED_SHA:-}"
+          [ -n "$trusted_sha" ] || refuse_early "trusted_sha_missing" "candidate admission received no trusted source SHA; the enforcement packet and generated-path declaration must come from the commit the trusted bundle was checked out at"
+          [[ "$trusted_sha" =~ ^[0-9a-f]{40}$ ]] || refuse_early "trusted_sha_invalid" "candidate admission received a trusted source SHA that is not a commit id; refresh the exact PR evidence and retry"
+          gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${trusted_sha}" > "$base_commit" || refuse_early "trusted_sha_unresolved" "candidate admission could not read the trusted source commit $trusted_sha; refresh the exact base evidence and retry"
+          # The live base tip is still read for `--base-sha` only: history-sync
+          # asks whether the declared destination base is an ancestor of the live
+          # tip, which is a live fact and not the judged tree's base. Pinning that
+          # one would reject a sync PR whose merge ref predates the destination.
           base_sha="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
           [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || refuse_early "base_sha_unresolved" "candidate admission could not resolve the exact live base SHA for $base_ref; refresh the exact PR evidence and retry"
-          gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
 
-          # The enforcement packet comes from the exact live base commit, never
+          # The enforcement packet comes from the trusted source commit, never
           # the candidate checkout. The local inactive template is used only
           # while the machinery PR is introduced on a base that has no packet.
           packet_err="$RUNNER_TEMP/packet-err.$$"
-          if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
+          if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${trusted_sha}" > "$packet_meta" 2>"$packet_err"; then
             jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$packet"
             packet_from_base=1
           elif grep -q 'HTTP 404' "$packet_err"; then
             cp "$local_packet" "$packet"
             packet_from_base=0
           else
-            refuse_early "cut_packet_read_failed" "hard-cut packet read from the live base failed for a reason other than absence; refresh the exact base evidence and retry"
+            refuse_early "cut_packet_read_failed" "hard-cut packet read from the trusted source failed for a reason other than absence; refresh the exact base evidence and retry"
           fi
           # An unreadable or malformed base packet must reach the decision
           # script, which refuses ordinary PRs but admits the packet-only
@@ -278,13 +299,13 @@ runs:
             proposed_args=(--proposed-packet "$proposed_packet")
           fi
 
-          # Generated paths: live base only; missing file exempts nothing, other failures refuse.
+          # Generated paths: trusted source commit only; missing file exempts nothing, other failures refuse.
           attrs="$tmp/gitattributes"
           attrs_args=()
-          if gh api -H "Accept: application/vnd.github.raw" "repos/${ADMISSION_REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>"$packet_err"; then
+          if gh api -H "Accept: application/vnd.github.raw" "repos/${ADMISSION_REPOSITORY}/contents/.gitattributes?ref=${trusted_sha}" > "$attrs" 2>"$packet_err"; then
             attrs_args=(--generated-attributes "$attrs")
           elif ! grep -q 'HTTP 404' "$packet_err"; then
-            refuse_early "generated_paths_read_failed" "the generated-path declaration could not be read from the live base; refresh the exact base evidence and retry"
+            refuse_early "generated_paths_read_failed" "the generated-path declaration could not be read from the trusted source; refresh the exact base evidence and retry"
           fi
 
           docs_flag=()

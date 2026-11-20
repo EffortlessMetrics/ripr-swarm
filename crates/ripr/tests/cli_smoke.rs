@@ -42,6 +42,9 @@ mod check_artifact_stdin;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/check_budget_refusals.rs"]
 mod check_budget_refusals;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/check_work_budget.rs"]
+mod check_work_budget;
 #[path = "cli_smoke/cli_value_contracts.rs"]
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]
@@ -122,6 +125,8 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+// Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
+#[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -2284,8 +2289,9 @@ fn check_human_output_reports_sample_findings() -> sample_output::TestResult {
 
 /// #9346: the issue's diff shape end to end — the actual two-probe
 /// shape from the live witness. The signature line of the production
-/// function changes (seeding a whole-function `static_unknown` probe at
-/// `src/lib.rs:1`), the predicate line below it flips its boundary and
+/// function gains an attribute (seeding a whole-function `static_unknown`
+/// probe at `src/lib.rs:1`; a trailing comment no longer does, #14175),
+/// the predicate line below it flips its boundary and
 /// reaches a decisive `exposed` verdict for the same function, and the
 /// discriminating test is added in `tests/` in the same working tree.
 /// Both production probes cover `discounted_total`, so Start here must
@@ -2301,7 +2307,7 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         let changed = source
             .replacen(
                 "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
-                "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { // boundary",
+                "#[must_use] pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {",
                 1,
             )
             .replacen(">= discount_threshold", "> discount_threshold", 1);
@@ -10519,6 +10525,35 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
         }) {
             return Err(format!("facade refusal lacks the typed line: {facade_stderr}").into());
         }
+        // #14931: under `--json` the façade's start refusal is the typed
+        // `cli_refusal` document, the same shape `typed_decision` writes.
+        let facade_json = run_ripr(&[
+            "repair",
+            BOUNDARY_GAP_SEAM_ID,
+            "--json",
+            "--root",
+            &root.display().to_string(),
+        ]);
+        if facade_json.status.code() != Some(3) {
+            return Err(
+                format!("facade --json Git-ignore refusal must exit 3: {facade_json:?}").into(),
+            );
+        }
+        let document: serde_json::Value = serde_json::from_slice(&facade_json.stdout)?;
+        let error = &document["error"];
+        if document["status"] != "refused"
+            || error["code"] != "build_output_not_ignored"
+            || error["disposition"] != "not_started"
+            || error.get("next") != Some(&serde_json::Value::Null)
+            || error["message"].as_str().is_none_or(|message| {
+                message.contains("refusal code=") || !message.contains("Nothing was started.")
+            })
+        {
+            return Err(format!(
+                "facade --json must write the typed refusal document: {document:#}"
+            )
+            .into());
+        }
         for artifact in [
             "target/ripr/workflow/workflow.json",
             "target/ripr/workflow/agent-packet.json",
@@ -18425,7 +18460,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
         )
     );
     assert!(stdout.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
@@ -18503,14 +18538,13 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         "the adopter has no local CI guide; the generated header must give its public URL"
     );
     assert!(workflow.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(!workspace.join("docs/CI.md").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
     // #5208: the pin/warning pair must stay consistent in both release
-    // states, on both install routes (the prebuilt `version=` and the
-    // cargo fallback). A released generator self-pins silently; an
+    // states, on the action tag and its `version` input (#5409). A released generator self-pins silently; an
     // unreleased one pins an exact released version (its own would
     // neither download nor install) and warns on stderr. Branching on the
     // observed warning keeps this test valid when the package and release
@@ -18529,7 +18563,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             upgrade_at.is_some(),
             "note must say to upgrade ripr first: {stderr}"
         );
-        // The warning names the fallback pin; both install routes must
+        // The warning names the fallback pin; the tag and the input must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
         let pinned = stderr
@@ -18538,24 +18572,17 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             .and_then(|rest| rest.split(", the latest published release").next())
             .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
         assert!(
-            workflow.contains(&format!("          version={pinned}\n")),
-            "a warned run must pin the fallback {pinned} on the prebuilt route"
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the action tag"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {pinned} --locked\n"
-            )),
-            "a warned run must pin the fallback {pinned} on the cargo route"
+            workflow.contains(&format!("          version: {pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the version input"
         );
         assert!(
-            !workflow.contains(&format!("          version={generator}\n")),
+            !workflow.contains(&format!("@v{generator}\n"))
+                && !workflow.contains(&format!("          version: {generator}\n")),
             "a warned run must not self-pin the unreleased generator"
-        );
-        assert!(
-            !workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "a warned run must not self-pin the fallback either"
         );
         assert!(
             stderr.contains("the latest published release")
@@ -18564,17 +18591,15 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         );
     } else {
         assert!(
-            workflow.contains(&format!("          version={generator}\n")),
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{generator}\n")),
             "an unwarned run must self-pin the released generator"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "an unwarned run must self-pin the fallback too"
+            workflow.contains(&format!("          version: {generator}\n")),
+            "an unwarned run must self-pin the version input too"
         );
     }
-    assert!(!workflow.contains("cargo install ripr --locked"));
+    assert!(!workflow.contains("cargo install"));
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(
@@ -27938,7 +27963,10 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
 /// run: `limits=` plus the `ripr explain` drill-in (#13594 dropped the
 /// `missing=-` per-finding records, which named nothing to fix), and the terminal must not claim nothing more is
 /// fixable while the human Start-here block recommends adding a co-located
-/// test.
+/// test. #14820: the base names `levy` and `fee` in a comment, so the
+/// RIPR-SPEC-0219 unreferenced-owner marker is withheld and the run stays
+/// all-limited; an owner nothing names reads as a gap instead (see
+/// `tests/agent_unreferenced_owner_gap.rs`).
 #[test]
 fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Result<(), String> {
     let root = unique_temp_workspace("agent-format-all-limited");
@@ -27946,8 +27974,11 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["init", "-b", "main"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
     run_git(&root, &["config", "user.name", "Test"])?;
-    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
-        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n",
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"agent-all-limited\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
@@ -27958,7 +27989,7 @@ fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Resu
     run_git(&root, &["commit", "-m", "initial"])?;
     std::fs::write(
         root.join("src/lib.rs"),
-        "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
+        "pub fn one() -> i32 { 1 }\n// The host crate wires up levy and fee.\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
     )
     .map_err(|e| format!("write lib v2: {e}"))?;
     run_git(&root, &["add", "."])?;
@@ -37484,7 +37515,7 @@ fn review_comments_help_survives_invalid_admission_environment()
             let stdout = String::from_utf8(output.stdout)?;
             assert!(stdout.contains("Usage: ripr review-comments"));
             assert!(stdout.contains(variable));
-            assert!(stdout.contains("Default: 1200"));
+            assert!(stdout.contains("Default: 5000"));
         }
         let output = run_command_with_env(
             env!("CARGO_BIN_EXE_ripr"),
@@ -37671,6 +37702,166 @@ fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
         );
     }
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// `init` in a repository that has no commits yet (the state right after
+/// `git init`) must not close by sending the user to a bare `ripr check`:
+/// that command has no base there and exits 2. The closing line names the
+/// commit-first step; once a commit exists the ordinary line returns.
+#[test]
+fn init_next_step_names_commit_first_in_a_repository_without_commits() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-unborn-next-step");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    let git = |args: &[&str]| -> Result<std::process::Output, String> {
+        run_command_with_env("git", &repo, args, &[]).map_err(|e| e.to_string())
+    };
+    assert!(git(&["init", "-q", "-b", "main"])?.status.success());
+    // Fixture check: HEAD really is unborn.
+    assert!(
+        !git(&["rev-parse", "--verify", "--quiet", "HEAD"])?
+            .status
+            .success(),
+        "fixture: expected an unborn HEAD"
+    );
+    let repo_arg = repo.display().to_string();
+
+    // The stumble this guards: the check `init` used to recommend fails here.
+    let check = run_ripr(&["check", "--root", &repo_arg]);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+
+    let unborn = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&unborn);
+    let stdout = String::from_utf8_lossy(&unborn.stdout);
+    let next = stdout
+        .lines()
+        .find(|line| line.starts_with("Next: "))
+        .ok_or_else(|| format!("init must print a Next line: {stdout}"))?;
+    assert!(
+        next.contains("no commits yet") && next.contains("commit once"),
+        "an unborn repository must be told to commit first: {next}"
+    );
+    assert!(
+        !next.contains("to analyze your branch against its default branch"),
+        "must not promise a check that cannot run yet: {next}"
+    );
+
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    assert!(git(&["add", "-A"])?.status.success());
+    let committed = git(&[
+        "-c",
+        "user.name=ripr",
+        "-c",
+        "user.email=ripr@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+    ])?;
+    assert!(committed.status.success(), "{committed:?}");
+    let ready = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&ready);
+    let ready_stdout = String::from_utf8_lossy(&ready.stdout);
+    assert!(
+        ready_stdout.contains("to analyze your branch against its default branch")
+            && !ready_stdout.contains("no commits yet"),
+        "a repository with a commit keeps the ordinary next step: {ready_stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// `init` in a root with nothing ripr can read (a brand-new repository with
+/// only a README) warns that `ripr check` has nothing to analyze, instead of
+/// writing a Rust configuration in silence. The warning is advisory (files
+/// are written, exit 0), and a root that has source stays quiet.
+#[test]
+fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
+    let repo = unique_temp_workspace("init-no-source-warning");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    std::fs::write(repo.join("README.md"), "demo\n").map_err(|e| e.to_string())?;
+    // Fixture check: no manifest and no source file of any language.
+    assert!(!repo.join("Cargo.toml").exists());
+    let repo_arg = repo.display().to_string();
+
+    let empty = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&empty);
+    assert!(
+        repo.join("ripr.toml").is_file(),
+        "the warning must stay advisory: {empty:?}"
+    );
+    let stderr = String::from_utf8_lossy(&empty.stderr);
+    assert!(
+        stderr.contains("has no Cargo.toml and no source file ripr reads yet"),
+        "init into a root without source must warn: {stderr}"
+    );
+
+    std::fs::write(repo.join("app.py"), "def f():\n    return 1\n").map_err(|e| e.to_string())?;
+    let with_source = run_ripr(&["init", "--force", "--root", &repo_arg]);
+    assert_success(&with_source);
+    let quiet = String::from_utf8_lossy(&with_source.stderr);
+    assert!(
+        !quiet.contains("no source file ripr reads yet"),
+        "a root with source must stay quiet: {quiet}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #15195: in a monorepo whose Rust and TypeScript projects sit below the
+/// root, the shallow doctor marker scan finds nothing at the root. With the
+/// `ripr.toml` that `init` writes there, doctor names the languages the config
+/// enables instead of "none detected"; without a config the ordinary line
+/// stays.
+#[test]
+fn doctor_names_config_enabled_languages_when_the_root_scan_finds_none() -> Result<(), String> {
+    let repo = unique_temp_workspace("doctor-monorepo-languages");
+    for dir in ["backend/src", "frontend/src"] {
+        std::fs::create_dir_all(repo.join(dir)).map_err(|e| format!("mkdir {dir}: {e}"))?;
+    }
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    let files = [
+        (
+            "backend/Cargo.toml",
+            "[package]\nname = \"be\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        ("backend/src/lib.rs", "pub fn g(x: i32) -> i32 { x }\n"),
+        ("frontend/package.json", "{\"name\": \"fe\"}\n"),
+        ("frontend/src/a.ts", "export const f = (x: number) => x;\n"),
+    ];
+    for (path, body) in files {
+        std::fs::write(repo.join(path), body).map_err(|e| format!("write {path}: {e}"))?;
+    }
+    let repo_arg = repo.display().to_string();
+    let detected_line = |output: &std::process::Output| -> Result<String, String> {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .lines()
+            .find(|line| line.starts_with("- Detected languages:"))
+            .map(str::to_string)
+            .ok_or_else(|| format!("doctor must print a detected-languages line: {stdout}"))
+    };
+
+    // Fixture check: without a config the shallow scan finds no marker.
+    let bare = run_ripr(&["doctor", "--root", &repo_arg]);
+    let bare_line = detected_line(&bare)?;
+    assert_eq!(bare_line, "- Detected languages: none detected", "{bare:?}");
+
+    let init = run_ripr(&["init", "--root", &repo_arg]);
+    assert_success(&init);
+    let config = std::fs::read_to_string(repo.join("ripr.toml")).map_err(|e| e.to_string())?;
+    assert!(
+        config.contains("\nenabled = [\"rust\", \"typescript\"]\n"),
+        "fixture: init must enable both languages: {config}"
+    );
+    let doctor = run_ripr(&["doctor", "--root", &repo_arg]);
+    let line = detected_line(&doctor)?;
+    assert!(
+        !line.contains("none detected") && line.ends_with("ripr.toml enables rust, typescript"),
+        "doctor must name the configured languages: {line}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
     Ok(())
 }
 

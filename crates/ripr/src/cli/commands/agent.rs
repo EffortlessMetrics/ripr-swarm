@@ -612,7 +612,9 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
 /// instead of "under the current config", which implies a config change
 /// would help. The seam inventory is Rust-only, so none would. Only the
 /// empty-scope warning is replaced; a brief that shows seams, or a scope
-/// with Rust or other changed code, keeps its wording.
+/// with Rust or other changed code, keeps its wording. The #13571 sibling
+/// branch below covers the opposite case — Python code whose adapter is
+/// not enabled at all — where a config change is exactly the fix.
 ///
 /// The route's `check` replays the brief's own input: a saved patch through
 /// `--diff` (resolved by the brief's diff path owner), a base through
@@ -643,7 +645,19 @@ fn route_preview_only_empty_brief(
     };
     let languages =
         app::task_first::preview_only_scope_languages(scope_paths, &config.languages.enabled);
-    if languages.is_empty() {
+    // #13571: when the preview predicate stays empty because Python is not
+    // enabled at all (a flat-layout repo with no marker and no `ripr.toml`),
+    // the generic "under the current config" line is misleading in the
+    // other direction: a config change is exactly what would help, and
+    // `ripr check` analyzed none of the change. Name that enable step
+    // before the `check` route, mirroring `agent_status`'s
+    // disabled-language wording; never claim no config change adds a seam.
+    let disabled_python = if languages.is_empty() {
+        app::task_first::disabled_python_scope_languages(scope_paths, &config.languages.enabled)
+    } else {
+        Vec::new()
+    };
+    if languages.is_empty() && disabled_python.is_empty() {
         return;
     }
     let resolved_diff = match working_set.diff.as_deref() {
@@ -675,12 +689,21 @@ fn route_preview_only_empty_brief(
     else {
         return;
     };
-    *warning = format!(
-        "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
-        working_set.source.as_str(),
-        languages.join(" and "),
-        app::task_first::preview_seam_route(root, input, &languages)
-    );
+    if !languages.is_empty() {
+        *warning = format!(
+            "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
+            working_set.source.as_str(),
+            languages.join(" and "),
+            app::task_first::preview_seam_route(root, input, &languages)
+        );
+    } else {
+        *warning = format!(
+            "No seams matched the requested scope (source: {}): the changed code is Python, but Python is not enabled in ripr.toml [languages], so ripr did not analyze it; add \"python\" to `[languages] enabled` in ripr.toml, then run `{}` {}.",
+            working_set.source.as_str(),
+            app::task_first::preview_check_command(root, input),
+            app::task_first::preview_check_findings(input)
+        );
+    }
 }
 
 fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {
@@ -2667,7 +2690,7 @@ fn run_agent_repair_phase(
                     )
                 && !preflight_violations.is_empty()
             {
-                return Err(before_phase_dirty_premise_refusal(
+                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
                     &seam_id,
                     &root,
                     store_ref,
@@ -2803,7 +2826,7 @@ fn run_agent_repair_phase(
                 &premise_head,
             )?;
             if !premise_violations.is_empty() {
-                return Err(before_phase_dirty_premise_refusal(
+                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
                     &seam_id,
                     &root,
                     store_ref,
@@ -2885,12 +2908,591 @@ fn run_agent_repair_phase(
                 )
             })?;
             if let Some(id) = attempt_id.as_deref() {
-                crate::app::repair_attempt::complete_pending_terminal_retention_from(
-                    &root, store_ref, id,
-                )
-                .map_err(|error| {
-                    repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
-                })?;
+                // Revalidate a proposal's focused claim before any historical
+                // recovery. Older B normalized records did not preserve suite
+                // framing. Under the C gate a proposal finish must hold a
+                // passing focused claim, so one without a claim (from an
+                // earlier producer) is not promoted.
+                if let Ok(parsed_id) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && let Some(after) = manifest.after.as_ref()
+                    && manifest.state
+                        == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish
+                {
+                    let mut policy = crate::app::repair_attempt::load_edit_cage_policy_from(
+                        &root, store_ref, &parsed_id,
+                    )?;
+                    if policy.new_test_proposal.is_some() {
+                        refusal.selected_attempt =
+                            Some((root.clone(), store.clone(), parsed_id.clone()));
+                        refusal.stop_unrecorded = true;
+                        refusal.typed = true;
+                        let status = format!(
+                            "ripr agent status --root {}{} --attempt {}",
+                            crate::agent::loop_commands::shell_arg(
+                                &crate::agent::loop_commands::bound_root(
+                                    &caller_root.to_string_lossy()
+                                )
+                            ),
+                            crate::app::repair_attempt::quoted_store_flag(store_ref),
+                            crate::agent::loop_commands::shell_arg(id)
+                        );
+                        let inline_baseline =
+                            inline_proposal_baseline_tests(&root, store_ref, &parsed_id, &policy)
+                                .map_err(|error| format!("{error}; inspect `{status}`"))?;
+                        let pending = after.focused_result.as_ref().ok_or_else(|| format!("the proposal finish retained no focused test result; inspect `{status}` before starting a new attempt"))?;
+                        crate::app::focused_run::require_passing_recorded_run(
+                            &pending.record,
+                            id,
+                            inline_baseline.as_ref(),
+                        )
+                        .map_err(|error| format!("{error}; inspect `{status}`"))?;
+                        let path = test_result.as_deref().ok_or_else(|| format!("proposal recovery needs a --test-result FILE matching the retained normalized claim to validate reported completion; inspect `{status}` before retrying"))?;
+                        crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
+                        let supplied =
+                            validate_focused_run_input(&root, store_ref, &parsed_id, &policy, path)
+                                .map_err(|error| format!("{error}; inspect `{status}`"))?;
+                        if supplied.identity.record != pending.record {
+                            return Err(format!(
+                                "the supplied focused result differs from the finished proposal; use a --test-result FILE matching the retained normalized claim, or inspect `{status}` before starting a new attempt"
+                            ));
+                        }
+                        crate::app::focused_run::require_passing_run(
+                            Some(&supplied.record),
+                            id,
+                            inline_baseline.as_ref(),
+                        )?;
+                        refusal.typed = false;
+                    }
+                }
+                // A refusal recorded beside a focused finish is a decision,
+                // not evidence of an interrupted publication. Do not promote
+                // or roll back that verdict on a later invocation.
+                if let Ok(parsed_id) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && manifest
+                        .after
+                        .as_ref()
+                        .is_some_and(|after| after.focused_result.is_some())
+                    && let Some(previous) = manifest.last_after_refusal.as_ref()
+                {
+                    refusal.selected_attempt = Some((root.clone(), store.clone(), parsed_id));
+                    refusal.stop_unrecorded = true;
+                    refusal.typed = true;
+                    return Err(format!(
+                        "the focused attempt already ended in a refusal: {}; run `ripr agent status` and start a new attempt",
+                        previous.reason
+                    ));
+                }
+                // A retry may carry a new input path. Validate it before a
+                // pending focused retention can commit, so a different claim
+                // is never silently reported as the one being recovered. A
+                // focused finish is promoted only after this recheck: omitting
+                // the file is never less strict than supplying it.
+                let mut focused_claim_rechecked = false;
+                if let Some(result_path) = test_result.as_deref()
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
+                    && crate::app::repair_attempt::find_manifest_artifact_by_role(
+                        &manifest,
+                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                    )
+                    .is_none()
+                {
+                    let policy = crate::app::repair_attempt::load_edit_cage_policy_from(
+                        &root, store_ref, &parsed_id,
+                    )?;
+                    let checked = validate_focused_run_input(
+                        &root,
+                        store_ref,
+                        &parsed_id,
+                        &policy,
+                        result_path,
+                    );
+                    let mismatch = match checked {
+                        Ok(supplied) if supplied.identity.record == pending.record => None,
+                        Ok(_) => Some("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string()),
+                        Err(error) => Some(format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")),
+                    };
+                    if let Some(error) = mismatch {
+                        refusal.selected_attempt = Some((root.clone(), store.clone(), parsed_id));
+                        refusal.stop_unrecorded = true;
+                        refusal.typed = true;
+                        return Err(error);
+                    }
+                    focused_claim_rechecked = true;
+                }
+                // A trust-bound result can promote the already accepted receipt
+                // only after the original claim and authority are rechecked and
+                // only while the apply projection is absent. Its exclusive
+                // recovery path below performs the final locked checks again.
+                let mut trust_promoted = false;
+                if let Ok(parsed_id) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && matches!(
+                        manifest.focused_receipt_evaluation,
+                        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+                    )
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
+                    && let Some(result_path) = test_result.as_deref()
+                    && let Some(binding) =
+                        crate::app::python_repair_binding::load_retained_binding_from(
+                            &root, store_ref, &parsed_id,
+                        )?
+                {
+                    let apply_relative =
+                        Path::new(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+                    if !crate::edit_cage::workflow_path_components_are_safe(&root, apply_relative)?
+                    {
+                        return Err("apply-record recovery path has a symlink, reparse point or hard-linked component; inspect it before retrying".to_string());
+                    }
+                    match std::fs::symlink_metadata(root.join(apply_relative)) {
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            refusal.selected_attempt =
+                                Some((root.clone(), store.clone(), parsed_id.clone()));
+                            refusal.stop_unrecorded = true;
+                            let mut policy =
+                                crate::app::repair_attempt::load_edit_cage_policy_from(
+                                    &root, store_ref, &parsed_id,
+                                )?;
+                            crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
+                            let supplied = validate_focused_run_input(&root, store_ref, &parsed_id, &policy, result_path).map_err(|error| {
+                                refusal.typed = true;
+                                format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
+                            })?;
+                            if supplied.identity.record != pending.record {
+                                refusal.typed = true;
+                                return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
+                            }
+                            let packet = crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "agent_packet").ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
+                            let packet_path = root.join(&packet.path);
+                            let packet_bytes =
+                                crate::bounded_input::read(&packet_path).map_err(|error| {
+                                    format!(
+                                        "read retained repair packet {} failed: {error}",
+                                        packet.path
+                                    )
+                                })?;
+                            crate::app::repair_attempt::receipt_binding_from(
+                                &root,
+                                store_ref,
+                                &manifest.seam_id,
+                                &packet_path,
+                                Some(id),
+                            )
+                            .map_err(|error| error.to_string())?;
+                            crate::app::python_repair_binding::reverify_for_apply(
+                                &manifest.seam_id,
+                                &policy,
+                                &packet_bytes,
+                                &binding,
+                                &edit_authorization,
+                            )?;
+                            crate::app::python_repair_binding::confirm_manifest_unchanged(&binding)
+                                .map_err(|error| {
+                                    if matches!(error, crate::app::python_repair_binding::ManifestConfirmationError::Replaced(_)) {
+                                        refusal.typed = true;
+                                    }
+                                    error.message().to_string()
+                                })?;
+                            trust_promoted = crate::app::repair_attempt::complete_pending_terminal_retention_authorized_from(&root, store_ref, id, true)?;
+                        }
+                        Err(error) => {
+                            return Err(format!(
+                                "inspect apply-record recovery path failed: {error}; check its permissions, then retry"
+                            ));
+                        }
+                    }
+                }
+                let completed = if trust_promoted {
+                    false
+                } else {
+                    crate::app::repair_attempt::complete_pending_terminal_retention_authorized_from(
+                        &root,
+                        store_ref,
+                        id,
+                        focused_claim_rechecked,
+                    )
+                    .map_err(|error| {
+                        repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
+                    })?
+                };
+                if completed
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest
+                        .after
+                        .as_ref()
+                        .is_some_and(|after| after.focused_result.is_some())
+                {
+                    let (document, summary, receipt_path) =
+                        crate::app::repair_attempt::with_locked_terminal_manifest_from(
+                            &root,
+                            store_ref,
+                            &parsed_id,
+                            &manifest,
+                            || recovered_focused_after_output(&root, store_ref, &manifest, json),
+                        )?;
+                    refusal.pending_stdout = Some(document);
+                    refusal.stdout_document_printed = true;
+                    if json {
+                        refusal.pending_success_lines = summary;
+                    }
+                    refusal.success_receipt_path = Some(receipt_path);
+                    return Ok(());
+                }
+                // Retention may have committed before the preceding process
+                // could render its response. A caller supplying the original
+                // claim can recover that response without changing the finish.
+                if !completed
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && !manifest.terminal_artifacts.is_empty()
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
+                    && let Some(result_path) = test_result.as_deref()
+                    && crate::app::repair_attempt::find_manifest_artifact_by_role(
+                        &manifest,
+                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                    )
+                    .is_none()
+                {
+                    refusal.selected_attempt =
+                        Some((root.clone(), store.clone(), parsed_id.clone()));
+                    refusal.stop_unrecorded = true;
+                    let (document, summary, receipt_path) =
+                        crate::app::repair_attempt::with_locked_terminal_manifest_from(
+                            &root,
+                            store_ref,
+                            &parsed_id,
+                            &manifest,
+                            || {
+                                let mut policy =
+                                    crate::app::repair_attempt::load_edit_cage_policy_from(
+                                        &root, store_ref, &parsed_id,
+                                    )?;
+                                crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
+                                &mut policy, &root, store_ref, Some(&parsed_id),
+                                crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
+                            )?;
+                                let supplied = validate_focused_run_input(&root, store_ref, &parsed_id, &policy, result_path).map_err(|error| {
+                                refusal.typed = true;
+                                format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
+                            })?;
+                                if supplied.identity.record != pending.record {
+                                    refusal.typed = true;
+                                    return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
+                                }
+                                let packet = crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "agent_packet")
+                                .ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
+                                crate::app::repair_attempt::receipt_binding_from(
+                                    &root,
+                                    store_ref,
+                                    &manifest.seam_id,
+                                    &root.join(&packet.path),
+                                    Some(id),
+                                )
+                                .map_err(|error| error.to_string())?;
+                                recovered_focused_after_output(&root, store_ref, &manifest, json)
+                            },
+                        )?;
+                    refusal.pending_stdout = Some(document);
+                    refusal.stdout_document_printed = true;
+                    if json {
+                        refusal.pending_success_lines = summary;
+                    }
+                    refusal.success_receipt_path = Some(receipt_path);
+                    return Ok(());
+                }
+                // If the process stopped after retaining focused evidence but
+                // before the trust apply projection, recover only a missing
+                // projection. Revalidate the claim, authorization, retained
+                // receipt and live cage binding before publishing it with an
+                // exclusive create, so another producer's file is never
+                // replaced by this retry.
+                if !completed
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && !manifest.terminal_artifacts.is_empty()
+                    && let Some(after) = manifest.after.as_ref()
+                    && let Some(pending) = after.focused_result.as_ref()
+                    && let Some(result_path) = test_result.as_deref()
+                    && crate::app::repair_attempt::find_manifest_artifact_by_role(
+                        &manifest,
+                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                    )
+                    .is_some()
+                {
+                    let apply_path =
+                        root.join(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+                    if !crate::edit_cage::workflow_path_components_are_safe(
+                        &root,
+                        Path::new(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH),
+                    )? {
+                        return Err("apply-record recovery path has a symlink, reparse point or hard-linked component; inspect it before retrying".to_string());
+                    }
+                    let missing = match std::fs::symlink_metadata(&apply_path) {
+                        Ok(_) => false,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                        Err(error) => {
+                            return Err(format!(
+                                "inspect {} failed: {error}; check its permissions, then retry",
+                                apply_path.display()
+                            ));
+                        }
+                    };
+                    if missing {
+                        refusal.selected_attempt =
+                            Some((root.clone(), store.clone(), parsed_id.clone()));
+                        refusal.stop_unrecorded = true;
+                        crate::app::repair_attempt::with_locked_terminal_manifest_from(
+                            &root,
+                            store_ref,
+                            &parsed_id,
+                            &manifest,
+                            || {
+                                let mut policy =
+                                    crate::app::repair_attempt::load_edit_cage_policy_from(
+                                        &root, store_ref, &parsed_id,
+                                    )?;
+                                crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
+                            &mut policy, &root, store_ref, Some(&parsed_id),
+                            crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
+                        )?;
+                                let supplied = validate_focused_run_input(
+                            &root,
+                            store_ref,
+                            &parsed_id,
+                            &policy,
+                            result_path,
+                        ).map_err(|error| {
+                            refusal.typed = true;
+                            format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
+                        })?;
+                                if supplied.identity.record != pending.record {
+                                    refusal.typed = true;
+                                    return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
+                                }
+                                let packet =
+                                    crate::app::repair_attempt::find_manifest_artifact_by_role(
+                                        &manifest,
+                                        "agent_packet",
+                                    )
+                                    .ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
+                                let packet_path = root.join(&packet.path);
+                                let packet_bytes = crate::bounded_input::read(&packet_path)
+                                    .map_err(|error| {
+                                        format!(
+                                            "read retained repair packet {} failed: {error}",
+                                            packet.path
+                                        )
+                                    })?;
+                                crate::app::repair_attempt::receipt_binding_from(
+                                    &root,
+                                    store_ref,
+                                    &manifest.seam_id,
+                                    &packet_path,
+                                    Some(id),
+                                )
+                                .map_err(|error| error.to_string())?;
+                                let binding =
+                                    crate::app::python_repair_binding::load_retained_binding_from(
+                                        &root, store_ref, &parsed_id,
+                                    )?
+                                    .ok_or(
+                                        "repair attempt is missing its retained trust binding; run `ripr agent status` and start a new attempt",
+                                    )?;
+                                let verified =
+                                    crate::app::python_repair_binding::reverify_for_apply(
+                                        &manifest.seam_id,
+                                        &policy,
+                                        &packet_bytes,
+                                        &binding,
+                                        &edit_authorization,
+                                    )?;
+                                crate::app::python_repair_binding::confirm_manifest_unchanged(&binding)
+                            .map_err(|error| {
+                                if matches!(error, crate::app::python_repair_binding::ManifestConfirmationError::Replaced(_)) {
+                                    refusal.typed = true;
+                                }
+                                error.message().to_string()
+                            })?;
+                                let (document, summary, receipt_path) =
+                                    recovered_focused_after_output(
+                                        &root, store_ref, &manifest, json,
+                                    )?;
+                                crate::app::python_repair_binding::recover_missing_apply_record_from(
+                            &root,
+                            store_ref,
+                            &parsed_id,
+                            &binding.artifact_sha256,
+                            &verified,
+                            edit_authorization.authority.as_deref().unwrap_or_default(),
+                            after,
+                        )?;
+                                refusal.pending_stdout = Some(document);
+                                refusal.stdout_document_printed = true;
+                                if json {
+                                    refusal.pending_success_lines = summary;
+                                }
+                                refusal.success_receipt_path = Some(receipt_path);
+                                Ok(())
+                            },
+                        )?;
+                        return Ok(());
+                    }
+                }
+                // The workflow lock is held for the whole after phase. If a
+                // prior process died before completing recoverable evidence,
+                // it cannot still be writing; restore only its exact focused
+                // finish and only after the caller has re-supplied the same
+                // validated claim. A missing or changed claim leaves it intact.
+                if !completed
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && let Some(after) = manifest.after.as_ref()
+                    && let Some(pending) = after.focused_result.as_ref()
+                {
+                    refusal.selected_attempt =
+                        Some((root.clone(), store.clone(), parsed_id.clone()));
+                    refusal.stop_unrecorded = true;
+                    if test_result.is_none()
+                        && matches!(
+                            manifest.focused_receipt_evaluation,
+                            Some(
+                                crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }
+                            )
+                        )
+                    {
+                        refusal.typed = true;
+                        return Err("recovery of a committed focused receipt needs the same --test-result FILE; if no valid receipt is available, inspect the attempt with `ripr agent status` and start a new attempt".to_string());
+                    }
+                    if pending.receipt_protocol.as_deref() != Some("durable-v1")
+                        || manifest.focused_receipt_evaluation.is_some()
+                    {
+                        refusal.typed = true;
+                        return Err("the interrupted focused receipt evaluation has no safely recoverable outcome; inspect the attempt with `ripr agent status` and start a new attempt".to_string());
+                    }
+                    let Some(result_path) = test_result.as_deref() else {
+                        refusal.typed = true;
+                        return Err("the interrupted focused finish needs a retry; use the same --test-result FILE to restore the attempt".to_string());
+                    };
+                    let mut policy = crate::app::repair_attempt::load_edit_cage_policy_from(
+                        &root,
+                        store_ref,
+                        &manifest.repair_attempt_id,
+                    )?;
+                    crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
+                        &mut policy,
+                        &root,
+                        store_ref,
+                        Some(&manifest.repair_attempt_id),
+                        crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
+                    )?;
+                    let supplied = validate_focused_run_input(
+                        &root,
+                        store_ref,
+                        &manifest.repair_attempt_id,
+                        &policy,
+                        result_path,
+                    ).map_err(|error| {
+                        refusal.typed = true;
+                        format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")
+                    })?;
+                    if supplied.identity.record != pending.record {
+                        refusal.typed = true;
+                        return Err("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string());
+                    }
+                    // A trust-bound retry must re-affirm the original edit
+                    // authority before it restores the durable finish.
+                    if let Some(binding) =
+                        crate::app::python_repair_binding::load_retained_binding_from(
+                            &root,
+                            store_ref,
+                            &manifest.repair_attempt_id,
+                        )?
+                    {
+                        let packet = crate::app::repair_attempt::find_manifest_artifact_by_role(
+                            &manifest,
+                            "agent_packet",
+                        )
+                        .ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
+                        let packet_bytes = crate::bounded_input::read(root.join(&packet.path))
+                            .map_err(|error| {
+                                format!(
+                                    "read retained repair packet {} failed: {error}",
+                                    packet.path
+                                )
+                            })?;
+                        crate::app::python_repair_binding::reverify_for_apply(
+                            &manifest.seam_id,
+                            &policy,
+                            &packet_bytes,
+                            &binding,
+                            &edit_authorization,
+                        )?;
+                        crate::app::python_repair_binding::confirm_manifest_unchanged(&binding)
+                            .map_err(|error| {
+                                if matches!(error, crate::app::python_repair_binding::ManifestConfirmationError::Replaced(_)) {
+                                    refusal.typed = true;
+                                }
+                                error.message().to_string()
+                            })?;
+                    }
+                    crate::app::repair_attempt::restore_focused_finish_from(
+                        &root,
+                        store_ref,
+                        &manifest.repair_attempt_id,
+                        after,
+                    )?;
+                    refusal.stop_unrecorded = false;
+                }
             }
             let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt_from(
                 &root,
@@ -3133,15 +3735,77 @@ fn run_agent_repair_phase(
                         Ok(record) => Some(record),
                         Err(error) => {
                             refusal.narrate(format!("focused test result refused: {error}"));
+                            let recovery = focused_result_recovery_lines(
+                                &caller_root,
+                                store_ref,
+                                &attempt,
+                                &cage_policy,
+                                prior_refusals,
+                            );
+                            for line in &recovery {
+                                refusal.narrate(line.clone());
+                            }
                             refusal.typed = true;
+                            if prior_refusals.saturating_add(1)
+                                >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+                            {
+                                refusal.code = Some(
+                                    crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted,
+                                );
+                            }
                             return Err(format!(
-                                "repair attempt `{}` refused the focused test result: {error}; the attempt is unchanged, so fix the result and rerun `ripr agent repair --phase after --attempt <id> --test-result FILE`",
-                                attempt.attempt_id.as_str()
+                                "repair attempt `{}` refused the focused test result: {error}; use these recovery instructions: {}",
+                                attempt.attempt_id.as_str(),
+                                recovery.join(" ")
                             ));
                         }
                     }
                 }
             };
+
+            // #13203 slice C: an attempt that follows a new-test proposal
+            // finishes only with a recorded focused run that counted a test
+            // and failed none. Refusing here leaves the attempt awaiting its
+            // edit, like any refused result. A proposal whose file was never
+            // created is left to the cage verdict, which names that.
+            let inline_baseline = inline_proposal_baseline_tests(
+                &root,
+                store_ref,
+                &attempt.attempt_id,
+                &cage_policy,
+            )?;
+            if cage_policy.new_test_proposal.is_some()
+                && root.join(cage_policy.selected_target.path()).is_file()
+                && let Err(error) = crate::app::focused_run::require_passing_run(
+                    focused_run.as_ref().map(|run| &run.record),
+                    attempt.attempt_id.as_str(),
+                    inline_baseline.as_ref(),
+                )
+            {
+                refusal.narrate(format!("focused test result required: {error}"));
+                let recovery = focused_result_recovery_lines(
+                    &caller_root,
+                    store_ref,
+                    &attempt,
+                    &cage_policy,
+                    prior_refusals,
+                );
+                for line in &recovery {
+                    refusal.narrate(line.clone());
+                }
+                refusal.typed = true;
+                if prior_refusals.saturating_add(1)
+                    >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+                {
+                    refusal.code =
+                        Some(crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted);
+                }
+                return Err(format!(
+                    "repair attempt `{}` cannot finish: {error}; use these recovery instructions: {}",
+                    attempt.attempt_id.as_str(),
+                    recovery.join(" ")
+                ));
+            }
 
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
@@ -3304,6 +3968,28 @@ fn run_agent_repair_phase(
                         if crate::app::repair_attempt::repair_attempt_focused_identity_is_retry_refusal(&error) {
                             refusal.narrate(error.clone());
                             refusal.typed = true;
+                        } else if crate::app::repair_attempt::repair_attempt_proposal_focused_required_is_refusal(&error) {
+                            // #13203 slice C at the finish authority: the
+                            // proposal file appeared after the gate above
+                            // looked. Narrate and type it like that gate.
+                            refusal.narrate(format!("focused test result required: {error}"));
+                            for line in focused_result_recovery_lines(
+                                &caller_root,
+                                store_ref,
+                                &attempt,
+                                &cage_policy,
+                                prior_refusals,
+                            ) {
+                                refusal.narrate(line);
+                            }
+                            refusal.typed = true;
+                            if prior_refusals.saturating_add(1)
+                                >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+                            {
+                                refusal.code = Some(
+                                    crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted,
+                                );
+                            }
                         } else if crate::app::repair_attempt::repair_attempt_commit_error_is_retry_refusal(
                             &error,
                         ) {
@@ -3766,7 +4452,13 @@ fn run_agent_repair_phase(
             })?;
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
             let mut summary_lines = gap_lines;
-            summary_lines.extend(repair_after_summary_lines(&receipt_path));
+            // #14079: a finish that recorded the caller's focused result
+            // reports it on the test-run line, not "none recorded".
+            let reported_run = focused_run.as_ref().map(|run| run.record.reported());
+            summary_lines.extend(repair_after_summary_lines(
+                &receipt_path,
+                reported_run.as_ref(),
+            ));
             // The movement summary goes to stdout when stdout is the human
             // channel, and to stderr as narration beside the `--json`
             // document; never both, so a terminal shows it once.
@@ -3910,6 +4602,8 @@ fn write_agent_repo_exposure_snapshot_with_report(
             python_guidance.as_ref(),
             generated_skip.as_ref(),
             &report.evidence_limitations,
+            // Agent snapshots keep every seam (#14139 scope: `check --format repo-*`).
+            crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
             &context,
             writer,
         )
@@ -3948,9 +4642,12 @@ fn publish_agent_snapshot(
 /// Narration for the repair after phase: the receipt's summary, or a line
 /// naming the receipt that could not be read so the gap is visible rather
 /// than silently empty.
-fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
+fn repair_after_summary_lines(
+    receipt_path: &Path,
+    reported_run: Option<&crate::output::agent_receipt::ReportedTestRun>,
+) -> Vec<String> {
     match std::fs::read_to_string(receipt_path) {
-        Ok(receipt) => repair_receipt_summary_lines(&receipt),
+        Ok(receipt) => repair_receipt_summary_lines(&receipt, reported_run),
         Err(error) => vec![format!(
             "could not read {} to summarize the result: {error}",
             crate::output::path::human_path(receipt_path)
@@ -4274,6 +4971,29 @@ fn repair_after_commit_busy_lines(
     ]
 }
 
+/// Preserve the attempt's root/store in focused-result recovery and use the
+/// existing terminal restart guidance when this refusal spends the budget.
+fn focused_result_recovery_lines(
+    root: &Path,
+    store: Option<&Path>,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    policy: &crate::edit_cage::EditCagePolicy,
+    prior_refusals: u32,
+) -> Vec<String> {
+    if prior_refusals.saturating_add(1)
+        >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    {
+        return repair_after_no_movement_lines(root, store, attempt, policy, prior_refusals);
+    }
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    vec![format!(
+        "to recover: rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after --test-result FILE`."
+    )]
+}
+
 /// The typed code for a no-movement after refusal. The refusal that spends
 /// the retry budget is terminal, matching the next call, which refuses without
 /// running (`RetryBudgetExhausted`); earlier ones are retryable.
@@ -4493,45 +5213,6 @@ fn repair_after_trusted_surface_recovery_lines(
     ]
 }
 
-/// A before phase refused because tracked content already differs from HEAD
-/// outside the allowed test surface (#5262). Names the paths, states the
-/// production-vs-test boundary, and gives the commit-first route the late
-/// receipt refusal cannot offer because the attempt no longer exists. The
-/// caller has written nothing yet, so the tail says so explicitly. A start
-/// through the `ripr repair <item>` façade is told to rerun that command, not
-/// the advanced `ripr agent repair` route it never typed (#14394).
-fn before_phase_dirty_premise_refusal(
-    seam_id: &str,
-    root: &Path,
-    store: Option<&Path>,
-    facade_start: bool,
-    violations: &[String],
-) -> String {
-    use crate::agent::loop_commands::{bound_root, shell_arg};
-
-    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
-    let seam_arg = shell_arg(seam_id);
-    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
-    let restart = if facade_start && store.is_none() {
-        format!("ripr repair {seam_arg} --root {root_arg}")
-    } else {
-        format!(
-            "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
-        )
-    };
-    before_phase_dirty_premise_refusal_with_restart(&restart, violations)
-}
-
-/// [`before_phase_dirty_premise_refusal`] for any start spelling: the seam
-/// and gap-bound (#9103) starts differ only in the command they name.
-fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[String]) -> String {
-    let first = violations.first().map(String::as_str).unwrap_or_default();
-    format!(
-        "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: {}. Commit them (for example `git commit -- {first}`) or restore them, then rerun `{restart}`. A test file you are still editing is fine. Nothing was started.",
-        violations.join(", "),
-    )
-}
-
 /// Why a gap-bound attempt gets no receipt when ripr did not accept its
 /// changes. A violation and an incomparable measurement are different facts, so
 /// the wording branches instead of claiming an edit that was never observed.
@@ -4627,7 +5308,7 @@ fn run_gap_bound_before_phase(
             )
         && !preflight_violations.is_empty()
     {
-        return Err(before_phase_dirty_premise_refusal_with_restart(
+        return Err(crate::app::repair_attempt::dirty_premise_refusal(
             &restart,
             &preflight_violations,
         ));
@@ -4722,7 +5403,7 @@ fn run_gap_bound_before_phase(
         &premise_head,
     )?;
     if !premise_violations.is_empty() {
-        return Err(before_phase_dirty_premise_refusal_with_restart(
+        return Err(crate::app::repair_attempt::dirty_premise_refusal(
             &restart,
             &premise_violations,
         ));
@@ -4882,6 +5563,68 @@ fn gap_closure_summary_lines(verify: &serde_json::Value) -> Vec<String> {
     )]
 }
 
+/// Render a completed focused recovery from the attempt-local evidence, not
+/// from the shared compatibility projections that a later attempt can replace.
+fn recovered_focused_after_output(
+    root: &Path,
+    store: Option<&Path>,
+    manifest: &crate::app::repair_attempt::RepairAttemptManifest,
+    json: bool,
+) -> Result<(String, Vec<String>, PathBuf), String> {
+    use crate::app::repair_attempt::{
+        AttemptTerminalReceipt, TERMINAL_FOCUSED_RUN_ROLE, TERMINAL_VERIFY_ROLE,
+        find_terminal_artifact_by_role, load_attempt_terminal_receipt,
+        read_terminal_artifact_bytes,
+    };
+    let pending = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref())
+        .ok_or(
+            "the finished attempt has no focused claim; run `ripr agent status` to inspect it",
+        )?;
+    let focused = find_terminal_artifact_by_role(manifest, TERMINAL_FOCUSED_RUN_ROLE)
+        .ok_or("finished attempt has no retained focused result; run `ripr agent status` and start a new attempt")?;
+    if read_terminal_artifact_bytes(root, manifest, focused)? != pending.record.as_bytes() {
+        return Err("retained focused result does not match the finished attempt; run `ripr agent status` and start a new attempt".to_string());
+    }
+    let receipt_path = match load_attempt_terminal_receipt(root, manifest) {
+        AttemptTerminalReceipt::Issued { path, .. } => root.join(path),
+        _ => {
+            return Err(
+                "the retained receipt is unavailable; inspect the attempt before retrying"
+                    .to_string(),
+            );
+        }
+    };
+    let verify = find_terminal_artifact_by_role(manifest, TERMINAL_VERIFY_ROLE)
+        .ok_or("finished attempt has no retained verify document; run `ripr agent status` and start a new attempt")?;
+    let verify_doc: serde_json::Value = serde_json::from_slice(&read_terminal_artifact_bytes(root, manifest, verify)?)
+        .map_err(|error| format!("decode retained verify document failed: {error}; run `ripr agent status` and start a new attempt"))?;
+    let status = app::agent_status::build_agent_status_report_from(root, root, store);
+    let status_doc: serde_json::Value = serde_json::from_str(&app::agent_status::render_agent_status_json(&status)?)
+        .map_err(|error| format!("decode agent status failed: {error}; rerun the command and report a repeat as a ripr bug"))?;
+    let mut summary = gap_closure_summary_lines(&verify_doc);
+    // #14079: a recovered finish reports the same retained caller run the
+    // original finish printed, never `none recorded`.
+    let reported_run = crate::app::repair_attempt::retained_run::retained_focused_run(manifest);
+    summary.extend(repair_after_summary_lines(
+        &receipt_path,
+        reported_run.as_ref(),
+    ));
+    let document = if json {
+        let envelope = serde_json::json!({"schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
+            "kind": "repair_after_result", "verify": verify_doc, "agent_status": status_doc});
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&envelope).map_err(|error| error.to_string())?
+        )
+    } else {
+        after_phase_human_stdout(&summary, &receipt_path, &root.join(&verify.path))
+    };
+    Ok((document, summary, receipt_path))
+}
+
 /// Stdout of an after phase without `--json`: the movement line the receipt
 /// owns, what was written, and the next step. With `--json` these lines are
 /// stderr narration instead; stdout is what a caller that reads only stdout
@@ -5008,7 +5751,10 @@ fn short_head(head: &str) -> &str {
 /// that owns it. The JSON streams on stdout carry the full evidence; this
 /// names the movement so a person does not have to parse them. A receipt
 /// missing these fields yields no summary rather than a guessed one.
-fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
+fn repair_receipt_summary_lines(
+    receipt: &str,
+    reported_run: Option<&crate::output::agent_receipt::ReportedTestRun>,
+) -> Vec<String> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(receipt) else {
         return Vec::new();
     };
@@ -5039,7 +5785,18 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
     }
     // Static movement is not a test result: a failing focused test still
     // reads `improved`. Say so before the next step, not only inside it.
-    if text("/verification/status") == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN) {
+    // #14079: a focused result the caller reported and this finish recorded
+    // is named with its counts (a reported failure included), never as "none
+    // recorded". Either way ripr ran nothing.
+    if let Some(run) = reported_run {
+        lines.push(format!(
+            "test run: reported by the caller, not run by ripr: {}. {}",
+            crate::app::agent_status::test_run::reported_test_run_counts(run),
+            crate::app::agent_status::test_run::reported_test_run_next_step(run)
+        ));
+    } else if text("/verification/status")
+        == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN)
+    {
         lines.push(
             "test run: none recorded. This receipt compares static evidence only; a failing test can still show `improved`."
                 .to_string(),
@@ -6674,7 +7431,7 @@ mod repair_summary_tests {
         let missing = std::env::temp_dir()
             .join(format!("ripr-missing-receipt-{}", std::process::id()))
             .join("agent-receipt.json");
-        let lines = repair_after_summary_lines(&missing);
+        let lines = repair_after_summary_lines(&missing, None);
         assert_eq!(lines.len(), 1, "expected one read-failure line: {lines:?}");
         // Diagnostics print through human_path: `/` separators on Windows,
         // the native spelling on Unix.
@@ -6701,11 +7458,53 @@ mod repair_summary_tests {
             "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}
         }"#;
         assert_eq!(
-            repair_receipt_summary_lines(receipt),
+            repair_receipt_summary_lines(receipt, None),
             vec![
                 "result for gap `67fc764ba37d77bd`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved.".to_string(),
                 "next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.".to_string(),
             ]
+        );
+    }
+
+    /// #14079: a recorded caller-reported run replaces "none recorded" with
+    /// its counts; a reported failure is named and is never a pass. Without
+    /// one, a `verification_not_run` receipt keeps the "none recorded" line.
+    #[test]
+    fn repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded() {
+        use crate::output::agent_receipt::ReportedTestRun;
+        let receipt = r#"{
+            "seam": {"seam_id": "s"},
+            "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"},
+            "verification": {"status": "verification_not_run"}
+        }"#;
+        let run = |passed, failed| ReportedTestRun {
+            file: "tests/p.rs".to_string(),
+            ran: passed + failed,
+            passed,
+            failed,
+        };
+        let line = |run: Option<&ReportedTestRun>| {
+            repair_receipt_summary_lines(receipt, run)
+                .into_iter()
+                .find(|line| line.starts_with("test run: "))
+        };
+        assert_eq!(
+            line(None).as_deref(),
+            Some(
+                "test run: none recorded. This receipt compares static evidence only; a failing test can still show `improved`."
+            )
+        );
+        assert_eq!(
+            line(Some(&run(1, 0))).as_deref(),
+            Some(
+                "test run: reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (1 passed, 0 failed). ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence."
+            )
+        );
+        assert_eq!(
+            line(Some(&run(0, 1))).as_deref(),
+            Some(
+                "test run: reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (0 passed, 1 failed). The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test."
+            )
         );
     }
 
@@ -6716,7 +7515,7 @@ mod repair_summary_tests {
             "provenance": {"before_class": "weakly_gripped", "after_class": "weakly_gripped", "movement": "unchanged"}
         }"#;
         assert_eq!(
-            repair_receipt_summary_lines(receipt),
+            repair_receipt_summary_lines(receipt, None),
             vec![
                 "result for gap `s`: weak -> weak (weakly_gripped -> weakly_gripped, unchanged)."
                     .to_string()
@@ -6736,7 +7535,7 @@ mod repair_summary_tests {
             r#"{{"status": "invalid", {movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "{step}"}}}}}}"#
         );
         assert_eq!(
-            repair_receipt_summary_lines(&invalid),
+            repair_receipt_summary_lines(&invalid, None),
             vec![result.clone(), format!("next: {step}")]
         );
         // Without a status nothing vouches for the receipt, so its
@@ -6744,13 +7543,13 @@ mod repair_summary_tests {
         let unstated = format!(
             r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}}}}}"#
         );
-        assert_eq!(repair_receipt_summary_lines(&unstated), vec![result]);
+        assert_eq!(repair_receipt_summary_lines(&unstated, None), vec![result]);
     }
 
     #[test]
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
-        assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
-        assert!(repair_receipt_summary_lines("not json").is_empty());
+        assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#, None).is_empty());
+        assert!(repair_receipt_summary_lines("not json", None).is_empty());
     }
 
     fn temp_root(label: &str) -> Result<std::path::PathBuf, String> {
@@ -7680,6 +8479,33 @@ mod no_movement_code_tests {
 struct ValidatedFocusedRun {
     record: crate::app::focused_run::FocusedRunRecord,
     identity: crate::app::repair_attempt::FocusedResultIdentity,
+}
+
+/// The test names an inline new-test proposal's file held when the attempt
+/// began (#13203 C). `None` for any other attempt; an inline proposal without
+/// a retained baseline region fails closed.
+fn inline_proposal_baseline_tests(
+    root: &std::path::Path,
+    store: Option<&std::path::Path>,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    policy: &crate::edit_cage::EditCagePolicy,
+) -> Result<Option<crate::app::focused_run::ProposalBaseline>, String> {
+    let Some(proposal) = &policy.new_test_proposal else {
+        return Ok(None);
+    };
+    if proposal.kind != crate::analysis::new_test_target::NewTestKind::InlineUnit {
+        return Ok(None);
+    }
+    let baseline =
+        crate::app::repair_attempt::load_edit_cage_baseline_from(root, store, attempt_id)?;
+    let source = baseline.inline_test_region_source().ok_or_else(|| {
+        format!(
+            "attempt `{}` follows an inline proposal but retains no baseline text of `{}`; start a new attempt",
+            attempt_id.as_str(),
+            proposal.file
+        )
+    })?;
+    crate::app::focused_run::baseline_test_names(&proposal.file, source).map(Some)
 }
 
 fn validate_focused_run_input(

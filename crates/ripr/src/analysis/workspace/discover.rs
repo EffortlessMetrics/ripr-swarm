@@ -65,27 +65,65 @@ pub(crate) fn changed_source_files_absent_from_worktree<'a>(
 
 /// Shared admission disclosure for a changed source path with no regular worktree file.
 pub(crate) fn limitations_for_absent_changed_files(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
     paths
         .iter()
         .map(|path| {
             let display = super::classify::normalize_path(path);
+            let (recovery, detail) = match unread_side_prefix(root, path) {
+                Some(prefix) => (
+                    format!(
+                        "If the patch was written with a custom side prefix{prefix}, ripr does not read it: write the patch with `git diff --src-prefix=a/ --dst-prefix=b/` (or `--no-prefix`). Otherwise check out the missing file or disable sparse checkout for it. Then re-run the analysis."
+                    ),
+                    format!(
+                        "changed file is absent from the working tree under the name the patch gives, but the same path without its first component{prefix} is a regular source file under the selected root, which a custom patch side prefix would explain; probes for this file were withheld"
+                    ),
+                ),
+                None => (
+                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.".to_string(),
+                    "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld".to_string(),
+                ),
+            };
             AnalysisLimitation::new(
                 AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
                 AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.",
-                )?,
+                AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery)?,
             )
             .with_path(&display)?
             .with_affected_items(1)?
-            .with_detail(
-                "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
-            )
+            .with_detail(detail)
         })
         .collect()
+}
+
+/// The first component of an absent changed path, as a parenthesized quote
+/// for display (or empty when it is not echoed), when the path without it is a regular source file under `root` (#15103). A
+/// patch written with custom side prefixes (`--src-prefix=old/
+/// --dst-prefix=new/`) keeps the prefix in every path ripr reads; git's
+/// default and mnemonic prefixes are already stripped by the diff parser.
+/// A long first component, or one with a backtick or control character, is
+/// not echoed, so the hint never carries unbounded or markup-breaking text.
+fn unread_side_prefix(root: &Path, path: &Path) -> Option<String> {
+    let mut components = path.components();
+    let first = match components.next()? {
+        std::path::Component::Normal(first) => first.to_str()?,
+        _ => return None,
+    };
+    let rest = components.as_path();
+    // The exact stripped path only: the crate-subdirectory suffix matching
+    // of `worktree_regular_source_file` would let a real directory pass.
+    if rest.as_os_str().is_empty() || !is_regular_source_below_root(root, rest) {
+        return None;
+    }
+    let echoable =
+        first.chars().count() <= 32 && !first.chars().any(|c| c == '`' || c.is_control());
+    Some(if echoable {
+        format!(" (`{first}/`)")
+    } else {
+        String::new()
+    })
 }
 
 /// Absent-file disclosure for a consumer that keeps earlier evidence, such as
@@ -95,9 +133,10 @@ pub(crate) fn limitations_for_absent_changed_files(
 /// canonical per-file limitations, or one bounded, path-less limitation
 /// naming the refusal so the withheld coverage stays disclosed.
 pub(crate) fn supplement_absent_file_limitations(
+    root: &Path,
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
-    match limitations_for_absent_changed_files(paths) {
+    match limitations_for_absent_changed_files(root, paths) {
         Ok(limitations) => Ok(limitations),
         Err(error) => {
             // `bounded_detail` rejects over-long text instead of truncating,
@@ -120,15 +159,21 @@ pub(crate) fn supplement_absent_file_limitations(
 }
 
 pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
+    worktree_regular_source_file(root, relative).is_some()
+}
+
+/// Where the changed path `relative` is on disk as a regular file reached
+/// through real directories below `root`, when it is.
+pub(crate) fn worktree_regular_source_file(root: &Path, relative: &Path) -> Option<PathBuf> {
     if relative.is_absolute()
         || relative
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
-        return false;
+        return None;
     }
     if is_regular_source_below_root(root, relative) {
-        return true;
+        return Some(root.join(relative));
     }
     // Git diffs keep the repository-relative path. `--root` is often a
     // crate subdirectory, so `root.join(diff_path)` misses a file that
@@ -148,10 +193,10 @@ pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path
             continue;
         }
         if is_regular_source_below_root(root, Path::new(suffix)) {
-            return true;
+            return Some(root.join(suffix));
         }
     }
-    false
+    None
 }
 
 fn is_regular_source_below_root(root: &Path, relative: &Path) -> bool {
@@ -699,6 +744,37 @@ mod tests {
     }
 
     #[test]
+    fn unread_side_prefix_echoes_only_a_short_plain_first_component() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-side-prefix-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let io = |error: std::io::Error| error.to_string();
+        fs::create_dir_all(root.join("src")).map_err(io)?;
+        fs::write(root.join("src/lib.rs"), "fn a() {}\n").map_err(io)?;
+        let long = "p".repeat(33);
+        for (path, expected) in [
+            ("new/src/lib.rs".to_string(), Some(" (`new/`)".to_string())),
+            (
+                format!("{}/src/lib.rs", "q".repeat(32)),
+                Some(format!(" (`{}/`)", "q".repeat(32))),
+            ),
+            (format!("{long}/src/lib.rs"), Some(String::new())),
+            ("n`w/src/lib.rs".to_string(), Some(String::new())),
+            ("new/src/missing.rs".to_string(), None),
+            ("new/src".to_string(), None),
+            ("lib.rs".to_string(), None),
+            ("../src/lib.rs".to_string(), None),
+        ] {
+            assert_eq!(
+                unread_side_prefix(&root, Path::new(&path)),
+                expected,
+                "{path}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn split_unreadable_unchanged_files_separates_unopenable_and_keeps_changed()
     -> Result<(), String> {
         let root = std::env::temp_dir().join(format!("ripr-split-unread-{}", std::process::id()));
@@ -740,6 +816,30 @@ mod tests {
             assert_eq!(limitation.affected_items, Some(1));
         }
         assert!(limitations_for_unreadable_unchanged_paths(&[])?.is_empty());
+        Ok(())
+    }
+
+    /// #14078: the human headline for an unchanged path the walk could not
+    /// read must not call it a changed file. The detail says "unchanged", so
+    /// a headline saying "changed" contradicts its own line.
+    #[test]
+    fn unreadable_unchanged_path_limitation_headline_does_not_call_it_changed() -> Result<(), String>
+    {
+        let limitations =
+            limitations_for_unreadable_unchanged_paths(&[PathBuf::from("src/locked.rs")])?;
+        let [limitation] = limitations.as_slice() else {
+            return Err(format!("expected one limitation, got {limitations:?}"));
+        };
+        let headline = limitation.kind.plain_label();
+        assert_eq!(headline, "some files were not fully analyzed");
+        assert!(!headline.contains("changed"), "{headline}");
+        assert!(
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("unchanged")),
+            "{limitation:?}"
+        );
         Ok(())
     }
 
@@ -885,7 +985,10 @@ mod tests {
     #[test]
     fn supplement_absent_file_limitations_keeps_canonical_per_file_disclosure() -> Result<(), String>
     {
-        let limitations = supplement_absent_file_limitations(&[PathBuf::from("src/z_hidden.rs")])?;
+        let limitations = supplement_absent_file_limitations(
+            Path::new("/nonexistent-ripr-root"),
+            &[PathBuf::from("src/z_hidden.rs")],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some("src/z_hidden.rs"));
         assert_eq!(
@@ -904,7 +1007,8 @@ mod tests {
         // running instead of failing, so the refused disclosure degrades to
         // one bounded, path-less stand-in naming the refusal (#6976).
         let absent = [PathBuf::from("src/kept.rs"), PathBuf::from("C:missing.rs")];
-        let limitations = supplement_absent_file_limitations(&absent)?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &absent)?;
         assert_eq!(limitations.len(), 1, "one bounded stand-in, not an error");
         let fallback = &limitations[0];
         assert_eq!(fallback.path, None, "the refused name cannot be a path");
@@ -921,7 +1025,8 @@ mod tests {
     #[test]
     fn supplement_absent_file_limitations_names_nothing_when_no_file_is_absent()
     -> Result<(), String> {
-        let limitations = supplement_absent_file_limitations(&[])?;
+        let limitations =
+            supplement_absent_file_limitations(Path::new("/nonexistent-ripr-root"), &[])?;
         assert!(limitations.is_empty());
         Ok(())
     }

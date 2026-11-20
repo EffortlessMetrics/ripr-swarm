@@ -2395,7 +2395,7 @@ fn base_deleted_findings_never_count_as_exposure_gaps() {
 /// `counts.unknowns` audit still lists every unknown class.
 #[test]
 fn withheld_owner_unknowns_stay_out_of_both_badge_headlines() {
-    use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason};
+    use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason, OwnerOptOutScope};
     let with_id = |class: ExposureClass, id: &str| {
         let mut finding = finding(class, vec![]);
         finding.id = id.to_string();
@@ -2411,6 +2411,8 @@ fn withheld_owner_unknowns_stay_out_of_both_badge_headlines() {
         finding_id: "probe:withheld_unknown".to_string(),
         owner: "skipped_owner".to_string(),
         reason: OwnerOptOutReason::MutantsSkip,
+        scope: OwnerOptOutScope::Fn,
+        scope_label: String::new(),
     }];
     let include_unknowns = || BadgePolicy {
         include_unknowns: true,

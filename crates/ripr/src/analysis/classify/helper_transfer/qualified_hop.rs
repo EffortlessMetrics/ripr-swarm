@@ -72,6 +72,7 @@ pub(super) fn qualified_free_hop(
         arguments,
         receiver: None,
         through_macro: false,
+        multi_site: false,
         module_qualified: true,
         crate_qualifier: None,
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),

@@ -3,10 +3,10 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/manual_let_else_pairing/input",
-  "summary": {"changed_rust_files":4,"probes":27,"findings":27,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":17,"infection_unknown":5,"propagation_unknown":0,"static_unknown":5,"changed_files_by_language":[{"language":"rust","files":4}]},
+  "summary": {"changed_rust_files":4,"probes":26,"findings":26,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":17,"infection_unknown":5,"propagation_unknown":0,"static_unknown":4,"changed_files_by_language":[{"language":"rust","files":4}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:a9f29f1e9fdd34786a1624652e6130a0df8560dd67fa7d81b49f6f64f9c28f96","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":4,"changed_line_count":38,"candidate_line_count":11,"probe_count":27,"finding_count":27},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:a9f29f1e9fdd34786a1624652e6130a0df8560dd67fa7d81b49f6f64f9c28f96","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":4,"changed_line_count":38,"candidate_line_count":11,"probe_count":26,"finding_count":26},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -1376,78 +1376,10 @@
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
-    },
-    {
-      "id": "probe:src_impls.rs:static_unknown:55d9b319",
-      "canonical_gap_id": "gap:rust:src/impls.rs:impl Ord for Prerelease::cmp:static_unknown:static_unknown:let_rhs=match_rhs.next",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/impls.rs:impl Ord for Prerelease::cmp:static_unknown:static_unknown:let_rhs=match_rhs.next",
-        "language": "rust",
-        "file": "src/impls.rs",
-        "owner": "impl Ord for Prerelease::cmp",
-        "behavior_kind": "static_unknown",
-        "probe_kind": "static_unknown",
-        "normalized_discriminator": "let_rhs=match_rhs.next"
-
-      },
-      "classification": "static_unknown",
-      "severity": "note",
-      "confidence": 0.30,
-      "probe": {
-        "id": "probe:src_impls.rs:static_unknown:55d9b319",
-        "family": "static_unknown",
-        "delta": "unknown",
-        "file": "./src/impls.rs",
-        "line": 69,
-        "expression": "let rhs = match rhs.next() {"
-       },
-      "ripr": {
-        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling cmp; a trait method can run through formatting, operators or generic code"},
-        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
-        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
-        "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
-        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
-       },
-      "evidence_stages": [
-        {"stage":"reach","state":"weak","confidence":"low"},
-        {"stage":"infect","state":"unknown","confidence":"unknown"},
-        {"stage":"propagate","state":"unknown","confidence":"low"},
-        {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium"}
-      ],
-      "evidence_path": ["reach weak: No test is seen calling cmp; a trait method can run through formatting, operators or generic code", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches unknown sink (line 69)"],
-      "flow_sinks": [
-        {"kind":"unknown","text":"unknown sink","line":69}
-      ],
-      "evidence": ["Changed syntax is not mapped to a high-confidence probe family", "No assertion can discriminate the changed behavior without a reachable test", "No propagation model is available for this changed syntax", "No reachable test oracle found", "No test is seen calling cmp; a trait method can run through formatting, operators or generic code"],
-      "missing": ["No relevant oracle was detected", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
-      "assertion_texts": {
-      },
-      "activation": {
-        "observed_values": [
-        ],
-        "missing_discriminators": [
-        ]
-      },
-      "observed_values": [
-      ],
-      "missing_discriminators": [
-      ],
-      "related_tests_total": 0,
-      "related_tests": [
-      ],
-      "stop_reasons": ["static_probe_unknown"],
-      "oracle_kind": "unknown",
-      "oracle_strength": "none",
-      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
-      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
-      "language": "rust",
-      "source_currentness": "base_deleted"
     },
     {
       "id": "probe:src_impls.rs:match_arm:fe7f100b",
@@ -1716,8 +1648,8 @@
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },

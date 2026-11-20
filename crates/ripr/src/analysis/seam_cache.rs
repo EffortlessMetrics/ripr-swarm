@@ -138,6 +138,7 @@ pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathB
 
 /// A versioned entry directory under an already-resolved cache `base`,
 /// for producers that shard their entries by a schema-version component.
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
     base.join(layer.name()).join(version)
 }
@@ -180,6 +181,10 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
 /// versions, across the Rust, TypeScript and Python fact stores this build
 /// knows. `ripr cache status` reports it; the next store prunes most of it.
 pub(crate) fn file_fact_reclaimable(base: &Path) -> Reclaimable {
+    #[cfg_attr(
+        not(any(feature = "lang-python", feature = "lang-typescript")),
+        expect(unused_mut, reason = "only preview-language stores add to the total")
+    )]
     let mut total = RepoFileFactCache::at_base(base).reclaimable();
     #[cfg(feature = "lang-typescript")]
     total.add(TypeScriptFileFactStore::at_base(base).reclaimable());
@@ -753,7 +758,22 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.181`: an exact assertion that pins only the success payload (`.unwrap()`,
 /// `Ok(..)`, `Some(..)`) is no longer an oracle on a failure-arm (`Err` /
 /// `None`) seam it cannot reach (#12757).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
+/// `1.182`: a module-level `const` read only by a same-module function gains a
+/// reader entry, so cached verdicts for such a value would stay
+/// `no_static_path` (#13592).
+/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
+/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
+/// in `files_content_hash`, so adding or removing it changes the key, and the
+/// key's analyzer build identity already keeps entries written by a build
+/// without the field from this one. A bump would only rewrite
+/// `source_subject.corpus.cache_schema_version` in every repo artifact.
+/// `1.183`: the unresolved boundary-input activation summary leads with the
+/// typed `activation_boundary_input_unresolved` token and the evidence record
+/// no longer derives that category from the sentence (#14951), so a cached
+/// summary without the token would lose its category.
+/// `1.184`: a macro-generated test takes no invocation scopes when its file or
+/// invocation scope rebinds an exempt std macro name (#12852).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -975,7 +995,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
 /// `0.182`: same logical-or field witness as full `1.180` (#14326).
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1199,7 +1222,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
 /// `0.182`: same logical-or field witness as full `1.180` (#14326).
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1448,8 +1474,10 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod build_retention;
+pub(crate) use build_retention::Reclaimable;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use build_retention::{
-    BuildRetention, Reclaimable, analyzer_version_from_entry_prefix, integer_schema_rank,
+    BuildRetention, analyzer_version_from_entry_prefix, integer_schema_rank,
 };
 mod export;
 pub(crate) mod path_dependencies;
@@ -2085,6 +2113,18 @@ impl WorkspaceKeyContext<'_> {
             "{workspace_manifests_hash}:rust-snapshot-files:{}",
             super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
         ));
+        // #15040 (also before the Cargo identity): a workspace member outside
+        // the root is read by classification (its crate name and the trait
+        // names it declares) but is never walked by discovery, so the corpus
+        // content hash does not see it. Fold what is read into the key. A
+        // workspace with every member below the root keeps its key.
+        let workspace_manifests_hash =
+            match super::classify::out_of_root_member_identity(self.workspace_root) {
+                Some(identity) => hash_str(&format!(
+                    "{workspace_manifests_hash}:out-of-root-members:{identity}"
+                )),
+                None => workspace_manifests_hash,
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -2471,6 +2511,22 @@ impl ModuleTreeScanEnvelope {
             Err("missing or mismatching semantic payload digest".to_owned())
         }
     }
+}
+
+/// Whether a non-empty `RIPR_CACHE_DIR` moves the cache off the default
+/// `target/ripr/cache` base for this process.
+pub(crate) fn cache_base_is_relocated() -> bool {
+    std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Repository-relative path of the module-tree scan bundle under the default
+/// cache base (no `RIPR_CACHE_DIR`). The repair edit cage treats this one
+/// fixed-name derived file as unbound attempt state (#15060).
+pub(crate) fn module_tree_scan_bundle_default_relative_path() -> String {
+    format!(
+        "target/ripr/cache/{}/{MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION}/scans.json",
+        CacheLayer::ModuleTreeScans.name()
+    )
 }
 
 /// Persists the module-graph walk's per-file scans between runs so a warm
@@ -5697,7 +5753,10 @@ mod tests {
         // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
         // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
         // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.181");
+        // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
+        // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
+        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.184");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5859,8 +5918,11 @@ mod tests {
         // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
         // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
         // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
+        // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
+        // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
+        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -8573,6 +8635,75 @@ mod tests {
         assert_ne!(baseline.lockfile_hash, updated.lockfile_hash);
         assert_ne!(baseline.filename(), updated.filename());
         ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #15040: a workspace member outside the root is read by classification
+    /// but is not in the corpus, so the production key must move when that
+    /// member's trait names or manifest move. An edit there that declares no
+    /// trait is the control: it keeps the key, so the entry is still reused.
+    #[test]
+    fn out_of_root_member_changes_change_cache_identity() -> Result<(), String> {
+        let base = isolated_dir("out-of-root-member");
+        ignore_remove_dir_all(&base);
+        let root = base.join("ws");
+        let shared = base.join("shared");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        std::fs::create_dir_all(shared.join("src"))
+            .map_err(|err| format!("create member: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../shared\"]\n",
+        )
+        .map_err(|err| format!("write manifest: {err}"))?;
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"shared\"\n")
+            .map_err(|err| format!("write member manifest: {err}"))?;
+        std::fs::write(shared.join("src/lib.rs"), "pub use std::fmt::Display;\n")
+            .map_err(|err| format!("write member source: {err}"))?;
+        let files: [(PathBuf, Vec<u8>); 0] = [];
+        let key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &files,
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = key();
+        assert_eq!(baseline.filename(), key().filename());
+
+        std::fs::write(shared.join("src/helper.rs"), "pub fn helper() {}\n")
+            .map_err(|err| format!("write non-trait edit: {err}"))?;
+        assert_eq!(
+            baseline.filename(),
+            key().filename(),
+            "an edit that declares no trait keeps the key"
+        );
+
+        std::fs::write(
+            shared.join("src/declares.rs"),
+            "pub trait Display {\n    fn fmt(&self);\n}\n",
+        )
+        .map_err(|err| format!("write trait: {err}"))?;
+        let declared = key();
+        assert_ne!(
+            baseline.workspace_manifests_hash,
+            declared.workspace_manifests_hash
+        );
+        assert_ne!(baseline.filename(), declared.filename());
+
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"renamed\"\n")
+            .map_err(|err| format!("change member manifest: {err}"))?;
+        let renamed = key();
+        assert_ne!(
+            declared.workspace_manifests_hash,
+            renamed.workspace_manifests_hash
+        );
+        assert_ne!(declared.filename(), renamed.filename());
+        ignore_remove_dir_all(&base);
         Ok(())
     }
 

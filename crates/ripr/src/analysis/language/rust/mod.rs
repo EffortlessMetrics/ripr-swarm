@@ -16,6 +16,7 @@
 //! diff, dispatches to this adapter, and applies sort + summary on the
 //! returned findings.
 
+mod boundary_input;
 mod dependent_scope;
 pub(crate) mod oracles;
 mod probe_shape;
@@ -1827,8 +1828,14 @@ fn apply_probe_and_oracle_limits(
         owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
-    oracles::apply_wrapper_error_binding_limit(finding, probe);
+    let literal_only_related = finding.class == ExposureClass::ReachableUnrevealed
+        && related_tests_assert_only_dropped_literals(finding, index);
+    oracles::apply_wrapper_error_binding_limit(finding, probe, literal_only_related);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
+    // #14951: after every reach-witness limit (an uncalled owner has none) and
+    // after the RIPR-SPEC-0150 binding disclosure, which keeps its finding
+    // limit-free, whichever related-test roles the finding carries.
+    boundary_input::apply_limit(finding, probe, index);
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
@@ -2124,7 +2131,13 @@ fn apply_rust_proximity_reach_limit(
     // or defining its own function of the owner's name). A test that reaches
     // the owner through a wrapper crate has no helper-transfer chain, so the
     // name-token relation alone must not read as an actionable gap (#10127).
-    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
+    // #14968: a finding whose every related test asserts only literals
+    // (`assert!(true)`) read `weakly_exposed` from that literal alone, and
+    // that reading admitted any witness. Dropping the literal's credit
+    // lowers the class, never the limitation it named, so such a finding
+    // keeps the weak reading's admission.
+    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed
+        && !related_tests_assert_only_dropped_literals(finding, index);
     // The owner as the index spells it, the same form a witness's test file
     // has (the probe's own path may carry the checkout root).
     let owner = probe
@@ -2142,10 +2155,15 @@ fn apply_rust_proximity_reach_limit(
                 )
             })
     };
-    if let Some(witness) = transitive_reach
-        .transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    // With an admission rule, rank only admitted witnesses: filtering the
+    // single best one would let a nearer ineligible witness hide an
+    // eligible one and drop the limit (#14970).
+    let transitive = if cross_package_only {
+        transitive_reach.transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.transitive_witness(&owner_name)
+    };
+    if let Some(witness) = transitive {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -2164,10 +2182,11 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach
-        .deep_transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    } else if let Some(witness) = if cross_package_only {
+        transitive_reach.deep_transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.deep_transitive_witness(&owner_name)
+    } {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -2176,6 +2195,29 @@ fn apply_rust_proximity_reach_limit(
             &owner_name,
         );
     }
+}
+
+/// Whether every related test of `finding` supplied no oracle row and is an
+/// indexed test whose assertions are all dropped literal-only assertions
+/// (#14968). A row the index cannot match, an oracle row, or a list at the
+/// render cap (which may hide rows) answers `false`.
+fn related_tests_assert_only_dropped_literals(finding: &Finding, index: &RustIndex) -> bool {
+    !finding.related_tests.is_empty()
+        && finding.related_tests.len() < classify::RELATED_TESTS_RENDER_CAP
+        && finding.related_tests.iter().all(|related| {
+            let mut matching = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.name == related.name
+                        && test.start_line == related.line
+                        && (test.file == related.file || related.file.ends_with(&test.file))
+                })
+                .peekable();
+            related.oracle.is_none()
+                && matching.peek().is_some()
+                && matching.all(classify::asserts_only_dropped_literals)
+        })
 }
 
 /// Shared transitive limitation projection (RIPR-SPEC-0114), for a witness
@@ -3261,6 +3303,35 @@ impl RustAdapter {
                 .with_diff_touched(diff_touched.clone())
                 .with_changed_consts(classify::ChangedConsts::from_changed_files(
                     &analyzable_changed_files,
+                ))
+                // #14852: every changed file, generated ones included, since
+                // a removed binding anywhere may have rebound `vec`.
+                .with_base_may_rebind_trusted_macros(classify::base_side_may_rebind_trusted_macros(
+                    changed_files,
+                    &index,
+                ))
+                // #14852: every `mod` declaration the index holds, and every
+                // changed file's declarations on both sides, for the shared
+                // base-owner identity.
+                .with_module_declarations(crate::analysis::diff::ModuleDeclarations::read(
+                    index
+                        .files()
+                        .iter()
+                        .filter(|(_, facts)| {
+                            // The facts list every parsed declaration; the
+                            // lexical test keeps a file the index could not
+                            // parse, which then reads as unreadable.
+                            !facts.module_declarations.is_empty()
+                                || crate::analysis::diff::may_declare_module(&facts.source)
+                        })
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+                    changed_files.iter().map(|changed| {
+                        (
+                            changed,
+                            crate::analysis::rust_index::find_file_facts(&index, &changed.path)
+                                .map(|facts| facts.data().source.as_ref()),
+                        )
+                    }),
                 ));
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
@@ -3678,7 +3749,10 @@ impl RustAdapter {
                 .count(),
             limitations: limitations
                 .into_iter()
-                .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(limitations_for_absent_changed_files(
+                    &options.root,
+                    &absent_changed_files,
+                )?)
                 .chain(workspace::limitations_for_unreadable_unchanged_paths(
                     &unreadable_unchanged_paths,
                 )?)
@@ -4470,8 +4544,11 @@ mod tests {
             ).map_err(|error| error.to_string())?;
             let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
             let count = if named && !ignored { 8 } else { 9 };
+            // Each crowd row also calls a foreign `add`, so it ranks as near the
+            // owner by name just like `zz_named` (#15026). The tie keeps name
+            // order, and `zz_named` stays behind the cap.
             for n in 0..count {
-                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        let one = 0i64.add(1);\n        assert_eq!(sum.0, 2);\n        assert_eq!(one, 1);\n    }}\n"));
             }
             if named {
                 source.push_str("    #[test]\n");
@@ -4870,7 +4947,10 @@ mod tests {
                 > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
             "fixture must exceed the detail budget when the path is interpolated"
         );
-        let limitations = limitations_for_absent_changed_files(&[std::path::PathBuf::from(&deep)])?;
+        let limitations = limitations_for_absent_changed_files(
+            std::path::Path::new("/nonexistent-ripr-root"),
+            &[std::path::PathBuf::from(&deep)],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some(deep.as_str()));
         let detail = limitations[0].bounded_detail.as_deref().unwrap_or_default();
@@ -10274,7 +10354,7 @@ fn absent_delimiter_boundary_returns_head() {
                 context.production_like_targets.insert(file.clone());
             }
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10300,7 +10380,7 @@ fn absent_delimiter_boundary_returns_head() {
         ] {
             let loaded = vec![(file.clone(), source.to_vec())];
             let remaining = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10333,7 +10413,7 @@ fn absent_delimiter_boundary_returns_head() {
                 Vec::new()
             };
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &harnesses,

@@ -95,7 +95,7 @@ keeps the plain `unsafe block` label.
 1. The `unsafe_boundary_probe` fixture: a changed loop body inside an
    `unsafe {}` block produces the boundary probe at the changed line and keeps
    the ordinary value probes for the surrounding function.
-2. The `unsafe_assumption_stop_reason` fixture: a function that gains the
+2. [abstain] The `unsafe_assumption_stop_reason` fixture: a function that gains the
    `unsafe` qualifier and a function that gains an `unreachable_unchecked()`
    block both read `static_unknown` with stop reason `unsafe_obligation`.
 

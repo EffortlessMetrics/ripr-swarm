@@ -12,7 +12,8 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
+    disclose_attached_terminal_stdin_read, expect_path_value, expect_value, parse_format,
+    parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -953,7 +954,7 @@ fn check_inner(
             }
             "--diff" => {
                 i += 1;
-                input.diff_file = Some(PathBuf::from(expect_value(args, i, "--diff")?));
+                input.diff_file = Some(PathBuf::from(expect_path_value(args, i, "--diff")?));
                 scope_explicitly_provided = true;
             }
             // #3237/#3278: immutable Git candidate input. The subject
@@ -1037,7 +1038,7 @@ fn check_inner(
             }
             "--suppression-policy" => {
                 i += 1;
-                input.suppression_policy = Some(PathBuf::from(expect_value(
+                input.suppression_policy = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--suppression-policy",
@@ -1052,7 +1053,11 @@ fn check_inner(
             }
             "--write-artifact" => {
                 i += 1;
-                write_artifact = Some(PathBuf::from(expect_value(args, i, "--write-artifact")?));
+                write_artifact = Some(PathBuf::from(expect_path_value(
+                    args,
+                    i,
+                    "--write-artifact",
+                )?));
             }
             "--git-timeout" => {
                 i += 1;
@@ -1814,7 +1819,11 @@ fn check_inner(
         app::repo_inventory_with_progress(
             progress_sink,
             || analysis::inventory_classified_seams_report_at_with_config(&input.root, &config),
-            |report| {
+            |mut report| {
+                // #14139: the same withholding `render.rs` applies to every
+                // classified `repo-*` format.
+                let owner_opt_outs =
+                    output::render::withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(
                     &input.root,
                     &report.classified,
@@ -1859,6 +1868,7 @@ fn check_inner(
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                     &artifact_context,
                     &mut handle,
                 )?;
@@ -3595,7 +3605,7 @@ mod tests {
                     .filter(|flag| flag.starts_with("--"));
             }
             if let Some(flag) = current
-                && line.contains("expect_value(")
+                && (line.contains("expect_value(") || line.contains("expect_path_value("))
             {
                 parsed.insert(flag.to_string());
             }

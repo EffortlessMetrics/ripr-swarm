@@ -6246,6 +6246,176 @@ fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Resu
     Ok(())
 }
 
+/// #13636: on a seam past the repair-packet flip, a dirty production premise
+/// turns the repair start inert for a disabled-capable client, naming the
+/// shared commit step; the hover names the same commit first. The check is
+/// live: committing re-enables the start on the same snapshot, no refresh.
+#[test]
+fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() -> Result<(), String>
+{
+    let fixture = unique_lsp_test_root("repair-start-uncommitted")?;
+    let root = fixture.path().to_path_buf();
+    fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    fs::write(root.join("src/pricing.rs"), "pub fn discount() {}\n")
+        .map_err(|err| format!("write production: {err}"))?;
+    fs::write(root.join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| format!("write test: {err}"))?;
+    run_lsp_scope_git(&root, &["init", "-q"])?;
+    run_lsp_scope_git(&root, &["add", "-A"])?;
+    let commit_all = |message: &str| {
+        run_lsp_scope_git(
+            &root,
+            &[
+                "-c",
+                "user.email=ripr-test@example.com",
+                "-c",
+                "user.name=ripr-test",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qam",
+                message,
+            ],
+        )
+    };
+    commit_all("base")?;
+    fs::write(
+        root.join("src/pricing.rs"),
+        "pub fn discount() { let _ = 1; }\n",
+    )
+    .map_err(|err| format!("dirty production: {err}"))?;
+
+    let seam = sample_classified_seam();
+    assert!(repair_packet_eligibility(&seam).eligible());
+    let diagnostic = diagnostic_for_classified_seam(&root, &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = crate::lsp::uri::file_uri_for_path(&root.join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.clone(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let params =
+        code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic.clone()])?;
+    let commands = vscode_advertised_client_commands()?;
+    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
+    let disabled_client = client_features_with_disabled_support(&borrowed)?;
+    let start_title = "Start repair: copy repair command";
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    let commit = crate::app::commit_prerequisite_command(&bound, &["src/pricing.rs".to_string()])
+        .ok_or("commit step for one file")?;
+
+    // Dirty: the start is present, inert, names the reason and the commit.
+    super::actions::forget_recent_premise();
+    let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the inert start must be listed: {literals:?}"))?;
+    assert!(
+        start.command.is_none(),
+        "an inert start carries no command: {start:?}"
+    );
+    let reason = start
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str())
+        .ok_or("the start must be disabled")?;
+    assert_eq!(
+        reason,
+        format!(
+            "Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted. Commit command: {commit}"
+        )
+    );
+    let data = start.data.as_ref().ok_or("inert start carries data")?;
+    assert_eq!(data["disabled_reason"], "uncommitted_production_change");
+    assert_eq!(data["action_name"], "copy_agent_repair_command");
+    assert_disabled_action_invariants(start)?;
+    // The rest of the agent loop stays, so the change is the start alone.
+    assert!(
+        literals.iter().any(
+            |action| action.title == "Agent handoff: copy packet command"
+                && action.command.is_some()
+        ),
+        "{literals:?}"
+    );
+    // A client without disabled support keeps the legacy omission.
+    let legacy = code_action_commands(&code_action_response(
+        &params,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    ))?;
+    assert!(
+        legacy.iter().all(|(title, command, _)| title != start_title
+            && command != COPY_AGENT_REPAIR_COMMAND),
+        "{legacy:?}"
+    );
+    let hover = match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+        HoverContents::Markup(markup) => markup.value,
+        other => return Err(format!("expected markdown hover, got {other:?}")),
+    };
+    let commit_at = hover
+        .find(&format!("- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"))
+        .ok_or_else(|| format!("hover must name the commit first:\n{hover}"))?;
+    let then_at = hover
+        .find("- then repair: `ripr agent repair ")
+        .ok_or_else(|| format!("hover must keep the start after the commit:\n{hover}"))?;
+    assert!(
+        commit_at < then_at && !hover.contains("repair (start here)"),
+        "{hover}"
+    );
+
+    // The retained-health conversion keeps the more specific refusal and its
+    // commit step instead of rewriting it to "refresh analysis".
+    let mut retained = actions.clone();
+    super::actions::disable_retained_analysis_actions(
+        &mut retained,
+        &AnalysisHealth {
+            state: AnalysisAttemptState::Succeeded,
+            ..AnalysisHealth::default()
+        },
+    );
+    let retained_start = code_action_literals(&retained)?
+        .into_iter()
+        .find(|action| action.title == start_title)
+        .ok_or("retained start listed")?;
+    assert_eq!(
+        retained_start
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str()),
+        Some(reason)
+    );
+
+    // Committed: the same snapshot offers the enabled start again.
+    commit_all("change")?;
+    super::actions::forget_recent_premise();
+    let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the start must be listed: {literals:?}"))?;
+    assert!(
+        start.disabled.is_none() && start.command.is_some(),
+        "{start:?}"
+    );
+    let hover = match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+        HoverContents::Markup(markup) => markup.value,
+        other => return Err(format!("expected markdown hover, got {other:?}")),
+    };
+    assert!(
+        hover.contains("- repair (start here): `ripr agent repair ")
+            && !hover.contains("commit first"),
+        "{hover}"
+    );
+    Ok(())
+}
+
 /// A Rust seam that is route-ready but fails the repair-packet flip: its
 /// related tests include a Rust test and a TypeScript file, so the oracle
 /// path is cross-language unresolved while the Rust-side target is known.
@@ -16738,6 +16908,16 @@ fn lsp_fixture_outputs(fixture: &str) -> Result<(serde_json::Value, serde_json::
 fn lsp_fixture_render(
     fixture: &str,
 ) -> Result<(serde_json::Value, serde_json::Value, String), String> {
+    // #13636: the fixture root sits inside this checkout, so pin a clean
+    // repair-start premise; the goldens pin the committed-fixture form.
+    super::actions::test_premise::with_pinned_premise(Vec::new(), || {
+        lsp_fixture_render_unpinned(fixture)
+    })
+}
+
+fn lsp_fixture_render_unpinned(
+    fixture: &str,
+) -> Result<(serde_json::Value, serde_json::Value, String), String> {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures")
         .join(fixture)
@@ -21573,8 +21753,12 @@ fn execute_command_collect_repair_packet_without_a_packet_source_names_the_route
             assert!(
                 reason.starts_with(subject)
                     && reason.contains("target/ripr/reports/actionable-gaps.json")
-                    && reason.contains("ripr pilot --root ."),
-                "reason must name the sources and the route: {reason}"
+                    && reason.contains("`ripr check --root .`")
+                    && reason.contains("the repair start it prints")
+                    && reason.contains("`ripr repair <id> --root .` for Rust")
+                    && !reason.contains("ripr pilot")
+                    && !reason.contains("gap-ledger"),
+                "reason must name the sources and the check-then-repair route: {reason}"
             );
         }
         // A first argument that is not an object is a caller error.

@@ -83,15 +83,15 @@ objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
 Use the actual installed request interface described in
-[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+[merge flow](docs/MERGE_FLOW.md). The live order is **label PR qualification ->
+final published-head review -> native enqueue -> required queue run -> queue-driven
+protected squash**. Apply `merge-ready` to request qualification on the PR; it does
+not enqueue or authorize merge. After inspecting the results and making the current
+product/integration judgment, enqueue the exact reviewed head for qualification of
+the actual merge composition. GitHub performs the protected squash when the queue's
+conditions pass. Direct expected-head squash is a refused historical route
+(#14247); do not arm generic auto-merge instead. Preserve actual required checks
+and approvals; this guidance does not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future

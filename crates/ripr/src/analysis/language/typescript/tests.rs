@@ -12294,6 +12294,115 @@ fn ts_fieldconstruction_sibling_field_read_downgrades() -> Result<(), String> {
     Ok(())
 }
 
+/// #14857: a change that moves TWO values of the returned literal cannot be
+/// reduced to one changed field, so #14814's single-field guard is skipped.
+/// A test that reads a THIRD, untouched field still cannot witness the
+/// change: it must read `weakly_exposed`, not `exposed`.
+#[test]
+fn ts_fieldconstruction_multi_value_change_untouched_field_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"timeout\", () => { expect(f().timeout).toBe(30); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30 };",
+        Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a read of an untouched field must not read as exposed when two values moved, got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes for an untouched-field read, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
+/// #14857 control A: the same two-value change, but the assertion names
+/// EITHER changed field. That read pins a value the edit moved, so it stays
+/// `exposed`. A fix that downgrades this too is over-broad.
+#[test]
+fn ts_fieldconstruction_multi_value_change_named_read_stays_exposed() -> Result<(), String> {
+    for (field, expected) in [("retries", "5"), ("verbose", "true")] {
+        let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+        let test_src = format!(
+            "import {{ f }} from \"./owner\";\ntest(\"{field}\", () => {{ expect(f().{field}).toBe({expected}); }});\n"
+        );
+
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), &test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: true, timeout: 30 };",
+            Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+
+        assert!(
+            matches!(finding.class, ExposureClass::Exposed),
+            "a read of the changed field `{field}` must stay exposed, got {:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
+/// #14857 round 1 (Devin): a whole-object assertion whose subject is a
+/// nullish fallback (`f() ?? defaults.config`) receives the whole object
+/// `f()` returns, so it notices both changed values and stays `exposed`.
+/// The trailing `.config` belongs to the fallback, not to `f()`; treating it
+/// as an untouched field of the owner would be an over-correction.
+#[test]
+fn ts_fieldconstruction_multi_value_change_nullish_fallback_whole_object_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+    let test_src = "import { f } from \"./owner\";\nconst defaults = { config: { retries: 3, verbose: false, timeout: 30 } };\ntest(\"whole\", () => { expect(f() ?? defaults.config).toEqual({ retries: 3, verbose: false, timeout: 30 }); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30 };",
+        Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion through a nullish fallback must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// #14814 control: the changed field itself, read off the owner's result,
 /// still confirms. `expect(f().retries)` observes `retries`, so the finding
 /// stays `exposed`. A fix that suppressed this too would over-apply.
@@ -21720,6 +21829,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
 mod boolean_pin_tests;
+mod call_lexer_tests;
 mod catch_arm_tests;
 mod changed_field_tests;
 mod class_barrel_reexport_tests;
@@ -21728,12 +21838,14 @@ mod class_receiver_overclaim_tests;
 mod close_to_pin_tests;
 mod committed_snapshot_tests;
 mod commonjs_class_receiver_tests;
+mod commonjs_default_class_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
 mod comparison_edit_tests;
 mod cross_module_entry_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
+mod default_class_declaration_tests;
 mod default_object_member_tests;
 mod derived_operand_tests;
 mod directory_specifier_tests;
@@ -21743,6 +21855,7 @@ mod error_payload_tests;
 mod floating_promise_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
+mod getter_matcher_key_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
@@ -21765,6 +21878,7 @@ mod mock_spread_source_tests;
 mod mocked_callee_tests;
 mod module_const_tests;
 mod module_entry_tests;
+mod module_value_read_tests;
 mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;

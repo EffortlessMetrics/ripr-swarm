@@ -4,7 +4,7 @@ use super::owner_pin::{AssertionRefusal, OwnerPinSyntax};
 use crate::analysis::classify::{ProbeContext, direct_call_name};
 use crate::analysis::facts::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
 use crate::analysis::resource_cost::trace_latency_phase;
-use crate::analysis::rust_index::TestSummary;
+use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{RelatedTest, RelatedTestMiss};
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -43,26 +43,32 @@ fn assertion_refusal_counts_as_analyzer_limit_with_local(
     let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
     (refusal.is_analyzer_limit()
         || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test, local))
-        || owner_compiled_only_under_refused_declaration(context, test, refusal, local))
+        || context.owner_fn.is_some_and(|owner| {
+            owner_compiled_only_under_refused_declaration_with_local(
+                context.index,
+                owner,
+                test,
+                refusal,
+                local,
+            )
+        }))
         && refusal
             .value_guard_subject()
             .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
 }
 
 fn cfg_gates(
-    context: &ProbeContext<'_>,
+    index: &RustIndex,
+    owner: &FunctionSummary,
     test: &TestSummary,
     local: &RefusalMemo,
 ) -> (Option<BTreeSet<String>>, Option<BTreeSet<String>>) {
-    let Some(owner) = context.owner_fn else {
-        return (None, None);
-    };
     let test_gates = local
         .test_cfg_gates
         .borrow_mut()
         .entry((test.file.clone(), test.name.clone(), test.start_line))
         .or_insert_with(|| {
-            let facts = context.index.files().get(&test.file)?;
+            let facts = index.files().get(&test.file)?;
             crate::analysis::syntax::unestablished_cfg_gates_of_fn(
                 &facts.source,
                 &test.name,
@@ -73,7 +79,7 @@ fn cfg_gates(
     let owner_gates = local
         .owner_cfg_gates
         .get_or_init(|| {
-            let facts = context.index.files().get(&owner.file)?;
+            let facts = index.files().get(&owner.file)?;
             crate::analysis::syntax::unestablished_cfg_gates_of_fn(
                 &facts.source,
                 &owner.name,
@@ -89,7 +95,10 @@ fn test_shares_owner_cfg_gates(
     test: &TestSummary,
     local: &RefusalMemo,
 ) -> bool {
-    let (Some(test_gates), Some(owner_gates)) = cfg_gates(context, test, local) else {
+    let Some(owner) = context.owner_fn else {
+        return false;
+    };
+    let (Some(test_gates), Some(owner_gates)) = cfg_gates(context.index, owner, test, local) else {
         return false;
     };
     !test_gates.is_empty() && test_gates.is_subset(&owner_gates)
@@ -113,20 +122,38 @@ fn test_shares_owner_cfg_gates(
 /// - the test's own refusal of each assertion, read past the provenance
 ///   refusal, is none, an analyzer limit, or that shared gate, so an ignored
 ///   test, an expected panic or a conditional assertion keeps the gap.
-fn owner_compiled_only_under_refused_declaration(
-    context: &ProbeContext<'_>,
+///
+/// #14537: the predicate family reads this same rule rather than skipping the
+/// Module edge unconditionally, so an unknown gate admits the equality only
+/// when the owner is reached solely through that declaration.
+pub(in crate::analysis) fn owner_compiled_only_under_refused_declaration(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    refusal: &AssertionRefusal,
+) -> bool {
+    owner_compiled_only_under_refused_declaration_with_local(
+        index,
+        owner,
+        test,
+        refusal,
+        &RefusalMemo::default(),
+    )
+}
+
+fn owner_compiled_only_under_refused_declaration_with_local(
+    index: &RustIndex,
+    owner: &FunctionSummary,
     test: &TestSummary,
     refusal: &AssertionRefusal,
     local: &RefusalMemo,
 ) -> bool {
-    let (Some((parent, line, declaration)), Some(owner)) =
-        (refusal.module_declaration_site(), context.owner_fn)
-    else {
+    let Some((parent, line, declaration)) = refusal.module_declaration_site() else {
         return false;
     };
     let (Some(owner_context), Some(test_context)) = (
-        context.index.execution_context(&owner.file),
-        context.index.execution_context(&test.file),
+        index.execution_context(&owner.file),
+        index.execution_context(&test.file),
     ) else {
         return false;
     };
@@ -156,8 +183,7 @@ fn owner_compiled_only_under_refused_declaration(
             .borrow_mut()
             .entry(key)
             .or_insert_with(|| {
-                context
-                    .index
+                index
                     .files()
                     .get(&edge.parent)
                     .filter(|facts| !facts.used_lexical_fallback)
@@ -184,7 +210,7 @@ fn owner_compiled_only_under_refused_declaration(
         .find(|edge| edge_key(edge) == (parent, line, declaration))
         .and_then(gate_of)
         == Some(true);
-    let in_file_shared = match cfg_gates(context, test, local) {
+    let in_file_shared = match cfg_gates(index, owner, test, local) {
         (Some(test_gates), Some(owner_gates)) => test_gates.is_subset(&owner_gates),
         _ => false,
     };
@@ -195,7 +221,7 @@ fn owner_compiled_only_under_refused_declaration(
         .local_refusals
         .borrow_mut()
         .entry((test.file.clone(), test.name.clone(), test.start_line))
-        .or_insert_with(|| AssertionRefusal::test_local_refusals(test, context.index))
+        .or_insert_with(|| AssertionRefusal::test_local_refusals(test, index))
         .as_ref()
         .is_some_and(|refusals| {
             !refusals.is_empty()
@@ -261,9 +287,13 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
         // unproven refusal is admission-unproven, independent of source order.
         let mut split: Option<RelatedTestMiss> = None;
         for assertion in &test.assertions {
-            let Some(refusal) =
-                pin_syntax.equality_assertion_refusal(probe, test, assertion, context.index)
-            else {
+            let Some(refusal) = pin_syntax.equality_assertion_refusal(
+                probe,
+                context.owner_fn,
+                test,
+                assertion,
+                context.index,
+            ) else {
                 continue;
             };
             let miss = related_test_miss_for_assertion_refusal_with_local(

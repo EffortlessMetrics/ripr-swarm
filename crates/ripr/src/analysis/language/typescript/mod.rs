@@ -67,6 +67,7 @@ mod boundary_label_tests;
 mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
+mod call_lexer;
 mod call_removal_guard;
 #[cfg(test)]
 mod call_removal_tests;
@@ -77,6 +78,7 @@ mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
+mod commonjs_default_class;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -132,6 +134,7 @@ mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
+mod module_value_reads;
 #[cfg(test)]
 mod negated_jest_assertion_tests;
 #[cfg(test)]
@@ -236,6 +239,7 @@ pub(crate) use boundary_selection::{
 };
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use call_lexer::inside_block_comment;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use close_to_guard::*;
@@ -1364,6 +1368,14 @@ impl TypeScriptAdapter {
             // HashMap key.
             let mut owner_contexts: std::collections::HashMap<usize, OwnerLineContext<'_>> =
                 std::collections::HashMap::new();
+            // #13827: removed lines that could have thrown the old side's
+            // error, read once per changed file for the message pin.
+            let removed_throw_candidates: Vec<String> = changed
+                .removed_lines
+                .iter()
+                .filter(|removed| removed_line_may_throw(&removed.text))
+                .map(|removed| removed.text.trim().to_string())
+                .collect();
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
@@ -1545,6 +1557,9 @@ impl TypeScriptAdapter {
                                 ([added], [removed]) if added.line == removed.new_side_line
                             );
                             context
+                                .removed_throw_candidates
+                                .clone_from(&removed_throw_candidates);
+                            context
                         });
                         classify_resolved_owner(
                             &changed.path,
@@ -1663,7 +1678,7 @@ impl TypeScriptAdapter {
                         owner.end_line,
                     )?;
                     let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                        changed_owner_line_context(
+                        let mut context = changed_owner_line_context(
                             owner,
                             &all_tests,
                             &options.root,
@@ -1671,7 +1686,11 @@ impl TypeScriptAdapter {
                             &relation_index,
                             alias_map_ref,
                             &cross_module_fan_in_limited,
-                        )
+                        );
+                        context
+                            .removed_throw_candidates
+                            .clone_from(&removed_throw_candidates);
+                        context
                     });
                     classify_resolved_owner(
                         &changed.path,

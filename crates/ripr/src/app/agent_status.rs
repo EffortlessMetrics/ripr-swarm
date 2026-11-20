@@ -35,6 +35,8 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod test_run;
+
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
 
 /// Unresolved seam placeholder a status command embeds when no seam id is
@@ -200,6 +202,20 @@ pub(crate) struct AgentStatusRepairAttempt {
     /// its prepared head: the recovery its after phase would print when it
     /// refuses (attempt authority's narration).
     pub(crate) diverged_recovery: Option<DivergedHeadRecovery>,
+    /// For an interrupted focused finish with no retained terminal evidence:
+    /// the recovery limitation status reports instead of reading the shared
+    /// compatibility receipt as this attempt's.
+    pub(crate) focused_recovery: Option<FocusedRecovery>,
+}
+
+/// One route for an interrupted focused finish: either retry the after phase
+/// with the same caller-reported result, or start a new attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FocusedRecovery {
+    pub(crate) limitation: &'static str,
+    /// Whether the after phase can recover this finish when it is re-run
+    /// with the same `--test-result FILE`.
+    pub(crate) retry_same_result: bool,
 }
 
 /// The workflow receipt read against one attempt. Only a `ready_to_finish`
@@ -320,18 +336,32 @@ impl AgentStatusCommand {
 }
 
 impl AgentStatusReport {
-    /// The first issued receipt that records no test run. A cold agent reads
-    /// `status: complete` plus movement `improved` as a pass, even when the
-    /// focused test fails; this names the missing test run explicitly.
-    pub(crate) fn unrun_test_receipt(&self) -> Option<&AgentReceiptReading> {
-        self.repair_attempts
+    /// Every issued receipt that records no ripr-run test, paired with its
+    /// attempt id, most telling first (#14146): a caller-reported failure,
+    /// then `none recorded`, then a caller-reported pass, attempt order within
+    /// each. A cold agent reads `status: complete` plus movement `improved` as
+    /// a pass, even when the focused test fails; this names the test-run axis
+    /// explicitly, and one attempt's `none recorded` never hides another
+    /// attempt's reported failure.
+    pub(crate) fn unrun_test_receipts(&self) -> Vec<(&str, &AgentReceiptReading)> {
+        let mut readings = self
+            .repair_attempts
             .iter()
-            .find_map(|attempt| match &attempt.receipt {
+            .filter_map(|attempt| match &attempt.receipt {
                 AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
-                    Some(reading)
+                    Some((attempt.attempt_id.as_str(), reading))
                 }
                 _ => None,
             })
+            .collect::<Vec<_>>();
+        readings.sort_by_key(|(_, reading)| test_run::aggregate_rank(reading));
+        readings
+    }
+
+    /// The one test-run reading the aggregate JSON `test_run` object reports:
+    /// the most telling of [`Self::unrun_test_receipts`].
+    pub(crate) fn unrun_test_receipt(&self) -> Option<(&str, &AgentReceiptReading)> {
+        self.unrun_test_receipts().into_iter().next()
     }
 
     /// #10984: a current gap-bound attempt that finished with its own retained
@@ -581,7 +611,7 @@ fn attempt_receipt(
     match load_attempt_terminal_receipt(root, manifest) {
         AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
             path,
-            reading: AgentReceiptReading::from_value(&value),
+            reading: test_run::issued_reading(manifest, &value),
         },
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
@@ -875,6 +905,7 @@ fn status_repair_attempt(
             }
         }),
         diverged_recovery,
+        focused_recovery: focused_receipt_recovery(root, manifest),
     }
 }
 
@@ -1145,7 +1176,34 @@ fn finished_attempt_warnings(
                         ),
                         None => String::new(),
                     }
-                ),
+                ) + &match attempt.focused_recovery {
+                    // An interrupted focused finish has no issued receipt;
+                    // say why. A retryable finish names only the same-result
+                    // retry; any other names the new-attempt route the gate
+                    // admits.
+                    Some(recovery) if recovery.retry_same_result => {
+                        format!(". {}", recovery.limitation)
+                    }
+                    Some(FocusedRecovery { limitation, .. }) => format!(
+                        ". {limitation}{}",
+                        match gate.check(&attempt.seam_id) {
+                            Some(refusal) => format!(
+                                ". {}",
+                                repair_start_withheld_note(root_display, &attempt.seam_id, &refusal)
+                            ),
+                            None => format!(
+                                ". Start a new attempt with `{}`",
+                                new_repair_attempt_command(
+                                    root_display,
+                                    &attempt.seam_id,
+                                    attempt.gap_base.as_deref(),
+                                    store_flag
+                                )
+                            ),
+                        }
+                    ),
+                    None => String::new(),
+                },
             }),
             _ => {}
         }
@@ -2640,7 +2698,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
-        "test_run": report.unrun_test_receipt().map(test_not_run_json),
+        "test_run": report.unrun_test_receipt().map(|(attempt_id, reading)| test_run::aggregate_test_run_json(attempt_id, reading)),
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
     });
     serde_json::to_string_pretty(&value)
@@ -2666,11 +2724,19 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         None if nothing_started => rendered.push_str("No repair in progress.\n"),
         None => rendered.push_str("Seam: unknown\n"),
     }
-    if let Some(reading) = report.unrun_test_receipt() {
-        rendered.push_str(&format!(
-            "Test run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+    let test_runs = report.unrun_test_receipts();
+    match test_runs.as_slice() {
+        [(_, reading)] => rendered.push_str(&format!("{}\n", test_run::test_run_line(reading))),
+        // #14146: several finished attempts each speak for themselves, so a
+        // reported failure on one is never hidden behind another's reading.
+        several => {
+            for (attempt_id, reading) in several {
+                rendered.push_str(&format!(
+                    "{}\n",
+                    test_run::attempt_test_run_line(attempt_id, reading)
+                ));
+            }
+        }
     }
 
     if !nothing_started {
@@ -3188,7 +3254,7 @@ pub(crate) fn build_agent_attempt_status(
         _ => {}
     }
     let mut limitations = manifest.limitations.clone();
-    if let Some(limitation) = focused_receipt_recovery_limitation(&manifest) {
+    if let Some(limitation) = focused_receipt_recovery_limitation(root, &manifest) {
         limitations.push(limitation.to_string());
     }
     if matches!(
@@ -3290,8 +3356,32 @@ fn corrupt_attempt_status(
 /// Status cannot assume the shared receipt is the accepted one; the after
 /// phase verifies the exact durable digests before recovering it.
 pub(crate) fn focused_receipt_recovery_limitation(
+    root: &Path,
     manifest: &RepairAttemptManifest,
 ) -> Option<&'static str> {
+    focused_receipt_recovery(root, manifest).map(|recovery| recovery.limitation)
+}
+
+/// The recovery route for an interrupted focused finish, matching what the
+/// after phase enforces: it recovers only a durable-v1 finish with no
+/// evaluation or an accepted one whose receipt and verify files exist with the
+/// accepted digests, and only when re-run with the same `--test-result FILE`.
+pub(crate) fn focused_receipt_recovery(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Option<FocusedRecovery> {
+    let new_attempt = |limitation| {
+        Some(FocusedRecovery {
+            limitation,
+            retry_same_result: false,
+        })
+    };
+    let retry = |limitation| {
+        Some(FocusedRecovery {
+            limitation,
+            retry_same_result: true,
+        })
+    };
     if manifest.state != RepairAttemptState::ReadyToFinish
         || !manifest.terminal_artifacts.is_empty()
     {
@@ -3299,24 +3389,40 @@ pub(crate) fn focused_receipt_recovery_limitation(
     }
     let pending = manifest.after.as_ref()?.focused_result.as_ref()?;
     if manifest.last_after_refusal.is_some() {
-        return Some(
+        return new_attempt(
             "the focused finish ended in a recorded refusal; inspect that refusal and start a new attempt",
         );
     }
     if pending.receipt_protocol.as_deref() != Some("durable-v1") {
-        return Some(
-            "the focused receipt recovery protocol is unknown; inspect the attempt and start a new attempt",
+        return new_attempt(
+            "the focused receipt recovery protocol is not durable-v1, so the after phase cannot restore it; start a new attempt",
         );
     }
     match &manifest.focused_receipt_evaluation {
-        None => Some(
-            "no focused receipt evaluation is recorded yet; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        None => retry(
+            "no focused receipt evaluation is recorded yet; if the after phase is no longer running, retry with the same --test-result FILE and, for a trust-bound attempt, its original edit authority",
         ),
-        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => Some(
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => new_attempt(
             "focused receipt evaluation has started but no outcome is recorded; if the after phase is no longer running, inspect the attempt and start a new attempt",
         ),
-        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => Some(
-            "the focused receipt decision was committed; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+            if !crate::app::repair_attempt::focused_accepted_projection_present(root, manifest) =>
+        {
+            new_attempt(
+                "the focused receipt decision was committed but its receipt and verify files are not present with the accepted digests, so the after phase cannot recover it; if the after phase is no longer running, start a new attempt",
+            )
+        }
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+            if crate::app::repair_attempt::trust_apply_record_blocks_focused_recovery(
+                root, manifest,
+            ) =>
+        {
+            new_attempt(
+                "the focused receipt decision was committed, but this trust-bound attempt's apply record path is already occupied, so the after phase cannot recover it; if the after phase is no longer running, start a new attempt",
+            )
+        }
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => retry(
+            "the focused receipt decision was committed; if the after phase is no longer running, retry with the same --test-result FILE (an after phase without it is refused) and, for a trust-bound attempt, its original edit authority; recovery rechecks that result against the current HEAD, the attempt and its test file and the exact committed receipt and verify bytes",
         ),
     }
 }
@@ -3750,7 +3856,7 @@ pub(crate) fn render_agent_attempt_status_json(
         "canonical_next_action": report.canonical_next_action.as_ref().map(|action| {
             crate::output::next_action::render_next_action_json_value(action)
         }),
-        "test_run": report.test_run.as_ref().map(test_not_run_json),
+        "test_run": report.test_run.as_ref().map(test_run::test_run_json),
         "claim_boundary": report.claim_boundary,
         "limitations": report.limitations,
         "non_claims": report.non_claims,
@@ -3845,10 +3951,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
     }
 
     if let Some(reading) = &report.test_run {
-        rendered.push_str(&format!(
-            "\nTest run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+        rendered.push_str(&format!("\n{}\n", test_run::test_run_line(reading)));
     }
 
     rendered.push_str("\n## Claim Boundary\n\n");
@@ -5646,6 +5749,78 @@ mod tests {
         Ok(())
     }
 
+    /// #13203: an accepted, trust-bound focused finish is recoverable only while
+    /// nothing exists at the apply-record compatibility path, so status offers
+    /// the same-result retry only then and the new-attempt route otherwise.
+    #[test]
+    fn trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied()
+    -> Result<(), String> {
+        use crate::app::repair_attempt::{FocusedReceiptEvaluation, PendingFocusedResult};
+        use sha2::{Digest, Sha256};
+        let digest = |bytes: &[u8]| {
+            let mut rendered = String::from("sha256:");
+            for byte in Sha256::digest(bytes) {
+                rendered.push_str(&format!("{byte:02x}"));
+            }
+            rendered
+        };
+        let root = unique_agent_status_test_dir("trust-apply-occupied");
+        let receipt = b"{\"receipt\":true}\n";
+        let verify = b"{\"verify\":true}\n";
+        write_file(
+            &root.join(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            std::str::from_utf8(receipt).map_err(|error| error.to_string())?,
+        )?;
+        write_file(
+            &root.join(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            std::str::from_utf8(verify).map_err(|error| error.to_string())?,
+        )?;
+        let mut manifest = ready_to_finish_manifest()?;
+        if let Some(after) = manifest.after.as_mut() {
+            after.focused_result = Some(PendingFocusedResult {
+                record: "{}".to_string(),
+                custody: "test".to_string(),
+                receipt_protocol: Some("durable-v1".to_string()),
+            });
+        }
+        manifest.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+            receipt_sha256: digest(receipt),
+            verify_sha256: digest(verify),
+        });
+        // Without a trust binding the occupied path is irrelevant.
+        let apply = root.join(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+        write_file(&apply, "{\"earlier\":true}\n")?;
+        let untrusted = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            untrusted.is_some_and(|recovery| recovery.retry_same_result),
+            "{untrusted:?}"
+        );
+        manifest
+            .artifacts
+            .push(crate::app::repair_attempt::RepairAttemptArtifact {
+                role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+                path: "target/ripr/repair-attempts/x/artifacts/binding.json".to_string(),
+                sha256: "sha256:binding".to_string(),
+                bytes: 1,
+            });
+        let occupied = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            occupied.is_some_and(|recovery| !recovery.retry_same_result
+                && recovery
+                    .limitation
+                    .contains("apply record path is already occupied")),
+            "{occupied:?}"
+        );
+        std::fs::remove_file(&apply).map_err(|error| error.to_string())?;
+        let free = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            free.is_some_and(|recovery| recovery.retry_same_result),
+            "{free:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     fn ready_to_finish_manifest() -> Result<RepairAttemptManifest, String> {
         use crate::app::repair_attempt::{RepairAttemptAfter, RepairAttemptId};
         use crate::edit_cage::{EditCageVerdict, EditCageVerdictStatus};
@@ -6251,6 +6426,7 @@ mod tests {
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         }
     }
 
@@ -8028,6 +8204,7 @@ mod tests {
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         }
     }
 
@@ -8040,6 +8217,7 @@ mod tests {
             analysis_outcome_error: None,
             verification_status: None,
             test_changed: None,
+            reported_test_run: None,
         }
     }
 
@@ -8598,6 +8776,104 @@ mod tests {
                     "{label}: human lost the empty next action:\n{human}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #14146: with several finished attempts, the aggregate test-run reading
+    /// names the attempt it speaks for, and one attempt's `none recorded`
+    /// never hides another attempt's caller-reported failure.
+    #[test]
+    fn aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure()
+    -> Result<(), String> {
+        use crate::output::agent_receipt::ReportedTestRun;
+        let issued = |id: &str, run: Option<ReportedTestRun>| {
+            let mut reading = AgentReceiptReading::from_value(&serde_json::json!({
+                "verification": {"status": "verification_not_run"},
+                "test_changed": "tests/p.rs"
+            }));
+            reading.reported_test_run = run;
+            let mut attempt = synthetic_attempt(id, &format!("seam-{id}"), "finished", None);
+            attempt.receipt = AgentStatusAttemptReceipt::Issued {
+                path: format!("{id}/receipt.json"),
+                reading,
+            };
+            attempt
+        };
+        let report_of = |repair_attempts: Vec<AgentStatusRepairAttempt>| AgentStatusReport {
+            root: ".".to_string(),
+            seam: None,
+            artifacts: Vec::new(),
+            repair_attempts,
+            missing_commands: Vec::new(),
+            next_command: None,
+            warnings: Vec::new(),
+        };
+        let failing = ReportedTestRun {
+            file: "tests/p.rs".to_string(),
+            ran: 1,
+            passed: 0,
+            failed: 1,
+        };
+
+        // A (earlier, no run recorded) and B (reported failure): the reading
+        // first in attempt order is A's, which the old aggregate printed alone.
+        let report = report_of(vec![issued("a", None), issued("b", Some(failing.clone()))]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("Test run (attempt `a`): none recorded. ") {
+            return Err(format!("A's reading must name its attempt:\n{markdown}"));
+        }
+        if !markdown.contains(
+            "Test run (attempt `b`): reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (0 passed, 1 failed). The reported run has a failing test",
+        ) {
+            return Err(format!("B's reported failure must be shown:\n{markdown}"));
+        }
+        if markdown.find("attempt `b`") > markdown.find("attempt `a`") {
+            return Err(format!("the reported failure must come first:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b"
+            || json["test_run"]["status"] != "caller_reported"
+            || json["test_run"]["failed"] != 1
+        {
+            return Err(format!(
+                "JSON must report B's failure: {}",
+                json["test_run"]
+            ));
+        }
+
+        // One finished attempt keeps the unlabeled line; JSON names it.
+        let report = report_of(vec![issued("a", None)]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("\nTest run: none recorded. ")
+            || markdown.contains("Test run (attempt")
+        {
+            return Err(format!("one attempt keeps the plain line:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "a" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "JSON must name the one attempt: {}",
+                json["test_run"]
+            ));
+        }
+
+        // A reported pass ranks behind a missing run on another attempt.
+        let passing = ReportedTestRun {
+            passed: 1,
+            failed: 0,
+            ..failing
+        };
+        let report = report_of(vec![issued("a", Some(passing)), issued("b", None)]);
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "a missing run outranks a reported pass: {}",
+                json["test_run"]
+            ));
         }
         Ok(())
     }

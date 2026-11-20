@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:123
   Static exposure: unrevealed (severity: warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
@@ -43,7 +43,7 @@ Write a test for it:
 
 Hidden:
   15 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:45-48 (exposed); 4 changed behaviors in `try_parse_summary`; kinds: error_path, return_value; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:45, 48 (exposed); 4 changed behaviors in `try_parse_summary`; kinds: error_path, return_value; reason: Strong oracle found: exact error variant assertion
     - ./src/lib.rs:56 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
     - ./src/lib.rs:56 (weak); kind: return_value; reason: same as above
     - ./src/lib.rs:67 (weak); kind: error_path; reason: same as above

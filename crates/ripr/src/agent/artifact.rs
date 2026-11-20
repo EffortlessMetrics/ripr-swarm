@@ -336,7 +336,7 @@ fn analysis_artifact_metadata(
         // from its own bytes (#7369). It is stamped once, here, so the
         // two-pass content-hash scheme keeps it fixed across both passes
         // (unlike `content_sha256`, it never changes after hashing).
-        "generated_at": artifact_generated_at_unix_ms(),
+        "generated_at": artifact_generated_at_unix_ms()?,
         "producer": {
             "tool": "ripr",
             "version": env!("CARGO_PKG_VERSION"),
@@ -363,14 +363,57 @@ fn repo_exposure_snapshot_identity(input_identity: &str, repository_head: &str) 
     format!("snapshot:{input_identity};revision:{repository_head}")
 }
 
+/// Environment variable that pins `artifact.generated_at` (#14230).
+const GENERATED_AT_ENV: &str = "RIPR_GENERATED_AT";
+
 /// The artifact's wall-clock generation stamp, `unix_ms:<millis>` like the
 /// gap-decision ledger. A clock that predates the Unix epoch reports an
 /// explicit `unavailable` instead of failing artifact production: the
 /// timestamp is disclosure, not integrity authority.
-fn artifact_generated_at_unix_ms() -> String {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(duration) => format!("unix_ms:{}", duration.as_millis()),
-        Err(_) => "unavailable".to_string(),
+///
+/// `RIPR_GENERATED_AT` replaces the clock with a caller-chosen stamp so two
+/// runs over the same inputs produce the same artifact bytes, digest
+/// included (#14230).
+fn artifact_generated_at_unix_ms() -> Result<String, String> {
+    artifact_generated_at_from(
+        std::env::var(GENERATED_AT_ENV),
+        || match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => format!("unix_ms:{}", duration.as_millis()),
+            Err(_) => "unavailable".to_string(),
+        },
+    )
+}
+
+/// Resolve the stamp from the override value, falling back to `clock` only
+/// when the variable is unset or empty. A set value that is not the canonical
+/// `unix_ms:<millis>` spelling is refused: silently stamping the wall clock
+/// would hand a caller who asked for reproducible bytes a differing artifact.
+fn artifact_generated_at_from(
+    override_value: Result<String, std::env::VarError>,
+    clock: impl FnOnce() -> String,
+) -> Result<String, String> {
+    let value = match override_value {
+        Err(std::env::VarError::NotPresent) => return Ok(clock()),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!(
+                "{GENERATED_AT_ENV} is not valid Unicode; set it to unix_ms:<milliseconds since the Unix epoch> or unset it"
+            ));
+        }
+        Ok(value) => value,
+    };
+    if value.is_empty() {
+        return Ok(clock());
+    }
+    let canonical = value
+        .strip_prefix("unix_ms:")
+        .and_then(|digits| digits.parse::<u64>().ok())
+        .map(|millis| format!("unix_ms:{millis}"));
+    if canonical.as_deref() == Some(value.as_str()) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{GENERATED_AT_ENV} must be unix_ms:<milliseconds since the Unix epoch>, for example unix_ms:1778179200000; got {value:?}. Unset it to stamp the current time"
+        ))
     }
 }
 
@@ -2466,6 +2509,67 @@ fn replace_content_commitment(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn generated_at_override_is_exact_or_refused_and_only_unset_reads_the_clock() {
+        use std::env::VarError;
+        let clock = || "unix_ms:42".to_string();
+        // Unset and empty fall back to the clock.
+        assert_eq!(
+            super::artifact_generated_at_from(Err(VarError::NotPresent), clock),
+            Ok("unix_ms:42".to_string())
+        );
+        assert_eq!(
+            super::artifact_generated_at_from(Ok(String::new()), clock),
+            Ok("unix_ms:42".to_string())
+        );
+        // A canonical value is used verbatim and the clock is not consulted.
+        for accepted in [
+            "unix_ms:0",
+            "unix_ms:1778179200000",
+            "unix_ms:18446744073709551615",
+        ] {
+            assert_eq!(
+                super::artifact_generated_at_from(Ok(accepted.to_string()), || {
+                    "clock-consulted".to_string()
+                }),
+                Ok(accepted.to_string()),
+                "{accepted}"
+            );
+        }
+        // Anything else is refused by name, never replaced by the clock.
+        for refused in [
+            "1778179200000",
+            "unix_ms:",
+            "unix_ms:-1",
+            "unix_ms:+1",
+            "unix_ms:007",
+            "unix_ms:1.5",
+            "unix_ms:18446744073709551616",
+            " unix_ms:1",
+            "unix_ms:1 ",
+            "UNIX_MS:1",
+            "unix_s:1",
+            "2026-05-08T00:00:00Z",
+            "unavailable",
+        ] {
+            let result = super::artifact_generated_at_from(Ok(refused.to_string()), clock);
+            assert!(
+                matches!(&result, Err(message) if message.contains("RIPR_GENERATED_AT") && message.contains(&format!("{refused:?}"))),
+                "{refused:?} must be refused naming the variable and value, got {result:?}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let raw = std::ffi::OsString::from_vec(vec![0xff]);
+            let result = super::artifact_generated_at_from(Err(VarError::NotUnicode(raw)), clock);
+            assert!(
+                matches!(&result, Err(message) if message.contains("RIPR_GENERATED_AT")),
+                "{result:?}"
+            );
+        }
+    }
     fn findings_fixture(
         document: serde_json::Value,
     ) -> Result<(Option<CheckFindingsOutcome>, Vec<CheckFindingsFinding>), String> {

@@ -51,6 +51,7 @@ pub(crate) use discover::{
     limitations_for_unreadable_unchanged_paths, refuse_unreadable_dir_over_changed_path,
     split_unreadable_unchanged_files, supplement_absent_file_limitations,
     unreadable_paths_partial_reason, worktree_contains_regular_source_file,
+    worktree_regular_source_file,
 };
 pub(crate) use discover::{is_ignored_dir_name, path_enters_ignored_dir};
 pub(crate) use named_dependent_scope::{

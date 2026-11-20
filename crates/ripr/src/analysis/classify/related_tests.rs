@@ -32,9 +32,11 @@ use std::path::Path;
 
 mod drop_dispatch;
 mod equality_dispatch;
+mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
@@ -151,6 +153,14 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Changed single-line constants with their old and new declarations
     /// (RIPR-SPEC-0048), for the value-flow check.
     changed_consts: super::ChangedConsts,
+    /// #14852: whether the diff's base side may rebind `vec` or a standard
+    /// assertion macro ([`super::base_side_may_rebind_trusted_macros`]).
+    /// `None` (not computed) reads as yes.
+    base_may_rebind_trusted_macros: Option<bool>,
+    /// #14852: the run's out-of-line `mod` declarations and the diff's
+    /// changes to them, for the shared base-owner identity. Unread (every
+    /// owner refuses) unless the run read them.
+    module_declarations: Option<crate::analysis::diff::ModuleDeclarations>,
 }
 
 impl RelatedTestCandidateIndex {
@@ -321,6 +331,61 @@ impl RelatedTestCandidateIndex {
         &self.changed_consts
     }
 
+    /// Record the diff-wide base-side macro rebinding answer (#14852).
+    pub(in crate::analysis) fn with_base_may_rebind_trusted_macros(
+        mut self,
+        rebinds: bool,
+    ) -> Self {
+        self.base_may_rebind_trusted_macros = Some(rebinds);
+        self
+    }
+
+    /// Record the run's module declaration reading (#14852).
+    pub(in crate::analysis) fn with_module_declarations(
+        mut self,
+        modules: crate::analysis::diff::ModuleDeclarations,
+    ) -> Self {
+        self.module_declarations = Some(modules);
+        self
+    }
+
+    /// #15104: record a module declaration reading of every index file that
+    /// may declare a module, for a run without a diff (a repo scan): no
+    /// declaration changed.
+    pub(in crate::analysis) fn with_unchanged_module_declarations(
+        self,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> Self {
+        let modules = crate::analysis::diff::ModuleDeclarations::read(
+            index
+                .files()
+                .iter()
+                .filter(|(_, facts)| {
+                    !facts.module_declarations.is_empty()
+                        || crate::analysis::diff::may_declare_module(&facts.source)
+                })
+                .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+            std::iter::empty(),
+        );
+        self.with_module_declarations(modules)
+    }
+
+    /// The run's module declaration reading; an unread one when the run did
+    /// not compute it.
+    pub(in crate::analysis) fn module_declarations(
+        &self,
+    ) -> &crate::analysis::diff::ModuleDeclarations {
+        static UNREAD: std::sync::LazyLock<crate::analysis::diff::ModuleDeclarations> =
+            std::sync::LazyLock::new(crate::analysis::diff::ModuleDeclarations::unread);
+        self.module_declarations.as_ref().unwrap_or(&UNREAD)
+    }
+
+    /// Whether the diff's base side may rebind `vec` or a standard assertion
+    /// macro; yes when the run did not compute it.
+    pub(in crate::analysis) fn base_may_rebind_trusted_macros(&self) -> bool {
+        self.base_may_rebind_trusted_macros.unwrap_or(true)
+    }
+
     /// Fold in the macro bindings of files a narrowed diff index withheld
     /// (#5320), so the owner-pin ambiguity unions match the full selection.
     pub(in crate::analysis) fn with_withheld_macro_bindings(
@@ -397,8 +462,8 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator, loop and scope-end syntax has no token worth indexing;
-        // same-file tests of such an impl are scanned in full.
+        // Operator, loop, scope-end and `str::parse` syntax has no token worth
+        // indexing; same-file tests of such an impl are scanned in full.
         if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
         }
@@ -1397,6 +1462,24 @@ fn find_related_tests_with_candidates<'a>(
             && !calls_helper_entry
             && call_identity.as_ref().is_some_and(|identity| {
                 identity.resolve_test(test, index) == super::CallTarget::Other
+            })
+        {
+            continue;
+        }
+        // #14087: with or without a rival, a bare call that a test-local
+        // `const`, `static` or tuple `struct` of the owner's name binds runs
+        // that item, not the owner. A test that also calls another hop
+        // caller of the helper chain keeps its relation; the test's own
+        // name-only hop (its body spells the owner's name) is not one.
+        if calls_owner
+            && owner_fn.is_some_and(|owner| {
+                super::call_identity::test_calls_only_a_local_value_item(index, owner, test)
+            })
+            && !helper_chain.is_some_and(|chain| {
+                chain.hops.iter().any(|hop| {
+                    !(hop.caller.file == test.file && hop.caller.start_line == test.start_line)
+                        && test.calls.iter().any(|call| call.name == hop.caller.name)
+                })
             })
         {
             continue;
@@ -3340,11 +3423,41 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
         return false;
     }
+    // #15073: a lone `use <lib>::*;` glob delivers a crate-root entry the way
+    // `use <lib>::<entry>;` does: the entry is defined in `src/lib.rs`, or the
+    // root re-exports it exactly once, and no other glob in the test file or
+    // body could also bring a same-named item in.
+    let globs = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .into_iter()
+            .filter(|import| import.path.ends_with('*'))
+            .collect::<Vec<_>>()
+    };
+    // The test file's text already holds the test body, so its globs are
+    // counted once from the file.
+    let all_globs = globs(&facts.source);
+    let root_glob_delivers_entry = matches!(all_globs.as_slice(), [only] if {
+        let segments: Vec<String> = only
+            .path
+            .trim_start_matches("::")
+            .split("::")
+            .map(unraw)
+            .collect();
+        only.alias.is_none()
+            && !in_src_unit_test
+            && segments.len() == 2
+            && segments[0] == crate_name
+            && segments[1] == "*"
+    }) && entry_module
+        .as_deref()
+        .is_some_and(|module| module_bound && (module.is_empty() || root_reexports_entry(module)))
+        && !test_file_declares_item_named(&facts.source, &caller.name)
+        && glob_and_test_share_the_file_scope(&facts.source, &test.name);
     let rebinds = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
             .any(|import| {
-                import.path.ends_with('*')
+                (import.path.ends_with('*') && !root_glob_delivers_entry)
                     || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
                     || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
@@ -3357,6 +3470,84 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !rebinds(&facts.source)
         && !rebinds(&test.body)
+}
+
+/// Whether the test file's one glob import is a top-level item of the file
+/// and the test `test_name` is a top-level function of the same file, so the
+/// glob is in scope at the test's calls. A glob in a sibling module, a nested
+/// block or the test's own body, a test inside a module, or a second `fn`
+/// of the test's name anywhere in the file, declines (#15073).
+fn glob_and_test_share_the_file_scope(source: &str, test_name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let mut top_level_globs = 0usize;
+    let mut top_level_test = false;
+    for item in parse.tree().items() {
+        match &item {
+            ast::Item::Use(use_item) => {
+                top_level_globs +=
+                    super::reveal::flattened_use_paths(&use_item.syntax().text().to_string())
+                        .iter()
+                        .filter(|import| import.path.ends_with('*'))
+                        .count();
+            }
+            ast::Item::Fn(function) => {
+                top_level_test |= function
+                    .name()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == test_name);
+            }
+            _ => {}
+        }
+    }
+    // The bare name is the only identity the test carries here, so a
+    // same-named function anywhere else in the file (a decoy beside a nested
+    // test) could be the one matched: the name must name exactly one `fn`.
+    let functions_so_named = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == test_name)
+        })
+        .count();
+    top_level_globs == 1 && top_level_test && functions_so_named == 1
+}
+
+/// Whether the test file declares any item named `name` at any depth (a `fn`,
+/// a tuple or unit `struct`, an enum, a `const`/`static`, a module, a macro),
+/// or does not parse cleanly. A file item beats a glob import, so a root glob
+/// delivers the library's entry only when no such item exists (#15073).
+fn test_file_declares_item_named(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    parse.tree().syntax().descendants().any(|node| {
+        let Some(item) = ast::Item::cast(node) else {
+            return false;
+        };
+        let named = match &item {
+            ast::Item::Fn(i) => i.name(),
+            ast::Item::Const(i) => i.name(),
+            ast::Item::Static(i) => i.name(),
+            ast::Item::Struct(i) => i.name(),
+            ast::Item::Enum(i) => i.name(),
+            ast::Item::Union(i) => i.name(),
+            ast::Item::Trait(i) => i.name(),
+            ast::Item::TypeAlias(i) => i.name(),
+            ast::Item::Module(i) => i.name(),
+            ast::Item::MacroRules(i) => i.name(),
+            ast::Item::MacroDef(i) => i.name(),
+            _ => None,
+        };
+        named.is_some_and(|found| found.text().trim_start_matches("r#") == name)
+    })
 }
 
 /// Whether the test file declares a `const` or `static` named `name` anywhere
@@ -4757,7 +4948,9 @@ pub(super) fn path_is_absolute_form(path: &Path) -> bool {
 }
 
 /// The workspace-package scope of a source path (`crates/foo/src/lib.rs`
-/// -> `crates/foo/`), or `None` when the path carries no package scope:
+/// -> `crates/foo/`; a relative path keeps the directories above `crates/`,
+/// so `rust/crates/foo/src/lib.rs` -> `rust/crates/foo/`, #15299), or `None`
+/// when the path carries no package scope:
 /// single-crate relative paths (`src/lib.rs`, `tests/basic.rs`) and
 /// absolute paths are unscopable (#3235). Shared with the classifier's
 /// evidence stage, whose cross-package same-name defeat gate (#3731 review
@@ -4766,12 +4959,24 @@ pub(in crate::analysis) fn package_prefix(path: &Path) -> Option<String> {
     let normalized = normalize_path(path);
     let crate_relative = normalized
         .strip_prefix("crates/")
-        .or_else(|| normalized.rsplit_once("/crates/").map(|(_, rest)| rest));
-    if let Some(crate_relative) = crate_relative
+        .map(|rest| ("", rest))
+        .or_else(|| normalized.rsplit_once("/crates/"));
+    if let Some((leading, crate_relative)) = crate_relative
         && let Some((crate_name, package_relative)) = crate_relative.split_once('/')
         && (package_relative.starts_with("src/") || package_relative.starts_with("tests/"))
     {
-        return Some(format!("crates/{crate_name}/"));
+        // Keep the directories above `crates/`: a workspace nested below the
+        // analysis root (`rust/crates/x`) or two workspaces that both have a
+        // `crates/x` are distinct packages, not one.
+        if path_is_absolute_form(path) {
+            return Some(format!("crates/{crate_name}/"));
+        }
+        let leading = if leading.is_empty() {
+            String::new()
+        } else {
+            format!("{leading}/")
+        };
+        return Some(format!("{leading}crates/{crate_name}/"));
     }
     if path_is_absolute_form(path) {
         return None;
@@ -5926,6 +6131,31 @@ fn qualified_self_type_matches(
         && compact_impl_type_name(trait_ty).as_deref() == Some(impl_trait)
 }
 
+/// Byte range of the first argument of the call whose name ends at
+/// `after_name`: from just past the `(` to the first top-level `,` or the
+/// closing `)`. `None` when no `(` follows the name or the list never closes.
+fn first_argument_span(text: &str, after_name: usize) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut open = after_name;
+    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+        open += 1;
+    }
+    if bytes.get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return Some((open + 1, index)),
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => return Some((open + 1, index)),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Whether the first argument of the call whose name ends at `after_name`
 /// has type `impl_type`: a suffixed literal (`&-0.0f64`), a `let` binding
 /// typed as `impl_type`, or a struct, tuple-struct or variant literal
@@ -5939,35 +6169,10 @@ fn first_argument_has_type(
     scope_body: &str,
     call_at: usize,
 ) -> bool {
-    let bytes = text.as_bytes();
-    let mut open = after_name;
-    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
-        open += 1;
-    }
-    if bytes.get(open) != Some(&b'(') {
-        return false;
-    }
-    let mut depth = 0usize;
-    let mut end = None;
-    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            b')' | b']' | b'}' => depth -= 1,
-            b',' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            _ => {}
-        }
-    }
-    let Some(end) = end else {
+    let Some((start, end)) = first_argument_span(text, after_name) else {
         return false;
     };
-    let arg = text[open + 1..end].trim();
+    let arg = text[start..end].trim();
     let arg = arg.strip_prefix('&').map_or(arg, str::trim_start);
     let arg = arg.strip_prefix("mut ").map_or(arg, str::trim_start);
     let literal = arg.strip_prefix('-').map_or(arg, str::trim_start);
@@ -8183,6 +8388,19 @@ pub(in crate::analysis) fn owner_impl_identity_shadowed(
     impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
 }
 
+/// Whether every call of `owner`'s name in `test` provably selects a sibling
+/// impl of the same generic trait on the same type (#14074), so the test
+/// cannot run `owner`. The seam-side relation applies the same refusal the
+/// finding-level relation applies to a direct owner call. Fails open: any
+/// part that is not established keeps the credit.
+pub(in crate::analysis) fn owner_call_selects_generic_sibling(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+}
+
 /// Whether a same-named `trait` declared in the test's own module scope (or at
 /// the root of an out-of-line parent module) shadows a trait-declaration
 /// default-method owner (#7123, #7087). The trait name comes from the
@@ -8350,6 +8568,15 @@ fn owner_call_relation_reason_gated(
     // rebinds the receiver too (#7067), in either spelling, exactly as it
     // refuses the owner pin.
     if impl_identity_is_shadowed(test, owner, &impl_type, test_source, index) {
+        return RelationReason::WeakTokenSubstring;
+    }
+    // #14074: one type implementing a generic trait twice (`From<u32>` and
+    // `From<&str>`) shares a self type and a method name across both impls,
+    // so nothing below tells them apart. A test whose every call passes a
+    // value written as a sibling's trait argument cannot run this owner.
+    if indexed_same_name_count > 1
+        && generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+    {
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
@@ -9806,6 +10033,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["value".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -9920,6 +10148,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -9978,6 +10207,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
@@ -14601,6 +14831,20 @@ fn crate_c_score_test() {
         assert_eq!(
             package_prefix(Path::new("crates/ripr/examples/sample/src/lib.rs")).as_deref(),
             Some("crates/ripr/examples/sample/")
+        );
+        // A workspace below the analysis root keeps the directories above
+        // `crates/`, so two workspaces' `crates/alpha` stay two packages (#15299).
+        assert_eq!(
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs")).as_deref(),
+            Some("w2/crates/alpha/")
+        );
+        assert_eq!(
+            package_prefix(Path::new("rust/crates/alpha/tests/a.rs")).as_deref(),
+            Some("rust/crates/alpha/")
+        );
+        assert_ne!(
+            package_prefix(Path::new("w1/crates/alpha/src/lib.rs")),
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs"))
         );
     }
 

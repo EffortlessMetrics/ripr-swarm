@@ -389,6 +389,23 @@ pub(in crate::analysis) fn constant_tail_witness(
     direct_tail_witness(probe, owner, sinks, tail_line, limitation)
 }
 
+/// #14852: a changed whole-body constant tail the classifier read as
+/// replacing a different base-side constant tail
+/// ([`super::ConstantTailChange`]). Nothing sits between the tail and the
+/// owner's return, so the edge is the same direct-return edge as
+/// [`constant_tail_witness`]; it completes only for the change's own sink.
+pub(in crate::analysis) fn constant_tail_change_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+    change: &super::ConstantTailChange,
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    direct_tail_witness(probe, owner, sinks, change.line, "constant_tail_change")
+}
+
 /// #13037 Defect A: a changed early `return <decimal scalar literal>;` whose
 /// sibling exits build only different scalar literals is an owner-bound exit
 /// for the returned value, exactly like a constant tail: the changed value
@@ -655,6 +672,20 @@ fn short_circuit_owner_tail_line(
 ) -> Option<usize> {
     super::owner_pin::short_circuit::ShortCircuitTail::parse(&owner.body, changed)?;
     whole_body_tail_line(owner, identity)
+}
+
+/// #15104: whether `probe` changes its owner's whole-body constant tail
+/// (the shape the constant arm of [`constant_tail_witness`] reads, and the
+/// one every direct-return edge on such a tail rests on). A cheap
+/// owner-body reading, so the classifier asks the whole-file gate decision
+/// only for such probes.
+pub(in crate::analysis) fn changes_constant_owner_tail(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+) -> bool {
+    probe.family == ProbeFamily::ReturnValue
+        && probe.owner.as_ref() == Some(&owner.id)
+        && constant_owner_tail_line(owner, &normalize_semantic_text(&probe.expression)).is_some()
 }
 
 /// The line of the owner's body when that body is exactly one constant

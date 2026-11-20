@@ -19,7 +19,10 @@
 //! alone earn `exposed`.
 
 use super::literal_patch::{literal_patch_calls, literal_patch_targets, mentions_substitution};
-use super::related_tests::{PythonRelatedCandidate, is_python_identifier_char, owner_module_paths};
+use super::related_tests::{
+    PythonRelatedCandidate, is_python_identifier_char, module_name_identifies_owner_for,
+    owner_module_paths,
+};
 use super::static_limits::test_has_mocked_module;
 use super::{PythonOwner, PythonTest};
 
@@ -146,6 +149,10 @@ pub(super) fn callee_only_patch(
             || !module_paths
                 .iter()
                 .any(|module| *module == prefix.join("."))
+            // The prefix must also identify the owner's module for this test:
+            // a test-local module of that name (#13706) or a rival project's
+            // module (#4566) is what `patch` would replace instead (#14035).
+            || !module_name_identifies_owner_for(owner, &prefix.join("."), &test.file)
         {
             return false;
         }

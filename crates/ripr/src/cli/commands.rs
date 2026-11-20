@@ -2,8 +2,8 @@ use crate::analysis;
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
-    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
-    reconcile_root,
+    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_path_value,
+    expect_value, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -14,6 +14,17 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
+
+/// Missing-required-input refusals (#14076). Each names where the value comes
+/// from, so the reader is not left at "requires X". The exact text is pinned
+/// by `tests/cli_error_message_snapshots.rs`.
+const ZERO_STATUS_REQUIRES_DELTA: &str = "zero status requires --delta <path>; pass the baseline debt delta JSON that `ripr baseline diff` writes, for example `--delta target/ripr/reports/baseline-debt-delta.json`";
+const CALIBRATE_REQUIRES_MUTANTS_JSON: &str = "calibrate cargo-mutants requires --mutants-json <path>; run `cargo mutants` first, then pass its `mutants.out` directory or `mutants.out/outcomes.json`";
+const CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON: &str = "calibrate cargo-mutants requires --repo-exposure-json <path>; capture one with `ripr check --format repo-exposure-json > repo-exposure.json`, then pass `--repo-exposure-json repo-exposure.json`";
+const PR_LEDGER_REQUIRES_PR_NUMBER: &str = "pr-ledger record requires --pr-number <value>; pass the pull request number or a local identifier, for example `--pr-number 123`";
+const PR_LEDGER_REQUIRES_BASE: &str = "pr-ledger record requires --base <revision>; pass the pull request's base commit, for example `--base origin/main`";
+const PR_LEDGER_REQUIRES_HEAD: &str = "pr-ledger record requires --head <revision>; pass the pull request's head commit, for example `--head HEAD`";
+const PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT: &str = "pr-review front-panel requires at least one explicit artifact input; pass one, for example `--pr-guidance target/ripr/review/comments.json` (run `ripr help pr-review` for the list)";
 
 #[path = "commands/agent.rs"]
 mod agent;
@@ -269,7 +280,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     let options = parse_evidence_health_options(args)?;
     if !options.root.is_dir() {
         return Err(format!(
-            "evidence-health root {} is not a directory",
+            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
             options.root.display()
         ));
     }
@@ -951,11 +962,9 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
         i += 1;
     }
 
-    let mutants_json = mutants_json
-        .ok_or_else(|| "calibrate cargo-mutants requires --mutants-json <path>".to_string())?;
-    let repo_exposure_json = repo_exposure_json.ok_or_else(|| {
-        "calibrate cargo-mutants requires --repo-exposure-json <path>".to_string()
-    })?;
+    let mutants_json = mutants_json.ok_or_else(|| CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())?;
+    let repo_exposure_json =
+        repo_exposure_json.ok_or_else(|| CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())?;
     if let Some(out) = out.as_deref() {
         refuse_output_naming_input(
             "calibrate cargo-mutants",
@@ -1169,7 +1178,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
                 let reconciled = reconcile_root(
                     &root,
                     root_explicit,
-                    expect_value(args, i, "--root")?,
+                    expect_path_value(args, i, "--root")?,
                     "evidence-health",
                 )?;
                 root = reconciled;
@@ -1177,15 +1186,15 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
             }
             "--out" => {
                 i += 1;
-                out = PathBuf::from(expect_value(args, i, "--out")?);
+                out = PathBuf::from(expect_path_value(args, i, "--out")?);
             }
             "--out-md" => {
                 i += 1;
-                out_md = PathBuf::from(expect_value(args, i, "--out-md")?);
+                out_md = PathBuf::from(expect_path_value(args, i, "--out-md")?);
             }
             "--mutation-calibration" => {
                 i += 1;
-                mutation_calibration = Some(PathBuf::from(expect_value(
+                mutation_calibration = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--mutation-calibration",
@@ -1265,7 +1274,7 @@ fn parse_ripr_zero_status_options(args: &[String]) -> Result<RiprZeroStatusOptio
         i += 1;
     }
 
-    let delta = delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?;
+    let delta = delta.ok_or_else(|| ZERO_STATUS_REQUIRES_DELTA.to_string())?;
     refuse_output_naming_input(
         "zero status",
         &[("--out", &out), ("--out-md", &out_md)],
@@ -1497,10 +1506,9 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
     }
 
     Ok(PrEvidenceLedgerOptions {
-        pr_number: pr_number
-            .ok_or_else(|| "pr-ledger record requires --pr-number <value>".to_string())?,
-        base: base.ok_or_else(|| "pr-ledger record requires --base <revision>".to_string())?,
-        head: head.ok_or_else(|| "pr-ledger record requires --head <revision>".to_string())?,
+        pr_number: pr_number.ok_or_else(|| PR_LEDGER_REQUIRES_PR_NUMBER.to_string())?,
+        base: base.ok_or_else(|| PR_LEDGER_REQUIRES_BASE.to_string())?,
+        head: head.ok_or_else(|| PR_LEDGER_REQUIRES_HEAD.to_string())?,
         labels,
         gate,
         baseline_delta,
@@ -1833,9 +1841,7 @@ fn parse_pr_review_front_panel_options(
         && coverage_frontier.is_none()
         && receipt.is_none()
     {
-        return Err(
-            "pr-review front-panel requires at least one explicit artifact input".to_string(),
-        );
+        return Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string());
     }
 
     refuse_output_naming_input(
@@ -2806,28 +2812,39 @@ pub(super) fn drill_in_scope_conflict(
     from_artifact: bool,
 ) -> Result<(), String> {
     if committed && worktree {
-        return Err(format!(
-            "{command} --committed and --worktree select different diff sources; pass one"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --committed and --worktree select different diff sources; pass one"
+            ),
         ));
     }
     if committed && diff_file {
-        return Err(format!(
-            "{command} --committed cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!("{command} --committed cannot be combined with --diff"),
         ));
     }
     if committed && from_artifact {
-        return Err(format!(
-            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!(
+                "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     if worktree && diff_file {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!("{command} --worktree cannot be combined with --diff"),
         ));
     }
     if worktree && from_artifact {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     Ok(())
@@ -3198,7 +3215,7 @@ mod tests {
         assert_eq!(pr_review(&args(&[])), Ok(()));
         assert_eq!(
             pr_review(&args(&["front-panel"])),
-            Err("pr-review front-panel requires at least one explicit artifact input".to_string())
+            Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string())
         );
         assert_eq!(
             pr_review(&args(&["bogus"])),
@@ -3247,7 +3264,7 @@ mod tests {
         assert_eq!(zero(&args(&[])), Ok(()));
         assert_eq!(
             zero(&args(&["status"])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             zero(&args(&["unknown"])),
@@ -3255,7 +3272,7 @@ mod tests {
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&[])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&["--delta", ""])),
@@ -4652,7 +4669,7 @@ language = "rust"
                 "--gate",
                 "gate.json"
             ])),
-            Err("pr-ledger record requires --pr-number <value>".to_string())
+            Err(PR_LEDGER_REQUIRES_PR_NUMBER.to_string())
         );
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[
@@ -5692,11 +5709,11 @@ language = "rust"
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--repo-exposure-json", "repo.json"])),
-            Err("calibrate cargo-mutants requires --mutants-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--mutants-json", "mutants.json"])),
-            Err("calibrate cargo-mutants requires --repo-exposure-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())
         );
     }
     #[test]
@@ -6212,11 +6229,16 @@ language = "rust"
         for line in workflow.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with(&format!("{name}:")) {
+                // #5409: a setting's comment can trail its entry on the
+                // same line.
+                if let Some((_, trailing)) = trimmed.split_once(" # ") {
+                    comment.push(trailing);
+                }
                 // An empty block means the comment moved away from the entry
                 // (a blank line between them also lands here). Fail with that
                 // as the reason rather than running `contains` on "".
                 if comment.is_empty() {
-                    return Err(format!("`{name}:` has no comment directly above it"));
+                    return Err(format!("`{name}:` has no comment above or beside it"));
                 }
                 return Ok(comment.join("\n"));
             }
@@ -6853,8 +6875,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 216,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, #11205 added the optional pilot-timeout binding, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
+            line_count <= 150,
+            "generated workflow is {line_count} lines; #5409 set 150 and brought it back there by installing through the release's ripr-check action instead of an inline installer"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -6882,10 +6904,9 @@ language = "rust"
         // the cleanup was meant to remove.
         let cleanup = workflow_step(&workflow, "Remove checked-in RIPR artifacts");
         assert!(cleanup.contains("run: rm -rf target/ripr target/ci"));
-        let install = workflow_step(&workflow, "Install ripr");
-        assert!(
-            install.contains(r#"echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV""#)
-        );
+        // #5409: the analysis step names the restored cache directory itself.
+        let run = workflow_step(&workflow, "Run RIPR");
+        assert!(run.contains("          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache\n"));
         let cache = workflow
             .split("\n\n")
             .find(|block| {
@@ -6910,7 +6931,7 @@ language = "rust"
         let run_at = workflow.find("      - name: Run RIPR\n").unwrap_or(0);
         assert!(
             install_at < cache_at && cache_at < run_at,
-            "the cache restores after the install sets RIPR_CACHE_DIR and before the first analysis"
+            "the cache restores after the install and before the first analysis"
         );
         assert_step_before(
             &workflow,
@@ -6935,16 +6956,21 @@ language = "rust"
         assert!(summary.contains("github.actor != 'dependabot[bot]'"));
         assert!(summary.contains("continue-on-error: true"));
         assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
-        assert!(summary.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(summary.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"));
-        assert!(summary.contains("REPO: ${{ github.repository }}"));
+        // #4452, #5409: the pull request values reach shell through job env,
+        // never as `${{ }}` inside `run:`; the repository is the runner's own
+        // GITHUB_REPOSITORY.
+        assert!(workflow.contains(
+            "    env:\n      PR_NUMBER: ${{ github.event.pull_request.number }}\n      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n    steps:\n"
+        ));
+        assert!(!workflow.contains("REPO: ${{ github.repository }}"));
+        assert!(summary.contains("\"repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments\""));
         assert!(summary.contains("--pull-request \"$PR_NUMBER\" --head-sha \"$PR_HEAD_SHA\""));
         assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
         assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
-        let run = workflow_step(&workflow, "Run RIPR");
         assert_eq!(
-            run, "      - name: Run RIPR\n        run: ripr reports ci-packet --root .",
+            run,
+            "      - name: Run RIPR\n        env:\n          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache\n        run: ripr reports ci-packet --root .",
             "the packet step has no condition or continue-on-error: a required \
              step's failure must fail the job"
         );
@@ -6960,11 +6986,6 @@ language = "rust"
         assert!(existing_comments.contains("env.RIPR_COMMENT_MODE != 'off'"));
         assert!(existing_comments.contains("GH_TOKEN: ${{ github.token }}"));
         assert!(existing_comments.contains("gh api --paginate --slurp"));
-        assert!(existing_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(
-            existing_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
-        );
-        assert!(existing_comments.contains("REPO: ${{ github.repository }}"));
         assert!(existing_comments.contains("pulls/$PR_NUMBER/comments"));
         // The command's default output is the file the packet's plan reads.
         assert!(include_str!("commands/pr_comments_github.rs").contains(
@@ -6978,14 +6999,9 @@ language = "rust"
         assert!(
             publish_comments.contains("hashFiles('target/ripr/review/comment-publish-plan.json')")
         );
-        assert!(publish_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(
-            publish_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
-        );
-        assert!(publish_comments.contains("REPO: ${{ github.repository }}"));
         assert!(publish_comments.contains("--head-sha \"$PR_HEAD_SHA\""));
         assert!(publish_comments.contains(
-            "gh api --method \"$method\" \"repos/$REPO/$endpoint\" --input \"$request\""
+            "gh api --method \"$method\" \"repos/$GITHUB_REPOSITORY/$endpoint\" --input \"$request\""
         ));
 
         // The packet writes the plan the publish step reads, and the comment

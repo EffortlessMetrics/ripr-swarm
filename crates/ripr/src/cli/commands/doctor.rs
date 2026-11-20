@@ -671,6 +671,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             Some(_) => {}
         }
     }
+    // #14114: `ripr check` refuses this root's output location, so the
+    // cache lines below would describe a run that cannot happen.
+    let output_location_refused = match check_named(report, output::doctor::OUTPUT_LOCATION_CHECK) {
+        Some(check) if check.status == output::doctor::DoctorCheckStatus::Fail => {
+            let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+            lines.extend(failure_block(evidence));
+            true
+        }
+        _ => false,
+    };
     if let Err(err) = config {
         let path = display_path(&root.join(CONFIG_FILE_NAME));
         lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
@@ -837,9 +847,19 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     if let Some(line) = join_compact("Toolchains", &toolchains) {
         lines.push(line);
     }
+    // #15195: name the languages a loaded ripr.toml enables when the
+    // shallow root scan finds none, so a monorepo whose projects sit deeper
+    // is not told "none detected" while `check` analyzes them.
+    let configured = match (config, environment.facts.config_defaults.as_ref()) {
+        (Ok(config), Some(defaults)) if defaults.source_path.is_some() => {
+            config.languages().enabled().to_vec()
+        }
+        _ => Vec::new(),
+    };
     lines.extend(detected_languages_lines(
         &environment.facts.detected_languages,
         &environment.facts.unanalyzed_source_languages,
+        &configured,
     ));
     lines.extend(perl_not_enabled_line(
         &environment.facts.detected_languages,
@@ -873,6 +893,11 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         output::doctor::root_unusable_skip_reason(root)
     };
+    let cache_skip_reason = cache_skip_reason.or(if output_location_refused {
+        Some("the default output location is refused (see the `!` line above)")
+    } else {
+        None
+    });
     if let Some(reason) = cache_skip_reason {
         // The default cache lives under the unusable root; a ✓ would claim
         // a usable cache for a root that cannot hold one.
@@ -886,8 +911,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     }
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
-    if !cache.relocated_by_env && !root.is_dir() {
-        // A missing root already failed `root_directory`; do not probe.
+    if (!cache.relocated_by_env && !root.is_dir()) || output_location_refused {
+        // A missing root already failed `root_directory`, and a refused
+        // output location already has its `!` line; do not probe.
     } else if let Some(reason) =
         cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
     {
@@ -1189,7 +1215,20 @@ fn doctor_start_here_lines(
     // first commands on one screen, one of which bounces straight back to the
     // other, is not a route.
     let md = root.join("target/ripr/reports/start-here.md");
-    if md.is_file() {
+    // A blocking recovery outranks packet advice, as on the compact screen:
+    // opening or refreshing the packet cannot help while a `!` check (for
+    // example a refused output location, #14114) stops every command.
+    let packet_recovery = md
+        .is_file()
+        .then(|| output::doctor::safe_next_action_recovery_line(report, first, root))
+        .flatten();
+    if let Some(line) = packet_recovery {
+        lines.push(
+            "- Start-here packet: target/ripr/reports/start-here.md (present; refresh it after the `!` checks pass)"
+                .to_string(),
+        );
+        lines.push(line.to_string());
+    } else if md.is_file() {
         lines.extend(doctor_packet_status_lines(root));
         if root
             .canonicalize()
@@ -1588,12 +1627,27 @@ fn language_runtime_probes_for_detected(
 ///
 /// Renders the same typed entries the JSON document serializes, so the two
 /// surfaces cannot disagree about what was found.
+///
+/// `configured` holds the languages a loaded `ripr.toml` enables (#15195).
+/// The marker scan stays shallow on purpose (#7506), so when it finds
+/// nothing while the config enables languages, the line says where it looked and names the configured languages instead of the bare
+/// "none detected" that reads as "ripr will analyze nothing here".
 fn detected_languages_lines(
     detected: &[output::doctor::DoctorDetectedLanguage],
     unanalyzed: &[output::doctor::DoctorUnanalyzedLanguage],
+    configured: &[LanguageId],
 ) -> Vec<String> {
     let mut lines = Vec::new();
-    if detected.is_empty() {
+    if detected.is_empty() && !configured.is_empty() {
+        let names: Vec<&str> = configured
+            .iter()
+            .map(|language| language.as_str())
+            .collect();
+        lines.push(format!(
+            "- Detected languages: no markers at the root, in src/ or one directory down; {CONFIG_FILE_NAME} enables {}",
+            names.join(", ")
+        ));
+    } else if detected.is_empty() {
         lines.push("- Detected languages: none detected".to_string());
     } else {
         let entries: Vec<String> = detected
@@ -3481,8 +3535,9 @@ const GENERATED_WORKFLOW_MAX_BYTES: u64 = 1024 * 1024;
 /// version (#4738). The 0.10-and-earlier template installed ripr unpinned,
 /// so after a release CI ran the new binary against the old steps; later
 /// templates pin the generating version. Advisory only: a stale template is
-/// not a failed check. It recognizes the template's own `cargo install ripr`
-/// step, not every way a hand-written workflow could install ripr.
+/// not a failed check. It recognizes the template's own install step (the
+/// ripr-check action tag, or the older `cargo install ripr` line), not every
+/// way a hand-written workflow could install ripr.
 fn generated_workflow_advisory(root: &Path) -> Option<String> {
     let path = root.join(GENERATED_WORKFLOW_PATH);
     // A repository can commit this path as a symlink (to `/dev/zero`, say);
@@ -3496,24 +3551,65 @@ fn generated_workflow_advisory(root: &Path) -> Option<String> {
     generated_workflow_line(root, &workflow, env!("CARGO_PKG_VERSION"))
 }
 
-fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -> Option<String> {
+/// The ripr-check action reference the generated workflow installs through
+/// (#5409); its tag names the pinned release.
+const GENERATED_INSTALL_ACTION: &str = "uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v";
+
+/// The action step's tag and `version` input, read from the lines after
+/// its `uses:`; the input is `None` when the step passes none.
+fn generated_install_action(workflow: &str) -> Option<(&str, Option<&str>)> {
+    let mut lines = workflow.lines();
+    let tag = lines.by_ref().find_map(|line| {
+        let rest = line.trim().strip_prefix(GENERATED_INSTALL_ACTION)?;
+        rest.split_whitespace().next()
+    })?;
+    let input = lines
+        .take_while(|line| !line.trim_start().starts_with("- "))
+        .find_map(|line| line.trim().strip_prefix("version:"))
+        .and_then(|value| value.split_whitespace().next())
+        .map(|value| value.trim_matches(|c| c == '\'' || c == '"'));
+    Some((tag, input))
+}
+
+/// The version the generated workflow's install step pins: `Some(Some(v))`
+/// for a pin, `Some(None)` for the unpinned 0.10-and-earlier `cargo install`,
+/// `None` when no generated install step is recognized. For the action
+/// route the `version` input is the release CI installs, so it wins over
+/// the tag (#5409); `generated_workflow_line` flags the two disagreeing.
+fn generated_workflow_pin(workflow: &str) -> Option<Option<&str>> {
+    if let Some((tag, input)) = generated_install_action(workflow) {
+        return Some(Some(input.unwrap_or(tag)));
+    }
     let install = workflow.lines().find_map(|line| {
         let command = line.trim().trim_start_matches("run:").trim();
         let rest = command.strip_prefix("cargo install ripr")?;
         (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
     })?;
     let words: Vec<&str> = install.split_whitespace().collect();
-    let pinned = words
-        .windows(2)
-        .find(|pair| pair[0] == "--version")
-        .map(|pair| pair[1])
-        .or_else(|| {
-            words
-                .iter()
-                .find_map(|word| word.strip_prefix("--version="))
-        });
+    Some(
+        words
+            .windows(2)
+            .find(|pair| pair[0] == "--version")
+            .map(|pair| pair[1])
+            .or_else(|| {
+                words
+                    .iter()
+                    .find_map(|word| word.strip_prefix("--version="))
+            }),
+    )
+}
+
+fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -> Option<String> {
+    let pinned = generated_workflow_pin(workflow)?;
     let refresh =
         super::init::workflow_refresh_guidance(root, crate::cli::commands_options::InitCi::Github);
+    if let Some((tag, Some(input))) = generated_install_action(workflow)
+        && tag != input
+    {
+        return Some(format!(
+            "{GENERATED_WORKFLOW_PATH} runs the ripr-check action from v{tag} but installs ripr {input}; the action and the release it installs should match; {refresh}"
+        ));
+    }
     match pinned {
         None => Some(format!(
             "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"
@@ -6426,6 +6522,36 @@ mod tests {
             generated_workflow_line(Path::new("."), "jobs: {}\n", "0.11.0"),
             None
         );
+        // #5409: the template installs through the release's ripr-check
+        // action, so its tag is the pin doctor compares.
+        let action = |tag: &str| {
+            format!(
+                "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{tag}\n        with:\n          version: {tag}\n"
+            )
+        };
+        assert_eq!(
+            generated_workflow_line(Path::new("."), &action("0.11.0"), "0.11.0"),
+            None
+        );
+        // The `version` input is what CI installs: a hand-edited input
+        // that leaves the tag behind is named, not hidden behind the tag.
+        let split = "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v0.11.0\n        with:\n          version: 0.12.0\n          install-only: true\n\n      - name: Run RIPR\n        run: ripr reports ci-packet --root .\n";
+        let split_line = generated_workflow_line(Path::new("."), split, "0.11.0");
+        assert!(
+            split_line.as_deref().is_some_and(|line| line
+                .contains("runs the ripr-check action from v0.11.0 but installs ripr 0.12.0")),
+            "{split_line:?}"
+        );
+        assert_eq!(generated_workflow_pin(split), Some(Some("0.12.0")));
+        let stale_action = generated_workflow_line(Path::new("."), &action(stale), current);
+        assert!(
+            stale_action
+                .as_deref()
+                .is_some_and(|line| line.contains(&format!(
+                    "installs ripr {stale}, but this is ripr {current}"
+                ))),
+            "{stale_action:?}"
+        );
         assert_eq!(
             generated_workflow_line(
                 Path::new("."),
@@ -7070,6 +7196,7 @@ mod tests {
         let lines = detected_languages_lines(
             &[detected_entry(LanguageId::Rust, true)],
             &[unanalyzed_entry("Go", 2)],
+            &[],
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(
@@ -7080,11 +7207,32 @@ mod tests {
             lines[1].starts_with("~ Unanalyzed languages: Go (2 file(s))"),
             "{lines:?}"
         );
-        let lines = detected_languages_lines(&[], &[unanalyzed_entry("Go", 2)]);
+        let lines = detected_languages_lines(&[], &[unanalyzed_entry("Go", 2)], &[]);
         assert_eq!(lines[0], "- Detected languages: none detected", "{lines:?}");
+        // #15195: a loaded config that enables languages the shallow scan
+        // missed is named instead of "none detected"; detected languages
+        // keep the ordinary line whatever the config says.
+        let configured =
+            detected_languages_lines(&[], &[], &[LanguageId::Rust, LanguageId::TypeScript]);
+        assert_eq!(configured.len(), 1, "{configured:?}");
+        assert!(
+            configured[0].ends_with("ripr.toml enables rust, typescript"),
+            "{configured:?}"
+        );
+        assert!(!configured[0].contains("none detected"), "{configured:?}");
+        let found = detected_languages_lines(
+            &[detected_entry(LanguageId::Rust, true)],
+            &[],
+            &[LanguageId::Rust, LanguageId::TypeScript],
+        );
+        assert!(
+            found[0].starts_with("- Detected languages: rust"),
+            "{found:?}"
+        );
+        assert!(!found[0].contains("enables"), "{found:?}");
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert_eq!(
-            detected_languages_lines(&[detected_entry(LanguageId::Rust, true)], &[]).len(),
+            detected_languages_lines(&[detected_entry(LanguageId::Rust, true)], &[], &[]).len(),
             1
         );
         // An adapter that was not compiled into this binary says so on the
@@ -7092,7 +7240,7 @@ mod tests {
         // The expectation follows the compiled features: `--all-features`
         // builds (like CI's JUnit job) compile the Perl adapter (#7137).
         let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]), false);
-        let first = &detected_languages_lines(&unavailable, &[])[0];
+        let first = &detected_languages_lines(&unavailable, &[], &[])[0];
         if cfg!(feature = "lang-perl") {
             assert!(unavailable[0].adapter_available);
             assert!(!first.contains("[adapter not compiled]"), "{first}");
@@ -9183,5 +9331,159 @@ mod tests {
         assert!(!is_workspace_relative_value("../tmp"));
         assert!(!is_workspace_relative_value("a/../../tmp"));
         assert!(!is_workspace_relative_value("/var/tmp"));
+    }
+
+    /// #14114: end to end through evaluation and the human screen, a root
+    /// outside a Git work tree with a refused output location prints the
+    /// `output_location` failure and no `ripr pilot --root` command. The same
+    /// root with a usable output location keeps the pilot route as control.
+    /// The fixture is a broken `.git` gitfile, which Git refuses the same way
+    /// as a plain directory outside any checkout.
+    #[cfg(unix)]
+    #[test]
+    fn outside_git_root_with_refused_output_prints_no_pilot_command() -> Result<(), String> {
+        let screen = |root: &Path| -> (output::doctor::DoctorReport, String) {
+            let evaluation = output::doctor::evaluate_doctor_core_with_config(root, &[]);
+            let config = evaluation.config.clone();
+            let environment = empty_environment();
+            let binary = quiet_binary();
+            let text = render_doctor_human_screen(DoctorHumanScreen {
+                root,
+                profile: output::doctor::DoctorProfile::Analysis,
+                report: &evaluation.report,
+                config: &config,
+                environment: &environment,
+                binary: &binary,
+                verbose: false,
+                passed: false,
+            })
+            .join("\n");
+            (evaluation.report, text)
+        };
+        let has_check = |report: &output::doctor::DoctorReport, name: &str| {
+            report.checks.iter().any(|check| {
+                check.name == name && check.status == output::doctor::DoctorCheckStatus::Fail
+            })
+        };
+
+        let usable = unique_command_test_dir("outside-git-usable-output");
+        let refused = unique_command_test_dir("outside-git-refused-output");
+        for root in [&usable, &refused] {
+            std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
+            std::fs::write(root.join(".git"), "not a gitfile\n")
+                .map_err(|error| error.to_string())?;
+        }
+        std::os::unix::fs::symlink(refused.join("no-such-directory"), refused.join("target"))
+            .map_err(|error| error.to_string())?;
+
+        let (usable_report, usable_text) = screen(&usable);
+        let (refused_report, refused_text) = screen(&refused);
+
+        // Fixture premises: both roots are outside Git; only one is refused.
+        assert!(has_check(&usable_report, "git_repository"), "{usable_text}");
+        assert!(
+            has_check(&refused_report, "git_repository"),
+            "{refused_text}"
+        );
+        assert!(
+            !has_check(&usable_report, output::doctor::OUTPUT_LOCATION_CHECK),
+            "{usable_text}"
+        );
+        assert!(
+            has_check(&refused_report, output::doctor::OUTPUT_LOCATION_CHECK),
+            "{refused_text}"
+        );
+
+        assert!(usable_text.contains("ripr pilot --root"), "{usable_text}");
+        assert!(
+            refused_text.contains("not inside a Git work tree"),
+            "{refused_text}"
+        );
+        assert!(
+            refused_text.contains("! `ripr check` and `ripr pilot` refuse to run here"),
+            "{refused_text}"
+        );
+        assert!(
+            !refused_text.contains("ripr pilot --root"),
+            "{refused_text}"
+        );
+        for root in [&usable, &refused] {
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// #14114: the verbose start-here block follows the same rule as the
+    /// compact screen. A present packet is the next artifact only while no
+    /// `!` check blocks every command; a refused output location gets the
+    /// recovery line, not packet-opening or refresh advice.
+    #[test]
+    fn verbose_packet_advice_yields_to_a_refused_output_location() -> Result<(), String> {
+        let root = unique_command_test_dir("packet-refused-output");
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|error| error.to_string())?;
+        std::fs::write(reports.join("start-here.md"), "# start here\n")
+            .map_err(|error| error.to_string())?;
+
+        let healthy = doctor_start_here_lines(&root, &passing_report(), None).join("\n");
+        let mut refused_report = passing_report();
+        refused_report.add_check(
+            output::doctor::OUTPUT_LOCATION_CHECK,
+            output::doctor::DoctorStatus::Fail,
+            Some("`ripr check` and `ripr pilot` refuse to run here: refused".to_string()),
+        );
+        let refused = doctor_start_here_lines(&root, &refused_report, None).join("\n");
+
+        assert!(healthy.contains("ripr first-pr --root"), "{healthy}");
+        assert!(!refused.contains("ripr first-pr"), "{refused}");
+        assert!(!refused.contains("open that packet"), "{refused}");
+        assert!(
+            refused.contains("- Safe next action: fix the `!` checks above"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains("refresh it after the `!` checks pass"),
+            "{refused}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// #14114: when `ripr check` refuses the output location, the screen
+    /// shows the `!` line with its fix and drops the cache lines that
+    /// described a run that cannot happen.
+    #[test]
+    fn refused_output_location_replaces_the_cache_lines_with_a_failure() {
+        let environment = empty_environment();
+        let healthy = render_screen(&passing_report(), &environment, false, true).join("\n");
+        assert!(healthy.contains("✓ Cache:"), "{healthy}");
+        assert!(!healthy.contains("refuse to run here"), "{healthy}");
+
+        let mut report = passing_report();
+        report.add_check(
+            output::doctor::OUTPUT_LOCATION_CHECK,
+            output::doctor::DoctorStatus::Fail,
+            Some(
+                "`ripr check` and `ripr pilot` refuse to run here: ./target cannot be resolved; replace it with a real directory"
+                    .to_string(),
+            ),
+        );
+        let text = render_screen(&report, &environment, false, false).join("\n");
+        assert!(
+            text.contains(
+                "! `ripr check` and `ripr pilot` refuse to run here: ./target cannot be resolved"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("  Fix: replace it with a real directory"),
+            "{text}"
+        );
+        assert!(!text.contains("✓ Cache:"), "{text}");
+        assert!(!text.contains("Cache not writable"), "{text}");
+        assert!(
+            text.contains("- Cache check skipped: the default output location is refused"),
+            "{text}"
+        );
     }
 }

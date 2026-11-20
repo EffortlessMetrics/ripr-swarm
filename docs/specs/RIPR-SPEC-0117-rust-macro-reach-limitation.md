@@ -689,7 +689,7 @@ open model/relational acceptance of #6643.
 
 ## Acceptance Examples
 
-1. **Macro-boundary limitation fires**: an integration test calls `outer()`;
+1. [abstain] **Macro-boundary limitation fires**: an integration test calls `outer()`;
    `outer()` invokes `call_inner!`; same-repo `macro_rules! call_inner` mentions
    changed owner `inner`. Result: `no_static_path` plus
    `static_limit_kind: rust_macro_reach_unresolved`.
@@ -698,26 +698,25 @@ open model/relational acceptance of #6643.
    `no_static_path`.
 3. **External macro**: `outer()` invokes a macro whose definition is not in the
    indexed repo source. Result: unchanged bare `no_static_path`.
-4. **Lexical transitive path exists**: the RIPR-SPEC-0114 witness fires first.
+4. [abstain] **Lexical transitive path exists**: the RIPR-SPEC-0114 witness fires first.
    Result remains a transitive/public-API limitation, not macro-reach. For
    integration-test witnesses, RIPR-SPEC-0118 refines the kind to
    `rust_integration_public_api_path_unresolved`; non-integration witnesses
    keep `rust_transitive_reach_unresolved`.
-5. **Proximity-only finding** (#7071): the only related test shares the
+5. [abstain] **Proximity-only finding** (#7071): the only related test shares the
    owner's file and calls `outer()`, which invokes `call_inner!`. Result:
    `weakly_exposed` plus `static_limit_kind: rust_macro_reach_unresolved` and a
    next step naming the witnessing test.
-6. **A recognized weak direct oracle also calls the owner** (#7542): same macro shape plus
+6. [abstain] **A recognized weak direct oracle also calls the owner** (#7542): same macro shape plus
    `assert!(inner(2) > 0)`, while the opaque `outer_triples` route asserts
    `outer(4) == 12`. Reach stays `yes` and classification stays `weakly_exposed`,
    but the finding names `rust_macro_reach_unresolved` and `outer_triples`.
    It does not advise writing an assertion before that route is inspected.
-   A direct confirmed discriminator gets no new limit, including when another
-   weak stage leaves its overall class `weakly_exposed`.
+   A direct confirmed discriminator is example 13.
    A direct call with no recognized oracle is outside this mixed gate. An
    unread assertion macro with the owner in its arguments remains governed by
    RIPR-SPEC-0120 (#7089), including when dependent reach exceeds its budget.
-7. **Owner handed to a local macro as an argument** (#6614): `doubled()`
+7. [abstain] **Owner handed to a local macro as an argument** (#6614): `doubled()`
    holds `twice!(inner)` and never calls `inner`; the only same-repo
    `macro_rules! twice` is unique and every source mentioning `macro_rules`
    parses. The chain records a macro-argument hop that forwards no result,
@@ -725,11 +724,8 @@ open model/relational acceptance of #6643.
    `doubled()` that holds an exact oracle in any operand shape
    (`assert_eq!(doubled(), 14)`, `let d = doubled(); assert_eq!(d, 14)`)
    reads `propagation_unknown` (`helper_result_not_forwarded`), neither
-   credit nor gap. A test whose oracles are all weak on their own terms
-   (`assert!(doubled() > 0)`, under the RIPR-SPEC-0159 weak-oracle rule,
-   #7549) keeps the prior evidence, and no edge forms
-   for an owner named only in a string literal, a caller that binds a local
-   or parameter of the owner's name, or a second invocation site.
+   credit nor gap. Weak-only tests and shapes that form no edge are
+   example 14.
 8. **Same-file test table** (#6925): a file defines `macro_rules! edge_table`
    with `$($name:ident($width:expr, $limit:expr, $want:expr))*` whose
    transcriber emits one `#[test] fn $name` asserting `fits_edge($width,
@@ -767,6 +763,27 @@ open model/relational acceptance of #6643.
    invokes `grouped_table! { .. }`. The owner reads `exposed`, as in example 10,
    and the unrelated `NOTE` import stays valid. A renamed, nested or glob group
    member is not followed.
+13. **A direct confirmed discriminator beside the macro shape** (#7542, split
+    from example 6): the same macro shape, with a direct call to the owner
+    that a recognized exact oracle confirms, gets no new limit, including when
+    another weak stage leaves its overall class `weakly_exposed`.
+14. **Weak-only or edgeless macro-argument shapes** (#6614, #7549, split from
+    example 7): a test calling `doubled()` whose oracles are all weak on their
+    own terms (`assert!(doubled() > 0)`, under the RIPR-SPEC-0159 weak-oracle
+    rule) keeps the prior evidence, and no edge forms for an owner named only
+    in a string literal, a caller that binds a local or parameter of the
+    owner's name, or a second invocation site.
+
+In examples 9 to 12 the bare owner call inside the generated test resolves
+through the owner's call identity at the invoking file. A `#[path = ".."]` in
+another integration-test file of the package (`tests/modules.rs` mounting
+`other/rows.rs`) does not switch that identity off when every such literal
+stays below its own directory: it only rearranges that test crate, so the
+owner's module path is unchanged (#12771). A `..` segment, an absolute, drive
+or backslash literal, a raw string, a `cfg_attr` carrier, a `#[path]` inside a
+macro body, a file that does not parse, any `#[path]` outside `tests/`, or an
+owner that itself lives under `tests/` keeps it off, and the owner reads
+unresolved rather than credited.
 
 ## Required Evidence
 
