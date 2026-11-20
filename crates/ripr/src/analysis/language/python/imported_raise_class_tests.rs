@@ -249,7 +249,7 @@ fn match_pattern_on_a_base_class_does_not_credit_a_local_subclass_swap() -> Chec
     let source = "class InvalidVersion(ValueError):\n    pass\n\n\ndef parse_release(text):\n    parts = text.strip().split(\".\")\n    if not all(part.isdigit() for part in parts):\n        raise InvalidVersion(\"invalid version\")\n    return tuple(int(part) for part in parts)\n";
     let old = "        raise ValueError(\"invalid version\")";
     let new = "        raise InvalidVersion(\"invalid version\")";
-    let imports = format!("from verlib.version import InvalidVersion, parse_release\n");
+    let imports = "from verlib.version import InvalidVersion, parse_release\n".to_string();
     let finding = classify(
         source,
         &matching_tests(&imports, "ValueError"),
