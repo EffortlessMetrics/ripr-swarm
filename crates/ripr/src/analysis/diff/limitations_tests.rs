@@ -172,7 +172,11 @@ fn conflict_region_split_across_zero_context_hunks_stays_quarantined() -> Result
     assert_eq!(limitation.affected_items, Some(1));
     let file = changed_file(&parsed, "src/lib.rs")?;
     let added: Vec<usize> = file.added_lines.iter().map(|line| line.line).collect();
-    assert_eq!(added, vec![7], "only the line after the closed region is a change");
+    assert_eq!(
+        added,
+        vec![7],
+        "only the line after the closed region is a change"
+    );
     assert_eq!(file.removed_lines.len(), 1);
     let other = changed_file(&parsed, "src/other.rs")?;
     assert_eq!(other.added_lines.len(), 1);
