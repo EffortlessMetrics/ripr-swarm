@@ -607,6 +607,9 @@ Relations, first match wins (rank, oracle-eligible):
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
   one `x = Class(...)` bound once;
+- R5a: `property_read` (4, eligible): a plain builtin `@property` owner
+  read as `Class(...).<name>` or through one `x = Class(...)` bound once
+  (Decision 10);
 - R6: otherwise the test must reference the owner (RIPR-SPEC-0028), or
   the test is unrelated;
 - R7: `same_stem` (3, heuristic), `test_name_similarity` (2, heuristic),
@@ -646,7 +649,8 @@ This order is the existing behavior and is normative:
   internal `async_def` marker, a static route decorator, a `click` or
   `typer` command, group, option, argument or callback decorator, and a
   `<receiver>.command` or `<receiver>.callback` decorator when the owner's
-  module imports `typer` and binds that receiver;
+  module imports `typer` and binds that receiver. A plain builtin
+  `@property` is not an indirection once its Decision 10 credit holds;
 - L6: `mocked_module` from any related candidate, heuristic ones included;
 - L7: `property_based_test`: an eligible candidate with a `given` or
   `example` decorator and no strong assertion;
@@ -1961,9 +1965,49 @@ rejected alternative. Any can be reversed later without touching the rest.
    `KeyError("blank")` mutant, so the R7 reading is a false actionable
    verdict. Rejected: relate any name passed to any call, because only
    these assertions are documented to call their argument.
-10. **Non-transparent decorators.** Adopted: unchanged, `@property` and
-    `@functools.lru_cache` stay `decorator_indirection`. Rejected for now:
-    make `@property` transparent, because it adds credit.
+10. **Non-transparent decorators.** Adopted: unchanged, `@functools.lru_cache`
+    stays `decorator_indirection`, and so does `@property` by default.
+    Amended (#15490): a plain builtin `@property` getter is credited, and
+    its limit lifted, only by a strong exact read. The owner is a method of
+    a top-level class with no bases, keywords or decorators, decorated
+    exactly `@property`; its module is ASCII, spells `property` only on the
+    bare `@property` decorator line, never binds or imports it (no star
+    import, no `builtins`), names the class nowhere outside its body, and
+    holds no attribute hook (`__getattr__`, `__getattribute__`,
+    `__setattr__`, `__dict__`, `__class__`, `type`, `setattr(`,
+    `delattr(`, `vars(`, a metaclass). The class body holds only methods
+    and literal attributes, never names the class (`Box.total = 6` in
+    `__init__`), never stores or deletes the property name
+    (`self.total = 0`, `del self.total`), and binds the owner name once: a
+    same-name setter, deleter or getter sibling, or any decorator naming
+    the property, keeps the limit. The getter is an optional docstring and
+    simple assignments followed by its one `return`, and the changed line
+    is that return, with no conditional expression, `and`/`or`,
+    comprehension, lambda or walrus anywhere in the getter: a branching
+    getter, a changed return under an `if` or a changed line before the
+    return keeps the limit. A
+    related pytest test relates as `property_read` (R5a) when it reads
+    `Cls(...).<name>` or `v.<name>` with `v` bound once to `Cls(...)`, `Cls`
+    imported once under its own name from the owner's module; every use of
+    the class is a construction, every use of a bound local is that read,
+    the body is straight-line with no other call, no write, `del` or call
+    of the attribute, and no patch or mock marker (`PropertyMock` among
+    them). Nothing outside the test body may reach the class first: the
+    test module neither rebinds the class nor writes an attribute named
+    like the class, the property or any dunder, holds no namespace writer
+    anywhere (`setattr`, `patch`, `sys.modules`, even in a sibling test or
+    on an unrelated receiver), no autouse fixture, setup hook or
+    definition-time call, no conftest fixture or hook on its directory
+    chain, and no fixture substitutes the owner. The credit (`strong_oracle_observes_property_read`, `direct`)
+    needs a changed `return` line of the getter (`return_value` family)
+    and the test's row-selected strong assertion to be a top-level
+    `assert <read> == <literal>` with no message. A bare `assert v.<name>`,
+    `!=`, `is`, `in`, a chained comparison, an `or` chain, a message, an
+    assertion under `if` or `with`, a relational or computed comparison, a read through a helper, a class
+    access `Cls.<name>` or any doubt keeps `decorator_indirection`.
+    `functools.cached_property` is unchanged. Rejected: make `@property`
+    transparent, because the earlier lift alone (#8551) read a direct
+    property assertion as a false actionable `weakly_exposed`.
 11. **`and` chains.** Adopted (2026-10-05, #6599): rule 15, the strongest
     conjunct. The first draft kept example 5's `smoke_only` reading, but
     the corpus case `py-spec0233-ex05-and-chain` fails on its mutant, so
@@ -2271,7 +2315,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `mocker.patch('os.getcwd')`: `static_unknown`, `mocked_module`
     (unchanged).
 30. Owner `@property def v(self)` in `class C`, changed body line:
-    `static_unknown`, `decorator_indirection` (unchanged).
+    `static_unknown`, `decorator_indirection` (unchanged). Decision 10's
+    one exception: in a plain `class C` whose getter is a single changed
+    `return`, a related test `assert C().v == 1` in a test module with no
+    namespace writer, autouse fixture or setup hook reads `exposed`,
+    `strong_oracle_observes_property_read` (#15490). The corpus case
+    `py-spec0233-ex30-property` keeps the limit: a sibling test in its
+    module calls `client.patch(...)`, a namespace writer.
 31. Owner `def fmt(n): return f"NO:{n}"`, changed from `f"ID:{n}"`.
     `test_a` asserts `assert len(fmt(7)) == 4`; `test_b` calls `fmt(7)` and
     asserts `assert other == "x"`: `weakly_exposed`, `orthogonal` (today
@@ -2698,6 +2748,10 @@ strong assertions is retained.
   swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
   module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
   the `py-trap-*` corpus cases.
+- `crates/ripr/src/analysis/language/python/property_read.rs`: the R5a
+  `property_read` relation and its Decision 10 credit, applied by
+  `static_limits.rs` (L5) and `classify.rs`, pinned by
+  `property_read_tests.rs` and `py-spec0233-ex30-property`.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.

@@ -8646,10 +8646,8 @@ def test_loyalty_price_context(tmp_path):
 
 #[test]
 fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> Result<(), String> {
-    let owners = extract_owners(
-        Path::new("src/account.py"),
-        "class Account:\n    def __init__(self, balance):\n        self._balance = balance\n\n    @property\n    def balance(self):\n        return max(0, self._balance)\n\n    def close(self):\n        return 0\n",
-    );
+    let account_source = "class Account:\n    def __init__(self, balance):\n        self._balance = balance\n\n    @property\n    def balance(self):\n        return max(0, self._balance)\n\n    def close(self):\n        return 0\n";
+    let owners = extract_owners(Path::new("src/account.py"), account_source);
     let init = flat_owner(&owners, "Account.__init__")?;
     let balance = flat_owner(&owners, "Account.balance")?;
     let close = flat_owner(&owners, "Account.close")?;
@@ -8661,8 +8659,33 @@ fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> 
 
     assert_eq!(
         candidate_relations(balance, &tests),
-        vec![("test_balance_property".to_string(), "same_stem")],
-        "`._balance` is not `.balance`; only the property read references the owner"
+        vec![("test_balance_property".to_string(), "property_read")],
+        "`._balance` is not `.balance`; only the property read relates, as a property read (#15490)"
+    );
+    // The read is compared relationally, never with a literal, so the
+    // property keeps its limit and takes no credit (#15490).
+    let finding = classify_change_with_source(
+        Path::new("src/account.py"),
+        7,
+        "        return max(0, self._balance)",
+        Some("        return max(1, self._balance)"),
+        &owners,
+        &tests,
+        Some(account_source),
+    )
+    .ok_or("the balance change must yield a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line == "static_limit decorator_indirection: `property`"),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_property_read")
     );
     assert_eq!(
         candidate_relations(close, &tests),

@@ -928,6 +928,36 @@ fn classify_change_for_owner_inner<'a>(
         },
         None => alignment,
     };
+    // A strong exact read of a plain builtin `@property` owner (#15490): the
+    // same credit that lifts its `decorator_indirection` limit.
+    let property_read = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            owner_source.and_then(|source| {
+                super::property_read::property_read_credit(
+                    owner,
+                    source,
+                    line_text,
+                    &focus,
+                    &related_candidates,
+                )
+            })
+        })
+        .flatten();
+    let alignment = match property_read {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_property_read".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
     let log_evidence = python_log_evidence(
         old_line_text,
         line_text,
