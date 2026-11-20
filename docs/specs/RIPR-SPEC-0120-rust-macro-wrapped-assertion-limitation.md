@@ -202,7 +202,11 @@ test never invokes keeps `no_assertion` (#15452). A test-local `macro_rules!`
 wrapper that the test invokes as code (`macro_rules! check { () => {
 assert_near!(..) } } check!();`) runs the check, so the row reads
 `assertion_admission_unproven` and the line names the wrapped macro
-(#15475).
+(#15475). Every arm of the wrapper must run such a macro as code, by the
+same rule, and the definition must still be live: one inside another
+macro's input, one in a block that has ended, or one shadowed by a later
+definition of the same name keeps `no_assertion`. So does a wrapper whose
+body only stringifies the macro or compares an `assert_*` variable.
 
 ## Fail-Closed Boundaries
 

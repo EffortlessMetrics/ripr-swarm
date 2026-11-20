@@ -163,6 +163,18 @@ fn other_shapes_keep_the_absence_claim() -> Result<(), String> {
         "    #[test]\n    fn holds() {\n        macro_rules! unused {\n            () => { assert_near!(bump(1), 3) };\n        }\n        let _ = bump(1);\n    }\n",
         // A local wrapper invoked only inside another macro's input.
         "    #[test]\n    fn holds() {\n        macro_rules! check {\n            () => { assert_near!(bump(1), 3) };\n        }\n        let _ = bump(1);\n        let _ = stringify!(check!());\n    }\n",
+        // An invoked local wrapper whose body only stringifies the macro.
+        "    #[test]\n    fn holds() {\n        macro_rules! show {\n            () => { stringify!(assert_near!(bump(1), 3)) };\n        }\n        let _ = bump(1);\n        let _ = show!();\n    }\n",
+        // An invoked local wrapper whose body compares an `assert_*` variable.
+        "    #[test]\n    fn holds() {\n        let assert_count = bump(1);\n        macro_rules! check {\n            ($x:expr) => { if assert_count != $x { println!(\"{}\", $x); } };\n        }\n        check!(3);\n    }\n",
+        // A wrapper defined only inside another macro's input.
+        "    #[test]\n    fn holds() {\n        let _ = bump(1);\n        let _ = stringify!(macro_rules! check { () => { assert_near!(bump(1), 3) } });\n        check!();\n    }\n",
+        // An invocation that selects the wrapper's quiet arm.
+        "    #[test]\n    fn holds() {\n        macro_rules! check {\n            (quiet) => { let _ = bump(1); };\n            (loud) => { assert_near!(bump(1), 3) };\n        }\n        check!(quiet);\n    }\n",
+        // A wrapper defined in a block that ended before the invocation.
+        "    #[test]\n    fn holds() {\n        {\n            macro_rules! check {\n                () => { assert_near!(bump(1), 3) };\n            }\n        }\n        let _ = bump(1);\n        check!();\n    }\n",
+        // A later definition of the wrapper that checks nothing shadows it.
+        "    #[test]\n    fn holds() {\n        macro_rules! check {\n            () => { assert_near!(bump(1), 3) };\n        }\n        macro_rules! check {\n            () => {};\n        }\n        let _ = bump(1);\n        check!();\n    }\n",
     ] {
         let (miss, named, _) = read(tests)?;
         if named || miss != Some("no_assertion") {

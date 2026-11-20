@@ -817,18 +817,35 @@ pub(super) fn name_unread_assertion_macro_rows(finding: &mut Finding, index: &Ru
 /// The first assertion-like macro ripr does not classify that `body` invokes
 /// as code: not inside another macro's input (`stringify!(assert_x!(..))`
 /// never evaluates it) and not inside a `macro_rules!` definition, which only
-/// defines it. A test-local `macro_rules!` whose body names one counts when
-/// the test then invokes that local macro, and the inner name is returned
-/// (#15475). Read from comment- and string-masked text (#15237).
+/// defines it. A test-local `macro_rules!` whose every arm runs one counts
+/// when the test then invokes that live local macro, and the inner name is
+/// returned (#15475). Read from comment- and string-masked text (#15237).
 fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
-    let masked = mask_rust_comments_and_strings(body);
+    first_executed_in_masked(&mask_rust_comments_and_strings(body))
+}
+
+/// One open delimiter in [`first_executed_in_masked`].
+struct WalkFrame {
+    /// It opens macro input, where nothing nested runs as code.
+    inert: bool,
+    /// The local macro it defines and where its body starts, if any.
+    defines: Option<(String, usize)>,
+    /// How many locals were live when it opened.
+    live_locals: usize,
+}
+
+/// [`first_executed_unread_assertion_macro`] over already-masked text. A local
+/// definition's body is read with this same walk, so its own inert inputs and
+/// `name !=` comparisons are skipped there too.
+fn first_executed_in_masked(masked: &str) -> Option<String> {
     let bytes = masked.as_bytes();
-    // One entry per open delimiter: whether it opens macro input, where
-    // nothing nested runs as code, and the local macro it defines, if any.
-    let mut frames: Vec<(bool, Option<(String, usize)>)> = Vec::new();
-    // Local `macro_rules!` names whose definition names an assertion-like
-    // macro, with that macro's name.
-    let mut asserting_locals: Vec<(String, String)> = Vec::new();
+    // One entry per open delimiter; a definition leaves scope with the block
+    // that holds it.
+    let mut frames: Vec<WalkFrame> = Vec::new();
+    // Every live local `macro_rules!` definition so far, with the
+    // assertion-like macro its body runs, if any; a later definition of a
+    // name shadows an earlier one.
+    let mut locals: Vec<(String, Option<String>)> = Vec::new();
     // The previous significant token was `macro_rules!` (then its name).
     let mut after_macro_rules = 0u8;
     let mut defined_name: Option<String> = None;
@@ -838,41 +855,46 @@ fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
         match ch {
             b'(' | b'[' | b'{' => {
                 let before = masked[..index].trim_end();
-                let defines = (after_macro_rules == 2)
+                let live = !frames.iter().any(|frame| frame.inert);
+                let defines = (after_macro_rules == 2 && live)
                     .then(|| defined_name.take())
                     .flatten()
                     .map(|name| (name, index + 1));
                 let opens_macro_input = before.ends_with('!') || after_macro_rules == 2;
-                if before.ends_with('!') && !frames.iter().any(|frame| frame.0) {
+                if before.ends_with('!') && live {
                     let bang = before.len() - 1;
-                    if let Some(name) = macro_name_before_bang(&masked, bang) {
+                    if let Some(name) = macro_name_before_bang(masked, bang) {
                         if is_unresolved_assertion_like_macro(&name) {
                             return Some(name);
                         }
-                        if let Some((_, inner)) = asserting_locals
-                            .iter()
-                            .rev()
-                            .find(|(local, _)| *local == name)
+                        if let Some((_, Some(inner))) =
+                            locals.iter().rev().find(|(local, _)| *local == name)
                         {
                             return Some(inner.clone());
                         }
                     }
                 }
-                frames.push((opens_macro_input, defines));
+                frames.push(WalkFrame {
+                    inert: opens_macro_input,
+                    defines,
+                    live_locals: locals.len(),
+                });
                 after_macro_rules = 0;
             }
             b')' | b']' | b'}' => {
-                if let Some((_, Some((name, start)))) = frames.pop()
-                    && let Some(inner) = first_assertion_like_macro_named(&masked[start..index])
-                {
-                    asserting_locals.push((name, inner));
+                if let Some(frame) = frames.pop() {
+                    locals.truncate(frame.live_locals);
+                    if let Some((name, start)) = frame.defines {
+                        locals.push((name, every_arm_runs_unread_assertion(&masked[start..index])));
+                    }
                 }
                 after_macro_rules = 0;
             }
             b'!' => {
-                // Only `macro_rules!` is followed by a name and then a body; a longer
-                // name ending in `macro_rules` (`my_macro_rules!`) opens ordinary
-                // macro input at its delimiter, so a suffix match is enough.
+                // Only `macro_rules!` is followed by a name and then a body; a
+                // longer name ending in `macro_rules` (`my_macro_rules!`) opens
+                // ordinary macro input at its delimiter, so a suffix match is
+                // enough.
                 after_macro_rules = u8::from(masked[..index].trim_end().ends_with("macro_rules"));
             }
             c if c.is_ascii_alphanumeric() || c == b'_' => {
@@ -897,12 +919,35 @@ fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
     None
 }
 
-/// The first assertion-like macro ripr does not classify that masked `text`
-/// spells as `name!`, wherever it sits.
-fn first_assertion_like_macro_named(text: &str) -> Option<String> {
-    text.match_indices('!').find_map(|(bang, _)| {
-        macro_name_before_bang(text, bang).filter(|name| is_unresolved_assertion_like_macro(name))
-    })
+/// The assertion-like macro that every arm of a masked `macro_rules!` body
+/// runs as code, named from its first arm; `None` when any arm runs none, so
+/// an invocation that may select a quiet arm keeps its absence claim.
+fn every_arm_runs_unread_assertion(body: &str) -> Option<String> {
+    let bytes = body.as_bytes();
+    let mut first = None;
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut transcriber = false;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => {
+                if depth == 0 {
+                    start = index + 1;
+                    transcriber = body[..index].trim_end().ends_with("=>");
+                }
+                depth += 1;
+            }
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 && transcriber {
+                    let name = first_executed_in_masked(&body[start..index])?;
+                    first.get_or_insert(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    first
 }
 
 fn unresolved_assertion_macro_invocations_among(
