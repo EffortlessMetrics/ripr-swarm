@@ -96,14 +96,22 @@ fn retains_registered_receipts_across_replay_and_refuses_incomplete_history()
     let mut missing = retained.clone();
     missing["latest_attempts"][0]["attempt_id"] = json!("attempt:registered-elsewhere");
     // Drop a historical row while keeping the latest projection consistent.
+    let mut conflicting = retained.clone();
+    conflicting["latest_attempts"][0]["receipt_path"] = json!("receipts/other.json");
     let mut truncated = retained;
     let latest_id = truncated["latest_attempts"][0]["attempt_id"].clone();
     truncated["attempts"]
         .as_array_mut()
         .ok_or("missing attempts")?
         .retain(|row| row["attempt_id"] == latest_id);
-    for invalid in [missing, truncated] {
-        let bytes = serde_json::to_vec(&invalid)?;
+    let mut damaged_encoding = original.clone();
+    damaged_encoding.push(0xff);
+    for bytes in [
+        serde_json::to_vec(&missing)?,
+        serde_json::to_vec(&conflicting)?,
+        serde_json::to_vec(&truncated)?,
+        damaged_encoding,
+    ] {
         fs::write(&ledger, &bytes)?;
         let output = refresh(&root, first, "gap:retention")?;
         assert!(!output.status.success());

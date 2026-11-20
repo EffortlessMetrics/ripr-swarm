@@ -2442,16 +2442,22 @@ pub(crate) fn ripr_swarm_attempt_ledger_report(
         actionable_gap_outcomes_limitation,
         actionable_gap_outcomes,
     ) = ripr_swarm_read_optional_json(&args.actionable_gap_outcomes_path);
-    let (prior_ledger_state, prior_ledger_limitation, prior_ledger) =
-        ripr_swarm_read_optional_json(&args.prior_ledger_path);
-    if prior_ledger_state == "malformed" {
-        return Err(format!(
-            "attempt history unavailable: {}",
-            prior_ledger_limitation
-                .as_deref()
-                .unwrap_or("malformed prior ledger")
-        ));
-    }
+    let prior_path = normalize_path(&args.prior_ledger_path);
+    let (prior_ledger, prior_ledger_limitation) = match fs::read(&args.prior_ledger_path) {
+        Ok(bytes) => {
+            let ledger = serde_json::from_slice(&bytes)
+                .map_err(|err| format!("attempt history unavailable at {prior_path}: {err}"))?;
+            (Some(ledger), None)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            (None, Some(format!("failed to read {prior_path}: {err}")))
+        }
+        Err(err) => {
+            return Err(format!(
+                "attempt history unavailable at {prior_path}: {err}"
+            ));
+        }
+    };
     let (real_repair_attempts_state, real_repair_attempts_limitation, real_repair_attempts) =
         ripr_swarm_read_optional_json(&args.real_repair_attempts_path);
     let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
@@ -2469,8 +2475,13 @@ pub(crate) fn ripr_swarm_attempt_ledger_report(
             value: actionable_gap_outcomes.as_ref(),
         },
         RiprSwarmReadinessInput {
-            path: normalize_path(&args.prior_ledger_path),
-            state: prior_ledger_state,
+            path: prior_path,
+            state: if prior_ledger.is_some() {
+                "read"
+            } else {
+                "missing"
+            }
+            .to_string(),
             limitation: prior_ledger_limitation,
             value: prior_ledger.as_ref(),
         },
@@ -3077,15 +3088,25 @@ fn validate_retained_attempt_history(
     {
         return Err("prior history contains an attempt without a canonical gap ID".to_string());
     }
-    let ids: BTreeSet<_> = attempts
+    let history_by_id: BTreeMap<_, _> = attempts
         .iter()
-        .filter_map(|row| row["attempt_id"].as_str())
+        .filter_map(|row| Some((row["attempt_id"].as_str()?, row)))
         .collect();
-    for row in audit_array(ledger, &["latest_attempts"]) {
-        if let Some(id) = row["attempt_id"].as_str()
-            && !ids.contains(id)
-        {
-            return Err(format!("registered attempt {id} is missing from history"));
+    for latest in audit_array(ledger, &["latest_attempts"]) {
+        let Some(id) = latest["attempt_id"].as_str() else {
+            continue;
+        };
+        let row = history_by_id
+            .get(id)
+            .ok_or_else(|| format!("registered attempt {id} is missing from history"))?;
+        for field in ["canonical_gap_id", "receipt_path"] {
+            if let Some(value) = latest[field].as_str()
+                && row[field].as_str() != Some(value)
+            {
+                return Err(format!(
+                    "registered attempt {id} has conflicting {field} in history"
+                ));
+            }
         }
     }
     for summary in ["summary", "attempt_history_summary"] {
