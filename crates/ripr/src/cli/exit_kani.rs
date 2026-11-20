@@ -22,13 +22,15 @@ fn exit_code_constants_match_documented_table() {
 #[kani::proof]
 fn command_error_exit_code_total_and_matches_table() {
     let which: u8 = kani::any();
-    kani::assume(which < 3); // exactly the three CommandError variants
+    kani::assume(which < 4); // exactly the four CommandError variants
     let (error, expected) = match which {
         0 => (CommandError::Failure(String::new()), 2),
         1 => (CommandError::Decision(String::new()), 3),
+        2 => (CommandError::MissingConfigFile(String::new()), 1),
         _ => (CommandError::Interrupted(String::new()), 130),
     };
     let code = error.exit_code();
+    kani::cover!(code == 1);
     kani::cover!(code == 2);
     kani::cover!(code == 3);
     kani::cover!(code == 130);

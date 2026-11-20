@@ -1,14 +1,14 @@
 //! Repository configuration commands.
 
-use crate::cli::help;
 use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
+use crate::cli::{CommandError, help};
 use crate::config::{RiprConfig, load_for_root};
 use crate::output::path::human_path;
 use crate::output::suppressions::load_suppressions_for_root_at;
 use std::path::{Path, PathBuf};
 
-pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
+pub(in crate::cli) fn config(args: &[String]) -> Result<(), CommandError> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_config_help();
         return Ok(());
@@ -19,14 +19,10 @@ pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "validate" {
-        return Err(unknown_value(
-            "config subcommand",
-            subcommand,
-            &["validate"],
-        ));
+        return Err(unknown_value("config subcommand", subcommand, &["validate"]).into());
     }
 
-    println!("{}", validate_config(&parse_validate_root(rest)?)?);
+    println!("{}", validate_config_result(&parse_validate_root(rest)?)?);
     Ok(())
 }
 
@@ -59,12 +55,17 @@ fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
     Ok(root.unwrap_or_else(|| PathBuf::from(".")))
 }
 
+#[cfg(test)]
 fn validate_config(root: &Path) -> Result<String, String> {
+    validate_config_result(root).map_err(|error| error.message().to_owned())
+}
+
+fn validate_config_result(root: &Path) -> Result<String, CommandError> {
     if !root.is_dir() {
         return Err(format!(
             "config validate root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             root.display()
-        ));
+        ).into());
     }
     // A missing file is a valid first run, but saying "ripr.toml valid" there
     // told users a file they never wrote had been checked. Ancestor
@@ -101,7 +102,7 @@ fn validate_config(root: &Path) -> Result<String, String> {
                 "✓ no ripr.toml found; built-in defaults apply (note: {error})"
             ))
         }
-        Err(error) => Err(error),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -109,7 +110,7 @@ fn validate_config(root: &Path) -> Result<String, String> {
 /// not a file under the root is a typo or a moved file, and every consumer
 /// would otherwise treat the setting as off without a word. Every missing
 /// entry is listed so one run reports all of them.
-fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), String> {
+fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), CommandError> {
     let analysis = config.analysis();
     let languages = config.languages();
     let mut declared: Vec<(String, String)> = Vec::new();
@@ -143,22 +144,42 @@ fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), Strin
             declared.push((key.to_string(), file.clone()));
         }
     }
+    if declared.is_empty() {
+        return Ok(());
+    }
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve config validate root {}: {error}",
+            human_path(root)
+        )
+    })?;
     let missing: Vec<String> = declared
         .into_iter()
-        .filter(|(_, path)| !root.join(path).is_file())
+        .filter(|(_, path)| {
+            !canonical_root
+                .join(path)
+                .canonicalize()
+                .is_ok_and(|file| file.starts_with(&canonical_root) && file.is_file())
+        })
         .map(|(key, path)| format!("- {key}: `{path}`"))
         .collect();
     if missing.is_empty() {
         return Ok(());
     }
-    Err(format!(
-        "ripr.toml names {} path{} that {} not a file under {}:\n{}\nCreate the file, fix the path, or remove the entry.",
+    Err(CommandError::MissingConfigFile(format!(
+        "{} names {} path{} that {} not a file under {}:\n{}\nCreate the file, fix the path, or remove the entry.",
+        human_path(
+            config
+                .source_path
+                .as_deref()
+                .unwrap_or(Path::new(crate::config::CONFIG_FILE_NAME))
+        ),
         missing.len(),
         if missing.len() == 1 { "" } else { "s" },
         if missing.len() == 1 { "is" } else { "are" },
         human_path(root),
         missing.join("\n")
-    ))
+    )))
 }
 
 /// #15308: the suppressions manifest the config selects is part of the
@@ -525,7 +546,7 @@ path = ".ripr/suppressions\u0000.toml"
     #[test]
     fn unknown_config_subcommand_lists_validate_without_a_near_miss() {
         assert_eq!(
-            config(&args(&["unknown"])),
+            config(&args(&["unknown"])).map_err(|error| error.to_string()),
             Err("unknown config subcommand \"unknown\". Accepted: validate.".to_string())
         );
     }
@@ -533,7 +554,7 @@ path = ".ripr/suppressions\u0000.toml"
     #[test]
     fn unknown_config_subcommand_suggests_validate_for_validat() {
         assert_eq!(
-            config(&args(&["validat"])),
+            config(&args(&["validat"])).map_err(|error| error.to_string()),
             Err(
                 "unknown config subcommand \"validat\". Did you mean `validate`? Accepted: validate."
                     .to_string()
@@ -560,7 +581,7 @@ path = ".ripr/suppressions\u0000.toml"
             ),
         ];
         for (input, expected) in cases {
-            let actual = config(&input);
+            let actual = config(&input).map_err(|error| error.to_string());
             if actual != Err(expected.clone()) {
                 return Err(format!("expected {expected:?}, got {actual:?}"));
             }

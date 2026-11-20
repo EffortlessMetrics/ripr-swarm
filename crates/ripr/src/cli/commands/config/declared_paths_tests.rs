@@ -52,9 +52,11 @@ fn present_declared_files_pass() -> Result<(), String> {
 fn every_missing_declared_file_is_named_with_its_key() -> Result<(), String> {
     let root = workspace("missing")?;
     write(&root, CONFIG_FILE_NAME, ALL_KEYS)?;
-    let result = validate_config(&root);
+    let result = super::validate_config_result(&root);
     let _ = fs::remove_dir_all(&root);
     let error = result.err().ok_or("missing declared files must fail")?;
+    assert_eq!(error.exit_code(), 1);
+    let error = error.message();
     for expected in [
         "ripr.toml names 3 paths that are not a file under",
         "- analysis.production_like_targets: `tests/support.rs`",
@@ -139,6 +141,34 @@ fn preview_language_keys_and_later_harnesses_are_named() -> Result<(), String> {
     }
     if error.contains("`tests/one.rs`") {
         return Err(format!("a present harness target was named: {error}"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn declared_symlinks_must_resolve_to_files_inside_the_root() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+
+    let parent = workspace("symlinks")?;
+    let root = parent.join("repo");
+    write(&root, CONFIG_FILE_NAME, ALL_KEYS)?;
+    write(&root, "tests/support.rs", "")?;
+    write(&parent, "outside.rs", "")?;
+    symlink("support.rs", root.join("tests/harness.rs")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join("src/gen")).map_err(|error| error.to_string())?;
+    symlink(
+        parent.join("outside.rs"),
+        root.join("src/gen/handwritten.rs"),
+    )
+    .map_err(|error| error.to_string())?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&parent);
+    let error = result.err().ok_or("an external symlink must fail")?;
+    if !error.contains("names 1 path that is not a file under")
+        || !error.contains("- languages.rust.handwritten_files: `src/gen/handwritten.rs`")
+    {
+        return Err(format!("unexpected error: {error}"));
     }
     Ok(())
 }

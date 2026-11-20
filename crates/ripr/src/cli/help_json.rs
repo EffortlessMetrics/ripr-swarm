@@ -149,6 +149,11 @@ enum ExitJson {
         completed: i32,
         could_not_complete: i32,
     },
+    ConfigValidate {
+        completed: i32,
+        missing_declared_file: i32,
+        could_not_complete: i32,
+    },
     AdvisoryFindings {
         completed: i32,
         could_not_complete: i32,
@@ -208,6 +213,11 @@ fn exit_json(contract: CommandExitContract) -> ExitJson {
     match contract {
         CommandExitContract::CompletedOrFailed => ExitJson::CompletedOrFailed {
             completed: EXIT_COMPLETED,
+            could_not_complete: EXIT_COULD_NOT_COMPLETE,
+        },
+        CommandExitContract::ConfigValidate => ExitJson::ConfigValidate {
+            completed: EXIT_COMPLETED,
+            missing_declared_file: crate::cli::EXIT_MISSING_CONFIG_FILE,
             could_not_complete: EXIT_COULD_NOT_COMPLETE,
         },
         CommandExitContract::AdvisoryFindings => ExitJson::AdvisoryFindings {

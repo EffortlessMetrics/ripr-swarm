@@ -35,6 +35,7 @@ pub use commands::impacted_evidence_command::run_impacted_evidence_at;
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
 pub(crate) const EXIT_COMPLETED: i32 = 0;
+pub(crate) const EXIT_MISSING_CONFIG_FILE: i32 = 1;
 /// The command could not complete. Maps from [`CommandError::Failure`].
 pub(crate) const EXIT_COULD_NOT_COMPLETE: i32 = 2;
 /// The command reached a blocking decision or typed refusal. Maps from
@@ -52,6 +53,8 @@ pub enum CommandError {
     /// The command could not complete: usage, parse, operational, or
     /// internal error. Maps to `EXIT_COULD_NOT_COMPLETE`.
     Failure(String),
+    /// An exact file declared in ripr.toml is missing under the validated root.
+    MissingConfigFile(String),
     /// The command ran successfully and reached a blocking decision or a
     /// typed refusal. Maps to `EXIT_DECISION_OR_REFUSAL`, so orchestrators
     /// can branch on `0` (completed), `3` (decision/refusal), and `2`
@@ -65,16 +68,18 @@ impl CommandError {
     /// The raw error message; `Display` is the terminal-safe rendering.
     pub fn message(&self) -> &str {
         match self {
-            Self::Failure(message) | Self::Decision(message) | Self::Interrupted(message) => {
-                message
-            }
+            Self::MissingConfigFile(message)
+            | Self::Failure(message)
+            | Self::Decision(message)
+            | Self::Interrupted(message) => message,
         }
     }
 
-    /// The process exit code this error maps to (2, 3 or 130).
+    /// The process exit code this error maps to (1, 2, 3 or 130).
     pub const fn exit_code(&self) -> i32 {
         match self {
             Self::Failure(_) => EXIT_COULD_NOT_COMPLETE,
+            Self::MissingConfigFile(_) => EXIT_MISSING_CONFIG_FILE,
             Self::Decision(_) => EXIT_DECISION_OR_REFUSAL,
             Self::Interrupted(_) => 130,
         }

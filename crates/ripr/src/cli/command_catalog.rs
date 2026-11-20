@@ -1534,7 +1534,9 @@ mod tests {
         let mut failures = Vec::new();
         type NestedParse = fn(&[String]) -> Result<(), String>;
         let families: &[(&str, NestedParse)] = &[
-            ("config", commands::config),
+            ("config", |args| {
+                commands::config(args).map_err(|error| error.to_string())
+            }),
             ("baseline", commands::baseline),
             ("zero", commands::zero),
             ("policy", commands::policy),
