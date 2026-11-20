@@ -68,6 +68,17 @@ passes; `--quiet` keeps stderr progress lines out of the hook log. On a
 before running hooks, so ripr checks exactly the change being committed;
 `pre-commit run --all-files` does not stash, so unstaged edits are included.
 New files stay out of the diff until they are staged.
+In a new repository the first `git commit` has no `HEAD` yet: with
+`--worktree --base HEAD` ripr compares the staged content against the empty
+tree, so the first commit is analyzed like any other change instead of the hook
+failing with "base HEAD does not resolve". Only that literal base gets this;
+`--base <other>` on an unborn branch still exits 2. A commit large enough to
+exceed the diff guard (2000 changed Rust lines, for example one generated
+file) still exits 2, because ripr did not analyze it and does not call it
+clean. The refusal names the ways through: `SKIP=ripr git commit ...` skips the
+hook for that one commit, and `args: [--exclude, "src/generated/**"]` (or
+`--path`) on the hook analyzes a subset and reports the left-out files as not
+analyzed.
 Output is the default human rendering. For a much smaller terminal (about 570
 bytes against about 3,400 for the same one-finding run), add arguments, which
 pre-commit appends to the entry:

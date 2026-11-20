@@ -1398,7 +1398,8 @@ fn enforce_changed_language_line_limit(
          reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
          limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
          `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
-         are reported as not analyzed)."
+         are reported as not analyzed). From a pre-commit hook, set those flags in the \
+         hook's `args:`, or skip this hook for one commit with `SKIP=ripr git commit ...`."
     ))
 }
 
