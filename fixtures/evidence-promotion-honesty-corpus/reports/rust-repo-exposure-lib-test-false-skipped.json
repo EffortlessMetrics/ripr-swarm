@@ -1,0 +1,50 @@
+{
+  "schema_version": "0.5",
+  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:bdde10d29859cd41","mode":"draft","profile":"draft","worktree":"clean"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:fb107587fa943bbe8ef1854e369fc10bfece9f80e850b6c89c2144cdc66390e6","generated_at":"unix_ms:1795181625564","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"f087d1ca9f3ea023542f71fd0e71e784fa06d706","root":"/workspace/ripr-swarm/fixtures/rust_lib_test_false_skipped/input"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:bdde10d29859cd41;revision:f087d1ca9f3ea023542f71fd0e71e784fa06d706"},
+  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.184","files_content_hash":"2e70fc3dddd289b4","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:1d593a8c01f385d540fdfdabc6b5a711e30de446c6528a07a5140aefb3ebb4c0","path":"src/lib.rs"}]},
+  "analysis_inputs": {"analyzer_version":"0.11.0+2df7ed089c572b1dff48c0b806afbf7e3780d883+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"9a394343da73929c","workspace_manifests_hash":"b9993418ec649c6e"},
+  "scope": "repo",
+  "run_status": "complete",
+  "metrics": {
+    "seams_total": 1,
+    "headline_eligible": 1,
+    "strongly_gripped": 0,
+    "weakly_gripped": 0,
+    "ungripped": 1,
+    "reachable_unrevealed": 0,
+    "activation_unknown": 0,
+    "propagation_unknown": 0,
+    "observation_unknown": 0,
+    "discrimination_unknown": 0,
+    "opaque": 0,
+    "intentional": 0,
+    "suppressed": 0
+  },
+  "seams": [
+    {
+      "seam_id": "b6994eb61ccca7ae",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 2,
+      "column": 5,
+      "end_line": 2,
+      "end_column": 10,
+      "owner": "src/lib.rs::f",
+      "expression": "a + 2",
+      "grip_class": "ungripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "no",
+        "activate": "no",
+        "propagate": "no",
+        "observe": "no",
+        "discriminate": "no"
+      },
+      "related_tests_total": 0,
+      "related_tests": [],
+      "observed_values": [],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"producer-owned missing discriminator fact: return_value","signals":{"assertion_shape":false,"candidate_value":false,"missing_discriminator":false,"recommended_test_target":true,"related_test":false,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:5efbf588ee4b3d1c","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:5efbf588ee4b3d1c","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: missing_discriminator_evidence"]},"evidence_class":"return_value","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"ungripped","line":2,"reason":"canonical_group_primary_raw_finding","source_id":"b6994eb61ccca7ae"},"raw_group_size":1,"raw_spans":[{"end_line":2,"file":"src/lib.rs","kind":"ungripped","source_id":"b6994eb61ccca7ae","start_line":2}],"receipt_command":null,"recommended_repair":"Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.","related_test":null,"repair_command":null,"repair_route":null,"static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: return_value","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}],"verify_command":null,"why":"producer-owned missing discriminator fact: return_value"},"evidence_path":{"activate":{"confidence":"low","state":"no","summary":"No direct owner call observed for value-insensitive seam `a + 2`"},"discriminate":{"confidence":"medium","state":"no","summary":"No related tests; oracle cannot discriminate"},"observe":{"confidence":"medium","state":"no","summary":"No related tests; nothing observes the seam"},"propagate":{"confidence":"medium","state":"no","summary":"No related tests; cannot infer propagation"},"reach":{"confidence":"medium","state":"no","summary":"No static test path found for seam owner `src/lib.rs::f`"}},"grip_class":"ungripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":2},"missing_discriminators":[],"observed_values":[],"owner":"src/lib.rs::f","presentation_text":null,"raw_findings":[{"evidence_record_ref":"b6994eb61ccca7ae","expression":"a + 2","file":"src/lib.rs","kind":"ungripped","language":"rust","language_status":"stable","line":2,"probe_kind":"return_value","source_id":"b6994eb61ccca7ae"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[],"nearest_test_to_imitate":null,"reason":"producer-owned missing discriminator fact: return_value","recommended_test":null,"verify_command":null},"related_tests":[],"related_tests_total":0,"schema_version":"0.1","seam_id":"b6994eb61ccca7ae","seam_kind":"return_value","static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: return_value","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}]}
+    }
+  ]
+}
