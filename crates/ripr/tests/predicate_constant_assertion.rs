@@ -51,12 +51,32 @@ const PURE_LABEL: &str =
 /// The predicate finding for `total >= 100` changed to `total > 200`, with
 /// `helpers` beside the owner and `body` as the body of the one unit test.
 fn predicate_finding(helpers: &str, body: &str) -> Result<Value, String> {
+    predicate_finding_with(helpers, Some(body), None)
+}
+
+/// [`predicate_finding`] with the unit test optional and an optional
+/// integration test file `tests/it.rs` holding `integration`.
+fn predicate_finding_with(
+    helpers: &str,
+    body: Option<&str>,
+    integration: Option<&str>,
+) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     let manifest =
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
+    let unit = body.map_or_else(String::new, |body| {
+        format!(
+            "#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn smoke() {{\n        {body}\n    }}\n}}\n"
+        )
+    });
     let lib = format!(
-        "pub fn discount(total: u32) -> u32 {{\n    if total > 200 {{\n        total - 10\n    }} else {{\n        total\n    }}\n}}\n\n{helpers}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn smoke() {{\n        {body}\n    }}\n}}\n"
+        "pub fn discount(total: u32) -> u32 {{\n    if total > 200 {{\n        total - 10\n    }} else {{\n        total\n    }}\n}}\n\n{helpers}\n{unit}"
     );
+    if let Some(integration) = integration {
+        std::fs::create_dir(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("tests/it.rs"), integration)
+            .map_err(|error| error.to_string())?;
+    }
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    if total >= 100 {\n+    if total > 200 {\n";
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
@@ -96,16 +116,31 @@ const CONSTANT: &[&str] = &[
     "let _ = discount(50);\n        assert_ne!(label(0), \"many\");",
 ];
 
+fn assert_constant_dropped(finding: &Value, case: &str) {
+    for name in ["observe", "discriminate"] {
+        assert_eq!(stage(finding, name), "no", "{name} for {case}: {finding}");
+    }
+    assert_eq!(
+        finding["classification"], "reachable_unrevealed",
+        "{case}: {finding}"
+    );
+    assert_eq!(
+        finding["related_tests"][0]["miss"], "assertion_not_observing",
+        "{case}: {finding}"
+    );
+}
+
 #[test]
 fn a_constant_assertion_on_another_pure_function_credits_no_observation() -> Result<(), String> {
     for body in CONSTANT {
-        let finding = predicate_finding(PURE_LABEL, body)?;
-        for name in ["observe", "discriminate"] {
-            assert_ne!(stage(&finding, name), "yes", "{name} for {body}: {finding}");
-        }
-        assert_ne!(finding["class"], "exposed", "{body}: {finding}");
-        assert_ne!(finding["class"], "weakly_exposed", "{body}: {finding}");
+        assert_constant_dropped(&predicate_finding(PURE_LABEL, body)?, body);
     }
+    // The issue's own shape: an integration test naming the library.
+    let integration = "#[test]\nfn smoke() {\n    let _ = demo::discount(50);\n    assert_eq!(demo::label(0), \"zero\");\n}\n";
+    assert_constant_dropped(
+        &predicate_finding_with(PURE_LABEL, None, Some(integration))?,
+        integration,
+    );
     Ok(())
 }
 
@@ -136,5 +171,43 @@ fn a_helper_or_argument_that_may_carry_state_keeps_the_earlier_reading() -> Resu
     let body = "let n = discount(50);\n        assert_eq!(label(n), \"many\");";
     let finding = predicate_finding(PURE_LABEL, body)?;
     assert_eq!(stage(&finding, "observe"), "yes", "{body}: {finding}");
+    Ok(())
+}
+
+/// The callee must be the one closed function the assertion's call names:
+/// a second function of the name, a callee that reaches the owner, a local
+/// shadow of the bare name, and a path the library root does not name all
+/// keep the earlier reading.
+#[test]
+fn a_callee_whose_identity_or_closure_is_unestablished_keeps_the_earlier_reading()
+-> Result<(), String> {
+    let bare = "let _ = discount(50);\n        assert_eq!(label(0), \"zero\");";
+    let cases = [
+        (
+            format!("{PURE_LABEL}pub mod m {{\n    pub fn label(_n: u32) -> &'static str {{\n        \"zero\"\n    }}\n}}\n"),
+            bare.to_string(),
+        ),
+        (
+            "pub fn label(n: u32) -> u32 {\n    discount(n)\n}\n".to_string(),
+            "let _ = discount(50);\n        assert_eq!(label(0), 0);".to_string(),
+        ),
+        (
+            PURE_LABEL.to_string(),
+            "let label = |_: u32| \"zero\";\n        let _ = discount(50);\n        assert_eq!(label(0), \"zero\");"
+                .to_string(),
+        ),
+        (
+            PURE_LABEL.to_string(),
+            "let _ = discount(50);\n        assert_eq!(other::label(0), \"zero\");".to_string(),
+        ),
+    ];
+    for (helpers, body) in &cases {
+        let finding = predicate_finding(helpers, body)?;
+        assert_eq!(
+            stage(&finding, "observe"),
+            "yes",
+            "{helpers}{body}: {finding}"
+        );
+    }
     Ok(())
 }
