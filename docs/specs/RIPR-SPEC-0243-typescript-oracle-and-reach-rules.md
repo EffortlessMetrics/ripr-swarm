@@ -2685,20 +2685,23 @@ keys); do not take the next number.
   production-path positive and negative.
 - #15306: a changed one-line `return <literal>` whose owner returns only
   distinct scalar literals (a switch or if-chain lookup) is credited only when
-  some strong related assertion expects the arm's old literal. When every
-  strong assertion on a direct owner call expects another readable literal,
+  some strong related assertion expects the arm's old or new literal (either
+  distinguishes the versions when the call takes the arm; a new literal another
+  arm shares is not ruled out). When every strong assertion on a direct owner
+  call expects another arm's readable literal,
   the change is not observed: the existing literal-return reading makes it
   `infection_unknown`, with a line naming the unpinned arm result.
   A duplicated old literal, any non-literal or multi-line return, a generator
   or concise-arrow owner, a non-direct relation, and a snapshot, structural,
   dynamic or table-row expected side on a direct owner call, and any strong
-  assertion whose expected text spells the old literal (alone or inside an
+  assertion whose expected text spells the old or new literal (alone or inside an
   object, array or expression), keep the verdict.
   `tests/literal_arm_return_tests.rs` pins the reader
   (`a_switch_arm_literal_return_is_located_with_its_old_value` and its
   refusals) and the production path:
   `an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm`,
   `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
+  `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
   `an_unreadable_expected_side_keeps_the_verdict` and
   `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,

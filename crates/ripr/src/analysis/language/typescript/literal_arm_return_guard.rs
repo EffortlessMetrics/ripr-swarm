@@ -6,7 +6,8 @@
 //! that arm, and the owner can return `'one'` from no other statement. An
 //! exact assertion whose expected value is another arm's result (`'two'`)
 //! passes on both versions, so reach plus a strong oracle does not
-//! discriminate the change: only an assertion that expects `'one'` can.
+//! discriminate the change: only an assertion that expects `'one'`, or the
+//! arm's new literal, can.
 //!
 //! The #8569 guard-entry rule withdraws credit only when every call
 //! provably leaves the arm untaken, which a computed discriminant
@@ -30,6 +31,11 @@ pub(crate) struct LiteralArmReturn {
     pub(crate) old_value: ArmConstant,
     /// The old literal as written on the base side (`'NNE'`).
     pub(crate) old_text: String,
+    /// The literal the changed arm returns after the edit. An exact
+    /// assertion that expects it distinguishes the two versions when the
+    /// call takes the arm, and may be another arm's result when one shares
+    /// it: either way the reader cannot withdraw credit.
+    pub(crate) new_value: ArmConstant,
 }
 
 /// `Some` when the changed line `line` is a one-line `return <literal>`
@@ -69,17 +75,18 @@ pub(crate) fn literal_arm_return(
     (changed_seen && returns.len() >= 2).then(|| LiteralArmReturn {
         old_value,
         old_text: old_text.to_string(),
+        new_value,
     })
 }
 
 /// What the related assertions say about the changed arm.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LiteralArmWitness {
-    /// Some strong assertion expects the arm's old literal, or one this
+    /// Some strong assertion expects the arm's old or new literal, or one this
     /// reader cannot rule out: keep the existing verdict.
     Kept,
     /// Every strong assertion on an owner call expects a readable literal and
-    /// none is the arm's old result; the readable expected values, sorted.
+    /// none is the arm's old or new result; the readable expected values, sorted.
     Unpinned(Vec<String>),
 }
 
@@ -116,17 +123,22 @@ pub(crate) fn ts_literal_arm_witness(
                 .as_deref()
                 .filter(|_| !assertion.has_dynamic_matcher_arg);
             let expected_value = expected.and_then(scalar_constant);
-            // An assertion anywhere that expects the old result, alone or
-            // inside a wrapping object, array or expression, may observe the
-            // arm through a local or a wrapper: keep the verdict.
-            if expected_value.as_ref() == Some(&change.old_value)
-                || [
-                    assertion.expected_value_or_variant.as_deref(),
-                    assertion.dynamic_expected_text.as_deref(),
-                ]
+            // An assertion anywhere that expects the old or the new result,
+            // alone or inside a wrapping object, array or expression, may
+            // observe the changed arm directly or through a local or a
+            // wrapper, and then tells the versions apart: keep the verdict.
+            if [&change.old_value, &change.new_value]
                 .into_iter()
-                .flatten()
-                .any(|text| mentions_constant(text, &change.old_value))
+                .any(|value| {
+                    expected_value.as_ref() == Some(value)
+                        || [
+                            assertion.expected_value_or_variant.as_deref(),
+                            assertion.dynamic_expected_text.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|text| mentions_constant(text, value))
+                })
             {
                 return LiteralArmWitness::Kept;
             }

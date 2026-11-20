@@ -28,6 +28,7 @@ fn a_switch_arm_literal_return_is_located_with_its_old_value() {
         Some(LiteralArmReturn {
             old_value: ArmConstant::Text("one".to_string()),
             old_text: "'one'".to_string(),
+            new_value: ArmConstant::Text("uno".to_string()),
         })
     );
 }
@@ -259,6 +260,77 @@ fn an_assertion_expecting_the_arms_old_result_keeps_exposed() -> Result<(), Stri
             finding.missing
         );
     }
+    Ok(())
+}
+
+/// An exact assertion on the selected arm that expects its new result also
+/// tells the versions apart (#12991 `switch_literal_return_controls`): the
+/// base returns the old literal there. When another arm shares the new
+/// literal the assertion may reach either arm, so the verdict is kept too.
+/// An assertion that only expects an unchanged arm's distinct result still
+/// removes the credit.
+#[test]
+fn an_assertion_expecting_the_arms_new_result_keeps_exposed() -> Result<(), String> {
+    for (label, source, body) in [
+        (
+            "arm-new-direct",
+            DIR.to_string(),
+            "    expect(dir(1)).toBe('uno');
+",
+        ),
+        (
+            "arm-new-with-other",
+            DIR.to_string(),
+            "    expect(dir(2)).toBe('two');
+    expect(dir(1)).toEqual(\"uno\");
+",
+        ),
+        (
+            "arm-new-object",
+            DIR.to_string(),
+            "    expect(dir(2)).toBe('two');
+    expect({ d: dir(1) }).toEqual({ d: 'uno' });
+",
+        ),
+        // Another arm already returns the new literal: the assertion may
+        // reach the changed arm or that one, and is not ruled out.
+        (
+            "arm-new-shared",
+            DIR.replace("'other'", "'uno'"),
+            "    expect(dir(3)).toBe('uno');
+",
+        ),
+    ] {
+        let finding = finding_at(
+            label,
+            &source,
+            4,
+            "      return 'one';",
+            "      return 'uno';",
+            &vitest(body),
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // The alternate side: only an unchanged arm's distinct result is
+    // expected, so the credit is still removed.
+    let finding = finding_at(
+        "arm-new-absent",
+        DIR,
+        4,
+        "      return 'one';",
+        "      return 'uno';",
+        &vitest(
+            "    expect(dir(2)).toBe('two');
+    expect(dir(3)).toBe('other');
+",
+        ),
+    )?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
     Ok(())
 }
 
