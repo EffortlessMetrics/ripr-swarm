@@ -12541,10 +12541,12 @@ fn ts_chain_is_plain_projection_accepts_chains_and_rejects_compounds() {
         "f() !== g()",
         "a + f()",
         "a ! b",
-        "",
     ] {
         assert!(!plain(base), "`{base}` is not a plain chain");
     }
+    // An empty base holds no operator, so the original reading (kept by the
+    // union) guards it, as it did before #14928: the fail-closed direction.
+    assert!(plain(""), "an empty base stays guarded");
 }
 
 /// #14814 control: the changed field itself, read off the owner's result,
