@@ -1743,8 +1743,8 @@ sibling rule (#14814) covers exactly one changed value. A compound assertion
 subject is not a field projection of the owner's result: in
 `expect(f() ?? defaults.config)` the trailing `config` belongs to the
 fallback while the assertion receives the whole object `f()` returns, so it
-keeps its credit. A plain projection is a call or member-access chain, read
-as a grammar rather than as a list of forbidden operators (#14928): a
+keeps its credit. A plain projection is a base with no top-level operator,
+or a call or member-access chain that a small grammar accepts (#14928): a
 postfix non-null assertion (`f()!.timeout`), optional chaining, a prefix
 negation (`!f().enabled`) and a balanced generic call (`f<string>()`) are all
 projections of the owner's result, so an untouched field read through any of
