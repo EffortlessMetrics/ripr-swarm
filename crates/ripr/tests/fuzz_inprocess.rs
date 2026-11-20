@@ -562,6 +562,12 @@ fn long_line_regressions_finish_within_the_deadline() -> Result<(), String> {
 /// arms. Every arm is a boundary seam, and each seam re-read the whole
 /// body to learn that `a` is a local of `amount`, so a one-line change
 /// beside it took 8.7 seconds in a release build and far longer in debug.
+/// Each seam also re-masked the body, re-resolved the changed binding,
+/// re-read the line and searched the body for its right-hand literal: a
+/// debug check took 20 seconds with the alias fix alone (47 s on a hosted
+/// runner, which missed this deadline in merge-queue run 44677899080) and
+/// under 4 seconds with every pass answered once per owner. The per-pass
+/// unit tests count scans; this case keeps the end-to-end answer bounded.
 ///
 /// The diff changes the `let` on line 2 alone. The case must finish in time
 /// with the answer the slow pass exists to give: the changed binding is

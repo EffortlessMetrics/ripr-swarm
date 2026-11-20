@@ -1308,7 +1308,43 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
 /// A nested block inside an arm (`if a { if b { .. } else { .. } } else { .. }`)
 /// is not judged: the outer arms say nothing about the inner predicate, so the
 /// reading declines and the caller keeps its established behavior.
+///
+/// Every seam on one line asks this about the same line, so a long line's
+/// answer is kept per thread (#15189).
 fn inline_arms_all_agree(line: &str) -> bool {
+    thread_local! {
+        static LAST_LINE: LastTextAnswer = const { std::cell::Cell::new(None) };
+    }
+    remembered_answer(&LAST_LINE, line, scan_inline_arms_all_agree)
+}
+
+/// One thread's last long text and a pure reading's answer for it.
+type LastTextAnswer = std::cell::Cell<Option<(String, bool)>>;
+
+/// `scan(text)`, kept in `last` for a long text: every seam of an owner
+/// asks the same reading of the same body or line, which a 1,900-arm
+/// `else if` chain otherwise re-read once per arm (#15189). A text shorter
+/// than the floor is cheaper to scan than to copy. `Cell::take` keeps this
+/// free of borrow panics.
+fn remembered_answer(
+    last: &'static std::thread::LocalKey<LastTextAnswer>,
+    text: &str,
+    scan: fn(&str) -> bool,
+) -> bool {
+    const MEMO_MIN_BYTES: usize = 1024;
+    if text.len() < MEMO_MIN_BYTES {
+        return scan(text);
+    }
+    let (kept, answer) = last
+        .with(std::cell::Cell::take)
+        .filter(|(kept, _)| kept == text)
+        .unwrap_or_else(|| (text.to_string(), scan(text)));
+    last.with(|cell| cell.set(Some((kept, answer))));
+    answer
+}
+
+/// The uncached reading behind [`inline_arms_all_agree`].
+fn scan_inline_arms_all_agree(line: &str) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
     if masked.len() != line.len() {
         return false;
@@ -1379,7 +1415,18 @@ pub(in crate::analysis) fn predicate_branch_side_effect_only(
 /// through a mutable alias, can change a value the owner later returns, so
 /// independence from the return cannot be established. Fail closed (#5384): keep the
 /// established return-value sink for such owners.
+///
+/// Every predicate probe of an owner asks this about the same body, so a
+/// long body's answer is kept per thread (#15189).
 fn body_may_mutate_locals(body: &str) -> bool {
+    thread_local! {
+        static LAST_BODY: LastTextAnswer = const { std::cell::Cell::new(None) };
+    }
+    remembered_answer(&LAST_BODY, body, scan_body_may_mutate_locals)
+}
+
+/// The uncached reading behind [`body_may_mutate_locals`].
+fn scan_body_may_mutate_locals(body: &str) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     masked.contains("&mut") || masked.contains("let mut ") || masked.contains("ref mut ")
 }
@@ -2235,6 +2282,80 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::ReturnFact;
     use std::path::PathBuf;
+
+    /// #15189: a long line's memoized arm reading equals the scan, also
+    /// when lines alternate and when only an arm's string differs.
+    #[test]
+    fn memoized_inline_arm_reading_equals_the_scan_for_long_lines() -> Result<(), String> {
+        let chain = |arm_text: &str, last: &str| {
+            let mut line = String::from("if a == 0 { r = 1; }");
+            for arm in 1..200 {
+                line.push_str(&format!(" else if a == {arm} {{ {arm_text} }}"));
+            }
+            line.push_str(&format!(" else {{ {last} }}"));
+            line
+        };
+        let lines = [
+            chain("r = 1;", "r = 1;"),
+            chain("r = 1;", "r = 2;"),
+            chain("r = \"yes\";", "r = \"low\";"),
+            chain("r = 1; // { note", "r = 1;"),
+            "if a { r = 1; } else { r = 1; }".to_string(),
+        ];
+        if !lines[..4].iter().all(|line| line.len() >= 1024) {
+            return Err("chains must be long enough to enter the memo".to_string());
+        }
+        for round in 0..3 {
+            for line in &lines {
+                let expected = scan_inline_arms_all_agree(line);
+                for _repeat in 0..round + 1 {
+                    if inline_arms_all_agree(line) != expected {
+                        return Err(format!(
+                            "round {round}: memo differs from the scan for {line:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        if !inline_arms_all_agree(&lines[0]) || inline_arms_all_agree(&lines[1]) {
+            return Err("an all-agreeing chain and a differing chain read the same".to_string());
+        }
+        Ok(())
+    }
+
+    /// #15189: a long body's memoized mutation reading equals the scan, also
+    /// when bodies alternate and when the only `&mut` sits in a comment.
+    #[test]
+    fn memoized_body_mutation_reading_equals_the_scan_for_long_bodies() -> Result<(), String> {
+        let filler = "    if a == 1 { 1 } else { 2 };\n".repeat(64);
+        let bodies = [
+            format!("{{\n{filler}    bump(&mut x);\n}}"),
+            format!("{{\n{filler}    // bump(&mut x);\n}}"),
+            format!("{{\n{filler}    let mut y = 1;\n}}"),
+            format!("{{\n{filler}}}"),
+        ];
+        for round in 0..3 {
+            for body in &bodies {
+                if body.len() < 1024 {
+                    return Err("bodies must be long enough to enter the memo".to_string());
+                }
+                let expected = scan_body_may_mutate_locals(body);
+                for _repeat in 0..round + 1 {
+                    if body_may_mutate_locals(body) != expected {
+                        return Err(format!("round {round}: memo differs from the scan"));
+                    }
+                }
+            }
+        }
+        let answers: Vec<bool> = bodies
+            .iter()
+            .map(|body| body_may_mutate_locals(body))
+            .collect();
+        if answers != [true, false, true, false] {
+            return Err(format!("mutation readings were {answers:?}"));
+        }
+        Ok(())
+    }
 
     /// #7063: a turbofish `Err::<T, E>(..)` constructs the same error as
     /// `Err(..)`, so its return-value sink is the error variant, not the
