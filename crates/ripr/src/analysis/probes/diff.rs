@@ -5515,6 +5515,28 @@ mod tests {
         assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
     }
 
+    #[test]
+    fn predicate_before_keeps_the_whole_old_line_when_the_body_changes_too() {
+        // #15420: classifiers rebuild the old owner from `before`
+        // (`guard_side_flip` reads a changed `Err` payload from it), so a
+        // condition-plus-body edit must not cut the old line.
+        let probes = single_shape_probes(
+            "if total > 200 { total - 25 } else { total }",
+            "if total >= 100 { total - 10 } else { total }",
+            ProbeShapeKind::Predicate,
+            "total > 200",
+            "",
+        );
+
+        assert_eq!(probes.len(), 1);
+        let probe = &probes[0];
+        assert_eq!(probe.after.as_deref(), Some("total > 200"));
+        assert_eq!(
+            probe.before.as_deref(),
+            Some("if total >= 100 { total - 10 } else { total }")
+        );
+    }
+
     /// `with_old_arm_body` over the old source rebuilt from `index`, as the
     /// probe builder shares it per file.
     fn joined_old_arm(line: &str, changed: &ChangedFile, index: &RustIndex) -> String {

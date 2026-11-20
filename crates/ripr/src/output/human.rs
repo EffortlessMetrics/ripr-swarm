@@ -8690,6 +8690,62 @@ mod tests {
         assert!(!render_finding(&other_family).contains("arm head only"));
     }
 
+    /// #15420: a predicate whose block body changed too keeps the whole old
+    /// line as `before` while `after` is the new condition, so the row says
+    /// the after side is the condition and where the new line is.
+    #[test]
+    fn render_finding_marks_a_condition_only_after_row_over_a_whole_old_line() {
+        let mut finding = sample_finding();
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
+        finding.probe.after = Some("total > 200".to_string());
+
+        let rendered = render_finding(&finding);
+
+        assert!(rendered.contains("  before: if total >= 100 { total - 10 } else { total }\n"));
+        assert!(rendered.contains("  after:  total > 200\n"));
+        assert!(
+            rendered.contains("(condition only; before is the whole old line; open "),
+            "a condition-only after row over a whole old line must say so; got:\n{rendered}"
+        );
+        assert!(rendered.contains(":7 to read the new line)"));
+    }
+
+    /// Discriminating negatives: a cut old condition, a whole new line, a
+    /// brace inside a literal, and a non-predicate family add no note.
+    #[test]
+    fn render_finding_adds_no_condition_note_when_the_sides_match() {
+        let note = "condition only;";
+        let predicate = |before: &str, after: &str| {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::Predicate;
+            finding.probe.before = Some(before.to_string());
+            finding.probe.after = Some(after.to_string());
+            render_finding(&finding)
+        };
+        assert!(!predicate("total >= 100", "total > 200").contains(note));
+        assert!(!predicate("if a { b }", "if a { c }").contains(note));
+        assert!(!predicate("s == \"{}\"", "s == \"x\"").contains(note));
+        assert!(!predicate("if a { b }", "if a { b }").contains(note));
+        // A closure body or struct literal inside a cut condition is not a
+        // whole line's block (#15584 review).
+        assert!(
+            !predicate("v.iter().any(|x| { *x > 1 })", "v.iter().any(|x| *x > 2)").contains(note)
+        );
+        assert!(!predicate("f(S { a: 1 })", "f(S::new(2))").contains(note));
+        // `while` and `else if` heads over a whole old line get the note.
+        // (Test text keeps braces balanced: the miss-closure scan in
+        // related_test_role_tests skips this module by counting braces.)
+        assert!(predicate("while n >= 1 { n -= 1 }", "n > 2").contains(note));
+        assert!(predicate("else if n >= 1 { a }", "n > 2").contains(note));
+
+        let mut arm = sample_finding();
+        arm.probe.family = crate::domain::ProbeFamily::MatchArm;
+        arm.probe.before = Some("x if a > 1 => { 2 }".to_string());
+        arm.probe.after = Some("x if a > 2 =>".to_string());
+        assert!(!render_finding(&arm).contains(note));
+    }
+
     /// The `expr:` fallback is the same rendered fragment reached through a
     /// different branch, so it gets the same treatment: wrapped, complete, and
     /// not whitespace-normalized.
