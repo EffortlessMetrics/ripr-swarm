@@ -1968,7 +1968,9 @@ impl ClassifiedProbeEvidence {
                     &test_summaries,
                     context.index,
                     |test, assertion| {
-                        assertion_admitted(test, assertion) && owner_pin_admits(test, assertion)
+                        assertion_admitted(test, assertion)
+                            && !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
                     },
                 )
             }) {
