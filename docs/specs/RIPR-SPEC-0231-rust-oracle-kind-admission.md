@@ -720,7 +720,9 @@ Two pattern terms are used below.
       `unimplemented!`, `unreachable!` or `panic!` invocation (including
       an expression such as `todo!() == price(10)`). A same-named closure
       parameter, match-arm pattern or later local only shadows the
-      placeholder within its own lexical scope (#14868);
+      placeholder within its own lexical scope (#14868). The same rule
+      applies to a local declared inside a comparison operand block and to
+      a qualified assertion helper invoked inside a closure;
     - the reading this replaces is strong (`exact_value`,
       `whole_object_equality`, `exact_error_variant` or `snapshot`), or
       a medium or weak one (#14882).

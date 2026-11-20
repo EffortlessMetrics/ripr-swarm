@@ -3861,6 +3861,51 @@ fn early_error() -> Result<(), String> {
         Ok(())
     }
 
+    #[test]
+    fn placeholder_operands_and_inline_helpers_resolve_at_the_read() -> Result<(), String> {
+        use crate::domain::OracleStrength::{Strong, Unknown};
+        for (declaration, observer, expected) in [
+            (
+                "",
+                "assert_eq!(price(10), { let expected: i32 = todo!(); expected });",
+                Unknown,
+            ),
+            (
+                "let expected: i32 = todo!();",
+                "assert_eq!(price(10), { let expected = 7; expected });",
+                Strong,
+            ),
+            (
+                "",
+                "ensure!(price(10) == { let expected: i32 = todo!(); expected });",
+                Unknown,
+            ),
+            (
+                "let expected: i32 = todo!();",
+                "let check = |expected: i32| checks::assert_eq(price(10), expected);",
+                Strong,
+            ),
+        ] {
+            let call = if observer.starts_with("let check") {
+                "check(7);"
+            } else {
+                ""
+            };
+            let source = format!("#[test]\nfn t() {{\n{declaration}\n{observer}\n{call}\n}}");
+            let ast = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+            let parser = ast.tests.iter().flat_map(|t| &t.assertions);
+            let scanned = crate::analysis::extract::extract_assertions(&source, 1);
+            for facts in [parser.collect::<Vec<_>>(), scanned.iter().collect()] {
+                let fact = facts
+                    .iter()
+                    .find(|f| f.text.contains("price(10)"))
+                    .ok_or_else(|| format!("missing oracle in {source}"))?;
+                assert_eq!(fact.strength, expected, "{source}: {fact:?}");
+            }
+        }
+        Ok(())
+    }
+
     /// The control: the same line-scanned shape with a real expected value
     /// keeps its strong credit.
     #[test]

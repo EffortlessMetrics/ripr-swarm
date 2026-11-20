@@ -50,6 +50,27 @@ pub(super) fn assertion_oracle_text_at(line: &str) -> Option<(usize, String)> {
     .min_by_key(|(offset, _)| *offset)
 }
 
+/// A line-scanned helper can follow a closure introducer on the same row.
+pub(super) fn custom_assertion_call_offset(text: &str) -> Option<usize> {
+    if !super::patterns::is_custom_assertion_helper(text) {
+        return None;
+    }
+    let masked = mask_comments_and_strings(text);
+    masked.match_indices("assert_").find_map(|(offset, _)| {
+        let prefix = &masked[..offset];
+        if prefix
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch.is_alphanumeric())
+        {
+            return None;
+        }
+        let tail =
+            masked[offset..].trim_start_matches(|ch: char| ch == '_' || ch.is_alphanumeric());
+        tail.trim_start().starts_with('(').then_some(offset)
+    })
+}
+
 pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(line);
     let open = masked.find('(')?;

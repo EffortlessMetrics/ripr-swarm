@@ -25,7 +25,7 @@ struct Binding {
     placeholder: bool,
 }
 
-fn mentions_placeholder(body: &str) -> bool {
+pub(super) fn mentions_placeholder(body: &str) -> bool {
     ["todo", "unimplemented", "panic", "unreachable"]
         .iter()
         .any(|name| body.contains(name))
@@ -51,6 +51,10 @@ impl PlaceholderScope {
         if !mentions_placeholder(body) {
             return Self::default();
         }
+        Self::collect(root, body, prefix, &BTreeSet::new())
+    }
+
+    fn collect(root: &SyntaxNode, body: &str, prefix: usize, outer: &BTreeSet<String>) -> Self {
         let mut scope = Self {
             prefix,
             line_starts: std::iter::once(0)
@@ -79,12 +83,13 @@ impl PlaceholderScope {
                 });
             }
         }
-        let candidates: BTreeSet<_> = scope
+        let mut candidates: BTreeSet<_> = scope
             .bindings
             .iter()
             .filter(|b| b.placeholder)
             .map(|b| b.name.clone())
             .collect();
+        candidates.extend(outer.iter().cloned());
         scope.bindings.retain(|b| candidates.contains(&b.name));
         scope
     }
@@ -95,8 +100,10 @@ impl PlaceholderScope {
         }
         // A scanned statement can start with a closure declaration or match
         // pattern. Locate the same macro whose operands the classifier reads.
-        let offset =
-            super::arguments::assertion_oracle_text_at(assertion).map_or(0, |(offset, _)| offset);
+        let offset = super::arguments::assertion_oracle_text_at(assertion)
+            .map(|(offset, _)| offset)
+            .or_else(|| super::arguments::custom_assertion_call_offset(assertion))
+            .unwrap_or(0);
         let prefix = &assertion[..offset];
         let preceding_rows = prefix.bytes().filter(|&b| b == b'\n').count();
         let Some(&start) = self.line_starts.get(row + preceding_rows) else {
@@ -112,8 +119,11 @@ impl PlaceholderScope {
     }
 
     pub(crate) fn at(&self, offset: usize) -> BTreeSet<String> {
-        let offset = self.prefix + offset;
-        let mut names = self.fallback.clone();
+        self.visible_at(self.prefix + offset, &self.fallback)
+    }
+
+    fn visible_at(&self, offset: usize, outer: &BTreeSet<String>) -> BTreeSet<String> {
+        let mut names = outer.clone();
         let function = self
             .functions
             .iter()
@@ -131,6 +141,43 @@ impl PlaceholderScope {
         }
         names
     }
+}
+
+/// Macro arguments are token trees in the file AST. Parse the semantic operands
+/// as tuple elements so declarations, patterns and reads have real Rust scopes.
+pub(super) fn scoped_operand_read(operands: &str, outer: &BTreeSet<String>) -> Option<bool> {
+    let source = format!("fn __ripr_operands() {{ let _ = ({operands}\n); }}");
+    let parsed = parse_clean_source_file_memoized(&source)?;
+    let tree = parsed.tree();
+    let scope = PlaceholderScope::collect(tree.syntax(), &source, 0, outer);
+    let wrapper = scope.functions.first()?;
+    for node in tree.syntax().descendants() {
+        let offset = bytes(&node).start;
+        if scope
+            .functions
+            .iter()
+            .skip(1)
+            .any(|nested| nested.contains(&offset))
+            || !wrapper.contains(&offset)
+        {
+            continue;
+        }
+        if let Some(path) = ast::PathExpr::cast(node.clone())
+            && let Some(name) = path.path().and_then(|p| p.as_single_name_ref())
+            && scope.visible_at(offset, outer).contains(name.text())
+        {
+            return Some(true);
+        }
+        if let Some(call) = ast::MacroCall::cast(node)
+            && super::classify::text_reads_placeholder(
+                &call.syntax().text().to_string(),
+                &scope.visible_at(offset, outer),
+            )
+        {
+            return Some(true);
+        }
+    }
+    Some(false)
 }
 
 fn bytes(node: &SyntaxNode) -> std::ops::Range<usize> {
