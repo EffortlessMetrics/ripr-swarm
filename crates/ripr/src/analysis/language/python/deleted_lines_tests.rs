@@ -1846,12 +1846,16 @@ fn changed_raise_message_inside_brackets_is_not_exposed_by_a_return_assertion() 
 
 #[test]
 fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<(), String> {
-    let shape = |first: &str, close: &str| {
+    let shape = |first: &str, close: &str, original: &str| {
         let source =
             format!("def capped_total(items):\n    {first}\n        \" the payload!\"\n{close}");
-        let findings = analyze(
+        let test = format!(
+            "from src.cart import capped_total\n\ndef test_message():\n    assert capped_total([]) == {original:?}\n"
+        );
+        let findings = analyze_with_test(
             "changed-continuation",
             &source,
+            &test,
             &[3],
             vec![line(3, 3, "        \" the payload\"")],
         )?;
@@ -1864,17 +1868,20 @@ fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<()
             .ok_or_else(|| format!("no candidate finding on line 3 of {source}"))?;
         Ok::<_, String>((finding.probe.family, finding.class))
     };
-    let returned = shape("return (", "    )\n")?;
+    let returned = shape("return (", "    )\n", " the payload")?;
     assert_eq!(returned.0, crate::domain::ProbeFamily::ReturnValue);
-    assert_eq!(shape("return\\", "")?, returned);
-    // Each assignment must produce a current finding. Probe classification
-    // already distinguishes parenthesized and plain right-hand sides.
-    let explicit = shape("msg = \"Could not load\" \\", "    return msg\n")?;
-    let bracketed = shape("msg = (\"Could not load\"", "    )\n    return msg\n")?;
-    assert_eq!(explicit.1, bracketed.1);
-    // An annotation or lambda colon is still part of an expression.
-    shape("msg: \\", "    return items\n")?;
-    shape("msg = lambda: \\", "    return msg()\n")?;
+    assert_eq!(shape("return\\", "", " the payload")?, returned);
+
+    // Both assignment spellings must report the suffix. Their right-hand
+    // sides go through the existing classifier for the enclosing statement.
+    for (first, close) in [
+        ("msg = \"Could not load\" \\", "    return msg\n"),
+        ("msg = (\"Could not load\"", "    )\n    return msg\n"),
+    ] {
+        shape(first, close, "Could not load the payload")?;
+    }
+    // A lambda colon still belongs to the expression producing the string.
+    shape("msg = lambda: \\", "    return msg()\n", " the payload")?;
     Ok(())
 }
 
