@@ -175,7 +175,7 @@ pub(in crate::analysis) use owner_pin::{
     assertion_has_independent_record_collection, claims_payload_eq_candidates,
     current_unwrapped_error_binding, direct_call_name, equality_condition_operands,
     expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
-    owner_builds_declared_error_variant, pin_scope_needs, primitive_bool_negated_result_identity,
+    owner_builds_declared_error_variant, pin_scope_needs, primitive_bool_projected_result_identity,
     returned_closure_pin_required, selected_unit_error_return, targeted_free_call_reaches_owner,
     targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };

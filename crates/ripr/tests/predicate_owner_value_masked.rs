@@ -157,3 +157,56 @@ fn an_observing_assertion_beside_a_masked_one_keeps_the_credit() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn boolean_cast_pins_only_a_compared_owner_against_its_numeric_encoding() -> Result<(), String> {
+    for (body, expected) in [
+        ("assert_eq!(over(10) as u8, 1);", "exposed"),
+        ("assert_eq!(1, over(10) as u8);", "exposed"),
+        ("assert_eq!(over(10) as u8 * 0, 0);", "weakly_exposed"),
+        (
+            "assert_eq!(0, 0, \"{}\", over(10) as u8);",
+            "weakly_exposed",
+        ),
+        (
+            "let _ = over(10); assert_eq!(first(true, true) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!(over(10) as u8, over(10) as u8);",
+            "weakly_exposed",
+        ),
+        (
+            "use core::primitive::i16 as u8; assert_eq!(over(10) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "macro_rules! define_type { ($a:ty as $b:ident) => { type $b = $a; } } define_type!(i16 as u8); assert_eq!(over(10) as u8, 1);",
+            "reachable_unrevealed",
+        ),
+        (
+            "struct Rival; impl Rival { fn over(&self, _: bool) -> bool { true } } assert_eq!(Rival.over(over(10)) as u8, 1);",
+            "weakly_exposed",
+        ),
+        ("assert_eq!(over(10) as u8, 2);", "weakly_exposed"),
+        (
+            "let _ = over(10); assert_eq!(over(11) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "let _ = over(10); let over = |_| true; assert_eq!(over(10) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "type u8 = i16; assert_eq!(over(10) as u8, 1);",
+            "weakly_exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let actual = finding.get("classification").and_then(Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {actual:?}"));
+        }
+    }
+    Ok(())
+}

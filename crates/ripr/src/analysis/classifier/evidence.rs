@@ -1237,16 +1237,19 @@ impl ClassifiedProbeEvidence {
                             owner,
                         )
                     }),
-                primitive_bool_negated_result_identity: &|test, assertion| {
+                primitive_bool_projected_result_identity: &|test, assertion| {
                     context.workspace_complete
                         && matches!(context.probe.family, ProbeFamily::Predicate)
                         && context.owner_fn.is_some_and(|owner| {
-                            crate::analysis::classify::primitive_bool_negated_result_identity(
+                            crate::analysis::classify::primitive_bool_projected_result_identity(
                                 owner,
                                 test,
                                 assertion,
                                 context.index,
                                 pin_syntax,
+                                owner_return_pin
+                                    .as_ref()
+                                    .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail),
                             )
                         })
                 },

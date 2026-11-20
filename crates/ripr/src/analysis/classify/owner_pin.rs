@@ -4872,14 +4872,15 @@ impl AsyncResultIdentity {
     }
 }
 
-/// Source identity only: Not is bijective on an established primitive bool. This
+/// Source identity only: primitive negation and a cast to u8 preserve a boolean. This
 /// does not establish which changed return path the owner call selected.
-pub(in crate::analysis) fn primitive_bool_negated_result_identity(
+pub(in crate::analysis) fn primitive_bool_projected_result_identity(
     owner: &FunctionSummary,
     test: &TestSummary,
     assertion: &OracleFact,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
+    whole_boolean_tail: bool,
 ) -> bool {
     if !matches!(owner.item.container, FunctionContainer::Free)
         || !(test.start_line..=test.end_line).contains(&assertion.line)
@@ -4887,9 +4888,21 @@ pub(in crate::analysis) fn primitive_bool_negated_result_identity(
     {
         return false;
     }
-    let Some(operands) =
-        assertion_comparison_operands(&assertion.text).and_then(primitive_bool_negated_operands)
-    else {
+    let Some(compared) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    let normalized = primitive_bool_negated_operands(compared).or_else(|| {
+        if !whole_boolean_tail || !assertion.text.contains("u8") {
+            return None;
+        }
+        let operands = bool_to_u8_operands(compared, index, syntax, test, assertion)?;
+        (function_declaration_is_async(owner, index) == Some(false)
+            && operands
+                .iter()
+                .any(|value| is_whole_free_owner_call(value, &owner.name)))
+        .then_some(operands)
+    });
+    let Some(operands) = normalized else {
         return false;
     };
     if !operands
@@ -4923,19 +4936,78 @@ fn primitive_bool_negated_operands(operands: [&str; 2]) -> Option<[&str; 2]> {
     })
 }
 
+/// Casting a primitive boolean to u8 encodes false as zero and true as one.
+fn bool_to_u8_operands<'a>(
+    operands: [&'a str; 2],
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> Option<[&'a str; 2]> {
+    [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+        let expected = match operands[other].trim() {
+            "0" => "false",
+            "1" => "true",
+            _ => return None,
+        };
+        if !operands[at].contains("u8") {
+            return None;
+        }
+        let call = projected_bool_call(operands[at], |expr| {
+            let ast::Expr::CastExpr(cast) = expr else {
+                return None;
+            };
+            (cast.ty()?.syntax().text() == "u8").then(|| cast.expr())?
+        })?;
+        // The trusted assertion is still a macro token tree in the source
+        // index. Its parsed cast keyword cannot introduce an import rename.
+        let source = &index.files().get(&test.file)?.source;
+        let (start, end) = assertion_byte_range(index, test, assertion.line)?;
+        let start = usize::try_from(start).ok()?;
+        let invocation = source.get(start..usize::try_from(end).ok()?)?;
+        if invocation != assertion.text.trim().trim_end_matches(';').trim_end() {
+            return None;
+        }
+        let operand = operands[at].trim();
+        let before_as = operand.strip_suffix("u8")?.trim_end().strip_suffix("as")?;
+        let cast_at = start
+            .checked_add(invocation.find(operand)?)?
+            .checked_add(before_as.len())?;
+        if !builtin_type_unshadowed_except("u8", index, syntax, Some((&test.file, cast_at))) {
+            return None;
+        }
+        Some(if at == 0 {
+            [call, expected]
+        } else {
+            [expected, call]
+        })
+    })
+}
+
 fn single_negated_free_call(operand: &str) -> Option<&str> {
+    projected_bool_call(operand, |expr| {
+        let ast::Expr::PrefixExpr(negated) = expr else {
+            return None;
+        };
+        (negated.op_kind() == Some(ast::UnaryOp::Not)).then(|| negated.expr())?
+    })
+}
+
+/// Pull the complete call out of an authenticated primitive projection.
+fn projected_bool_call(
+    operand: &str,
+    inner: impl FnOnce(ast::Expr) -> Option<ast::Expr>,
+) -> Option<&str> {
     let operand = operand.trim();
     let prefix = "fn ripr_bool_operand() { ";
     let source = format!("{prefix}{operand} }}");
     let parsed = parse_clean_source_file(&source)?;
     let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
-    let ast::Expr::PrefixExpr(negated) = function.body()?.stmt_list()?.tail_expr()? else {
-        return None;
-    };
-    if negated.op_kind() != Some(ast::UnaryOp::Not) {
+    let body = function.body()?.stmt_list()?;
+    if body.statements().next().is_some() {
         return None;
     }
-    let mut value = negated.expr()?;
+    let mut value = inner(body.tail_expr()?)?;
     while let ast::Expr::ParenExpr(parenthesized) = &value {
         value = parenthesized.expr()?;
     }
@@ -12209,9 +12281,20 @@ fn declaring_file_rebinds(
     workspace_type: bool,
     index: &RustIndex,
 ) -> bool {
-    if file_renames_to(declaring, base) || file_aliases_type(declaring, base) {
-        return true;
-    }
+    file_renames_to(declaring, base)
+        || file_aliases_type(declaring, base)
+        || imports_may_rebind(declaring, base, workspace_type, index, || {
+            workspace_may_export_other(index, base)
+        })
+}
+
+fn imports_may_rebind(
+    declaring: &str,
+    base: &str,
+    workspace_type: bool,
+    index: &RustIndex,
+    workspace_exports_other: impl Fn() -> bool,
+) -> bool {
     file_use_statements(declaring).iter().any(|statement| {
         let names = contains_as_whole_word(statement, base);
         if !(names || statement.contains('*')) {
@@ -12222,7 +12305,7 @@ fn declaring_file_rebinds(
             // A workspace path that names a standard name imports some
             // other item of it; a workspace glob brings only workspace items.
             Some(root) if is_workspace_root(root, index) => {
-                (names && !workspace_type) || workspace_may_export_other(index, base)
+                (names && !workspace_type) || workspace_exports_other()
             }
             _ => true,
         }
@@ -13323,10 +13406,15 @@ pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
 }
 
 fn file_renames_to_uncached(source: &str, name: &str) -> bool {
+    file_renames_to_except(source, name, None)
+}
+
+fn file_renames_to_except(source: &str, name: &str, known_cast: Option<usize>) -> bool {
     let masked = mask_comments_and_strings(source);
     let spans = rename_item_spans(&masked);
     whole_word_offsets(&masked, "as").into_iter().any(|offset| {
-        starts_with_word(masked[offset + "as".len()..].trim_start(), name)
+        Some(offset) != known_cast
+            && starts_with_word(masked[offset + "as".len()..].trim_start(), name)
             && spans.iter().any(|span| span.contains(&offset))
     })
 }
@@ -15187,15 +15275,32 @@ pub(super) fn builtin_type_unshadowed(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
+    builtin_type_unshadowed_except(name, index, syntax, None)
+}
+
+fn builtin_type_unshadowed_except(
+    name: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    known_cast: Option<(&Path, usize)>,
+) -> bool {
     [name.to_string(), format!("r#{name}")]
         .iter()
         .all(|spelling| {
             !type_declared_in_workspace(spelling, index)
                 && !workspace_declares_trait(index, spelling)
                 && !syntax.macro_may_declare(spelling, index)
-                && index.files().values().all(|facts| {
+                && index.files().iter().all(|(path, facts)| {
+                    let renamed = match known_cast.filter(|(file, _)| *file == path) {
+                        Some((_, at)) => file_renames_to_except(&facts.source, spelling, Some(at)),
+                        None => file_renames_to(&facts.source, spelling),
+                    };
+                    // Aliases, renames and outside imports are checked across all
+                    // indexed files here, including the target of any workspace glob.
                     !facts.used_lexical_fallback
-                        && !declaring_file_rebinds(&facts.source, spelling, false, index)
+                        && !renamed
+                        && !file_aliases_type(&facts.source, spelling)
+                        && !imports_may_rebind(&facts.source, spelling, false, index, || false)
                 })
         })
 }
