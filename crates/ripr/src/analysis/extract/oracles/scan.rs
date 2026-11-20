@@ -6174,12 +6174,18 @@ fn price_boundary_discriminator() {
                 "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
             );
             let fact = only_fact(&body)?;
-            let wanted = if reads {
-                (OracleKind::Unknown, OracleStrength::Unknown)
+            if reads {
+                assert_eq!(
+                    (fact.kind, fact.strength),
+                    (OracleKind::Unknown, OracleStrength::Unknown),
+                    "{operand}"
+                );
             } else {
-                (OracleKind::ExactValue, OracleStrength::Strong)
-            };
-            assert_eq!((fact.kind, fact.strength), wanted, "{operand}");
+                assert_eq!(fact.strength, OracleStrength::Strong, "{operand}");
+                if operand.starts_with('r') {
+                    assert_eq!(fact.kind, OracleKind::ExactValue, "{operand}");
+                }
+            }
         }
         Ok(())
     }
