@@ -106,6 +106,8 @@ mod leftover_status;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/legend_first_run.rs"]
 mod legend_first_run;
+#[path = "cli_smoke/missing_root_refusal.rs"]
+mod missing_root_refusal;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;

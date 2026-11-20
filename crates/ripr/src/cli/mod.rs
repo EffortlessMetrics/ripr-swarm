@@ -331,6 +331,9 @@ fn drive_before_phase_inner(
     // and the Rust seam inventory cannot translate. The gap id is the attempt
     // identity (the manifest's seam slot); the seam translator is skipped,
     // and `--seam-id gap:...` keeps its translating behaviour untouched.
+    // #15249: a missing or non-directory `--root` is the shared root refusal,
+    // not a git failure from the seam translation or the workflow lock below.
+    commands_context::ensure_command_root(&options.root, "agent repair --phase before")?;
     if let Some(gap_id) = options.gap_id.clone() {
         options.seam_id = Some(gap_id);
     } else if let Some(seam_id) = options.seam_id.clone() {
