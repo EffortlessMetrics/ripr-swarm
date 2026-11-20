@@ -87,3 +87,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_tuple_derived_conditional_exit_before_assertion (8)
+
+Reason:
+RIPR-SPEC-0229 (#15359): repair no longer reads a match arm no test input selects as strongly gripped, so its no-repair-start reason matches check
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_derived_conditional_exit_before_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`
