@@ -54471,6 +54471,37 @@ fn check_nextest_hang_window_budget(config: &str, shard_workflow: &str) -> Resul
     Ok(())
 }
 
+/// The analytics timeout covers the entire partition job. Both measured
+/// phases consume its budget before a late hang can be named (#14946).
+#[test]
+fn nextest_hang_window_fits_the_analytics_job_budget() -> Result<(), String> {
+    let workflow = include_str!("../../.github/workflows/test-analytics.yml");
+    let (_, job) = workflow
+        .split_once("\n  rust-tests:\n")
+        .ok_or("missing analytics rust-tests job")?;
+    let minutes: u32 = job
+        .lines()
+        .take_while(|line| {
+            line.trim().is_empty() || line.starts_with("    ") || line.trim_start().starts_with('#')
+        })
+        .find_map(|line| line.strip_prefix("    timeout-minutes: "))
+        .ok_or("missing analytics rust-tests job timeout")?
+        .trim()
+        .parse()
+        .map_err(|err| format!("invalid analytics job timeout: {err}"))?;
+    let cap = u64::from(minutes) * 60;
+    let (default, overrides) = nextest_ci_hang_windows(include_str!("../../.config/nextest.toml"))?;
+    for (name, window) in std::iter::once(("ci profile".to_owned(), default)).chain(overrides) {
+        let elapsed = NEXTEST_CI_MEASURED_BUILD_SECONDS + NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS;
+        if window >= cap.saturating_sub(elapsed) {
+            return Err(format!(
+                "{name}: {elapsed}s of measured build and test time plus a {window}s hang window reaches the analytics job cap of {cap}s"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// #14906 acceptance: the hang window plus the measured build and test-phase
 /// time stays inside the shard step's cap, and the window sits above the
 /// slowest legitimate test. Widening `terminate-after` past the budget fails
