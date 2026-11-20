@@ -1,8 +1,14 @@
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
+import { promises as fsp } from 'fs';
 import * as https from 'https';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { distributionManifestUrl, distributionPlacements, ResolvedDistributionRequest } from './distributionDescriptor';
+import {
+  AdmittedServerManifest, admitInitialRequestTarget, admitManifestBytes, admitRedirectTarget,
+  assetUrlForSubject, RELEASE_ASSET_HOSTS, RedirectPolicy
+} from './manifestTrust';
 import { extractAdmittedArchive } from './archiveInventory';
 import { RiprConfig } from './config';
 import {
@@ -11,6 +17,7 @@ import {
   ManagedServerInstallation,
   ManagedServerInstallRequest,
   readManagedServerInstallation,
+  ResolvedArchive,
   safeDigestEquals,
   validateManagedServerVersion
 } from './managedServerInstall';
@@ -107,7 +114,7 @@ export async function downloadServer(
   distribution?: ResolvedDistributionRequest
 ): Promise<ManagedServerInstallation> {
   const managedVersion = validateManagedServerVersion(version);
-  const origin = downloadOriginLabel(config, managedVersion);
+  const origin = downloadOriginLabel(config, managedVersion, distribution);
   return vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -130,19 +137,19 @@ async function downloadServerWithProgress(
 ): Promise<ManagedServerInstallation> {
   const requestedVersion = validateManagedServerVersion(version);
   const generation = distributionGeneration(requestedVersion);
-  const placement = manifestPlacementPlan(config.downloadBaseUrl, requestedVersion);
-  const admittedManifestSha256 = admittedDescriptor(generation)?.manifestSha256;
-  const request = installRequest(context, requestedVersion, platform);
+  const request = installRequest(context, requestedVersion, platform, distribution);
   return installManagedServer(request, {
     resolveArchive: async () => {
-      // Descriptor-bound downloads never fetch or parse unadmitted bytes:
-      // branch before any manifest fetch so a replaced manifest cannot even
-      // be retrieved, let alone select its own asset host.
+      // Schema 2 pins the raw manifest before parsing its placement-neutral archive subjects.
       if (distribution?.manifestSha256 !== undefined) {
         return downloadAdmittedAsset(config, distribution, platform, version, output, progress);
       }
 
       progress.report({ message: 'Fetching release manifest…' });
+      if (distribution) {
+        return downloadLegacyDescriptorAsset(config.downloadBaseUrl, distribution, platform, request, output);
+      }
+      const placement = manifestPlacementPlan(config.downloadBaseUrl, requestedVersion);
       const selection = await resolveServerManifestPlacement(
         {
           requestedVersion,
@@ -150,7 +157,7 @@ async function downloadServerWithProgress(
           platformTarget: platform.target,
           stableManifestUrl: placement.stableManifestUrl,
           rcManifestUrl: placement.rcManifestUrl,
-          admittedManifestSha256
+          admittedManifestSha256: request.admittedManifestSha256
         },
         fetchManifestBytesOverHttps
       );
@@ -183,7 +190,7 @@ async function downloadServerWithProgress(
       // the owned parser, policed, and budgeted before any file is created.
       // No system extractor ever touches archive bytes on this path.
       await extractAdmittedArchive(
-        await fs.promises.readFile(archivePath),
+        await fsp.readFile(archivePath),
         platform.archiveExtension,
         destination,
         platform.executableName
@@ -312,13 +319,52 @@ function installRequest(
   distribution?: ResolvedDistributionRequest
 ): ManagedServerInstallRequest {
   const admittedManifestSha256 = admittedDescriptor(distributionGeneration(version))?.manifestSha256;
+  if (admittedManifestSha256 !== undefined && distribution?.manifestSha256 !== undefined
+    && !safeDigestEquals(admittedManifestSha256, distribution.manifestSha256)) {
+    throw new Error('Embedded and release-catalogue manifest SHA-256 admissions disagree.');
+  }
   return {
     serversRoot: path.join(context.globalStorageUri.fsPath, 'servers'),
     version,
     platformTarget: platform.target,
     executableName: platform.executableName,
     archiveExtension: platform.archiveExtension,
-    ...(admittedManifestSha256 !== undefined ? { admittedManifestSha256 } : {})
+    ...(admittedManifestSha256 !== undefined ? { admittedManifestSha256 } : {}),
+    ...(distribution !== undefined ? { distributionIdentity: distribution.descriptorIdentity } : {}),
+    ...(distribution?.manifestSha256 !== undefined ? { expectedManifestSha256: distribution.manifestSha256 } : {})
+  };
+}
+
+/** Schema 1 names the placements and uses the legacy asset map. Only the release catalogue can pin these bytes. */
+async function downloadLegacyDescriptorAsset(
+  baseUrl: string,
+  distribution: ResolvedDistributionRequest,
+  platform: RiprPlatform,
+  request: ManagedServerInstallRequest,
+  output: vscode.OutputChannel
+): Promise<ResolvedArchive> {
+  const selection = await fetchManifestForDistribution(baseUrl, distribution, request.version, request.admittedManifestSha256);
+  const manifest = selection.manifest.parsed;
+  assertPlacementIdentity(manifest, {
+    generation: distributionGeneration(request.version),
+    platformTarget: platform.target
+  }, selection.manifestUrl);
+  const asset = manifest.assets[platform.target];
+  const fallback = selection.manifestSelection === 'fallback_exact_after_preferred_absent';
+  const preferredRc = distribution.preferredPlacement.channel === 'rc';
+  const archiveUrl = fallback || preferredRc ? placementArchiveUrl(selection.manifestUrl, asset.url) : asset.url;
+  output.appendLine(`Selected server manifest at ${selection.manifestUrl} (${selection.manifestSelection}).`);
+  return {
+    manifestVersion: manifest.version,
+    expectedSha256: asset.sha256,
+    bytes: await fetchDescriptorBytes(archiveUrl, ARCHIVE_MAX_BYTES),
+    manifestSha256: selection.manifest.sha256,
+    manifestUrl: selection.manifestUrl,
+    ...(preferredRc ? {} : { manifestPlacement: fallback ? 'rc_after_stable_absent' : 'stable' }),
+    selectedManifestUrl: selection.manifestUrl,
+    manifestSelection: selection.manifestSelection,
+    preferredManifestObservation: selection.preferredManifestObservation,
+    fallbackManifestObservation: selection.fallbackManifestObservation
   };
 }
 
@@ -357,12 +403,13 @@ async function downloadAdmittedAsset(
   const assetUrl = assetUrlForSubject(placementBase, asset.subject);
   output.appendLine(`Downloading ripr server ${version} for ${platform.target} from admitted placement.`);
   progress.report({ message: `Downloading ${platform.executableName}…` });
-  const { body: bytes } = await fetchBuffer(assetUrl, asset.archiveSize, fetchPolicyFor(assetUrl));
+  const bytes = await fetchDescriptorBytes(assetUrl, Math.min(asset.archiveSize, ARCHIVE_MAX_BYTES));
   progress.report({ message: 'Verifying checksum…' });
   return {
     manifestVersion: admitted.manifest.productVersion,
     expectedSha256: asset.sha256,
     bytes,
+    manifestSha256: expectedDigest,
     admittedManifestSha256: expectedDigest,
     selectedManifestUrl: admitted.manifestUrl,
     manifestSelection: admitted.manifestSelection,
@@ -376,8 +423,10 @@ export type FetchAdmittedManifest = (
   expectedDigest: string
 ) => Promise<AdmittedServerManifest>;
 
-export interface AdmittedManifestSelection {
-  readonly manifest: AdmittedServerManifest;
+export type AdmittedManifestSelection = DistributionManifestSelection<AdmittedServerManifest>;
+
+interface DistributionManifestSelection<T> {
+  readonly manifest: T;
   readonly manifestUrl: string;
   readonly manifestSelection: 'preferred_exact' | 'fallback_exact_after_preferred_absent';
   readonly preferredManifestObservation: 'accepted' | 'direct_not_found';
@@ -397,10 +446,20 @@ export async function fetchAdmittedManifestForDistribution(
   expectedDigest: string,
   fetchImpl: FetchAdmittedManifest = fetchAdmittedManifest
 ): Promise<AdmittedManifestSelection> {
+  return selectDistributionManifest(baseUrl, distribution, version, expectedDigest, (url) => fetchImpl(url, expectedDigest));
+}
+
+async function selectDistributionManifest<T>(
+  baseUrl: string,
+  distribution: ResolvedDistributionRequest,
+  version: string,
+  admittedDigest: string | undefined,
+  fetchAtPlacement: (url: string) => Promise<T>
+): Promise<DistributionManifestSelection<T>> {
   const [preferred, ...fallbacks] = manifestCandidatesForDistribution(baseUrl, distribution, version);
   try {
     return {
-      manifest: await fetchImpl(preferred, expectedDigest),
+      manifest: await fetchAtPlacement(preferred),
       manifestUrl: preferred,
       manifestSelection: 'preferred_exact',
       preferredManifestObservation: 'accepted',
@@ -408,11 +467,11 @@ export async function fetchAdmittedManifestForDistribution(
     };
   } catch (error) {
     const fallback = fallbacks[0];
-    if (fallback === undefined || !isDirectManifestNotFound(error)) {
+    if (fallback === undefined || admittedDigest === undefined || !isDirectManifestNotFound(error)) {
       throw error;
     }
     return {
-      manifest: await fetchImpl(fallback, expectedDigest),
+      manifest: await fetchAtPlacement(fallback),
       manifestUrl: fallback,
       manifestSelection: 'fallback_exact_after_preferred_absent',
       preferredManifestObservation: 'direct_not_found',
@@ -422,7 +481,7 @@ export async function fetchAdmittedManifestForDistribution(
 }
 
 export async function fetchAdmittedManifest(url: string, expectedDigest: string): Promise<AdmittedServerManifest> {
-  const { body } = await fetchBuffer(url, MAX_MANIFEST_BYTES, fetchPolicyFor(url));
+  const body = await fetchDescriptorBytes(url, MANIFEST_MAX_BYTES);
   return admitManifestBytes(body, expectedDigest);
 }
 
@@ -483,35 +542,46 @@ export function isDirectManifestNotFound(error: unknown): boolean {
   return error instanceof ManifestFetchError && error.statusCode === 404 && !error.redirected;
 }
 
-export type FetchManifest = (url: string) => Promise<ServerManifest>;
-
-export async function fetchManifestForDistribution(
-  baseUrl: string,
-  distribution: ResolvedDistributionRequest | undefined,
-  version: string,
-  fetchImpl: FetchManifest = fetchManifest
-): Promise<ServerManifest> {
-  // The candidate list holds the preferred placement first and at most one
-  // bounded predeclared fallback. Only the preferred placement may fall
-  // through to that fallback, and only when its own initial response is a
-  // direct 404. Every other failure propagates with its original error, and
-  // a fetched manifest is validated by the caller, which fails fast: a
-  // contradictory manifest must not be masked by a fallback.
-  const [preferred, ...fallbacks] = manifestCandidatesForDistribution(baseUrl, distribution, version);
-  try {
-    return await fetchImpl(preferred);
-  } catch (error) {
-    const fallback = fallbacks[0];
-    if (fallback === undefined || !isDirectManifestNotFound(error)) {
-      throw error;
-    }
-    return fetchImpl(fallback);
+function manifestUrl(baseUrl: string, version: string): string {
+  const file = `ripr-server-manifest-v${version}.json`;
+  const base = baseUrl.trim();
+  if (base.length > 0) {
+    return `${base.replace(/\/+$/, '')}/${file}`;
   }
+  return `https://github.com/EffortlessMetrics/ripr/releases/download/v${version}/${file}`;
 }
 
-function downloadOriginLabel(config: RiprConfig, version: string): string {
+async function fetchDescriptorBytes(url: string, maxBytes: number): Promise<Buffer> {
+  const outcome = await fetchManifestBytesOverHttps(url, maxBytes, fetchPolicyFor(url));
+  if (outcome.kind === 'ok') {
+    return outcome.bytes;
+  }
+  if (outcome.kind === 'authoritative_absence') {
+    throw new ManifestFetchError(`Manifest not found at ${url}.`, { statusCode: 404, redirected: false });
+  }
+  throw placementFetchError(outcome);
+}
+
+/** Schema 1 carries placements. The generated release catalogue supplies the optional raw-byte digest. */
+export function fetchManifestForDistribution(
+  baseUrl: string,
+  distribution: ResolvedDistributionRequest,
+  version: string,
+  digest: string | undefined,
+  fetchBytes: (url: string) => Promise<Buffer> = (url) => fetchDescriptorBytes(url, MANIFEST_MAX_BYTES)
+): Promise<DistributionManifestSelection<{ parsed: ServerManifest; sha256: string }>> {
+  return selectDistributionManifest(baseUrl, distribution, version, digest, async (url) => {
+    const bytes = await fetchBytes(url);
+    return { parsed: parseAdmittedManifest(bytes, digest, url), sha256: sha256Hex(bytes) };
+  });
+}
+
+function downloadOriginLabel(config: RiprConfig, version: string, distribution?: ResolvedDistributionRequest): string {
   try {
-    return new URL(manifestPlacementPlan(config.downloadBaseUrl, version).stableManifestUrl).host;
+    const preferred = distribution
+      ? distributionManifestUrl(config.downloadBaseUrl, distribution)
+      : manifestPlacementPlan(config.downloadBaseUrl, version).stableManifestUrl;
+    return new URL(preferred).host;
   } catch {
     return 'the configured download mirror';
   }
@@ -554,7 +624,7 @@ function parseAdmittedManifest(
   return parsed as ServerManifest;
 }
 
-function assertPlacementIdentity(manifest: ServerManifest, request: ManifestPlacementRequest, url: string): void {
+function assertPlacementIdentity(manifest: ServerManifest, request: Pick<ManifestPlacementRequest, 'generation' | 'platformTarget'>, url: string): void {
   if (manifest.version !== request.generation) {
     throw new Error(
       `Server manifest version ${manifest.version} at ${url} does not match distribution generation ${request.generation}.`
@@ -594,7 +664,11 @@ export function isAllowedHttpsRedirect(fromUrl: string, toUrl: string): boolean 
   return REDIRECT_ALLOWED_HOSTS.has(to.host);
 }
 
-export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX_BYTES): Promise<ManifestFetchOutcome> {
+export function fetchManifestBytesOverHttps(
+  url: string,
+  maxBytes = MANIFEST_MAX_BYTES,
+  policy?: RedirectPolicy
+): Promise<ManifestFetchOutcome> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (outcome: ManifestFetchOutcome): void => {
@@ -615,6 +689,9 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
       // (#3798: fail closed, never crash, never hang).
       let request: import('http').ClientRequest;
       try {
+        if (policy && redirects === 0) {
+          admitInitialRequestTarget(target, policy);
+        }
         if (new URL(target).protocol !== 'https:') {
           finish({
             kind: 'transport_failure',
@@ -638,7 +715,9 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
             }
             let redirectedUrl: string;
             try {
-              redirectedUrl = new URL(location, target).toString();
+              redirectedUrl = policy
+                ? admitRedirectTarget(target, location, policy)
+                : new URL(location, target).toString();
             } catch (error) {
               finish({
                 kind: 'transport_failure',
@@ -715,12 +794,14 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
             finish({
               kind: 'transport_failure',
               url: target,
-              message: error instanceof Error ? error.message : String(error)
+              // A body cut off by the peer arrives here as "aborted" with
+              // the reset only in `code`; keep both and name the URL.
+              message: requestErrorMessage(target, error instanceof Error ? error : new Error(String(error)))
             });
           });
         });
         request.on('error', (error) => {
-          finish({ kind: 'transport_failure', url: target, message: error.message });
+          finish({ kind: 'transport_failure', url: target, message: requestErrorMessage(target, error) });
         });
         request.setTimeout(30_000, () => {
           request.destroy(new Error(`Timed out while fetching ${target}.`));
@@ -737,6 +818,27 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
   });
 }
 
+/**
+ * The text of a failed request. A raw socket error ("getaddrinfo ENOTFOUND
+ * host") does not say what was being fetched, so the URL is added unless the
+ * error already names it (the fetch timeout does). When a host has several
+ * addresses and every connection attempt fails, Node reports an
+ * AggregateError whose own message is empty and whose cause is only in
+ * `code`; the code is kept so the failure still reads, and still classifies,
+ * as a connection problem (#13638).
+ */
+export function requestErrorMessage(target: string, error: Error): string {
+  const code = (error as NodeJS.ErrnoException).code;
+  const text = error.message.trim();
+  const detail = typeof code === 'string' && code.length > 0 && !text.includes(code)
+    ? `${code} ${text}`.trim()
+    : text;
+  if (detail.includes(target)) {
+    return detail;
+  }
+  return `Could not fetch ${target}: ${detail.length > 0 ? detail : 'the request failed without a reported cause'}`;
+}
+
 async function fetchBuffer(url: string): Promise<Buffer> {
   const outcome = await fetchManifestBytesOverHttps(url, ARCHIVE_MAX_BYTES);
   if (outcome.kind === 'ok') {
@@ -745,26 +847,220 @@ async function fetchBuffer(url: string): Promise<Buffer> {
   throw placementFetchError(outcome);
 }
 
-function extractArchive(archivePath: string, destination: string, platform: RiprPlatform): Promise<void> {
+async function extractArchive(archivePath: string, destination: string, platform: RiprPlatform): Promise<void> {
   if (platform.archiveExtension === 'zip') {
-    return runProcess('powershell.exe', [
+    await inspectZipArchive(archivePath);
+    await runProcess('powershell.exe', [
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
       '-Command',
       `Expand-Archive -LiteralPath ${quotePowerShell(archivePath)} -DestinationPath ${quotePowerShell(destination)} -Force`
     ]);
+    return;
   }
-  return runProcess('tar', ['-xzf', archivePath, '-C', destination]);
+  await inspectTarArchive(archivePath);
+  await runProcess('tar', ['-xzf', archivePath, '-C', destination]);
 }
 
-function runProcess(command: string, args: string[]): Promise<void> {
+/** Maximum member count accepted from a server archive before extraction. */
+export const ARCHIVE_MAX_MEMBERS = 1000;
+
+/**
+ * Lists a tar archive and refuses unsafe members before anything is written
+ * (#13640): the post-extraction walk cannot undo writes made through a symlink
+ * or `..` member, so those members must never reach `tar -x`.
+ */
+export async function inspectTarArchive(archivePath: string): Promise<void> {
+  const names = await runProcess('tar', ['-tzf', archivePath]);
+  const verbose = await runProcess('tar', ['-tvzf', archivePath]);
+  assertSafeTarListing(names.split(/\r?\n/), verbose.split(/\r?\n/));
+}
+
+/**
+ * Pure policy over `tar -tzf` names and `tar -tvzf` lines: rejects absolute or
+ * drive-qualified paths, `..` segments, NUL/backslash tricks, symlink and
+ * hard-link members, any non-file/directory type, and oversized member counts.
+ */
+export function assertSafeTarListing(nameLines: readonly string[], verboseLines: readonly string[]): void {
+  const names = nameLines.filter((line) => line.length > 0);
+  if (names.length > ARCHIVE_MAX_MEMBERS) {
+    throw new Error(`Server archive lists ${names.length} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
+  }
+  for (const name of names) {
+    const segments = name.split(/[\\/]/);
+    if (/^[\\/]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
+    }
+  }
+  for (const line of verboseLines) {
+    if (line.length === 0) {
+      continue;
+    }
+    // GNU tar marks links with a leading 'l'/'h'; bsdtar prints hard links as
+    // regular rows containing "link to". Anything but '-' or 'd' is refused.
+    const kind = line[0];
+    if (kind !== '-' && kind !== 'd') {
+      throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(line)}.`);
+    }
+    if (/ link to /.test(line)) {
+      throw new Error(`Refusing server archive hard link member: ${JSON.stringify(line)}.`);
+    }
+  }
+}
+
+/** One central-directory entry as read from a zip archive. */
+export interface ZipCentralDirectoryEntry {
+  readonly name: string;
+  readonly externalAttributes: number;
+}
+
+const ZIP_EOCD_SIGNATURE = 0x06054b50;
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
+/** General-purpose flag bit 11: the member name is UTF-8, not cp437. */
+const ZIP_GP_FLAG_UTF8 = 0x0800;
+/** DOS attribute mask inside `externalAttributes`: FILE_ATTRIBUTE_REPARSE_POINT. */
+const ZIP_DOS_REPARSE_POINT = 0x0400;
+/** Unix mode mask inside the high 16 bits of `externalAttributes`. */
+const ZIP_UNIX_IFMT = 0xf000;
+const ZIP_UNIX_IFREG = 0x8000;
+const ZIP_UNIX_IFDIR = 0x4000;
+const ZIP_MAX_COMMENT_BYTES = 0xffff;
+/** Win32 device names, including superscript-digit and console aliases, with any extension. */
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3]) *(\..*)?$/i;
+
+/**
+ * Reads the central directory of a zip archive without extracting anything
+ * (#13904): the listing must be validated before `Expand-Archive` writes a
+ * single member, the same pre-extraction contract `inspectTarArchive` keeps
+ * for the tar path (#13640).
+ */
+export function listZipCentralDirectoryEntries(archive: Buffer): ZipCentralDirectoryEntry[] {
+  // The end-of-central-directory record can sit anywhere in the last
+  // 22 + 65,535 bytes (the whole trailing comment range).
+  const searchFloor = Math.max(0, archive.length - (22 + ZIP_MAX_COMMENT_BYTES));
+  let eocd = -1;
+  for (let cursor = archive.length - 22; cursor >= searchFloor; cursor -= 1) {
+    if (archive.readUInt32LE(cursor) === ZIP_EOCD_SIGNATURE) {
+      eocd = cursor;
+      break;
+    }
+  }
+  if (eocd < 0) {
+    throw new Error('Server archive is not a readable zip: end-of-central-directory record not found.');
+  }
+  // The chosen record's comment must end the file exactly. A trailing byte or
+  // an earlier record hidden inside a later comment would let this reader and
+  // the extractor disagree about which directory is real.
+  if (eocd + 22 + archive.readUInt16LE(eocd + 20) !== archive.length) {
+    throw new Error('Refusing server archive: end-of-central-directory comment does not end the file.');
+  }
+  if (archive.readUInt16LE(eocd + 4) !== 0 || archive.readUInt16LE(eocd + 6) !== 0) {
+    throw new Error('Refusing multi-disk server archive.');
+  }
+  const recordedOnDisk = archive.readUInt16LE(eocd + 8);
+  const recordedCount = archive.readUInt16LE(eocd + 10);
+  const centralSize = archive.readUInt32LE(eocd + 12);
+  const centralOffset = archive.readUInt32LE(eocd + 16);
+  // ZIP64 moves the real counts and offsets into another record this reader
+  // does not parse; a managed server archive never needs it.
+  if (recordedCount === 0xffff || recordedOnDisk === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
+    throw new Error('Refusing ZIP64 server archive.');
+  }
+  if (recordedOnDisk !== recordedCount) {
+    throw new Error('Refusing multi-disk server archive.');
+  }
+  if (centralOffset + centralSize > eocd) {
+    throw new Error('Refusing server archive: central directory extends past the end-of-central-directory record.');
+  }
+  const entries: ZipCentralDirectoryEntry[] = [];
+  let cursor = centralOffset;
+  const centralEnd = centralOffset + centralSize;
+  while (cursor < centralEnd) {
+    if (cursor + 46 > centralEnd || archive.readUInt32LE(cursor) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new Error('Refusing server archive: malformed central directory entry.');
+    }
+    const flags = archive.readUInt16LE(cursor + 8);
+    const nameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    if (46 + nameLength + extraLength + commentLength > centralEnd - cursor) {
+      throw new Error('Refusing server archive: central directory entry extends past the directory end.');
+    }
+    const externalAttributes = archive.readUInt32LE(cursor + 38);
+    const nameBytes = archive.subarray(cursor + 46, cursor + 46 + nameLength);
+    // Expand-Archive reads the same flag; a non-UTF-8 name is decoded as
+    // single bytes here and refused below if it spells anything unsafe.
+    const name = (flags & ZIP_GP_FLAG_UTF8) !== 0 ? nameBytes.toString('utf8') : nameBytes.toString('latin1');
+    entries.push({ name, externalAttributes });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  if (entries.length !== recordedCount) {
+    throw new Error(`Refusing server archive: central directory holds ${entries.length} entries, expected ${recordedCount}.`);
+  }
+  return entries;
+}
+
+/**
+ * Pure policy over a zip central-directory listing, mirroring
+ * `assertSafeTarListing`: rejects traversal, absolute, drive-qualified or NUL
+ * names, symlink members (Unix mode in the external attributes), NTFS reparse
+ * points (DOS attributes), any other non-file/directory member type, and
+ * oversized member counts. Because `Expand-Archive` writes through Win32, it
+ * also rejects empty names, any `:` (alternate data streams), segments ending
+ * in a dot or space, and reserved device names such as `CON` or `COM¹`.
+ */
+export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[]): void {
+  if (entries.length > ARCHIVE_MAX_MEMBERS) {
+    throw new Error(`Server archive lists ${entries.length} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
+  }
+  for (const entry of entries) {
+    const segments = entry.name.split(/[\\/]/);
+    // A ':' anywhere is a drive prefix or an NTFS alternate data stream on
+    // the Windows extractor; an empty name has no member to write.
+    if (entry.name.length === 0 || /^[\\/]/.test(entry.name) || entry.name.includes(':') || entry.name.includes('\0') || segments.includes('..')) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(entry.name)}.`);
+    }
+    for (const segment of segments) {
+      // Win32 strips trailing dots and spaces (so `.. ` becomes `..`) and maps
+      // device names to devices whatever the extension. A lone `.` is a no-op
+      // component (`./ripr.exe`); `..` is refused above.
+      if (segment.length > 0 && segment !== '.' && (/[. ]$/.test(segment) || WINDOWS_RESERVED_NAME.test(segment))) {
+        throw new Error(`Refusing server archive member with unsafe Windows path ${JSON.stringify(entry.name)}.`);
+      }
+    }
+    if ((entry.externalAttributes & ZIP_DOS_REPARSE_POINT) !== 0) {
+      throw new Error(`Refusing server archive reparse-point member: ${JSON.stringify(entry.name)}.`);
+    }
+    const unixMode = (entry.externalAttributes >>> 16) & 0xffff;
+    if (unixMode !== 0) {
+      // Windows tools (Python zipfile.writestr and friends) store permission
+      // bits without a file type, so only a *present* type is classified;
+      // anything typed that is not a regular file or directory is refused,
+      // which catches symlinks (0o120000) and device/fifo members.
+      const fileType = unixMode & ZIP_UNIX_IFMT;
+      if (fileType !== 0 && fileType !== ZIP_UNIX_IFREG && fileType !== ZIP_UNIX_IFDIR) {
+        throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(entry.name)}.`);
+      }
+    }
+  }
+}
+
+/**
+ * Lists and validates a zip archive's members before extraction (#13904), so
+ * symlink and reparse-point entries never reach `Expand-Archive`.
+ */
+export async function inspectZipArchive(archivePath: string): Promise<void> {
+  assertSafeZipListing(listZipCentralDirectoryEntries(await fsp.readFile(archivePath)));
+}
+
+function runProcess(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    cp.execFile(command, args, (error, _stdout, stderr) => {
+    cp.execFile(command, args, { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr.trim() || error.message));
       } else {
-        resolve();
+        resolve(stdout);
       }
     });
   });

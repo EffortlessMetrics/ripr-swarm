@@ -131,3 +131,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_binding_status_wrong_owner_observer (12)
+
+Reason:
+RIPR-SPEC-0108 For rust_binding_status_wrong_owner_observer, preserve structured evidence stages from RIPR-SPEC-0423, and retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

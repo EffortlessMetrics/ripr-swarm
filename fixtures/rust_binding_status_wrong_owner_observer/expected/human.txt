@@ -15,17 +15,14 @@ Start here:
   Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
   Gap ID (for scripts): gap:rust:src/lib.rs:receipt_binding_matches:predicate_boundary:predicate:current.status==recorded.status_current.violations==recorded.violations
   Changed behavior: current.status == recorded.status && current.violations == recorded.violations
-  Missing check (1 of 4): Changed boundary input is unresolved: the changed comparison's operands
-    are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the
-    boundary a test reaches; activation/infection is unknown
+  Missing check (1 of 4): No detected boundary input for the changed predicate
   Related test (1 of 4 matched rows): tests/driver.rs:6 binding_inputs_reach_the_changed_comparison (has no assertion)
   Next step: Open the related test, check whether it reaches the changed code, and inspect other
     existing tests. Trace their inputs through the local or computed operand (including default and
     empty cases) to see which side of the changed condition they exercise, then name an input that
     would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
-    strengthen a test only if this inspection finds a gap. Compare the original and changed
-    implementations with a focused run using the project's configured test runner (`cargo test` for
-    ordinary Cargo tests). Static classification may remain unknown
+    tighten a test only if this finds a gap; compare old and new code with the project's configured
+    test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
   Evidence: reach yes · infection unknown · propagation unknown · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -38,7 +35,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison
-    - infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of…
+    - infection unknown: Predicate changed, but no literal boundary was visible in the changed expression
     - 13 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

@@ -170,7 +170,7 @@ fn boolean_cast_pins_only_a_compared_owner_against_its_numeric_encoding() -> Res
         ("assert_eq!(over(10) as u8 * 0, 0);", "weakly_exposed"),
         (
             "assert_eq!(0, 0, \"{}\", over(10) as u8);",
-            "weakly_exposed",
+            "reachable_unrevealed",
         ),
         (
             "let _ = over(10); assert_eq!(first(true, true) as u8, 1);",
@@ -247,7 +247,7 @@ fn a_tuple_of_boolean_owner_calls_must_match_on_exactly_one_version() -> Result<
         ),
         (
             "assert_eq!((true, false), (true, false), \"{}\", over(10));",
-            "weakly_exposed",
+            "reachable_unrevealed",
         ),
     ] {
         let finding = predicate_finding(body)?;

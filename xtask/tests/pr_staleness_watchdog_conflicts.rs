@@ -26,19 +26,25 @@ done
 serve() { if [ -f "$1" ]; then jq -r "$expr" < "$1"; else jq -r "$expr" <<< "$2"; fi; }
 all="$*"
 case "$all" in
-  *"/pulls?state=open"*) serve "$FAKE_DIR/pulls.json" '[]' ;;
+  *"/pulls?state=open"*)
+    if [ -f "$FAKE_DIR/pulls.fail" ]; then echo "invalid character 'u' looking for beginning of value" >&2; exit 1; fi
+    serve "$FAKE_DIR/pulls.json" '[]' ;;
   *"/pulls/"*)
     n="${all#*/pulls/}"; n="${n%% *}"
     if [ -f "$FAKE_DIR/pull.$n.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    if [ -f "$FAKE_DIR/pull.$n.later.fail" ] && [ -f "$FAKE_DIR/pull.$n.seen" ]; then echo "HTTP 502" >&2; exit 1; fi
     # A `.later.json` fixture answers every read after the first (lazy mergeability).
     if [ -f "$FAKE_DIR/pull.$n.later.json" ] && [ -f "$FAKE_DIR/pull.$n.seen" ]; then
       serve "$FAKE_DIR/pull.$n.later.json" '{}'
     else
       touch "$FAKE_DIR/pull.$n.seen"; serve "$FAKE_DIR/pull.$n.json" '{}'
     fi ;;
-  *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
+  *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
+    if [ -f "$FAKE_DIR/checks.$sha.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
   *"/workflows/routed-rust.yml/runs"*)
     # A `.later.json` fixture answers every look after the first (delayed run visibility).
+    if [ -f "$FAKE_DIR/runs.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ -f "$FAKE_DIR/runs.later.fail" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
       echo "HTTP 502" >&2; exit 1
     elif [ -f "$FAKE_DIR/runs.later.json" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
@@ -70,9 +76,14 @@ struct Pr {
     late_run: Option<&'static str>,
     late_fail: bool,
     renewed: bool,
+    withdrawn: Option<&'static str>,
+    late_withdrawn: Option<&'static str>,
+    late_pull_fail: bool,
     head_of: Option<u32>,
     status_fail: bool,
     pull_fail: bool,
+    checks_fail: bool,
+    runs_fail: bool,
 }
 
 impl Pr {
@@ -94,9 +105,14 @@ impl Pr {
             late_run: None,
             late_fail: false,
             renewed: false,
+            withdrawn: None,
+            late_withdrawn: None,
+            late_pull_fail: false,
             head_of: None,
             status_fail: false,
             pull_fail: false,
+            checks_fail: false,
+            runs_fail: false,
         }
     }
     fn sha(&self) -> String {
@@ -110,6 +126,7 @@ struct Outcome {
     successes: usize,
     summary: String,
     log: String,
+    stdout: String,
 }
 
 fn run_block() -> Result<String, String> {
@@ -126,6 +143,27 @@ fn run_block() -> Result<String, String> {
         .map(|line| line.strip_prefix("          ").unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+/// Runs the workflow's script block with bash against the fake `gh` under `dir/bin`.
+fn spawn_block(dir: &Path, summary_path: &Path) -> Result<std::process::Output, String> {
+    Command::new("bash")
+        .arg(dir.join("block.sh"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.join("bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("FAKE_DIR", dir)
+        .env("GH_TOKEN", "unused")
+        .env("REPOSITORY", "o/r")
+        .env("REQUIRED_CHECK", "Ripr Rust Small Result")
+        .env("GITHUB_STEP_SUMMARY", summary_path)
+        .output()
+        .map_err(|e| e.to_string())
 }
 
 fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
@@ -168,11 +206,23 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(dir.join(format!("pull.{}.fail", pr.number)), "")
                 .map_err(|e| e.to_string())?;
         }
+        if pr.checks_fail {
+            fs::write(dir.join(format!("checks.{}.fail", pr.sha())), "")
+                .map_err(|e| e.to_string())?;
+        }
+        if pr.runs_fail {
+            fs::write(dir.join("runs.fail"), "").map_err(|e| e.to_string())?;
+        }
+        if pr.late_pull_fail {
+            fs::write(dir.join(format!("pull.{}.later.fail", pr.number)), "")
+                .map_err(|e| e.to_string())?;
+        }
         fs::write(
             dir.join(format!("pull.{}.json", pr.number)),
             // `moved` models a push between the list call and the live read.
             format!(
-                r#"{{"mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
+                r#"{{"state":"{}","mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
+                if pr.withdrawn == Some("closed") { "closed" } else { "open" },
                 if pr.state == "null" {
                     "null".to_string()
                 } else {
@@ -185,8 +235,8 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                 },
                 pr.repo,
                 // `renewed` models the label or ready state coming back after the list call.
-                pr.draft && !pr.renewed,
-                if pr.labeled || pr.renewed {
+                (pr.draft && !pr.renewed) || pr.withdrawn == Some("draft"),
+                if (pr.labeled || pr.renewed) && pr.withdrawn != Some("unlabeled") {
                     r#"[{"name":"merge-ready"}]"#
                 } else {
                     "[]"
@@ -236,8 +286,49 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(
                 dir.join(format!("pull.{}.later.json", pr.number)),
                 format!(
-                    r#"{{"mergeable_state":"{later}","head":{{"sha":"{}"}},"base":{{"ref":"main"}}}}"#,
-                    pr.sha()
+                    r#"{{"state":"open","draft":false,"labels":[{{"name":"merge-ready"}}],"mergeable_state":"{later}","head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}}}}"#,
+                    pr.sha(),
+                    pr.repo
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if let Some(withdrawn) = pr.late_withdrawn {
+            fs::write(
+                dir.join(format!("pull.{}.later.json", pr.number)),
+                format!(
+                    r#"{{"state":"{}","draft":{},"labels":{},"mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"{}"}}}}"#,
+                    if withdrawn == "closed" {
+                        "closed"
+                    } else {
+                        "open"
+                    },
+                    withdrawn == "draft",
+                    if withdrawn == "unlabeled" {
+                        "[]"
+                    } else {
+                        r#"[{"name":"merge-ready"}]"#
+                    },
+                    if pr.state == "null" {
+                        "null".to_string()
+                    } else {
+                        format!("\"{}\"", pr.state)
+                    },
+                    if withdrawn == "moved" {
+                        format!("{:040x}", pr.number + 1000)
+                    } else {
+                        pr.sha()
+                    },
+                    if withdrawn == "fork" {
+                        "fork/r"
+                    } else {
+                        pr.repo
+                    },
+                    if withdrawn == "retargeted" {
+                        "release"
+                    } else {
+                        "main"
+                    }
                 ),
             )
             .map_err(|e| e.to_string())?;
@@ -266,21 +357,7 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
         fs::set_permissions(&path, mode).map_err(|e| e.to_string())?;
     }
     let summary_path = dir.join("summary.md");
-    let path = format!(
-        "{}:{}",
-        dir.join("bin").display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let output = Command::new("bash")
-        .arg(dir.join("block.sh"))
-        .env("PATH", path)
-        .env("FAKE_DIR", &dir)
-        .env("GH_TOKEN", "unused")
-        .env("REPOSITORY", "o/r")
-        .env("REQUIRED_CHECK", "Ripr Rust Small Result")
-        .env("GITHUB_STEP_SUMMARY", &summary_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = spawn_block(&dir, &summary_path)?;
     if !output.status.success() {
         return Err(format!(
             "block exited {:?}: {}",
@@ -296,6 +373,7 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
         successes: count("state=success"),
         summary: fs::read_to_string(&summary_path).unwrap_or_default(),
         log: log.clone(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
     };
     let _ = fs::remove_dir_all(&dir);
     Ok(outcome)
@@ -502,8 +580,12 @@ fn a_head_pushed_since_the_list_call_is_left_for_the_next_sweep() -> Result<(), 
 }
 
 #[test]
-fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(), String> {
-    // The first read is "unknown" (the base just moved); the retry sees the conflict.
+fn a_head_whose_mergeability_is_unreadable_is_deferred_not_retried() -> Result<(), String> {
+    // The sweep reads mergeability once. Retrying in-sweep cost 10 s of sleep per
+    // unreadable head and alone exceeded the job cap once 63 of 102 eligible heads
+    // were queued and stayed `unknown` (#14636); GitHub does not resolve mergeability
+    // for a queued head. The next sweep re-reads them, so each sweep defers a head at
+    // most once per interval, not a resolution bound.
     let lazy = Pr {
         state: "unknown",
         later_state: Some("dirty"),
@@ -511,11 +593,69 @@ fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(
     };
     let outcome = run(&[lazy], "lazy")?;
     assert_eq!(
-        (outcome.comments, outcome.failures),
-        (1, 1),
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
         "{}",
         outcome.summary
     );
+    assert!(
+        outcome.summary.contains("mergeability unreadable"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("Unreadable mergeability: 1 head(s) deferred to the next sweep"),
+        "{}",
+        outcome.summary
+    );
+    // An unreadable head is deferred, not dark: the row must not carry the
+    // re-apply remedy, which cannot create a merge ref for a conflicted head.
+    assert!(
+        outcome.summary.contains(
+            "deferred to the next sweep; check mergeability before re-applying merge-ready"
+        ),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        !outcome.summary.contains("DARK; re-apply merge-ready"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("dark merge-ready heads reported: 0"),
+        "{}",
+        outcome.summary
+    );
+    // The warning names the deferral and the mergeability check, not a push.
+    assert!(
+        outcome.stdout.contains("Unreadable merge-ready PR head"),
+        "{}",
+        outcome.stdout
+    );
+    assert!(
+        outcome
+            .stdout
+            .contains("Check mergeability before re-applying merge-ready"),
+        "{}",
+        outcome.stdout
+    );
+    assert!(
+        !outcome.stdout.contains("pushed after the request"),
+        "{}",
+        outcome.stdout
+    );
+    // One live read per head: the in-sweep retry loop is gone.
+    let reads = outcome
+        .log
+        .lines()
+        .filter(|line| line.contains("/pulls/16 "))
+        .count();
+    assert_eq!(reads, 1, "{}", outcome.log);
     Ok(())
 }
 
@@ -553,6 +693,48 @@ fn a_clean_head_pushed_after_the_label_is_told_once_to_re_apply_it() -> Result<(
     assert!(
         outcome.summary.contains("re-apply notice already posted")
             && outcome.summary.contains("re-apply notices: 0"),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn an_in_flight_head_with_unreadable_mergeability_keeps_the_unreadability_note()
+-> Result<(), String> {
+    // A freshly pushed head can start a qualification while its first mergeability
+    // read is still unknown. The row must keep the in-flight instruction and the
+    // per-head unreadability classification the header and AC3 promise (#14636).
+    let in_flight = Pr {
+        state: "unknown",
+        in_flight: true,
+        ..Pr::dirty(980)
+    };
+    let outcome = run(&[in_flight], "in-flight-unreadable")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome.summary.contains(
+            "in flight (1 merge-ready run(s) not yet at result; do not re-apply the label)"
+        ),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("mergeability unreadable, conflict status unavailable"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("in-flight qualifications: 1; dark merge-ready heads reported: 0"),
         "{}",
         outcome.summary
     );
@@ -827,5 +1009,232 @@ fn a_failure_on_a_head_shared_with_a_merge_ready_pr_is_kept_in_either_scan_order
     let (requested, withdrawn) = pair();
     let outcome = run(&[withdrawn, requested], "shared-withdrawn-first")?;
     assert_eq!(outcome.successes, 0, "{}", outcome.log);
+    Ok(())
+}
+
+#[test]
+fn a_request_withdrawn_since_listing_receives_no_new_status_or_notice() -> Result<(), String> {
+    for (index, withdrawn) in ["unlabeled", "draft", "closed"].iter().enumerate() {
+        for state in ["dirty", "clean"] {
+            let pr = Pr {
+                withdrawn: Some(withdrawn),
+                state,
+                ..Pr::dirty(900 + index as u32)
+            };
+            let outcome = run(&[pr], &format!("withdrawn-{withdrawn}-{state}"))?;
+            if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0) {
+                return Err(format!(
+                    "withdrawn {withdrawn} request ({state}) received writes: {}",
+                    outcome.log
+                ));
+            }
+            if !outcome.summary.contains("request withdrawn") {
+                return Err(format!(
+                    "missing withdrawn-request summary: {}",
+                    outcome.summary
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_request_withdrawn_or_moved_after_the_initial_live_read_receives_no_write() -> Result<(), String>
+{
+    for (index, transition) in [
+        "unlabeled",
+        "draft",
+        "closed",
+        "moved",
+        "retargeted",
+        "fork",
+    ]
+    .iter()
+    .enumerate()
+    {
+        for (state, prior_statuses) in [("dirty", "[]"), ("clean", "[]"), ("clean", OURS_FAILURE)] {
+            let pr = Pr {
+                late_withdrawn: Some(transition),
+                state,
+                prior_statuses,
+                ..Pr::dirty(950 + index as u32)
+            };
+            let case = format!(
+                "late-withdrawn-{transition}-{state}-{}",
+                if prior_statuses == "[]" {
+                    "new"
+                } else {
+                    "flagged"
+                }
+            );
+            let outcome = run(&[pr], &case)?;
+            if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0) {
+                return Err(format!(
+                    "late transition {transition} ({state}) received writes: {}",
+                    outcome.log
+                ));
+            }
+            if !outcome
+                .summary
+                .contains("skip: request withdrawn or moved before write")
+                || !outcome
+                    .summary
+                    .contains("dark merge-ready heads reported: 0; conflicts reported on the PR: 0; conflict statuses cleared: 0; re-apply notices: 0.")
+            {
+                return Err(format!(
+                    "unexpected summary for late transition {transition} ({state}): {}",
+                    outcome.summary
+                ));
+            }
+        }
+    }
+    let failed_recheck = Pr {
+        late_pull_fail: true,
+        ..Pr::dirty(960)
+    };
+    let outcome = run(&[failed_recheck], "late-pull-fail-dirty")?;
+    if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0)
+        || !outcome.summary.contains("conflict report failed")
+    {
+        return Err(format!(
+            "failed write-boundary recheck wrote or misreported: {}",
+            outcome.summary
+        ));
+    }
+    for (case, covered, in_flight) in [("covered", true, false), ("in-flight", false, true)] {
+        let pr = Pr {
+            late_withdrawn: Some("unlabeled"),
+            covered,
+            in_flight,
+            ..Pr::dirty(970)
+        };
+        let outcome = run(&[pr], &format!("late-withdrawn-dirty-{case}"))?;
+        if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0)
+            || !outcome.summary.contains(
+                "in-flight qualifications: 0; dark merge-ready heads reported: 0; conflicts reported on the PR: 0; conflict statuses cleared: 0; re-apply notices: 0.",
+            )
+        {
+            return Err(format!(
+                "dirty {case} late withdrawal miscounted summary: {}",
+                outcome.summary
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The runs fixture is global, so every head reads the failure: all are deferred, none
+/// is told, and the sweep still finishes with its summary instead of aborting.
+#[test]
+fn a_failed_runs_read_defers_every_head_and_the_sweep_still_finishes() -> Result<(), String> {
+    let down = Pr {
+        runs_fail: true,
+        ..Pr::dirty(711)
+    };
+    let outcome = run(&[down, Pr::dirty(712)], "api-down-runs-read")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures),
+        (0, 0),
+        "{}",
+        outcome.log
+    );
+    assert!(
+        outcome.summary.contains("API reads failed: 2")
+            && outcome.summary.contains("workflow-runs read"),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+/// A failed API read of one head (a 502 or a non-JSON gateway body, #14721) defers
+/// that head; it must not abort the sweep and lose the other heads' conflict reports.
+#[test]
+fn a_failed_read_of_one_head_defers_it_and_the_sweep_still_reports_the_rest() -> Result<(), String>
+{
+    for (case, broken) in [
+        (
+            "pull-read",
+            Pr {
+                pull_fail: true,
+                ..Pr::dirty(701)
+            },
+        ),
+        (
+            "check-runs-read",
+            Pr {
+                checks_fail: true,
+                ..Pr::dirty(701)
+            },
+        ),
+        (
+            "status-read",
+            Pr {
+                status_fail: true,
+                ..Pr::dirty(701)
+            },
+        ),
+    ] {
+        let outcome = run(&[broken, Pr::dirty(702)], &format!("api-down-{case}"))?;
+        assert!(
+            outcome.summary.contains("| #702 |")
+                && outcome.summary.contains("conflict reported")
+                && !outcome.summary.contains("API reads failed: 0"),
+            "{case}: the healthy head must still be swept: {}",
+            outcome.summary
+        );
+        assert_eq!(
+            (outcome.comments, outcome.failures),
+            (1, 1),
+            "{case}: only the healthy head is told: {}",
+            outcome.log
+        );
+        assert!(
+            outcome.stdout.contains("title=API read failed"),
+            "{case}: the failed read is named: {}",
+            outcome.stdout
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_open_pr_list_fails_the_sweep_after_retrying_and_says_so() -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!("watchdog-list-down-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("bin")).map_err(|e| e.to_string())?;
+    fs::write(dir.join("pulls.fail"), "").map_err(|e| e.to_string())?;
+    fs::write(dir.join("bin/gh"), FAKE_GH).map_err(|e| e.to_string())?;
+    fs::write(dir.join("bin/sleep"), "#!/bin/bash\nexit 0\n").map_err(|e| e.to_string())?;
+    fs::write(dir.join("block.sh"), run_block()?).map_err(|e| e.to_string())?;
+    for tool in ["gh", "sleep"] {
+        let path = dir.join("bin").join(tool);
+        let mut mode = fs::metadata(&path)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        mode.set_mode(0o755);
+        fs::set_permissions(&path, mode).map_err(|e| e.to_string())?;
+    }
+    let summary_path = dir.join("summary.md");
+    let output = spawn_block(&dir, &summary_path)?;
+    let log = fs::read_to_string(dir.join("log")).unwrap_or_default();
+    let summary = fs::read_to_string(&summary_path).unwrap_or_default();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        !output.status.success(),
+        "an unswept run must not read green"
+    );
+    assert_eq!(
+        log.lines()
+            .filter(|l| l.contains("/pulls?state=open"))
+            .count(),
+        3,
+        "{log}"
+    );
+    assert!(
+        summary.contains("Open PR list unreadable after 3 attempts"),
+        "{summary}"
+    );
     Ok(())
 }

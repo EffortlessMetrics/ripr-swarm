@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -101,6 +102,30 @@ class AdmissionTests(unittest.TestCase):
     def test_actual_consumer_rerun_guard_and_attempt_wiring(self):
         workflow = (Path(__file__).resolve().parents[1] / "workflows" /
                     "python-wheel-qualification.yml").read_text()
+        # A reusable controller inherits the caller's repository. In a local
+        # checkout, recognize only the canonical public or private GitHub origin.
+        owner = os.environ.get("GITHUB_REPOSITORY")
+        if owner is None:
+            remote = subprocess.run(
+                ["git", "remote", "get-url", "origin"], cwd=Path(__file__).resolve().parents[2],
+                capture_output=True, text=True, check=False,
+            )
+            match = re.fullmatch(
+                r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                r"(EffortlessMetrics/ripr(?:-swarm)?)(?:\.git)?/?", remote.stdout.strip(),
+            )
+            self.assertTrue(remote.returncode == 0 and match, "unknown checkout origin; set GITHUB_REPOSITORY to the controller owner")
+            owner = match.group(1)
+        if owner == "EffortlessMetrics/ripr-swarm":
+            self.assertNotIn("name: pypi-qualified-wheel-", workflow)
+            self.assertIn('test "${GITHUB_REPOSITORY}" = EffortlessMetrics/ripr-swarm', workflow)
+            self.assertIn('test "${ADMITTED_REQUEST}" = "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"', workflow)
+            self.assertIn('test "${GITHUB_WORKFLOW_SHA}" = "${ADMITTED_GENERATION}"', workflow)
+            # The Linux repo-policy callable_guard integration test executes
+            # this private subject guard over a real two-parent Git history.
+            return
+        self.assertEqual(owner, admission.REPOSITORY, "unknown wheel controller owner")
+        self.assertIn("      - name: Require full qualification rerun\n", workflow)
         # Exercise the checked-in shell, rather than a second implementation of
         # its intended behavior. Match only this named step's literal run block.
         step = workflow.split("      - name: Require full qualification rerun\n", 1)[1].split("      - ", 1)[0]

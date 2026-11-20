@@ -5,6 +5,7 @@
 //! the end of a top-level owner file that has none, or the producer-admitted
 //! integration file. It calls the owner with its real receiver and argument
 //! shape, fills a boundary input when the seam's own comparison names one,
+//! builds the receiver from a constructor the impl establishes (`receiver`),
 //! and leaves every value ripr cannot know as a labelled `todo!()`.
 //!
 //! The expected value is never invented. A value-seam stub always stops at
@@ -121,6 +122,9 @@ pub(crate) struct RustTestStub {
     pub(crate) fill_ins: Vec<String>,
     /// Inputs ripr wrote from the seam's own comparison, as `name = value`.
     pub(crate) derived_inputs: Vec<String>,
+    /// #8361: how the receiver was built when ripr could name a constructor
+    /// (`subject = TokenBucket::new(5), as in the existing test ...`).
+    pub(crate) receiver_setup: Option<String>,
 }
 
 /// Typed reason no stub was produced. Every refusal names what blocked it.
@@ -437,7 +441,7 @@ fn rust_test_stub_for_target(
     } else {
         PathScope::ChildModule
     };
-    let body = stub_body(seam, &signature, &scope_import, source, path_scope)?;
+    let body = stub_body(seam, &signature, &scope_import, source, path_scope, &scope)?;
     // #8891: a second run for the same seam recomputes byte-identical text.
     // When the name collision is that earlier stub, the CLI reports "already
     // written" instead of suffixing a `_2` duplicate; a different test that
@@ -526,6 +530,7 @@ fn rust_test_stub_for_target(
         already_present,
         fill_ins: body.fill_ins,
         derived_inputs: body.derived_inputs,
+        receiver_setup: body.receiver_setup,
     })
 }
 
@@ -772,6 +777,7 @@ struct StubBody {
     lines: Vec<String>,
     fill_ins: Vec<String>,
     derived_inputs: Vec<String>,
+    receiver_setup: Option<String>,
 }
 
 /// Where the test sits relative to the owner's module, which decides how
@@ -790,6 +796,7 @@ fn stub_body(
     scope_import: &str,
     source: &str,
     path_scope: PathScope<'_>,
+    scope: &StubScope<'_>,
 ) -> Result<StubBody, TestStubRefusal> {
     // `Self` is substituted with the impl type as the owner spells it, and
     // each completed type is respelled for the test once; respelling the
@@ -875,6 +882,7 @@ fn stub_body(
     let mut lines = vec![scope_import.to_string()];
     let mut fill_ins = Vec::new();
     let mut derived_inputs = Vec::new();
+    let mut receiver_setup = None;
     let mut boundary = boundary_inputs(seam, signature);
     if matches!(path_scope, PathScope::Integration(_)) {
         // A `tests/` file sees crate-root `pub const` items through
@@ -902,10 +910,39 @@ fn stub_body(
             } else {
                 "let"
             };
-            lines.push(format!(
-                "{keyword} {subject}: {self_type} = todo!(\"{label}\");"
-            ));
-            fill_ins.push(label);
+            // #8361: a constructor the impl declares (and, preferably, an
+            // existing test already calls with literals) builds the
+            // receiver; only the inline test module sees private items.
+            let construction = matches!(path_scope, PathScope::ChildModule)
+                .then(|| {
+                    receiver::receiver_construction(
+                        source,
+                        seam.byte_offset(),
+                        strip_generic_arguments(self_type),
+                        scope,
+                    )
+                })
+                .flatten();
+            match construction {
+                Some(construction) => {
+                    lines.push(format!("// {}", construction.comment()));
+                    lines.push(format!(
+                        "{keyword} {subject}: {self_type} = {};",
+                        construction.expression
+                    ));
+                    receiver_setup = Some(format!(
+                        "{subject} = {}, {}",
+                        construction.expression,
+                        construction.origin_text()
+                    ));
+                }
+                None => {
+                    lines.push(format!(
+                        "{keyword} {subject}: {self_type} = todo!(\"{label}\");"
+                    ));
+                    fill_ins.push(label);
+                }
+            }
             Some(subject)
         }
         (Some(_), None) => return Err(TestStubRefusal::OwnerUnsupported),
@@ -982,12 +1019,6 @@ fn stub_body(
         ),
         (None, None, None) => format!("{}({})", signature.name, arguments.join(", ")),
     };
-    if return_type.trim() == "()" {
-        lines.push(format!("{call};"));
-    } else {
-        lines.push(format!("let actual = {call};"));
-    }
-
     let asserts_return = return_type.trim() != "()";
     let variant = match seam.required_discriminator() {
         RequiredDiscriminator::ErrorVariant { variant }
@@ -998,6 +1029,31 @@ fn stub_body(
         }
         _ => None,
     };
+    // #13602: a whole-value comparison asserts the owner call inline
+    // (`assert_eq!(owner(..), expected)`), the shape the reveal stage ties to
+    // the changed line; `let actual = owner(..); assert_eq!(actual, expected)`
+    // left the stub's own gap open with `observation_unconfirmed`.
+    //
+    // Inlining moves the call after the `expected` initializer, so an owner
+    // that can mutate its inputs (`&mut self` or a `&mut` argument) keeps the
+    // binding: an `expected` the developer derives from post-call state must
+    // still read it after the call (#13861 review).
+    let mutates_inputs = matches!(signature.receiver, Some(OwnerReceiver::RefMut))
+        || arguments
+            .iter()
+            .any(|argument| argument.starts_with("&mut "));
+    let inline_call = asserts_return
+        && variant.is_none()
+        && !mutates_inputs
+        && matches!(
+            value_traits(&return_type, source),
+            ValueTraits::PartialEqAndDebug
+        );
+    if !asserts_return {
+        lines.push(format!("{call};"));
+    } else if !inline_call {
+        lines.push(format!("let actual = {call};"));
+    }
     match variant {
         _ if !asserts_return => {}
         Some(pattern) => {
@@ -1031,7 +1087,8 @@ fn stub_body(
                         "let expected: {return_type} = todo!(\"{}\");",
                         escape(&label)
                     ));
-                    lines.push("assert_eq!(actual, expected);".to_string());
+                    let observed = if inline_call { call.as_str() } else { "actual" };
+                    lines.push(format!("assert_eq!({observed}, expected);"));
                 }
                 // `PartialEq` or `Debug` is not visible for the return
                 // type, so no generated comparison is sure to compile (a
@@ -1104,6 +1161,7 @@ fn stub_body(
         lines,
         fill_ins,
         derived_inputs,
+        receiver_setup,
     })
 }
 
@@ -1917,6 +1975,8 @@ fn escape(text: &str) -> String {
         .replace('{', "{{")
         .replace('}', "}}")
 }
+
+mod receiver;
 
 #[cfg(test)]
 mod tests;

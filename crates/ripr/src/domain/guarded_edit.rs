@@ -171,19 +171,34 @@ impl NegotiatedSourceRange {
     /// range is as wide as the text; a multi-line range spans one line per line
     /// break in the text and ends at the width of its last line.
     pub fn covers_text(&self, text: &str) -> bool {
-        let utf16 = |segment: &str| u32::try_from(segment.encode_utf16().count()).ok();
-        let segments: Vec<&str> = text.split('\n').collect();
-        let Some(breaks) = u32::try_from(segments.len() - 1).ok() else {
-            return false;
-        };
+        let mut breaks = 0_u32;
+        let mut width = 0_u32;
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if matches!(ch, '\r' | '\n') {
+                // CRLF is one line break; lone CR and LF are also LSP breaks.
+                if ch == '\r' && chars.peek() == Some(&'\n') {
+                    let _ = chars.next();
+                }
+                let Some(next) = breaks.checked_add(1) else {
+                    return false;
+                };
+                breaks = next;
+                width = 0;
+            } else {
+                let Some(next) = width.checked_add(ch.len_utf16() as u32) else {
+                    return false;
+                };
+                width = next;
+            }
+        }
         if self.end_line.checked_sub(self.start_line) != Some(breaks) {
             return false;
         }
-        let last = segments.last().copied().unwrap_or_default();
         if breaks == 0 {
-            self.end_character.checked_sub(self.start_character) == utf16(last)
+            self.end_character.checked_sub(self.start_character) == Some(width)
         } else {
-            Some(self.end_character) == utf16(last)
+            self.end_character == width
         }
     }
 }
@@ -551,7 +566,9 @@ impl ExactTestEditPrecondition {
                 GuardedEditUnavailableReason::SourcePreconditionMissing,
             ));
         }
-        if !is_recognized_rust_test_source_file(&self.test_file) {
+        if contained_relative_path(&self.test_file).as_deref() != Some(self.test_file.as_str())
+            || !is_recognized_rust_test_source_file(&self.test_file)
+        {
             return Err(GuardedEditUnavailable::new(
                 GuardedEditUnavailableReason::OutsideAllowedEditSurface,
             ));
@@ -799,7 +816,11 @@ fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    type Mutation = (&'static str, Box<dyn Fn(&mut serde_json::Value)>);
+    type Mutation = (
+        &'static str,
+        GuardedEditUnavailableReason,
+        Box<dyn Fn(&mut serde_json::Value)>,
+    );
 
     use super::*;
     use crate::domain::CanonicalItemId;
@@ -961,6 +982,27 @@ mod tests {
                         format!("{id}: built precondition invalid: {unavailable:?}")
                     })?;
                 }
+                "invalid_precondition" => {
+                    let built = try_build_exact_test_edit_precondition(&input)
+                        .map_err(|e| format!("{id}: setup: {e:?}"))?;
+                    let mut value = serde_json::to_value(built).map_err(|e| e.to_string())?;
+                    let overrides = case["overrides"]
+                        .as_object()
+                        .ok_or_else(|| format!("{id}: overrides missing"))?;
+                    for (key, replacement) in overrides {
+                        value[key] = replacement.clone();
+                    }
+                    let decoded: ExactTestEditPrecondition =
+                        serde_json::from_value(value).map_err(|e| e.to_string())?;
+                    let expected = case["reason"]
+                        .as_str()
+                        .ok_or_else(|| format!("{id}: reason missing"))?;
+                    assert_eq!(
+                        decoded.validate().err().map(|e| e.reason.as_str()),
+                        Some(expected),
+                        "{id}"
+                    );
+                }
                 "unavailable" => {
                     let unavailable = match try_build_exact_test_edit_precondition(&input) {
                         Err(unavailable) => unavailable,
@@ -1011,9 +1053,12 @@ mod tests {
                 if unavailable.reason == GuardedEditUnavailableReason::DocumentVersionMismatch => {}
             other => return Err(format!("expected mismatch for unknown current: {other:?}")),
         }
-        // Precondition minted without a version: refuse any current version.
-        let mut unversioned = precondition.clone();
-        unversioned.document_version = None;
+        // RIPR-SPEC-0320 Behavior: an absent precondition version never verifies.
+        // Mint without a version through the real builder, preserving v1 behavior.
+        let mut input = sample_input();
+        input.document_version = None;
+        let unversioned =
+            try_build_exact_test_edit_precondition(&input).map_err(|e| format!("{e:?}"))?;
         for current in [None, Some(3)] {
             match verify_document_version(&unversioned, current) {
                 Err(unavailable)
@@ -1062,18 +1107,27 @@ mod tests {
             .map_err(|unavailable| format!("{unavailable:?}"))?;
         verify_document_version(&precondition, Some(3))
             .map_err(|unavailable| format!("doc ok: {unavailable:?}"))?;
-        if verify_document_version(&precondition, Some(4)).is_ok() {
-            return Err("expected doc mismatch".to_string());
-        }
+        assert_eq!(
+            verify_document_version(&precondition, Some(4))
+                .err()
+                .map(|e| e.reason),
+            Some(GuardedEditUnavailableReason::DocumentVersionMismatch)
+        );
         verify_source_text(&precondition, "assert!(result.is_err());")
             .map_err(|unavailable| format!("text ok: {unavailable:?}"))?;
-        if verify_source_text(&precondition, "assert!(result.is_ok());").is_ok() {
-            return Err("expected text mismatch".to_string());
-        }
+        assert_eq!(
+            verify_source_text(&precondition, "assert!(result.is_ok());")
+                .err()
+                .map(|e| e.reason),
+            Some(GuardedEditUnavailableReason::SourceTextMismatch)
+        );
         client_supports_guarded_edit(true, true).map_err(|e| format!("{e:?}"))?;
-        if client_supports_guarded_edit(true, false).is_ok() {
-            return Err("expected cap miss".to_string());
-        }
+        assert_eq!(
+            client_supports_guarded_edit(true, false)
+                .err()
+                .map(|e| e.reason),
+            Some(GuardedEditUnavailableReason::ClientCapabilityMissing)
+        );
         Ok(())
     }
 
@@ -1235,6 +1289,7 @@ mod tests {
         let mutations: Vec<Mutation> = vec![
             (
                 "production test_file and surface",
+                GuardedEditUnavailableReason::OutsideAllowedEditSurface,
                 Box::new(|v| {
                     v["test_file"] = "src/lib.rs".into();
                     v["allowed_edit_surface"] = serde_json::json!(["src/lib.rs"]);
@@ -1242,6 +1297,7 @@ mod tests {
             ),
             (
                 "traversal test_file",
+                GuardedEditUnavailableReason::OutsideAllowedEditSurface,
                 Box::new(|v| {
                     v["test_file"] = "tests/../src/lib.rs".into();
                     v["allowed_edit_surface"] = serde_json::json!(["tests/../src/lib.rs"]);
@@ -1249,83 +1305,181 @@ mod tests {
             ),
             (
                 "parse failed",
+                GuardedEditUnavailableReason::ParseValidationFailed,
                 Box::new(|v| v["parse_validation_status"] = "failed".into()),
             ),
             (
                 "format failed",
+                GuardedEditUnavailableReason::FormatValidationFailed,
                 Box::new(|v| v["format_validation_status"] = "failed".into()),
             ),
             (
                 "parse not run",
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
                 Box::new(|v| v["parse_validation_status"] = "not_run".into()),
             ),
             (
                 "format not run",
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
                 Box::new(|v| v["format_validation_status"] = "not_run".into()),
             ),
             (
                 "empty selector",
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
                 Box::new(|v| v["test_selector"] = "  ".into()),
             ),
             (
                 "workspace_edit disabled",
+                GuardedEditUnavailableReason::ClientCapabilityMissing,
                 Box::new(|v| {
                     v["required_client_capability"]["workspace_edit"] = false.into();
                 }),
             ),
             (
                 "guarded edit capability disabled",
+                GuardedEditUnavailableReason::ClientCapabilityMissing,
                 Box::new(|v| {
                     v["required_client_capability"]["ripr_editor_guarded_test_edit"] = false.into();
                 }),
             ),
             (
                 "replacement changed under a minted id",
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
                 Box::new(|v| {
                     v["exact_replacement_text"] = "assert!(true);".into();
                 }),
             ),
             (
                 "document_version changed under a minted id",
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
                 Box::new(|v| v["document_version"] = 9.into()),
             ),
             (
                 "snapshot identity changed under a minted id",
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
                 Box::new(|v| {
                     v["identity"]["snapshot_identity"] = "snap:other".into();
                 }),
             ),
             (
                 "range one short of the retained text",
+                GuardedEditUnavailableReason::SourceTextMismatch,
                 Box::new(|v| v["assertion_range"]["end_character"] = 28.into()),
             ),
             (
                 "range one long for the retained text",
+                GuardedEditUnavailableReason::SourceTextMismatch,
                 Box::new(|v| v["assertion_range"]["end_character"] = 30.into()),
             ),
             (
                 "digest malformed",
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
                 Box::new(|v| v["original_source_digest"] = "sha256:xyz".into()),
             ),
             (
                 "digest mismatches retained text",
+                GuardedEditUnavailableReason::SourceTextMismatch,
                 Box::new(|v| {
                     v["original_source_digest"] = sha256_digest("something else").into();
                 }),
             ),
             (
                 "two edit surfaces",
+                GuardedEditUnavailableReason::OutsideAllowedEditSurface,
                 Box::new(|v| {
                     v["allowed_edit_surface"] =
                         serde_json::json!(["tests/demo.rs", "tests/other.rs"]);
                 }),
             ),
         ];
-        for (name, mutate) in mutations {
+        for (name, expected, mutate) in mutations {
             let decoded = decode(&*mutate)?;
-            assert!(
-                decoded.validate().is_err(),
-                "mutation must be rejected: {name}"
+            assert_eq!(
+                decoded.validate().err().map(|e| e.reason),
+                Some(expected),
+                "{name}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fix_instruction_guarded_edit_decoded_path_is_canonical() -> Result<(), String> {
+        for path in [
+            "tests\\demo.rs",
+            " tests/demo.rs",
+            "tests/demo.rs ",
+            "tests/./demo.rs",
+            "tests/../tests/demo.rs",
+            "/tests/demo.rs",
+        ] {
+            let mut value = serde_json::to_value(built()?).map_err(|e| e.to_string())?;
+            value["test_file"] = path.into();
+            value["allowed_edit_surface"] = serde_json::json!([path]);
+            let decoded: ExactTestEditPrecondition =
+                serde_json::from_value(value).map_err(|e| e.to_string())?;
+            assert_eq!(
+                decoded.validate().err().map(|e| e.reason),
+                Some(GuardedEditUnavailableReason::OutsideAllowedEditSurface),
+                "{path}"
+            );
+        }
+        // Producer input may use native separators, but the minted DTO is canonical.
+        let mut input = sample_input();
+        input.test_file = "tests\\demo.rs".into();
+        input.allowed_edit_surface = vec![input.test_file.clone()];
+        let normalized =
+            try_build_exact_test_edit_precondition(&input).map_err(|e| format!("{e:?}"))?;
+        assert_eq!(normalized, built()?);
+        Ok(())
+    }
+
+    #[test]
+    fn fix_instruction_guarded_edit_lsp_line_breaks() -> Result<(), String> {
+        for text in ["a\rb", "a\r\nb", "a\nb", "a\r\n"] {
+            let width = if text.ends_with('b') { 1 } else { 0 };
+            let range = NegotiatedSourceRange {
+                start_line: 2,
+                start_character: 4,
+                end_line: 3,
+                end_character: width,
+            };
+            assert!(range.covers_text(text), "{text:?}");
+            let mut input = sample_input();
+            input.original_source_text = Some(text.into());
+            input.assertion_range = range;
+            let dto = try_build_exact_test_edit_precondition(&input)
+                .map_err(|e| format!("{text:?}: {e:?}"))?;
+            dto.validate().map_err(|e| format!("{e:?}"))?;
+            let wrong = NegotiatedSourceRange {
+                start_line: 2,
+                start_character: 4,
+                end_line: 2,
+                end_character: 4 + text.encode_utf16().count() as u32,
+            };
+            assert!(!wrong.covers_text(text), "must count line break: {text:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fix_instruction_guarded_edit_advisory_refs_do_not_change_identity() -> Result<(), String> {
+        // RIPR-SPEC-0320 Identity: v1 identifies the exact source replacement,
+        // not the surrounding advisory envelope or permission to execute it.
+        let baseline = built()?;
+        for field in [
+            "must_not_change",
+            "verification_command_refs",
+            "receipt_command_refs",
+        ] {
+            let mut value = serde_json::to_value(&baseline).map_err(|e| e.to_string())?;
+            value[field] = serde_json::json!(["different advisory reference"]);
+            let decoded: ExactTestEditPrecondition =
+                serde_json::from_value(value).map_err(|e| e.to_string())?;
+            decoded.validate().map_err(|e| format!("{e:?}"))?;
+            assert_eq!(
+                decoded.edit_instruction_id, baseline.edit_instruction_id,
+                "{field}"
             );
         }
         Ok(())
@@ -1370,7 +1524,12 @@ mod tests {
         // Text and digest retained.
         verify_source_text(&full, "assert!(result.is_err());")
             .map_err(|unavailable| format!("text present: {unavailable:?}"))?;
-        assert!(verify_source_text(&full, "assert!(result.is_ok());").is_err());
+        assert_eq!(
+            verify_source_text(&full, "assert!(result.is_ok());")
+                .err()
+                .map(|e| e.reason),
+            Some(GuardedEditUnavailableReason::SourceTextMismatch)
+        );
         // Only the digest retained (the passive representation).
         let mut digest_only = full.clone();
         digest_only.original_source_text = None;
@@ -1388,8 +1547,16 @@ mod tests {
         // A malformed retained digest never verifies.
         let mut malformed = digest_only.clone();
         malformed.original_source_digest = Some("sha256:00".to_string());
-        assert!(malformed.validate().is_err());
-        assert!(verify_source_text(&malformed, "assert!(result.is_err());").is_err());
+        assert_eq!(
+            malformed.validate().err().map(|e| e.reason),
+            Some(GuardedEditUnavailableReason::SourcePreconditionMissing)
+        );
+        assert_eq!(
+            verify_source_text(&malformed, "assert!(result.is_err());")
+                .err()
+                .map(|e| e.reason),
+            Some(GuardedEditUnavailableReason::SourceTextMismatch)
+        );
         // Neither retained: nothing to verify against.
         let mut neither = digest_only;
         neither.original_source_digest = None;

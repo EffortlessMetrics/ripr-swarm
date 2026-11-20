@@ -203,7 +203,7 @@ fn bool_comparison_identity_stays_with_the_compared_owner_field() -> Result<(), 
         ),
         (
             "let o = opts(10); assert_eq!(true, true, \"{}\", o.big);",
-            "weakly_exposed",
+            "reachable_unrevealed",
         ),
     ] {
         let report = finding(body, "predicate")?;

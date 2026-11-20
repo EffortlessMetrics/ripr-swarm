@@ -313,6 +313,281 @@ mod tests {
         Ok(())
     }
 
+    /// Rewrites the complete-artifact receipt's recorded `status` line.
+    fn rewrite_receipt_status(root: &Path, replacement: &str) -> Result<(), String> {
+        let path = root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+        let text =
+            std::fs::read_to_string(&path).map_err(|err| format!("read receipt fixture: {err}"))?;
+        let advisory = "  \"status\": \"advisory\",\n";
+        if text.matches(advisory).count() != 1 {
+            return Err("receipt fixture must record exactly one advisory status line".to_string());
+        }
+        write_file(&path, &text.replace(advisory, replacement))
+    }
+
+    /// The receipt owner issues `advisory` only over a complete, valid
+    /// producer analysis outcome. A receipt that records any other status (or
+    /// none) still names a movement, but that movement is not review
+    /// evidence: the packet must not read `ready` even when every other
+    /// artifact, including a later complete analysis outcome, is in place.
+    #[test]
+    fn non_advisory_receipt_keeps_the_review_packet_incomplete() -> Result<(), String> {
+        let cases = [
+            (
+                "invalid",
+                "  \"status\": \"invalid\",\n",
+                "the agent receipt status is invalid, not advisory",
+            ),
+            (
+                "incomplete",
+                "  \"status\": \"incomplete\",\n",
+                "the agent receipt status is incomplete, not advisory",
+            ),
+            (
+                "no-status",
+                "",
+                "the agent receipt does not record an advisory status",
+            ),
+            (
+                "unknown-status",
+                "  \"status\": \"ready\\n# Injected heading\",\n",
+                "the agent receipt does not record an advisory status",
+            ),
+        ];
+        for (label, replacement, reason) in cases {
+            let root = unique_agent_review_summary_test_dir(&format!("non-advisory-{label}"))?;
+            write_complete_artifacts(&root)?;
+
+            // Control: the same artifact tree with the advisory receipt is ready.
+            let control = build_agent_review_summary_report(&root, Path::new("."));
+            assert_eq!(control.status, "ready", "{label} control");
+
+            rewrite_receipt_status(&root, replacement)?;
+            let report = build_agent_review_summary_report(&root, Path::new("."));
+            let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+                .map_err(|err| format!("parse review summary JSON: {err}"))?;
+            let markdown = render_agent_review_summary_markdown(&report);
+
+            assert_eq!(value["status"], "incomplete", "{label}");
+            // The movement is still copied from the receipt, with its artifact.
+            assert_eq!(value["static_movement"]["state"], "improved", "{label}");
+            assert_eq!(
+                value["static_movement"]["evidence_artifact"], WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+                "{label}"
+            );
+            assert_eq!(
+                value["reviewer_summary"]["headline"],
+                format!("Review packet is incomplete for seam-a: {reason}."),
+                "{label}"
+            );
+            assert_eq!(
+                value["reviewer_summary"]["what_changed"],
+                format!(
+                    "The recorded static movement is not review evidence: {reason}. Reissue the receipt over a complete analysis outcome."
+                ),
+                "{label}"
+            );
+            // The receipt's own "include this receipt in review" guidance is
+            // not repeated next to the caveat.
+            assert_eq!(
+                value["reviewer_summary"]["remaining"],
+                "Reissue the receipt over a complete analysis outcome before using it in review.",
+                "{label}"
+            );
+            assert!(
+                !markdown.contains("include this receipt in review"),
+                "{label}: {markdown}"
+            );
+            assert!(
+                markdown.contains(&format!(
+                    "Receipt: {reason}; the movement above is not review evidence.\n"
+                )),
+                "{label}: {markdown}"
+            );
+            assert!(
+                !markdown.contains("Review packet is ready"),
+                "{label}: {markdown}"
+            );
+            // The reason is a fixed phrase; receipt text is never echoed into it.
+            assert!(
+                !markdown.contains("Injected heading"),
+                "{label}: {markdown}"
+            );
+
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+        Ok(())
+    }
+
+    /// An advisory receipt renders no receipt-status caveat.
+    #[test]
+    fn advisory_receipt_renders_no_receipt_status_caveat() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("advisory-no-caveat")?;
+        write_complete_artifacts(&root)?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert_eq!(report.status, "ready");
+        assert!(
+            markdown.contains("Review packet is ready for seam seam-a."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("not review evidence"), "{markdown}");
+        assert!(!markdown.contains("\nReceipt:"), "{markdown}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    fn receipt_surface(value: &Value) -> Result<&Value, String> {
+        value["surfaces"]
+            .as_array()
+            .ok_or_else(|| "expected surfaces".to_string())?
+            .iter()
+            .find(|surface| surface["name"] == "agent_receipt")
+            .ok_or_else(|| "expected an agent_receipt surface".to_string())
+    }
+
+    /// A file at the receipt path that yields no movement is never described
+    /// as a missing receipt: "missing" tells the reader nothing was written.
+    /// Every other artifact is complete, so the receipt is the only variable.
+    #[test]
+    fn present_but_unusable_receipt_is_not_reported_as_missing() -> Result<(), String> {
+        enum Unusable {
+            Bytes(&'static [u8]),
+            Directory,
+        }
+        let cases = [
+            (
+                "not-utf8",
+                Unusable::Bytes(b"\xff\xfe{\"seam\":1}"),
+                "invalid",
+            ),
+            ("directory", Unusable::Directory, "invalid"),
+            ("not-json", Unusable::Bytes(b"{\"seam\": "), "invalid_json"),
+            ("truncated-empty", Unusable::Bytes(b""), "invalid_json"),
+            (
+                "no-seam",
+                Unusable::Bytes(b"{\"status\":\"advisory\"}"),
+                "present",
+            ),
+        ];
+        for (label, unusable, surface_state) in cases {
+            let root = unique_agent_review_summary_test_dir(&format!("unusable-{label}"))?;
+            write_complete_artifacts(&root)?;
+            let receipt_path = root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+            std::fs::remove_file(&receipt_path).map_err(|err| format!("remove receipt: {err}"))?;
+            match unusable {
+                Unusable::Bytes(bytes) => std::fs::write(&receipt_path, bytes)
+                    .map_err(|err| format!("write receipt: {err}"))?,
+                Unusable::Directory => std::fs::create_dir(&receipt_path)
+                    .map_err(|err| format!("create receipt dir: {err}"))?,
+            }
+
+            let report = build_agent_review_summary_report(&root, Path::new("."));
+            let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+                .map_err(|err| format!("parse review summary JSON: {err}"))?;
+            let markdown = render_agent_review_summary_markdown(&report);
+
+            assert_eq!(value["status"], "incomplete", "{label}");
+            assert_eq!(receipt_surface(&value)?["state"], surface_state, "{label}");
+            assert_eq!(
+                value["static_movement"]["state"], "missing_artifact",
+                "{label}"
+            );
+            assert_eq!(
+                value["static_movement"]["evidence_artifact"],
+                Value::Null,
+                "{label}"
+            );
+            assert_eq!(
+                value["static_movement"]["summary"],
+                "Agent receipt is unreadable or invalid; static movement is not available.",
+                "{label}"
+            );
+            assert_eq!(
+                value["static_movement"]["next_action"]["summary"],
+                "Agent receipt is unreadable or invalid.",
+                "{label}"
+            );
+            assert_eq!(
+                value["static_movement"]["next_action"]["recommended_action"],
+                "Inspect the receipt file, then reissue it: rerun `ripr agent verify`, then `ripr agent receipt`.",
+                "{label}"
+            );
+            assert_eq!(
+                value["reviewer_summary"]["what_changed"],
+                "No static before/after movement is available because the agent receipt is unreadable or invalid.",
+                "{label}"
+            );
+            assert!(
+                markdown.contains("Receipt: unavailable or invalid.\n"),
+                "{label}: {markdown}"
+            );
+            let rendered = format!("{value}\n{markdown}");
+            assert!(
+                !rendered.contains("receipt is missing"),
+                "{label}: {rendered}"
+            );
+            assert!(
+                !rendered.contains("No agent receipt yet"),
+                "{label}: {rendered}"
+            );
+
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+        Ok(())
+    }
+
+    /// A receipt whose text cannot be read says why on its surface.
+    #[test]
+    fn unreadable_receipt_surface_names_the_read_failure() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("unreadable-surface")?;
+        write_complete_artifacts(&root)?;
+        std::fs::write(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT), b"\xff\xfe")
+            .map_err(|err| format!("write receipt: {err}"))?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let surface = receipt_surface(&value)?;
+        assert_eq!(surface["status"], "invalid");
+        assert_eq!(
+            surface["summary"],
+            "Agent receipt artifact exists but could not be read: it is not UTF-8 text."
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// Control for the two tests above: with no file at the receipt path the
+    /// summary still says the receipt is missing.
+    #[test]
+    fn absent_receipt_is_still_reported_as_missing() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("absent-receipt")?;
+        write_complete_artifacts(&root)?;
+        std::fs::remove_file(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT))
+            .map_err(|err| format!("remove receipt: {err}"))?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert_eq!(value["status"], "incomplete");
+        assert_eq!(receipt_surface(&value)?["state"], "missing");
+        assert_eq!(
+            value["static_movement"]["summary"],
+            "Agent receipt is missing; static movement is not available."
+        );
+        assert_eq!(
+            value["static_movement"]["next_action"]["summary"],
+            "Agent receipt is missing."
+        );
+        assert_eq!(
+            value["reviewer_summary"]["what_changed"],
+            "No static before/after movement is available because the agent receipt is missing."
+        );
+        assert!(markdown.contains(NO_RECEIPT_BEFORE_REPAIR), "{markdown}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn agent_review_summary_reports_missing_receipt_with_next_command() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("missing-receipt")?;
@@ -702,6 +977,119 @@ mod tests {
     }
 
     #[test]
+    fn agent_review_summary_fresh_repo_uses_plain_early_state_copy() -> Result<(), String> {
+        const EXPECTED: &str =
+            "Review incomplete: analysis outcome and repair receipt are unavailable.";
+
+        let root = unique_agent_review_summary_test_dir("fresh-plain")?;
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let json = render_agent_review_summary_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        assert_eq!(
+            value["reviewer_summary"]["headline"].as_str(),
+            Some(EXPECTED)
+        );
+        assert_eq!(
+            value["reviewer_summary"]["what_changed"].as_str(),
+            Some(EXPECTED)
+        );
+
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert!(markdown.contains(EXPECTED), "{markdown}");
+        assert!(
+            !markdown.contains("producer analysis outcome is unavailable"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("Movement: missing_artifact"),
+            "{markdown}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_receipt_does_not_assert_no_repair_was_run() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("invalid-receipt")?;
+        write_file(&root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT), "not json")?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        let expected = "Review incomplete: analysis outcome and repair receipt are unavailable.";
+        assert_eq!(value["status"], "incomplete");
+        assert_eq!(value["static_movement"]["state"], "missing_artifact");
+        assert_eq!(value["reviewer_summary"]["headline"], expected);
+        assert_eq!(value["reviewer_summary"]["what_changed"], expected);
+        assert!(markdown.contains(expected), "{markdown}");
+        assert!(
+            markdown.contains("Receipt: unavailable or invalid."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("no repair has been run"), "{markdown}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn missing_evidence_after_prior_work_does_not_claim_no_repair() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("prior-work")?;
+        write_complete_artifacts(&root)?;
+        std::fs::remove_file(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT))
+            .map_err(|err| format!("remove receipt: {err}"))?;
+        std::fs::remove_file(root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT))
+            .map_err(|err| format!("remove outcome: {err}"))?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        let expected = "Review incomplete: analysis outcome and repair receipt are unavailable.";
+        assert_eq!(value["status"], "incomplete");
+        assert_eq!(value["reviewer_summary"]["headline"], expected);
+        assert_eq!(value["reviewer_summary"]["what_changed"], expected);
+        assert!(markdown.contains(expected), "{markdown}");
+        assert!(!markdown.contains("no repair has been run"), "{markdown}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn present_receipt_with_missing_movement_is_not_unavailable() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("present-missing-movement")?;
+        write_file(
+            &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            r#"{"seam":{"seam_id":"s","change":"missing_artifact"}}"#,
+        )?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert_eq!(value["static_movement"]["state"], "missing_artifact");
+        assert_eq!(
+            value["static_movement"]["evidence_artifact"],
+            WORKFLOW_AGENT_RECEIPT_ARTIFACT
+        );
+        assert_ne!(
+            value["reviewer_summary"]["headline"],
+            "Review incomplete: analysis outcome and repair receipt are unavailable."
+        );
+        assert!(
+            !markdown.contains("repair receipt are unavailable"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("Receipt: unavailable or invalid"),
+            "{markdown}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn agent_review_summary_markdown_names_review_focus_and_limits() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("markdown")?;
         write_complete_artifacts(&root)?;
@@ -845,9 +1233,12 @@ mod tests {
     fn agent_review_summary_handles_receipt_without_next_action() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("no-next-action")?;
         write_complete_artifacts(&root)?;
+        // The receipt is advisory, as an issued receipt always is: this test
+        // is about the absent `next_action`, not about receipt status
+        // (#14245 pins what a receipt with no advisory status reads as).
         write_file(
             &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
-            r#"{"seam":{"seam_id":"seam-without-next","change":"unchanged"}}"#,
+            r#"{"status":"advisory","seam":{"seam_id":"seam-without-next","change":"unchanged"}}"#,
         )?;
 
         let report = build_agent_review_summary_report(&root, Path::new("."));
@@ -1026,7 +1417,9 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("No analysis yet. Run `ripr check` first."),
+            rendered.contains(
+                "Review incomplete: analysis outcome and repair receipt are unavailable."
+            ),
             "{rendered}"
         );
 
@@ -1148,6 +1541,7 @@ mod tests {
             receipt: crate::app::agent_status::AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         };
         let report = |attempts: Vec<AgentStatusRepairAttempt>| AgentStatusReport {
             root: ".".to_string(),

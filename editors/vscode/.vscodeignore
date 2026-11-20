@@ -3,6 +3,7 @@ test/**
 scripts/**
 test-fixtures/**
 tsconfig.json
+tsconfig.setup.json
 *.vsix
 dist/**
 out/test/**

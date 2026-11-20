@@ -35,17 +35,24 @@
         "expression": "x > 101"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: at, high, local"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: high, local, low"},
         "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: x > 101"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, local", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));", "related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));", "source function argument value x = 50 at line 8", "source function argument value x = 500 at line 10", "source function argument value x = 101 at line 13", "source function argument value x = 101 at line 20"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach thr: high, local, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));", "related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));", "related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));", "source function argument value x = 50 at line 8", "source function argument value x = 500 at line 10", "source function argument value x = 101 at line 13", "source function argument value x = 101 at line 20"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: x > 101", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach thr: at, high, local"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: x > 101", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach thr: high, local, low"],
       "missing": ["Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "No detected boundary input for the changed predicate", "No strong discriminator was detected"],
       "assertion_texts": {
         "8": "fn low() { assert!(!thr(50)); }",
@@ -106,16 +113,6 @@
       "related_tests_total": 4,
       "related_tests": [
         {
-          "name": "at",
-          "file": "tests/it.rs",
-          "line": 13,
-          "oracle_strength": "weak",
-          "oracle_kind": "relational_check",
-          "oracle": "assert!(thr(101));",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        },
-        {
           "name": "high",
           "file": "tests/it.rs",
           "line": 10,
@@ -144,13 +141,25 @@
           "oracle": "assert!(!thr(50));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
+        },
+        {
+          "name": "at",
+          "file": "tests/it.rs",
+          "line": 13,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(thr(101));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -180,16 +189,23 @@
         "expression": "x > 100"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: at, high, local"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: high, local, low"},
         "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, local", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));", "related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));", "source function argument value x = 50 at line 8", "source function argument value x = 500 at line 10", "source function argument value x = 101 at line 13", "source function argument value x = 101 at line 20"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach thr: high, local, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));", "related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));", "related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));", "source function argument value x = 50 at line 8", "source function argument value x = 500 at line 10", "source function argument value x = 101 at line 13", "source function argument value x = 101 at line 20"],
       "flow_sinks": [
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach thr: at, high, local"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach thr: high, local, low"],
       "missing": ["Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "No detected boundary input for the changed predicate", "No strong discriminator was detected"],
       "assertion_texts": {
         "8": "fn low() { assert!(!thr(50)); }",
@@ -250,16 +266,6 @@
       "related_tests_total": 4,
       "related_tests": [
         {
-          "name": "at",
-          "file": "tests/it.rs",
-          "line": 13,
-          "oracle_strength": "weak",
-          "oracle_kind": "relational_check",
-          "oracle": "assert!(thr(101));",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        },
-        {
           "name": "high",
           "file": "tests/it.rs",
           "line": 10,
@@ -288,6 +294,18 @@
           "oracle": "assert!(!thr(50));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
+        },
+        {
+          "name": "at",
+          "file": "tests/it.rs",
+          "line": 13,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(thr(101));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": ["infection_evidence_unknown"],
@@ -324,17 +342,24 @@
         "expression": "x > 101"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: at, high, local"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: high, local, low"},
         "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: x > 101"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, local", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Complete propagation witness reaches returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x > 101 (line 2)", "related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));", "related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));", "source function argument value x = 50 at line 8", "source function argument value x = 500 at line 10", "source function argument value x = 101 at line 13", "source function argument value x = 101 at line 20"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach thr: high, local, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Complete propagation witness reaches returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x > 101 (line 2)", "related test tests/it.rs:10 high uses weak relational check oracle: assert!(thr(500));", "related test tests/it.rs:18 local uses weak relational check oracle: assert!(thr(101));", "related test tests/it.rs:8 low uses weak relational check oracle: assert!(!thr(50));", "related test tests/it.rs:13 at uses weak relational check oracle: assert!(thr(101));", "source function argument value x = 50 at line 8", "source function argument value x = 500 at line 10", "source function argument value x = 101 at line 13", "source function argument value x = 101 at line 20"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "Complete propagation witness reaches returned value: x > 101", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Related tests appear to reach thr: at, high, local"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "Complete propagation witness reaches returned value: x > 101", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Related tests appear to reach thr: high, local, low"],
       "missing": ["Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "No strong discriminator was detected"],
       "assertion_texts": {
         "8": "fn low() { assert!(!thr(50)); }",
@@ -395,16 +420,6 @@
       "related_tests_total": 4,
       "related_tests": [
         {
-          "name": "at",
-          "file": "tests/it.rs",
-          "line": 13,
-          "oracle_strength": "weak",
-          "oracle_kind": "relational_check",
-          "oracle": "assert!(thr(101));",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        },
-        {
           "name": "high",
           "file": "tests/it.rs",
           "line": 10,
@@ -433,13 +448,25 @@
           "oracle": "assert!(!thr(50));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
+        },
+        {
+          "name": "at",
+          "file": "tests/it.rs",
+          "line": 13,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(thr(101));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
         }
       ],
       "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

@@ -458,8 +458,22 @@ fn apply_macro_assertion_witness(finding: &mut Finding, witness: RustMacroAssert
 /// what ripr could not resolve instead of prescribing an assertion the suite
 /// may already contain. Classification (already `weakly_exposed` via the
 /// unconfirmed-observation rule in reveal) is unchanged.
-pub(super) fn apply_wrapper_error_binding_limit(finding: &mut Finding, probe: &Probe) {
-    if finding.class != ExposureClass::WeaklyExposed || finding.static_limit_kind.is_some() {
+///
+/// #14968: `literal_only_related` says every related test asserts only
+/// dropped literal-only assertions. Such a finding read `weakly_exposed` from
+/// the literal alone; dropping that credit lowers the class to
+/// `reachable_unrevealed`, never the limitation or the typed next step it
+/// named (RIPR-SPEC-0094).
+pub(super) fn apply_wrapper_error_binding_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    literal_only_related: bool,
+) {
+    let literal_only_unrevealed =
+        literal_only_related && finding.class == ExposureClass::ReachableUnrevealed;
+    if (finding.class != ExposureClass::WeaklyExposed && !literal_only_unrevealed)
+        || finding.static_limit_kind.is_some()
+    {
         return;
     }
     if !matches!(
@@ -473,6 +487,10 @@ pub(super) fn apply_wrapper_error_binding_limit(finding: &mut Finding, probe: &P
     }
 
     finding.static_limit_kind = Some(StaticLimitKind::WrapperErrorBindingUnresolved);
+    if literal_only_unrevealed {
+        finding.recommended_next_step =
+            Some(crate::analysis::classify::WRAPPER_ERROR_BINDING_NEXT_STEP.to_string());
+    }
     finding.evidence.push(
         "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel".to_string(),
     );
@@ -538,7 +556,9 @@ fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
         let Some(oracle) = related.oracle.as_deref() else {
             // A refused assertion on a directly related test is still an
             // assertion ripr judged (#7089).
-            if related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+            if related
+                .miss
+                .is_some_and(crate::domain::RelatedTestMiss::is_assertion_refusal_miss)
                 && (related.relation_reason.is_none()
                     || is_direct_relation(related.relation_reason))
             {
@@ -744,6 +764,111 @@ fn unresolved_assertion_macro_invocations(
     owner_in_arguments: Option<&str>,
 ) -> Vec<(String, usize)> {
     unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
+}
+
+/// Evidence prefix of an unread assertion-like macro row line (#15237).
+pub(crate) const UNREAD_ASSERTION_MACRO_PREFIX: &str = "assertion-like macro not read: ";
+
+/// #15237: a related-test row read as `no_assertion` whose test body invokes
+/// an assertion-like macro ripr does not classify (`assert_delta!`, a
+/// test-local `macro_rules!` built from `if bad { panic!(..) }`) does have a
+/// check; what it observes is unknown. The row becomes the analyzer-limit miss
+/// `assertion_admission_unproven` and the finding names the test and macro.
+///
+/// This runs after every limit and gap decision of the post-classify pass, so
+/// it never feeds one: a refusal miss reads as "an assertion ripr judged" to
+/// those decisions (#7089), which this macro is not. It grants no oracle,
+/// strength, class or limit, and leaves the stage summaries alone; only the
+/// false absence claim is withdrawn. Macros are read from comment- and
+/// string-masked text with the #7089 witness's spelling rule.
+pub(super) fn name_unread_assertion_macro_rows(finding: &mut Finding, index: &RustIndex) {
+    let mut lines = Vec::new();
+    for row in &mut finding.related_tests {
+        if row.oracle.is_some()
+            || row.miss != Some(crate::domain::RelatedTestMiss::NoAssertion)
+            || row.file.extension().is_none_or(|ext| ext != "rs")
+        {
+            continue;
+        }
+        let Some(macro_name) = index
+            .tests()
+            .iter()
+            .chain(index.files().values().flat_map(|file| file.tests.iter()))
+            .find(|test| {
+                test.name == row.name && test.file == row.file && test.start_line == row.line
+            })
+            .and_then(|test| first_executed_unread_assertion_macro(&test.body))
+        else {
+            continue;
+        };
+        row.miss = Some(crate::domain::RelatedTestMiss::AssertionAdmissionUnproven);
+        lines.push(format!(
+            "{UNREAD_ASSERTION_MACRO_PREFIX}`{}` checks through `{macro_name}!`, an assertion-like macro ripr does not read, so whether it observes the changed behavior is not established",
+            row.name
+        ));
+    }
+    for line in lines {
+        if !finding.evidence.contains(&line) {
+            finding.evidence.push(line);
+        }
+    }
+}
+
+/// The first assertion-like macro ripr does not classify that `body` invokes
+/// as code: not inside another macro's input (`stringify!(assert_x!(..))`
+/// never evaluates it) and not inside a `macro_rules!` definition, which only
+/// defines it. Read from comment- and string-masked text (#15237).
+fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
+    let masked = mask_rust_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    // One entry per open delimiter: whether it opens macro input, where
+    // nothing nested runs as code.
+    let mut inert: Vec<bool> = Vec::new();
+    // The previous significant token was `macro_rules!` (then its name).
+    let mut after_macro_rules = 0u8;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let ch = bytes[index];
+        match ch {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..index].trim_end();
+                let opens_macro_input = before.ends_with('!') || after_macro_rules == 2;
+                if opens_macro_input && !inert.iter().any(|frame| *frame) && before.ends_with('!') {
+                    let bang = before.len() - 1;
+                    if let Some(name) = macro_name_before_bang(&masked, bang)
+                        && is_unresolved_assertion_like_macro(&name)
+                    {
+                        return Some(name);
+                    }
+                }
+                inert.push(opens_macro_input);
+                after_macro_rules = 0;
+            }
+            b')' | b']' | b'}' => {
+                inert.pop();
+                after_macro_rules = 0;
+            }
+            b'!' => {
+                if masked[..index].trim_end().ends_with("macro_rules") {
+                    after_macro_rules = 1;
+                }
+            }
+            c if c.is_ascii_alphanumeric() || c == b'_' => {
+                if after_macro_rules == 1 {
+                    after_macro_rules = 2;
+                }
+                while index + 1 < bytes.len()
+                    && (bytes[index + 1].is_ascii_alphanumeric() || bytes[index + 1] == b'_')
+                {
+                    index += 1;
+                }
+            }
+            c if c.is_ascii_whitespace() => {}
+            _ => after_macro_rules = 0,
+        }
+        index += 1;
+    }
+    None
 }
 
 fn unresolved_assertion_macro_invocations_among(
@@ -1269,14 +1394,14 @@ mod tests {
             start_line: 1,
             end_line: 5,
             body: format!("pub fn {name}(x: i32) -> i32 {{ x }}").into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         }
@@ -1377,7 +1502,8 @@ mod tests {
                 line: start_line,
                 name: "inner".to_string(),
                 text: "inner(10, 3)".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
             literals: vec![
                 LiteralFact {
@@ -1388,10 +1514,11 @@ mod tests {
                     line: start_line + 1,
                     value: "7".to_string(),
                 },
-            ],
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            ]
+            .into(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -1669,7 +1796,7 @@ mod tests {
         let with_attribute = |attribute: &str| {
             let (finding, _) = weakly_exposed_beside_a_proximity_oracle();
             let mut test = test_summary("direct_inner", "src/lib.rs", 20, "weight(x)");
-            test.attrs = vec![attribute.to_string()];
+            test.attrs = vec![attribute.to_string()].into();
             let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
                 tests: vec![test],
                 ..Default::default()
@@ -1811,7 +1938,7 @@ let _ = (result, note, raw);"##,
         finding.probe.family = ProbeFamily::ErrorPath;
         finding.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = finding.probe.clone();
-        apply_wrapper_error_binding_limit(&mut finding, &probe);
+        apply_wrapper_error_binding_limit(&mut finding, &probe, false);
         assert_eq!(
             finding.static_limit_kind,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved)
@@ -1823,7 +1950,7 @@ let _ = (result, note, raw);"##,
         returned.probe.family = ProbeFamily::ReturnValue;
         returned.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = returned.probe.clone();
-        apply_wrapper_error_binding_limit(&mut returned, &probe);
+        apply_wrapper_error_binding_limit(&mut returned, &probe, false);
         assert_eq!(
             returned.static_limit_kind,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved)
@@ -1835,7 +1962,7 @@ let _ = (result, note, raw);"##,
         predicate.probe.family = ProbeFamily::Predicate;
         predicate.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = predicate.probe.clone();
-        apply_wrapper_error_binding_limit(&mut predicate, &probe);
+        apply_wrapper_error_binding_limit(&mut predicate, &probe, false);
         assert_eq!(predicate.static_limit_kind, None);
 
         let mut already_named =
@@ -1846,11 +1973,40 @@ let _ = (result, note, raw);"##,
         already_named.static_limit_kind =
             Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
         let probe = already_named.probe.clone();
-        apply_wrapper_error_binding_limit(&mut already_named, &probe);
+        apply_wrapper_error_binding_limit(&mut already_named, &probe, false);
         assert_eq!(
             already_named.static_limit_kind,
             Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
         );
+
+        // #14968: a `reachable_unrevealed` seam keeps the limit and its typed
+        // next step only when every related test asserts dropped literals.
+        for literal_only in [true, false] {
+            let mut unrevealed =
+                reachable_unrevealed_finding_with_related_test("wraps", "tests/it.rs", 4);
+            unrevealed.probe.family = ProbeFamily::ErrorPath;
+            unrevealed.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
+            unrevealed.recommended_next_step = Some("Add a meaningful assertion".to_string());
+            let probe = unrevealed.probe.clone();
+            apply_wrapper_error_binding_limit(&mut unrevealed, &probe, literal_only);
+            assert_eq!(unrevealed.class, ExposureClass::ReachableUnrevealed);
+            if literal_only {
+                assert_eq!(
+                    unrevealed.static_limit_kind,
+                    Some(StaticLimitKind::WrapperErrorBindingUnresolved)
+                );
+                assert_eq!(
+                    unrevealed.recommended_next_step.as_deref(),
+                    Some(crate::analysis::classify::WRAPPER_ERROR_BINDING_NEXT_STEP)
+                );
+            } else {
+                assert_eq!(unrevealed.static_limit_kind, None);
+                assert_eq!(
+                    unrevealed.recommended_next_step.as_deref(),
+                    Some("Add a meaningful assertion")
+                );
+            }
+        }
     }
 
     #[test]

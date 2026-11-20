@@ -909,6 +909,7 @@
   ],
   "suppressed": [
     {
+      "canonical_gap_id": "gap:dedf923a13a00573",
       "file": "src/pricing.rs",
       "line": 110,
       "message": "The PR guidance summary item cap was reached.",
@@ -916,6 +917,7 @@
       "seam_id": "ae33db3aa13cc766"
     },
     {
+      "canonical_gap_id": "gap:dedf923a13a00573",
       "file": "src/pricing.rs",
       "line": 120,
       "message": "The PR guidance summary item cap was reached.",

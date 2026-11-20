@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_return_unresolved_guard (5)
+
+Reason:
+RIPR-SPEC-0158 For error_return_unresolved_guard, preserve structured evidence stages from RIPR-SPEC-0423.
+
+Command:
+`cargo xtask goldens bless error_return_unresolved_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

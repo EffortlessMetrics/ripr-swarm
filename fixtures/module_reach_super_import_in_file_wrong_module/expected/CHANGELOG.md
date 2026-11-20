@@ -169,7 +169,46 @@ Updated:
 ## Pending — module_reach_super_import_in_file_wrong_module (14)
 
 Reason:
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (15)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (16)
+
+Reason:
 RIPR-SPEC-0159 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (17)
+
+Reason:
+RIPR-SPEC-0159 The test calls the sibling module entry. Neither the predicate nor its returned comparison has a resolved owner argument.
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`

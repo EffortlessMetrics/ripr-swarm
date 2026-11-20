@@ -9,10 +9,10 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:9
   Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Why weak: test reach to this change is not established
   Gap ID (for scripts): gap:rust:src/lib.rs:impl Wrapper::get:predicate_boundary:predicate:self.inner.get==10
   Changed behavior: self.inner.get() > 10
   Missing check (1 of 2): No detected boundary input for the changed predicate

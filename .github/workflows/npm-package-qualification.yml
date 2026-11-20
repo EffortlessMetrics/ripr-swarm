@@ -2,39 +2,25 @@ name: Qualify native Linux npm prerelease (read-only)
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - '.github/jactionlint.yaml'
-      - '.github/scripts/npm_*.py'
-      - '.github/scripts/test_npm_package.py'
-      - '.github/workflows/npm-package-qualification.yml'
-      - '.github/workflows/publish-npm.yml'
-      - '.github/workflows/python-wheel-qualification.yml'
-      - '.github/scripts/pypi_admission.py'
-      - '.github/scripts/test_pypi_admission.py'
-      - 'packaging/npm/**'
-      - 'packaging/python/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'crates/ripr/**'
-      - 'rust-toolchain.toml'
-      - 'LICENSE-*'
-      - 'fixtures/python/basic/**'
 
 permissions:
   contents: read
 
 concurrency:
-  group: npm-qualification-${{ github.event.pull_request.number || github.ref }}
+  group: npm-qualification-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_SHA: ${{ github.sha }}
 
 jobs:
   native:
     name: native
-    uses: ./.github/workflows/python-wheel-qualification.yml
+    if: >-
+      github.repository == 'EffortlessMetrics/ripr' &&
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # This public producer emits the attempt-bound npm-native-wheel artifact.
+    uses: EffortlessMetrics/ripr/.github/workflows/python-wheel-qualification.yml@33554d5f10fafc04c4e40e94ce67c59e2f438c57
     permissions:
       contents: read
 
@@ -42,8 +28,7 @@ jobs:
     needs: native
     if: >-
       github.repository == 'EffortlessMetrics/ripr' &&
-      (github.event_name == 'pull_request' ||
-       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:

@@ -11,11 +11,11 @@ Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach
 
 Analysis outcome: limitations below (analysis incomplete; partial_with_limitations)
   The 3 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: part of the analysis failed during language analysis (producer_failure at language_adapter); recovery: inspect the failure (inspect_failure) — Run ripr from a Cargo workspace root (or restore the missing Cargo.toml), then re-run the analysis.
+  Limitation: part of the analysis failed during language analysis (producer_failure at language_adapter); The path-dependency graph is unavailable: no local Cargo.toml manifest was found, so reverse-dependency scope expansion did not run and the diff scope stays the changed packages; crates that depend on them, and their tests, were not searched; recovery: inspect the failure (inspect_failure) — Run ripr from a Cargo workspace root (or restore the missing Cargo.toml), then re-run the analysis.
 
 Shared evidence and guidance
   E1 [findings 1, 3]: reach yes: Related tests appear to reach quote_body: empty_body_equality_case, missing_close_returns_none, nonempty_body
-  E2 [findings 1, 3]: infection unknown: Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  E2 [findings 1, 3]: infection unknown: Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; inspect how existing test inputs reach this operand; literal inputs do not guarantee that ripr can trace the required value mapping
   E3 [findings 1, 3]: observation yes: A related test observes a value or effect near the changed behavior
   E4 [findings 1, 3]: discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)
   E5 [findings 1, 3]: related test tests/q.rs:4 empty_body_equality_case uses strong exact value oracle: assert_eq!(quote_body("[]", '[', ']'), Some(""));
@@ -29,7 +29,7 @@ Shared evidence and guidance
   E13 [findings 1, 3]: source function argument value close = ']' at line 10
   E14 [findings 1, 3]: source function argument value open = '[' at line 10
   E15 [findings 1, 3]: source function argument value rest = "[ab]" at line 10
-  N1 [findings 1, 3]: Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  N1 [findings 1, 3]: Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 
 Finding 1: WARNING ./src/lib.rs:4
   id: probe:src_lib.rs:predicate:28000360
@@ -52,7 +52,7 @@ Evidence
   shared evidence: E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15
   - source values (showing 8 of 11 read from related tests; full list in --format json)
 Weakness
-  - Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; inspect how existing test inputs reach this operand; literal inputs do not guarantee that ripr can trace the required value mapping
   - No detected boundary input for the changed predicate
   - No strong discriminator was detected
 Stop reasons:
@@ -127,7 +127,7 @@ Evidence
   shared evidence: E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15
   - source values (showing 8 of 11 read from related tests; full list in --format json)
 Weakness
-  - Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; inspect how existing test inputs reach this operand; literal inputs do not guarantee that ripr can trace the required value mapping
   - No detected boundary input for the changed predicate
   - No strong discriminator was detected
 Stop reasons:

@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — option_chain_mutable_alias (5)
+
+Reason:
+RIPR-SPEC-0158 For option_chain_mutable_alias, preserve structured evidence stages from RIPR-SPEC-0423.
+
+Command:
+`cargo xtask goldens bless option_chain_mutable_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

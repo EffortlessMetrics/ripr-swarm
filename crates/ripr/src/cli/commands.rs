@@ -2,8 +2,8 @@ use crate::analysis;
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
-    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
-    reconcile_root,
+    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_path_value,
+    expect_value, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -14,6 +14,17 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
+
+/// Missing-required-input refusals (#14076). Each names where the value comes
+/// from, so the reader is not left at "requires X". The exact text is pinned
+/// by `tests/cli_error_message_snapshots.rs`.
+const ZERO_STATUS_REQUIRES_DELTA: &str = "zero status requires --delta <path>; pass the baseline debt delta JSON that `ripr baseline diff` writes, for example `--delta target/ripr/reports/baseline-debt-delta.json`";
+const CALIBRATE_REQUIRES_MUTANTS_JSON: &str = "calibrate cargo-mutants requires --mutants-json <path>; run `cargo mutants` first, then pass its `mutants.out` directory or `mutants.out/outcomes.json`";
+const CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON: &str = "calibrate cargo-mutants requires --repo-exposure-json <path>; capture one with `ripr check --format repo-exposure-json > repo-exposure.json`, then pass `--repo-exposure-json repo-exposure.json`";
+const PR_LEDGER_REQUIRES_PR_NUMBER: &str = "pr-ledger record requires --pr-number <value>; pass the pull request number or a local identifier, for example `--pr-number 123`";
+const PR_LEDGER_REQUIRES_BASE: &str = "pr-ledger record requires --base <revision>; pass the pull request's base commit, for example `--base origin/main`";
+const PR_LEDGER_REQUIRES_HEAD: &str = "pr-ledger record requires --head <revision>; pass the pull request's head commit, for example `--head HEAD`";
+const PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT: &str = "pr-review front-panel requires at least one explicit artifact input; pass one, for example `--pr-guidance target/ripr/review/comments.json` (run `ripr help pr-review` for the list)";
 
 #[path = "commands/agent.rs"]
 mod agent;
@@ -48,7 +59,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout, resolve_agent_repair_root,
+    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout,
+    before_phase_stdout_owns_start_result, resolve_agent_repair_root,
     run_before_repair_with_identity, translate_agent_repair_seam_id, translate_seam_id_for,
 };
 pub(super) use context::context;
@@ -148,22 +160,38 @@ mod review_comments;
 mod review_guidance_index_handoff;
 pub(super) use review_comments::review_comments;
 
+#[path = "commands/annotations.rs"]
+mod annotations_command;
 #[path = "commands/assistant_loop.rs"]
 mod assistant_loop;
 #[path = "commands/first_action.rs"]
 mod first_action;
 #[path = "commands/first_pr.rs"]
 pub(crate) mod first_pr;
+#[path = "commands/impacted_evidence.rs"]
+pub(crate) mod impacted_evidence_command;
+#[path = "commands/pr_evidence.rs"]
+pub(crate) mod pr_evidence_command;
+#[path = "commands/pr_summary.rs"]
+pub(crate) mod pr_summary_command;
 #[path = "commands/reports.rs"]
 mod reports;
+#[path = "commands/ripr_plus.rs"]
+pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
+#[cfg(test)]
 pub(super) use reports::reports;
+pub(super) use reports::reports_command;
 
 #[path = "commands/capabilities.rs"]
 mod capabilities;
 pub(super) use capabilities::capabilities;
+
+#[path = "commands/completions.rs"]
+mod completions;
+pub(super) use completions::completions;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
@@ -203,8 +231,16 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = read_calibration_text(&options.before, SnapshotCaptureKind::Outcome)?;
-    let after_json = read_calibration_text(&options.after, SnapshotCaptureKind::Outcome)?;
+    let before_json = read_calibration_text(
+        &options.before,
+        "outcome --before",
+        SnapshotCaptureKind::Outcome,
+    )?;
+    let after_json = read_calibration_text(
+        &options.after,
+        "outcome --after",
+        SnapshotCaptureKind::Outcome,
+    )?;
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,
@@ -244,7 +280,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     let options = parse_evidence_health_options(args)?;
     if !options.root.is_dir() {
         return Err(format!(
-            "evidence-health root {} is not a directory",
+            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
             options.root.display()
         ));
     }
@@ -611,6 +647,10 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
 
 fn pr_comments_plan(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_plan_options(args)?;
+    crate::cli::commands_context::ensure_command_root(
+        Path::new(&options.root),
+        "pr-comments plan",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -724,51 +764,51 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         pr_guidance_json: options
             .pr_guidance
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR guidance", path)),
+            .map(|path| read_report_input_plain("PR guidance", path)),
         first_action_json: options
             .first_action
             .as_ref()
-            .map(|path| read_optional_text_for_report("first useful action", path)),
+            .map(|path| read_report_input_plain("first useful action", path)),
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_optional_text_for_report("assistant proof", path)),
+            .map(|path| read_report_input_plain_typed("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
-            .map(|path| read_optional_text_for_report("assistant loop health", path)),
+            .map(|path| read_report_input_plain("assistant loop health", path)),
         ledger_json: options
             .ledger
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR evidence ledger", path)),
+            .map(|path| read_report_input_plain("PR evidence ledger", path)),
         baseline_delta_json: options
             .baseline_delta
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline debt delta", path)),
+            .map(|path| read_report_input_plain("baseline debt delta", path)),
         zero_status_json: options
             .zero_status
             .as_ref()
-            .map(|path| read_optional_text_for_report("RIPR Zero status", path)),
+            .map(|path| read_report_input_plain("RIPR Zero status", path)),
         gate_decision_json: options
             .gate_decision
             .as_ref()
-            .map(|path| read_optional_text_for_report("gate decision", path)),
+            .map(|path| read_report_input_plain("gate decision", path)),
         recommendation_calibration_json: options
             .recommendation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("recommendation calibration", path)),
+            .map(|path| read_report_input_plain("recommendation calibration", path)),
         mutation_calibration_json: options
             .mutation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("mutation calibration", path)),
+            .map(|path| read_report_input_plain("mutation calibration", path)),
         coverage_frontier_json: options
             .coverage_frontier
             .as_ref()
-            .map(|path| read_optional_text_for_report("coverage/grip frontier", path)),
+            .map(|path| read_report_input_plain("coverage/grip frontier", path)),
         receipt_json: options
             .receipt
             .as_ref()
-            .map(|path| read_optional_text_for_report("receipt", path)),
+            .map(|path| read_report_input_plain("receipt", path)),
     };
     let report = output::pr_review_front_panel::build_pr_review_front_panel_report(input);
     let rendered_json = output::pr_review_front_panel::render_pr_review_front_panel_json(&report)?;
@@ -777,6 +817,9 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    emit_report_warnings(
+        &output::pr_review_front_panel::pr_review_front_panel_input_warnings(&report),
+    );
     Ok(())
 }
 
@@ -855,6 +898,7 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     let options = parse_calibrate_cargo_mutants_options(rest)?;
     let repo_exposure_json = read_calibration_text(
         &options.repo_exposure_json,
+        "calibrate cargo-mutants --repo-exposure-json",
         SnapshotCaptureKind::RepoExposure,
     )?;
     let mutants_json = read_calibration_mutants_json(&options.mutants_json)?;
@@ -918,11 +962,22 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
         i += 1;
     }
 
-    let mutants_json = mutants_json
-        .ok_or_else(|| "calibrate cargo-mutants requires --mutants-json <path>".to_string())?;
-    let repo_exposure_json = repo_exposure_json.ok_or_else(|| {
-        "calibrate cargo-mutants requires --repo-exposure-json <path>".to_string()
-    })?;
+    let mutants_json = mutants_json.ok_or_else(|| CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())?;
+    let repo_exposure_json =
+        repo_exposure_json.ok_or_else(|| CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())?;
+    if let Some(out) = out.as_deref() {
+        refuse_output_naming_input(
+            "calibrate cargo-mutants",
+            &[("--out", out)],
+            &[
+                ("--mutants-json", Some(&mutants_json)),
+                // A cargo-mutants directory is read through these members.
+                ("--mutants-json", Some(&mutants_json.join("outcomes.json"))),
+                ("--mutants-json", Some(&mutants_json.join("mutants.json"))),
+                ("--repo-exposure-json", Some(&repo_exposure_json)),
+            ],
+        )?;
+    }
     Ok(CalibrateOptions {
         mutants_json,
         repo_exposure_json,
@@ -955,21 +1010,37 @@ fn read_calibration_mutants_json(path: &Path) -> Result<String, String> {
         }
 
         if outcomes_exists {
-            return read_calibration_text(&outcomes_path, SnapshotCaptureKind::CargoMutants);
+            return read_calibration_text(
+                &outcomes_path,
+                "calibrate cargo-mutants --mutants-json",
+                SnapshotCaptureKind::CargoMutants,
+            );
         }
         if mutants_exists {
-            return read_calibration_text(&mutants_path, SnapshotCaptureKind::CargoMutants);
+            return read_calibration_text(
+                &mutants_path,
+                "calibrate cargo-mutants --mutants-json",
+                SnapshotCaptureKind::CargoMutants,
+            );
         }
         return Err(format!(
-            "{} is a directory but contains neither outcomes.json nor mutants.json",
+            "calibrate cargo-mutants --mutants-json {} is a directory but contains neither outcomes.json nor mutants.json; pass the cargo-mutants output directory (usually `mutants.out`) or its `outcomes.json`",
             output::outcome::display_path(path)
         ));
     }
-    read_calibration_text(path, SnapshotCaptureKind::CargoMutants)
+    read_calibration_text(
+        path,
+        "calibrate cargo-mutants --mutants-json",
+        SnapshotCaptureKind::CargoMutants,
+    )
 }
 
 fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
-    let text = read_calibration_text(path, SnapshotCaptureKind::CargoMutants)?;
+    let text = read_calibration_text(
+        path,
+        "calibrate cargo-mutants --mutants-json",
+        SnapshotCaptureKind::CargoMutants,
+    )?;
     serde_json::from_str(&text).map_err(|err| {
         format!(
             "failed to parse JSON from {}: {err}",
@@ -1007,7 +1078,22 @@ fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
     }
 }
 
-fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<String, String> {
+/// `flag` names the command and flag (`outcome --before`) so a directory
+/// passed where a JSON file belongs is named in user words (#14313).
+fn read_calibration_text(
+    path: &Path,
+    flag: &str,
+    kind: SnapshotCaptureKind,
+) -> Result<String, String> {
+    // Checked before reading: a directory read fails with a host-specific
+    // errno (`Is a directory` on Unix, access denied on Windows).
+    if path.is_dir() {
+        return Err(format!(
+            "{flag} {} is a directory, not a JSON file; pass the file itself. {}",
+            output::outcome::display_path(path),
+            snapshot_capture_hint(kind, Path::new("snapshot.json"))
+        ));
+    }
     crate::bounded_input::read_to_string(path).map_err(|err| {
         let displayed = output::outcome::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -1020,6 +1106,9 @@ fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<Strin
         }
     })
 }
+
+const OUTCOME_BEFORE_REFUSAL: &str = "outcome requires --before <path>; pass the snapshot saved before your edit (capture one with `ripr check --format repo-exposure-json > before.json` before editing, not after)";
+const OUTCOME_AFTER_REFUSAL: &str = "outcome requires --after <path>; after your edit run `ripr check --format repo-exposure-json > after.json`, then pass `--after after.json`";
 
 fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
     let mut before: Option<PathBuf> = None;
@@ -1051,8 +1140,19 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
         i += 1;
     }
 
-    let before = before.ok_or_else(|| "outcome requires --before <path>".to_string())?;
-    let after = after.ok_or_else(|| "outcome requires --after <path>".to_string())?;
+    let before = before.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--before", OUTCOME_BEFORE_REFUSAL)
+    })?;
+    let after = after.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required("--after", OUTCOME_AFTER_REFUSAL)
+    })?;
+    if let Some(out) = out.as_deref() {
+        refuse_output_naming_input(
+            "outcome",
+            &[("--out", out)],
+            &[("--before", Some(&before)), ("--after", Some(&after))],
+        )?;
+    }
     Ok(OutcomeOptions {
         before,
         after,
@@ -1078,7 +1178,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
                 let reconciled = reconcile_root(
                     &root,
                     root_explicit,
-                    expect_value(args, i, "--root")?,
+                    expect_path_value(args, i, "--root")?,
                     "evidence-health",
                 )?;
                 root = reconciled;
@@ -1086,15 +1186,15 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
             }
             "--out" => {
                 i += 1;
-                out = PathBuf::from(expect_value(args, i, "--out")?);
+                out = PathBuf::from(expect_path_value(args, i, "--out")?);
             }
             "--out-md" => {
                 i += 1;
-                out_md = PathBuf::from(expect_value(args, i, "--out-md")?);
+                out_md = PathBuf::from(expect_path_value(args, i, "--out-md")?);
             }
             "--mutation-calibration" => {
                 i += 1;
-                mutation_calibration = Some(PathBuf::from(expect_value(
+                mutation_calibration = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--mutation-calibration",
@@ -1105,6 +1205,11 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
         i += 1;
     }
 
+    refuse_output_naming_input(
+        "evidence-health",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--mutation-calibration", mutation_calibration.as_deref())],
+    )?;
     Ok(EvidenceHealthOptions {
         root,
         out,
@@ -1169,9 +1274,25 @@ fn parse_ripr_zero_status_options(args: &[String]) -> Result<RiprZeroStatusOptio
         i += 1;
     }
 
+    let delta = delta.ok_or_else(|| ZERO_STATUS_REQUIRES_DELTA.to_string())?;
+    refuse_output_naming_input(
+        "zero status",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--baseline", baseline.as_deref()),
+            ("--delta", Some(&delta)),
+            ("--gap-ledger", gap_ledger.as_deref()),
+            ("--gate", gate.as_deref()),
+            ("--pr-guidance", pr_guidance.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+        ],
+    )?;
     Ok(RiprZeroStatusOptions {
         baseline,
-        delta: delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?,
+        delta,
         gap_ledger,
         gate,
         pr_guidance,
@@ -1338,6 +1459,24 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         );
     }
 
+    refuse_output_naming_input(
+        "pr-ledger record",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--gate", gate.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--gap-ledger", gap_ledger.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--agent-receipt", agent_receipt.as_deref()),
+            ("--coverage", coverage.as_deref()),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     if let Some(jsonl) = out_jsonl.as_ref() {
         let mut forbidden = vec![&out, &out_md];
         for input in [
@@ -1355,10 +1494,10 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         {
             forbidden.push(input);
         }
-        if forbidden
-            .iter()
-            .any(|path| output::path::same_output_leaf(jsonl, path))
-        {
+        if forbidden.iter().any(|path| {
+            output::path::same_output_leaf(jsonl, path)
+                || output::path::output_replaces_input(jsonl, path)
+        }) {
             return Err(
                 "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
                     .to_string(),
@@ -1367,10 +1506,9 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
     }
 
     Ok(PrEvidenceLedgerOptions {
-        pr_number: pr_number
-            .ok_or_else(|| "pr-ledger record requires --pr-number <value>".to_string())?,
-        base: base.ok_or_else(|| "pr-ledger record requires --base <revision>".to_string())?,
-        head: head.ok_or_else(|| "pr-ledger record requires --head <revision>".to_string())?,
+        pr_number: pr_number.ok_or_else(|| PR_LEDGER_REQUIRES_PR_NUMBER.to_string())?,
+        base: base.ok_or_else(|| PR_LEDGER_REQUIRES_BASE.to_string())?,
+        head: head.ok_or_else(|| PR_LEDGER_REQUIRES_HEAD.to_string())?,
         labels,
         gate,
         baseline_delta,
@@ -1508,6 +1646,14 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
         return Err("pr-comments plan --max-inline-comments must be greater than zero".to_string());
     }
 
+    refuse_output_naming_input(
+        "pr-comments plan",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--existing-comments", existing_comments.as_deref()),
+        ],
+    )?;
     Ok(PrCommentsPlanOptions {
         root,
         pr_guidance,
@@ -1695,11 +1841,30 @@ fn parse_pr_review_front_panel_options(
         && coverage_frontier.is_none()
         && receipt.is_none()
     {
-        return Err(
-            "pr-review front-panel requires at least one explicit artifact input".to_string(),
-        );
+        return Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string());
     }
 
+    refuse_output_naming_input(
+        "pr-review front-panel",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--first-action", first_action.as_deref()),
+            ("--assistant-proof", assistant_proof.as_deref()),
+            ("--assistant-health", assistant_health.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--mutation-calibration", mutation_calibration.as_deref()),
+            ("--coverage-frontier", coverage_frontier.as_deref()),
+            ("--receipt", receipt.as_deref()),
+        ],
+    )?;
     Ok(PrReviewFrontPanelOptions {
         root,
         pr_guidance,
@@ -1783,12 +1948,22 @@ fn parse_coverage_grip_frontier_options(
     }
 
     if ledger.is_none() && baseline_delta.is_none() && zero_status.is_none() {
-        return Err(
-            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status"
-                .to_string(),
-        );
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--ledger",
+            "coverage-grip frontier requires at least one of --ledger, --baseline-delta, or --zero-status",
+        ));
     }
 
+    refuse_output_naming_input(
+        "coverage-grip frontier",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--coverage", coverage.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+        ],
+    )?;
     Ok(CoverageGripFrontierOptions {
         coverage,
         ledger,
@@ -1821,6 +1996,41 @@ pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
         )
+    })
+}
+
+/// Like `read_optional_text_for_report`, but a missing file reads `not found`
+/// (#9851 vocabulary) instead of the host's errno text. Kept separate because
+/// some policy reports still classify a missing input by that errno text.
+fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        format!(
+            "read {label} {} failed: {}",
+            output::baseline_delta::display_path(path),
+            crate::bounded_input::read_failure_detail(&err)
+        )
+    })
+}
+
+/// [`read_report_input_plain`] with the not-found case kept separate, so the
+/// front panel can say "missing" only when the path is really absent (#14553).
+fn read_report_input_plain_typed(
+    label: &str,
+    path: &Path,
+) -> Result<String, output::pr_review_front_panel::PanelInputError> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        let detail = match detail.find(" (os error ") {
+            Some(index) => detail[..index].to_string(),
+            None => detail,
+        };
+        output::pr_review_front_panel::PanelInputError {
+            not_found: err.kind() == std::io::ErrorKind::NotFound,
+            message: format!(
+                "read {label} {} failed: {detail}",
+                output::baseline_delta::display_path(path)
+            ),
+        }
     })
 }
 
@@ -1870,6 +2080,31 @@ fn read_optional_manifest_for_report(
     }
 }
 
+/// Refuse, before anything is written, an output flag that names one of the
+/// command's own input files (#14312): the write would silently replace the
+/// evidence the user wants to rerun from. Shared by every artifact report
+/// command so the rule and wording live in one place.
+fn refuse_output_naming_input(
+    command: &str,
+    outputs: &[(&str, &Path)],
+    inputs: &[(&str, Option<&Path>)],
+) -> Result<(), String> {
+    for (out_flag, out_path) in outputs {
+        for (in_flag, in_path) in inputs {
+            let Some(in_path) = in_path else {
+                continue;
+            };
+            if output::path::output_replaces_input(out_path, in_path) {
+                return Err(format!(
+                    "{command} {out_flag} {} names the same file as {in_flag}; writing there would replace that input. Pass a different {out_flag} path",
+                    output::path::human_path(out_path)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn non_empty_path_arg(
     args: &[String],
     index: usize,
@@ -1888,7 +2123,9 @@ fn non_empty_string_arg(
 ) -> Result<String, String> {
     let value = expect_value(args, index, flag)?;
     if value.trim().is_empty() {
-        Err(format!("{command} {flag} requires a non-empty value"))
+        let message = format!("{command} {flag} requires a non-empty value");
+        crate::cli::usage_refusal::note_missing_value(flag, &message);
+        Err(message)
     } else {
         Ok(value.to_string())
     }
@@ -2105,10 +2342,16 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         .as_deref()
         .is_some_and(|base| base.trim().is_empty())
     {
-        return Err("diff --base requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--base",
+            "diff --base requires a non-empty revision",
+        ));
     }
     if options.head.trim().is_empty() {
-        return Err("diff --head requires a non-empty revision".to_string());
+        return Err(crate::cli::usage_refusal::empty_value(
+            "--head",
+            "diff --head requires a non-empty revision",
+        ));
     }
 
     Ok(options)
@@ -2391,16 +2634,19 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    // `explain` has no machine output format (its stdout is the human or
-    // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
-    // machine-format default that `check` and `pilot` adopt has nothing to key on.
+    // `--quiet` / `RIPR_QUIET` always silence it. `--format agent` is the
+    // compact report a coding agent reads, so it takes the same machine-format
+    // default as `ripr check --format agent`: silent on a non-terminal stderr
+    // unless `RIPR_PROGRESS` asks for the stream. The agent loop follows the
+    // `next=ripr explain ...` line check prints, which carries no `--quiet`.
     if from_artifact.is_some()
         && input.suppression_policy.is_some()
         && format == app::ExplainFormat::Agent
     {
         return Err("`ripr explain --format agent` cannot apply `--suppression-policy` to a `--from` replay, so a suppressed finding could print as open; drop `--from` or `--suppression-policy`".to_string());
     }
-    let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
+    let machine_format = format == app::ExplainFormat::Agent;
+    let progress = (!crate::cli::progress::progress_silenced(quiet, machine_format)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -2453,12 +2699,21 @@ fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
     match value {
         "human" | "text" => Ok(app::ExplainFormat::Human),
         "agent" => Ok(app::ExplainFormat::Agent),
-        "json" => Err(
-            "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
-                .to_string(),
-        ),
-        other => Err(format!(
-            "unknown explain format `{other}`; expected `human` or `agent`"
+        "json" => {
+            let message = "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
+                .to_string();
+            // #11584: a JSON-requesting caller gets the typed refusal too.
+            crate::cli::usage_refusal::note_unknown_value(
+                "json",
+                &message,
+                Some("ripr explain --help"),
+            );
+            Err(message)
+        }
+        other => Err(unknown_value(
+            "explain format",
+            other,
+            &["human", "text", "agent"],
         )),
     }
 }
@@ -2557,28 +2812,39 @@ pub(super) fn drill_in_scope_conflict(
     from_artifact: bool,
 ) -> Result<(), String> {
     if committed && worktree {
-        return Err(format!(
-            "{command} --committed and --worktree select different diff sources; pass one"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --committed and --worktree select different diff sources; pass one"
+            ),
         ));
     }
     if committed && diff_file {
-        return Err(format!(
-            "{command} --committed cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!("{command} --committed cannot be combined with --diff"),
         ));
     }
     if committed && from_artifact {
-        return Err(format!(
-            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--committed",
+            &format!(
+                "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     if worktree && diff_file {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --diff"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!("{command} --worktree cannot be combined with --diff"),
         ));
     }
     if worktree && from_artifact {
-        return Err(format!(
-            "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+        return Err(crate::cli::usage_refusal::conflicting_flags(
+            "--worktree",
+            &format!(
+                "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+            ),
         ));
     }
     Ok(())
@@ -2588,40 +2854,30 @@ pub(super) fn drill_in_scope_conflict(
 /// Composes existing RIPR artifacts into a PR evidence summary. Does NOT run
 /// analysis or invoke Cargo. The canonical downstream replacement for
 /// `cargo xtask ripr-pr-summary`.
-pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
-    crate::app::pr_summary::run_pr_summary(args)
-}
+pub(super) use pr_summary_command::pr_summary;
 
 /// `ripr annotations` — binary-first GitHub Actions annotations (item 8b).
 /// Reads comments.json and emits `::warning` annotation lines. The canonical
 /// downstream replacement for `cargo xtask ripr-annotations`.
-pub(super) fn annotations(args: &[String]) -> Result<(), String> {
-    crate::app::annotations::run_annotations(args)
-}
+pub(super) use annotations_command::annotations;
 
 /// `ripr pr-evidence` — binary-first PR evidence packet (Campaign 31 item 8c).
 /// Writes the PR diff, runs an in-process RIPR check, and composes the result
 /// into a PR evidence packet. The canonical downstream replacement for
 /// `cargo xtask ripr-pr`. Unlike the xtask, it calls `check_workspace`
 /// directly instead of shelling out to `cargo run -p ripr -- check`.
-pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::pr_evidence::run_pr_evidence(args)
-}
+pub(super) use pr_evidence_command::pr_evidence;
 
 /// `ripr impacted-evidence` — binary-first mutation-routing evidence (item 8e).
 /// Reads PR evidence + labels and emits routing decision JSON + Markdown.
-pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::impacted_evidence::run_impacted_evidence(args)
-}
+pub(super) use impacted_evidence_command::impacted_evidence;
 
 /// `ripr plus` — binary-first RIPR+ repo receipt (composition-only).
 /// Composes the repo-wide RIPR+ quality-gate receipt from a pre-computed
 /// `repo-exposure-summary-json` or `--gap-ledger` artifact. The canonical
 /// downstream replacement for `cargo xtask ripr-plus`. Unlike the xtask, it
 /// is artifact-composition-only and does not run an in-process full-repo scan.
-pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
-    crate::app::ripr_plus::run_ripr_plus(args)
-}
+pub(super) use ripr_plus_command::ripr_plus;
 
 #[cfg(test)]
 mod tests {
@@ -2959,7 +3215,7 @@ mod tests {
         assert_eq!(pr_review(&args(&[])), Ok(()));
         assert_eq!(
             pr_review(&args(&["front-panel"])),
-            Err("pr-review front-panel requires at least one explicit artifact input".to_string())
+            Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string())
         );
         assert_eq!(
             pr_review(&args(&["bogus"])),
@@ -3008,7 +3264,7 @@ mod tests {
         assert_eq!(zero(&args(&[])), Ok(()));
         assert_eq!(
             zero(&args(&["status"])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             zero(&args(&["unknown"])),
@@ -3016,7 +3272,7 @@ mod tests {
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&[])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&["--delta", ""])),
@@ -3575,6 +3831,94 @@ mod tests {
         assert!(md_text.contains("# RIPR Policy Readiness"));
         assert!(md_text.contains("Recommended mode: baseline-check"));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove policy dir: {err}"))?;
+        Ok(())
+    }
+    /// #14311: a supplied gate decision that is missing, not JSON, empty, or
+    /// another artifact never yields a `ready_for_*` recommendation; the run
+    /// writes `config_error` and refuses, naming the input.
+    #[test]
+    fn policy_readiness_refuses_an_unusable_supplied_input() -> Result<(), String> {
+        let dir = unique_command_test_dir("policy-readiness-unusable");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let out = dir.join("policy-readiness.json");
+        let out_md = dir.join("policy-readiness.md");
+        let gate = dir.join("gate-decision.json");
+        for body in [
+            None,
+            Some("not json {"),
+            Some("{}"),
+            Some("[]"),
+            Some(r#"{"schema":"ripr.other","x":1}"#),
+        ] {
+            if gate.exists() {
+                std::fs::remove_file(&gate).map_err(|err| format!("remove gate: {err}"))?;
+            }
+            if let Some(body) = body {
+                std::fs::write(&gate, body).map_err(|err| format!("write gate: {err}"))?;
+            }
+            let Err(err) = policy(&args(&[
+                "readiness",
+                "--gate-decision",
+                &gate.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ])) else {
+                return Err(format!("gate decision {body:?} must be refused"));
+            };
+            assert!(
+                err.contains("policy readiness could not use 1 supplied input")
+                    && err.contains("gate-decision.json")
+                    && err.contains("written as `config_error`"),
+                "{body:?}: {err}"
+            );
+            let report: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(&out).map_err(|err| format!("read report: {err}"))?,
+            )
+            .map_err(|err| format!("parse report: {err}"))?;
+            assert_eq!(report["status"], "config_error", "{body:?}");
+        }
+        // Another artifact's `kind` is refused on the input it was passed to.
+        let baseline = dir.join("baseline-debt-delta.json");
+        std::fs::write(
+            &baseline,
+            r#"{"schema_version":"0.1","kind":"waiver_aging","delta":{"still_present":0}}"#,
+        )
+        .map_err(|err| format!("write baseline: {err}"))?;
+        let Err(err) = policy(&args(&[
+            "readiness",
+            "--baseline-delta",
+            &baseline.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ])) else {
+            return Err(
+                "a waiver-aging document passed as --baseline-delta must be refused".to_string(),
+            );
+        };
+        assert!(
+            err.contains("its kind is `waiver_aging`, expected `baseline_debt_delta`"),
+            "{err}"
+        );
+        // Discriminating control: a real gate decision still completes.
+        std::fs::write(
+            &gate,
+            r#"{"schema_version":"0.1","status":"advisory","mode":"visible-only","summary":{"blocking":0,"acknowledged":0,"advisory":0,"suppressed":0,"not_applicable":0},"decisions":[]}"#,
+        )
+        .map_err(|err| format!("write gate: {err}"))?;
+        policy(&args(&[
+            "readiness",
+            "--gate-decision",
+            &gate.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         Ok(())
     }
     #[test]
@@ -4325,7 +4669,7 @@ language = "rust"
                 "--gate",
                 "gate.json"
             ])),
-            Err("pr-ledger record requires --pr-number <value>".to_string())
+            Err(PR_LEDGER_REQUIRES_PR_NUMBER.to_string())
         );
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[
@@ -4997,11 +5341,11 @@ language = "rust"
     fn outcome_requires_before_and_after() {
         assert_eq!(
             parse_outcome_options(&args(&["--after", "after.json"])),
-            Err("outcome requires --before <path>".to_string())
+            Err(OUTCOME_BEFORE_REFUSAL.to_string())
         );
         assert_eq!(
             parse_outcome_options(&args(&["--before", "before.json"])),
-            Err("outcome requires --after <path>".to_string())
+            Err(OUTCOME_AFTER_REFUSAL.to_string())
         );
     }
     #[test]
@@ -5365,11 +5709,11 @@ language = "rust"
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--repo-exposure-json", "repo.json"])),
-            Err("calibrate cargo-mutants requires --mutants-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--mutants-json", "mutants.json"])),
-            Err("calibrate cargo-mutants requires --repo-exposure-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())
         );
     }
     #[test]
@@ -5528,7 +5872,7 @@ language = "rust"
     fn read_calibration_text_names_capture_command_per_kind() -> Result<(), String> {
         let missing = PathBuf::from("definitely-missing-snapshot.json");
         let outcome = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::Outcome),
             "missing outcome snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5543,7 +5887,7 @@ language = "rust"
         );
 
         let repo = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::RepoExposure),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::RepoExposure),
             "missing repo-exposure snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5554,7 +5898,7 @@ language = "rust"
         );
 
         let mutants = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::CargoMutants),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::CargoMutants),
             "missing cargo-mutants snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5581,7 +5925,7 @@ language = "rust"
             "control path must stay a bare shell token"
         );
         let plain_message = err_message(
-            read_calibration_text(&plain, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&plain, "test --flag", SnapshotCaptureKind::Outcome),
             "plain missing outcome snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5613,7 +5957,7 @@ language = "rust"
         );
 
         let outcome = err_message(
-            read_calibration_text(&spaced, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&spaced, "test --flag", SnapshotCaptureKind::Outcome),
             "spaced missing outcome snapshot must fail",
         )?;
         assert!(
@@ -5632,7 +5976,7 @@ language = "rust"
         );
 
         let repo = err_message(
-            read_calibration_text(&spaced, SnapshotCaptureKind::RepoExposure),
+            read_calibration_text(&spaced, "test --flag", SnapshotCaptureKind::RepoExposure),
             "spaced missing repo-exposure snapshot must fail",
         )?;
         assert!(
@@ -5885,11 +6229,16 @@ language = "rust"
         for line in workflow.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with(&format!("{name}:")) {
+                // #5409: a setting's comment can trail its entry on the
+                // same line.
+                if let Some((_, trailing)) = trimmed.split_once(" # ") {
+                    comment.push(trailing);
+                }
                 // An empty block means the comment moved away from the entry
                 // (a blank line between them also lands here). Fail with that
                 // as the reason rather than running `contains` on "".
                 if comment.is_empty() {
-                    return Err(format!("`{name}:` has no comment directly above it"));
+                    return Err(format!("`{name}:` has no comment above or beside it"));
                 }
                 return Ok(comment.join("\n"));
             }
@@ -5967,7 +6316,11 @@ language = "rust"
 
         // Every mode the CLI accepts is listed, derived from the help line
         // rather than from a second list kept here.
+        // `gate check` documents `--mode MODE` too, by reference to this
+        // list, so read the evaluate section that spells the modes out.
         let mode_line = gate_help
+            .split_once("Evaluate options:")
+            .map_or(gate_help, |(_, evaluate)| evaluate)
             .lines()
             .find(|line| line.trim_start().starts_with("--mode MODE"))
             .ok_or_else(|| format!("gate help does not document --mode:\n{gate_help}"))?;
@@ -6125,10 +6478,16 @@ language = "rust"
             section.contains("always()"),
             "the section no longer names the always() steps the binding above checks"
         );
+        // #14841: the packet exits 3 when only the gate blocked and 2 on any
+        // other required failure; the section and the catalog stop states
+        // must both say so.
         assert!(
-            section.contains("nonzero")
+            section.contains("makes the packet exit `3`")
+                && section.contains("exit `2` after")
                 && include_str!("command_metadata.rs")
-                    .contains("exits nonzero after the packet is written")
+                    .contains("a blocked gate exits 3 after the packet is written")
+                && include_str!("command_metadata.rs")
+                    .contains("exits 2 after the packet is written")
                 && include_str!("commands/ci_packet.rs")
                     .contains("failed and is advisory; continuing"),
             "the section's failure-role prose no longer matches the ci-packet \
@@ -6241,7 +6600,7 @@ language = "rust"
         );
         for command in [
             "--format sarif",
-            "--format repo-sarif",
+            // `--format repo-sarif` runs on manual runs only (#14300).
             "--format repo-badge-json",
             "ripr pilot",
             "ripr agent start",
@@ -6347,7 +6706,7 @@ language = "rust"
         assert!(workflow.contains("gh api --method \"$method\""));
         assert!(!workflow.contains("jq "));
         assert!(workflow.contains(
-            "env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif')"
+            "env.RIPR_UPLOAD_SARIF == 'true' && github.event_name != 'pull_request' && hashFiles('target/ripr/reports/ripr-seams.sarif')"
         ));
         assert!(
             workflow
@@ -6516,8 +6875,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 216,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, #11205 added the optional pilot-timeout binding, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
+            line_count <= 150,
+            "generated workflow is {line_count} lines; #5409 set 150 and brought it back there by installing through the release's ripr-check action instead of an inline installer"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -6545,10 +6904,9 @@ language = "rust"
         // the cleanup was meant to remove.
         let cleanup = workflow_step(&workflow, "Remove checked-in RIPR artifacts");
         assert!(cleanup.contains("run: rm -rf target/ripr target/ci"));
-        let install = workflow_step(&workflow, "Install ripr");
-        assert!(
-            install.contains(r#"echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV""#)
-        );
+        // #5409: the analysis step names the restored cache directory itself.
+        let run = workflow_step(&workflow, "Run RIPR");
+        assert!(run.contains("          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache\n"));
         let cache = workflow
             .split("\n\n")
             .find(|block| {
@@ -6573,7 +6931,7 @@ language = "rust"
         let run_at = workflow.find("      - name: Run RIPR\n").unwrap_or(0);
         assert!(
             install_at < cache_at && cache_at < run_at,
-            "the cache restores after the install sets RIPR_CACHE_DIR and before the first analysis"
+            "the cache restores after the install and before the first analysis"
         );
         assert_step_before(
             &workflow,
@@ -6598,16 +6956,21 @@ language = "rust"
         assert!(summary.contains("github.actor != 'dependabot[bot]'"));
         assert!(summary.contains("continue-on-error: true"));
         assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
-        assert!(summary.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(summary.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"));
-        assert!(summary.contains("REPO: ${{ github.repository }}"));
+        // #4452, #5409: the pull request values reach shell through job env,
+        // never as `${{ }}` inside `run:`; the repository is the runner's own
+        // GITHUB_REPOSITORY.
+        assert!(workflow.contains(
+            "    env:\n      PR_NUMBER: ${{ github.event.pull_request.number }}\n      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n    steps:\n"
+        ));
+        assert!(!workflow.contains("REPO: ${{ github.repository }}"));
+        assert!(summary.contains("\"repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments\""));
         assert!(summary.contains("--pull-request \"$PR_NUMBER\" --head-sha \"$PR_HEAD_SHA\""));
         assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
         assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
-        let run = workflow_step(&workflow, "Run RIPR");
         assert_eq!(
-            run, "      - name: Run RIPR\n        run: ripr reports ci-packet --root .",
+            run,
+            "      - name: Run RIPR\n        env:\n          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache\n        run: ripr reports ci-packet --root .",
             "the packet step has no condition or continue-on-error: a required \
              step's failure must fail the job"
         );
@@ -6623,11 +6986,6 @@ language = "rust"
         assert!(existing_comments.contains("env.RIPR_COMMENT_MODE != 'off'"));
         assert!(existing_comments.contains("GH_TOKEN: ${{ github.token }}"));
         assert!(existing_comments.contains("gh api --paginate --slurp"));
-        assert!(existing_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(
-            existing_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
-        );
-        assert!(existing_comments.contains("REPO: ${{ github.repository }}"));
         assert!(existing_comments.contains("pulls/$PR_NUMBER/comments"));
         // The command's default output is the file the packet's plan reads.
         assert!(include_str!("commands/pr_comments_github.rs").contains(
@@ -6641,14 +6999,9 @@ language = "rust"
         assert!(
             publish_comments.contains("hashFiles('target/ripr/review/comment-publish-plan.json')")
         );
-        assert!(publish_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-        assert!(
-            publish_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
-        );
-        assert!(publish_comments.contains("REPO: ${{ github.repository }}"));
         assert!(publish_comments.contains("--head-sha \"$PR_HEAD_SHA\""));
         assert!(publish_comments.contains(
-            "gh api --method \"$method\" \"repos/$REPO/$endpoint\" --input \"$request\""
+            "gh api --method \"$method\" \"repos/$GITHUB_REPOSITORY/$endpoint\" --input \"$request\""
         ));
 
         // The packet writes the plan the publish step reads, and the comment
@@ -6735,8 +7088,11 @@ language = "rust"
         );
         // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
         assert!(packet.contains("--format sarif"));
-        assert!(packet.contains("--format repo-sarif"));
+        // The repo seam SARIF renders on manual runs only (#14300); the
+        // recorded packet is a pull request run.
+        assert!(!packet.contains("--format repo-sarif"));
         assert!(packet_source.contains("let sarif = self.settings.upload_sarif == \"true\";"));
+        assert!(packet_source.contains("sarif && !pr,"));
 
         let artifact_check = packet_source
             .split("fn check_advisory_artifacts")
@@ -6764,6 +7120,7 @@ language = "rust"
     fn init_ci_github_writes_workflow_and_preserves_existing_config() -> Result<(), String> {
         let dir = unique_command_test_dir("init-ci");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let config = dir.join(CONFIG_FILE_NAME);
         std::fs::write(&config, "# existing policy\n")
             .map_err(|err| format!("write existing config: {err}"))?;
@@ -6793,6 +7150,7 @@ language = "rust"
         let workflow_dir = dir.join(".github/workflows");
         std::fs::create_dir_all(&workflow_dir)
             .map_err(|err| format!("create workflow dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let workflow = workflow_dir.join("ripr.yml");
         std::fs::write(&workflow, "name: Existing\n")
             .map_err(|err| format!("write existing workflow: {err}"))?;

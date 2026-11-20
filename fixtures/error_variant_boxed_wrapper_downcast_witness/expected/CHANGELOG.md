@@ -746,7 +746,7 @@ Updated:
 ## Pending — error_variant_boxed_wrapper_downcast_witness (54)
 
 Reason:
-RIPR-SPEC-0106: refuse owner-level credit for two ambiguous early-return sites; real native branch controls change the first return outcome but not the second; preserve boxed binding limitations and discarded-witness refusal
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
@@ -759,6 +759,78 @@ Updated:
 ## Pending — error_variant_boxed_wrapper_downcast_witness (55)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (56)
+
+Reason:
+RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (57)
+
+Reason:
+RIPR-SPEC-0224 #14483: the JSON oracle summary and the Related test headline rank rows by the shared observation tier, so a no_call_path or assertion_not_observing row no longer speaks for the finding while a row that reaches the change is listed
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (58)
+
+Reason:
+RIPR-SPEC-0122: grouped Hidden rows name their members' line runs instead of a covering range (#14682); a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (59)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (60)
+
+Reason:
+RIPR-SPEC-0106: refuse owner-level credit for two ambiguous early-return sites; real native branch controls change the first return outcome but not the second; preserve boxed binding limitations and discarded-witness refusal
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (61)
+
+Reason:
 RIPR-SPEC-0106: current21production+4native controls establish the current bound unit-error observer selects only the first literal guard return; later identical return, unentered, overwritten, shadowed, unrelated and sibling-variant controls remain non-exposed; wrappers retain typed unresolved binding. Native per-return contrast independently distinguishes the first from the second return.
 
 Command:
@@ -768,3 +840,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (62)
+
+Reason:
+RIPR-SPEC-0106 For error_variant_boxed_wrapper_downcast_witness, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

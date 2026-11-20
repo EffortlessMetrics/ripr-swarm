@@ -45,8 +45,8 @@ Write a test for it:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:16 (unknown: infection unclear); kind: field_construction; reason: A changed Rust value binding uses a bounded string or character operation, but ripr cannot carry that value into the same-owner equality predicate. This is a named analyzer…
-    - ./src/lib.rs:16 (unknown: infection unclear); kind: return_value; reason: A changed Rust value binding uses a bounded string or character operation, but ripr cannot carry that value into the same-owner equality predicate. This is a named analyzer…
+    - ./src/lib.rs:16 (unknown: infection unclear); kind: field_construction; reason: A bounded Rust value flow, value-dependent guard or arithmetic observer has an unresolved transfer to an independent assertion. This is a named analyzer limitation, not a coverage…
+    - ./src/lib.rs:16 (unknown: infection unclear); kind: return_value; reason: same as above
   Hidden classes:
     unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full

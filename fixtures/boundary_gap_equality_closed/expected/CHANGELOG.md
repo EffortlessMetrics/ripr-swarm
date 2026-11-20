@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_gap_equality_closed (5)
+
+Reason:
+RIPR-SPEC-0001 For boundary_gap_equality_closed, preserve structured evidence stages from RIPR-SPEC-0423.
+
+Command:
+`cargo xtask goldens bless boundary_gap_equality_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

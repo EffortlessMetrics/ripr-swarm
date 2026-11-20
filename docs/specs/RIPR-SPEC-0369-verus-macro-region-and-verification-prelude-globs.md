@@ -112,11 +112,17 @@ is exactly one of:
 | `creusot_std::prelude::*` | creusot-std 0.14.0 |
 | `vstd::prelude::*` | vstd 0.0.0-2026-10-25-0158 |
 | `prusti_contracts::*` | prusti-contracts 0.3.3 |
+| `proptest::prelude::*` | proptest 1.12.0 |
+| `rayon::prelude::*` | rayon 1.12.0 |
 
 and the crate name resolves to its plain registry package for the importing
 file's manifest (the existing drop-in manifest authority, RIPR-SPEC-0197: no
 `package`, `path`, `git`, `registry`, `[patch]` or `.cargo` substitution) and
 is not shadowed by a workspace package, module or `extern crate` rename.
+A plain import that binds the crate name in the same file (`use other::vstd;`
+or `use other::vstd::{self};`) also takes the path over, as it does for the
+standard roots, so the glob stays foreign; an absolute `::vstd::prelude::*`
+still names the extern crate.
 
 Evidence for "exports no assertion macro", read from the published crate
 sources (the clones are not vendored):
@@ -135,6 +141,16 @@ sources (the clones are not vendored):
   `prusti_assert_eq!`, `prusti_assert_ne!`, `map!`, `seq!`, `set!`,
   `closure!` and `ghost!`. None is named `assert_eq`, `assert_ne` or any
   other trusted assertion.
+- `proptest::prelude` (#14116) re-exports `any`, `any_with`, `Arbitrary`,
+  strategy types, `ProptestConfig`, `TestCaseError`, `ProptestResultExt`,
+  the `rand` traits `Rng`, `RngExt` and `RngCore`, a `prop` module of
+  submodules, and the macros `prop_assert!`, `prop_assert_eq!`,
+  `prop_assert_ne!`, `prop_assume!`, `prop_compose!`, `prop_oneof!` and
+  `proptest!`. None is named like a trusted assertion.
+- `rayon::prelude` (#14116) is only `pub use` of thirteen parallel-iterator
+  traits (`ParallelIterator`, `IntoParallelIterator`, `ParallelSlice`, ...)
+  and exports no macro at all. On ripr's own repository these two globs were
+  the cited refusal on 68 of 72 uncredited assertions across three commits.
 
 The audit is of the listed versions only. The glob keeps assertion credit only
 when the nearest `Cargo.lock` at or above the analysis root locks the crate
@@ -150,9 +166,12 @@ covered by this entry until it is re-read and added.
 New-audit procedure: re-read the published crate's prelude export list at the
 exact version (no macro named like a trusted assertion), add that exact version
 string to `AUDITED_PRELUDE_VERSIONS` in `analysis/facts/drop_in.rs` and to the
-table above, extend `verification_prelude_globs_credit_only_audited_locked_versions`,
-and bump `CACHE_SCHEMA_VERSION`. Remove a version the same way if a re-read finds
-an assertion-like export.
+table above, and extend `verification_prelude_globs_credit_only_audited_locked_versions`.
+Remove a version the same way if a re-read finds an assertion-like export. No
+`CACHE_SCHEMA_VERSION` bump is needed: persisted classifications key on the
+analyzer build identity (`build_identity::cache_identity`, the commit or a
+source digest), so a build with a different audit table never reads entries
+another build wrote (#14116).
 
 This grants no credit of its own: an assertion in a file
 with such a glob is credited exactly as it would be without the glob, and a
@@ -161,6 +180,48 @@ import of a trusted name in the same scope still refuses. `use
 creusot_std::*;`, `use vstd::*;`, `use prusti_contracts::prelude::*;`, other
 crate names (including the older `creusot_contracts`) and renamed or
 substituted dependencies remain foreign globs.
+
+A top-level `mod name; pub use name::*;` (or `use name::*;`) in one file is
+not a foreign glob either (#14031): the whole `name::*` glob of an out-of-line
+module the same file declares reads that module's own items, as `crate::name::*`
+does, and the module's definitions and public imports are reported at their own
+file. It stays foreign when the module is inline (its imports are scoped to it),
+mounted with `#[path]`, declared twice (for example under exclusive `cfg`s),
+shadowed by an `extern crate`, `use` or other item of the same name, written
+with a longer path, a group or a leading `::`, nested in a module, reached next
+to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
+re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
+in the crate's tests macro-binding unestablished.
+
+An import path that only reads the module name does not shadow it (#14116):
+`pub(crate) use name::{A, B};`, a member renamed to another name, or an import
+renamed to `_` leaves the local glob intact. Actual leaf bindings, including
+grouped `self` and aliases to the module name, still refuse. An opaque import
+that mentions the module name keeps the prior refusal; this includes absolute
+grouped paths whose bound name is not established. Unrelated absolute imports
+do not shadow the module. This does not relax unresolved-include placement refusal or
+hide public macro imports in the module being globbed.
+
+Std's `thread_local!` and `compile_error!` (bare or `std::`) are not
+item-position macros that refuse the local glob (#14116): their expansions
+declare no module, as the module-tree scan already reads them. The call still
+refuses when its tokens spell the module name, when the file may bind the
+macro's name, or for a `std::` call the name `std` (a same-named
+`macro_rules!` or `macro` at any depth, since a nested `#[macro_export]` one
+lands in the crate root's scope; a top-level same-named `mod` or
+`extern crate` alias, import of that name, or any `#[macro_use]` item), or
+when the file has another top-level glob. `core::` and `::std::` spellings
+keep the refusal. Without this, a file holding `mod inner; use
+inner::*;` beside a `thread_local!` lost the `assert_eq!` credit of every test
+in it. As in the module-tree scan, a shadowing macro or crate name from
+outside the file is not modeled: an `extern crate dep as std;` at the crate
+root, or a `std` or `thread_local` the globbed module itself re-exports.
+
+The rule reads the glob with 2018 path semantics at the top level of any file
+and does not consult the edition. In a 2015-edition crate a non-root file's
+`mod name; pub use name::*;` names a crate-root item instead, so a crate-root
+`extern crate dep as name;` could hide a foreign glob there. That is an accepted
+residual; the scan has no edition input.
 
 ## Non-Goals
 
@@ -224,7 +285,8 @@ substituted dependencies remain foreign globs.
   (`repo_analysis_excludes_verus_region_and_keeps_sibling_fn`).
 - `crates/ripr/src/analysis/language/rust/probes.rs`: finding limit tests.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs` and the classify owner-pin
-  tests: prelude-glob tests, including `verification_prelude_globs_credit_only_audited_locked_versions`.
+  tests: prelude-glob tests, including `verification_prelude_globs_credit_only_audited_locked_versions`
+  and `a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob`.
 - Corpus: `prusti-prelude-glob-boundary` in `fixtures/rust-verdict-corpus`
   (credited under the allowlisted glob, runtime-labeled). Verus and Creusot
   prelude cases need their toolchains to produce runtime truth and are not in

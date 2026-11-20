@@ -256,6 +256,7 @@ pub(in crate::analysis) fn successful_push_call(
                     &read.binding,
                     &owner.name,
                     assertion.line,
+                    Some(self_ty.as_str()),
                 )
                 && reveal::binding_untouched_after_owner_call(
                     &test.body,

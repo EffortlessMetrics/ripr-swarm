@@ -683,6 +683,52 @@ fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
 }
 
 #[test]
+fn add_observer_checks_the_selected_tuple_operands_across_versions() -> Result<(), String> {
+    let method = Case {
+        old_line: "        Self(other.0 - self.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let operator = Case {
+        old_line: "        Money(other.0 - self.0)",
+        new_line: "        Money(other.0 + self.0)",
+        ..ADD
+    };
+    for (case, test_body, expected) in [
+        (
+            method,
+            "let r = Money(0).add(Money(3));
+        assert_eq!(r.0, 3);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            method,
+            "let r = Money(2).add(Money(3));
+        assert_eq!(5, r.0);",
+            ExposureClass::Exposed,
+        ),
+        (
+            operator,
+            "assert_eq!(Money(0) + Money(3), Money(3));",
+            ExposureClass::StaticUnknown,
+        ),
+        (
+            operator,
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let actual = classes(&Case { test_body, ..case })?;
+        if actual.as_slice() != std::slice::from_ref(&expected) {
+            return Err(format!(
+                "{test_body}: expected {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn grouped_self_import_binds_the_enclosing_type_name() -> Result<(), String> {
     let base = Case {
         label: "grouped_self",
@@ -1416,48 +1462,73 @@ mod pathed {
         extra_items: "
 #[cfg(test)]
 mod crowded {
+    // Each crowd row also calls a foreign `add`, so it ranks as near the owner
+    // by name like `zz_pathed` (#15026). Eight of them fill the window ahead
+    // of it, and the tie keeps name order.
     use super::*;
 
     #[test]
     fn a01_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a02_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a03_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a04_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a05_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a06_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a07_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
+    }
+
+    #[test]
+    fn a08_operator() {
+        let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
+        assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
@@ -1481,7 +1552,9 @@ mod crowded {
         !crowded_last[0]
             .related_tests
             .iter()
-            .any(|test| test.name == "zz_pathed")
+            .any(|test| test.name == "zz_pathed"),
+        "{:#?}",
+        crowded_last[0].related_tests
     );
     assert_eq!(crowded_last[0].class, ExposureClass::WeaklyExposed);
     let crowded_path_call_first = Case {

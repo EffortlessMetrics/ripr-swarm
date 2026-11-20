@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- `ripr check --format sarif` and `--format repo-sarif` now bound the results array with `RIPR_SARIF_RESULTS_BYTES` (default 1000000 bytes, `0` for unbounded), disclosing `results_rendered`/`results_total`/`results_omitted` with `limited_results_bound` and `document_complete: false` when the budget omits results, so large runs stay token-efficient instead of emitting unbounded pretty-printed SARIF (#13102).

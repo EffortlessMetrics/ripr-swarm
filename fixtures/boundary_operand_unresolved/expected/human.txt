@@ -6,11 +6,11 @@ Summary: 3 changed behaviors checked: 0 appear noticed by tests, 1 partly notice
 
 Analysis outcome: limitations below (analysis incomplete)
   The 3 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: part of the analysis failed during language analysis; recovery: inspect the failure — Run ripr from a Cargo workspace root (or restore the missing Cargo.toml), then re-run the analysis.
+  Limitation: part of the analysis failed during language analysis; The path-dependency graph is unavailable: no local Cargo.toml manifest was found, so reverse-dependency scope expansion did not run and the diff scope stays the changed packages; crates that depend on them, and their tests, were not searched; recovery: inspect the failure — Run ripr from a Cargo workspace root (or restore the missing Cargo.toml), then re-run the analysis.
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:5
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -48,7 +48,7 @@ Write a test for it:
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:4 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side…
-    - ./src/lib.rs:6 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side…
+    - ./src/lib.rs:6 (unknown: infection unclear); kind: predicate; reason: same as above
   Hidden classes:
     unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full

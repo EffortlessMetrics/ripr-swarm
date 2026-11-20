@@ -146,7 +146,7 @@ Updated:
 ## Pending — boundary_pairing_sibling_element (12)
 
 Reason:
-RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
 
 Command:
 `cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
@@ -169,7 +169,70 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — boundary_pairing_sibling_element (13)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
 ## Pending — boundary_pairing_sibling_element (14)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_element (15)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_element (16)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — boundary_pairing_sibling_element (17)
+
+Reason:
+RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_element (18)
 
 Reason:
 RIPR-SPEC-0226 / RIPR-SPEC-0186 / RIPR-SPEC-0197: preserve the independently authenticated whole-return owner pin while Predicate retains its same-call boundary refusal; refresh reviewed native output on frozen f90c6d2104758630db9c026cd48e2e9222d15888.
@@ -180,4 +243,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_element (19)
+
+Reason:
+RIPR-SPEC-0186 The independent whole-return owner assertion retains credit while the predicate refuses the sibling element under RIPR-SPEC-0186 and RIPR-SPEC-0226.
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
+
+Updated:
+- `expected/check.json`
 - `expected/human-full.txt`

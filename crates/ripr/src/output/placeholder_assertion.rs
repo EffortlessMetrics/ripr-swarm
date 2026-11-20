@@ -10,6 +10,12 @@
 pub(crate) const FILL_IN_NOTE: &str =
     "replace each /* ... */ comment with a real value from your test before using it";
 
+/// Note printed under a drafted concrete assertion: the values come from
+/// ripr's static model of the current behavior, not from a run, so the
+/// draft must not read as a verified assertion. The phrases are the honesty
+/// contract the repair surfaces keep verbatim.
+pub(crate) const DRAFTED_ASSERTION_NOTE: &str = "drafted from the current behavior; ripr has not run or verified anything, and the developer confirms the expected value before relying on this test";
+
 pub(crate) fn has_placeholders(text: &str) -> bool {
     text.contains("/*") && text.contains("*/")
 }
@@ -34,6 +40,36 @@ pub(crate) fn push_terminal_assertion(out: &mut String, indent: &str, shape: &st
     }
 }
 
+/// Terminal assertion block with drafted honesty: a drafted assertion keeps
+/// the `assertion shape:` label (it is not a verified assertion) and adds
+/// the drafted note; when it still carries a placeholder the fill-in note
+/// precedes it. Non-drafted shapes keep [`push_terminal_assertion`].
+pub(crate) fn push_drafted_terminal_assertion(
+    out: &mut String,
+    indent: &str,
+    shape: &str,
+    drafted: bool,
+) {
+    if !drafted {
+        push_terminal_assertion(out, indent, shape);
+        return;
+    }
+    out.push_str(indent);
+    out.push_str("assertion shape: ");
+    out.push_str(shape);
+    out.push('\n');
+    if has_placeholders(shape) {
+        out.push_str(indent);
+        out.push_str("  (");
+        out.push_str(FILL_IN_NOTE);
+        out.push_str(")\n");
+    }
+    out.push_str(indent);
+    out.push_str("  (");
+    out.push_str(DRAFTED_ASSERTION_NOTE);
+    out.push_str(")\n");
+}
+
 /// Append a parenthetical fill-in note when `text` carries `/* ... */`.
 pub(crate) fn push_fill_in_note(out: &mut String, indent: &str, text: &str) {
     if let Some(line) = fill_in_note_line(indent, text) {
@@ -51,8 +87,8 @@ pub(crate) fn fill_in_note_line(indent: &str, text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FILL_IN_NOTE, fill_in_note_line, has_placeholders, push_fill_in_note,
-        push_terminal_assertion,
+        DRAFTED_ASSERTION_NOTE, FILL_IN_NOTE, fill_in_note_line, has_placeholders,
+        push_drafted_terminal_assertion, push_fill_in_note, push_terminal_assertion,
     };
 
     #[test]
@@ -66,6 +102,45 @@ mod tests {
         assert_eq!(
             out,
             "  assertion shape: assert_eq!(total(/* boundary input where a >= b */), /* expected */)\n    (replace each /* ... */ comment with a real value from your test before using it)\n"
+        );
+    }
+
+    #[test]
+    fn drafted_concrete_assertion_keeps_the_shape_label_and_the_drafted_note() {
+        let mut out = String::new();
+        push_drafted_terminal_assertion(&mut out, "  ", "assert_eq!(total(100), 90)", true);
+        assert_eq!(
+            out,
+            "  assertion shape: assert_eq!(total(100), 90)\n    (drafted from the current behavior; ripr has not run or verified anything, and the developer confirms the expected value before relying on this test)\n"
+        );
+    }
+
+    #[test]
+    fn drafted_placeholder_shape_keeps_both_notes() {
+        let mut out = String::new();
+        push_drafted_terminal_assertion(
+            &mut out,
+            "  ",
+            "assert_eq!(total(100), /* expected */)",
+            true,
+        );
+        assert!(out.contains(FILL_IN_NOTE), "{out}");
+        assert!(out.contains(DRAFTED_ASSERTION_NOTE), "{out}");
+    }
+
+    #[test]
+    fn non_drafted_shape_keeps_the_plain_terminal_form() {
+        let mut out = String::new();
+        push_drafted_terminal_assertion(
+            &mut out,
+            "  ",
+            "assert!(quote.total > Money::zero())",
+            false,
+        );
+        assert_eq!(
+            out,
+            "  assertion: assert!(quote.total > Money::zero())
+"
         );
     }
 

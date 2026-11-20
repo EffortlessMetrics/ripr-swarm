@@ -24,3 +24,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_effect_receiver_intercepted_first (3)
+
+Reason:
+RIPR-SPEC-0108 For rust_effect_receiver_intercepted_first, preserve structured evidence stages from RIPR-SPEC-0423.
+
+Command:
+`cargo xtask goldens bless rust_effect_receiver_intercepted_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

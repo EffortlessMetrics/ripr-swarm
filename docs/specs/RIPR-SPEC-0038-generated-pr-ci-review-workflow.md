@@ -44,13 +44,24 @@ checkout and setup
 -> preserve configured gate-decision authority
 ```
 
+The job summary keeps each section's at-a-glance lines and names its full
+Markdown report by its path inside the `ripr-reports` artifact (for example
+`ripr/pilot/pilot-summary.md`) instead of inlining it (#14301). Only the
+inline comment publish plan stays inline, in one collapsed block. The
+`ci_summary` test `complete_artifacts_render_every_section_in_order` (the
+single fold) and `generated_workflow_replay_prints_only_runnable_next_steps`
+(no inlined report heading, under 20,000 bytes) pin this.
+
 The workflow may summarize and upload evidence. It must not create analyzer
 truth, rerun hidden analysis to patch missing artifacts, edit source, generate
 tests, call providers, run mutation testing, publish inline comments, change
 branch protection, or change default CI blocking.
 
-The `Install ripr` step (shell `bash`, pinned by `defaults.run.shell`) installs
-the exact pinned release's prebuilt archive for the runner (#6245). Linux and
+The `Install ripr` step runs the `.github/actions/ripr-check` composite Action
+from the pinned release's tag (`EffortlessMetrics/ripr/.github/actions/ripr-check@v<version>`,
+`version: <version>`, `install-only: true`), so the generated workflow carries
+no installer shell of its own (#5409). The Action's `Install ripr` block (shell
+`bash`) installs the exact pinned release's prebuilt archive for the runner (#6245). Linux and
 macOS x64/ARM64 take the `tar.gz`; Windows x64 (`x86_64-pc-windows-msvc`) takes
 the `zip` containing `ripr.exe`. Targets, archive kinds and executable names
 come from `policy/distribution.toml`, bound by drift tests. The step:
@@ -68,8 +79,28 @@ come from `policy/distribution.toml`, bound by drift tests. The step:
   archive, wrong payload or wrong reported version exits 1 with no fallback;
 - stops with an explicit unsupported error on Windows ARM64.
 
-The `.github/actions/ripr-check` composite Action's `Install ripr` step carries
-the same contract (#6245); `tests/ripr_check_action.rs` replays it.
+`tests/ripr_check_action.rs` and the archive replays in
+`tests/generated_review_workflow.rs` run that block with the version the
+generated workflow passes. A ripr already on `PATH` is reused only when it
+reports exactly the pinned version.
+
+Its `Run ripr check` step (#14800):
+
+- on `pull_request` with no explicit `base`, fetches the base branch and, only
+  in a shallow checkout, deepens both sides in doubling steps (50 to 1,600
+  commits, then `--unshallow`) until HEAD has a merge base with it; a full
+  checkout runs no `--depth` or `--deepen`, and a failed fetch warns and leaves
+  the repair message to `ripr check`;
+- restores ripr's analysis cache under `runner.temp` (`RIPR_CACHE_DIR`) with a
+  commit-pinned `actions/cache` when the `cache` input is `true` (default);
+- writes the report to a fresh per-invocation file (output `report`) and the job
+  log, a text report also to the job summary, and the exit status to output
+  `exit-code`; `ripr check` exit codes are unchanged, so findings stay advisory;
+- on a nonzero exit, fails the step with one escaped `::error` annotation that
+  names the exit meaning and ripr's first reason lines;
+- replays report and stderr text inside a `::stop-commands::` window, each
+  marker on its own line, so quoted text cannot issue workflow commands; only
+  the `format: github` report is emitted before the window.
 
 The generated workflow must keep Rust-default behavior unchanged unless a later
 spec explicitly changes that default. Language-aware grouping is opt-in and
@@ -145,6 +176,15 @@ When an expected artifact is missing, the summary or packet index should show
 the missing artifact and the regeneration command when known. If no command is
 known, the missing entry must say so explicitly.
 
+When the pull request analysis did not run, the visible first-run status says
+why instead of leaving the reason in the uploaded start-here report:
+
+- a blocked start-here packet's own reason is shown with its selected state;
+- a run whose event is not `pull_request` states that it has no pull request
+  before the states that follow from that, and names opening or updating a
+  pull request as the next step. A `pull_request` event and an unset event add
+  nothing.
+
 ## Generated Workflow Sections
 
 The generated workflow should keep these sections stable enough for tests and
@@ -161,6 +201,23 @@ reviewers:
 Gate evaluation may set pass/fail according to its own configured policy. The
 front panel, packet index, and job summary may point to that decision, but they
 do not become authority.
+
+When the configured gate fails the job, the failing step's error annotation and
+the job summary's first block restate that decision so the author does not
+have to open a log group or scroll to find it:
+
+- a `blocked` decision: the mode, the number of blocking gaps or blocking
+  exception-policy violations, and the first blocking reason;
+- a `config_error` decision: the gate's own configuration error;
+- a set `RIPR_GATE_MODE` the gate does not accept: the gate's own refusal and
+  where the variable is edited. The gate is not run under such a value.
+
+The restatement is read from the decision report the gate wrote and is used
+only when that report names the mode the run is set to. A report from another
+mode, an unreadable report, and a decision that does not fail add nothing. The
+annotation falls back to the gate command line and exit code when the report
+does not state the status that exit code means. This is presentation only: it
+never changes the decision or the exit code.
 
 ## Language-Aware Grouping
 
@@ -228,6 +285,9 @@ that generated CI can create tests, edit source, or run provider-backed repair.
 - A missing optional calibration report is a warning, not a workflow failure.
 - A configured blocked gate points to `gate-decision.md` as authority and does
   not treat the job summary as the gate.
+- A configured blocked gate makes `ripr reports ci-packet` exit `3` (the gate's
+  decision exit) when no other required step failed; any other required
+  failure exits `2`, even when the gate also blocked (docs/EXIT_CODES.md).
 - A TypeScript preview packet groups advisory evidence under a preview label,
   includes separately labeled JavaScript preview evidence when present, reports
   actionability and repair-packet-ready counts, and keeps gate impact at none.

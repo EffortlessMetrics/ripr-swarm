@@ -5,9 +5,12 @@
 //! exporter, a Perl runtime, or an LSP protocol session. Production routing
 //! lands only after the fact packet and strict actionability slices are
 //! fixture-backed.
-#![allow(
-    dead_code,
-    reason = "Perl strict-actionability scaffold is feature-gated and currently exercised by tests before public projection is enabled"
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the Perl strict-actionability, repair-card and exporter-command scaffold has only test consumers until public projection is enabled; the test build lints it"
+    )
 )]
 
 use crate::analysis::AnalysisOptions;
@@ -33,11 +36,10 @@ mod row_miss_tests;
 mod static_limit;
 mod v2_projection;
 #[cfg(test)]
-pub(crate) use v2_projection::sink_text_eq;
-pub(crate) use v2_projection::{
-    behavior_hint_to_probe_family, change_lines_from_diff, packet_to_findings,
-    packet_to_findings_with_currentness, perl_change_currentness, perl_lines_currentness,
-    unowned_change_findings,
+use v2_projection::{behavior_hint_to_probe_family, sink_text_eq};
+use v2_projection::{
+    change_lines_from_diff, packet_to_findings, packet_to_findings_with_currentness,
+    perl_change_currentness, unowned_change_findings,
 };
 
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
@@ -322,6 +324,7 @@ impl LanguageAdapter for PerlAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: Default::default(),
+            owner_opt_outs: Vec::new(),
         })
     }
 
@@ -1638,69 +1641,6 @@ impl PerlFactPacket {
         Ok(refs)
     }
 
-    fn has_blocking_dynamic_boundary(
-        &self,
-        change: &ChangeFact,
-        evidence: Option<&PerlRelatedTestEvidence>,
-    ) -> bool {
-        let test_file_id = evidence.and_then(|evidence| {
-            self.test(&evidence.test_id)
-                .map(|test| test.file_id.as_str())
-        });
-        self.dynamic_boundaries.iter().any(|boundary| {
-            if let Some(owner_id) = boundary.owner_id.as_deref() {
-                owner_id == change.owner_id
-            } else {
-                boundary.file_id == change.file_id
-                    || test_file_id == Some(boundary.file_id.as_str())
-            }
-        })
-    }
-
-    fn has_blocking_limitation(
-        &self,
-        change: &ChangeFact,
-        evidence: &PerlRelatedTestEvidence,
-    ) -> bool {
-        let relevant_refs = self.actionability_evidence_ids(change, evidence);
-        self.limitations.iter().any(|limitation| {
-            limitation_kind_blocks_strict_actionability(&limitation.kind)
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
-    fn has_blocking_dynamic_dispatch_limitation(
-        &self,
-        change: &ChangeFact,
-        evidence: &PerlRelatedTestEvidence,
-    ) -> bool {
-        let relevant_refs = self.actionability_evidence_ids(change, evidence);
-        self.limitations.iter().any(|limitation| {
-            limitation.kind == "dynamic_dispatch"
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
-    fn has_blocking_dynamic_dispatch_limitation_for_change(&self, change: &ChangeFact) -> bool {
-        let relevant_refs = self.change_evidence_ids(change);
-        self.limitations.iter().any(|limitation| {
-            limitation.kind == "dynamic_dispatch"
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
     fn change_evidence_ids(&self, change: &ChangeFact) -> BTreeSet<String> {
         let mut ids = BTreeSet::from([
             change.change_id.clone(),
@@ -2689,18 +2629,13 @@ enum FrameworkExecution {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum FrameworkOracleMode {
+    #[default]
     Normal,
     TodoQualified,
     Unknown,
-}
-
-impl Default for FrameworkOracleMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -3315,6 +3250,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod actionability_proptest_tests;
 #[cfg(test)]
 mod boundary_input_projection_tests;
 #[cfg(test)]

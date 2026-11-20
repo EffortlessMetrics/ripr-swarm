@@ -52,6 +52,8 @@ const AUDITED_PRELUDE_VERSIONS: &[(&str, &str, &[&str])] = &[
     ("creusot_std", "creusot-std", &["0.14.0"]),
     ("vstd", "vstd", &["0.0.0-2026-10-25-0158"]),
     ("prusti_contracts", "prusti-contracts", &["0.3.3"]),
+    ("proptest", "proptest", &["1.12.0"]),
+    ("rayon", "rayon", &["1.12.0"]),
 ];
 
 /// The source crate names with an audit row, for the cross-check against the

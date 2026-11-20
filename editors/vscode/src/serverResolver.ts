@@ -1,8 +1,11 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import { cachedServerInstallation, downloadServer } from './downloader';
+import { knownExtensionVersion } from './extensionVersion';
+import { hasUnsafeShellMetacharacter } from './packetJson';
 import {
   parseDistributionDescriptor,
   resolveDistributionRequest,
@@ -38,6 +41,106 @@ const START_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
 const CONFIGURED_PATH_REMEDY =
   'Fix or clear ripr.server.path so it points at an existing ripr server executable.';
 
+/**
+ * Why a non-empty `ripr.server.downloadBaseUrl` cannot serve a download, or
+ * undefined when it can. The downloader appends the manifest file name to
+ * this value, so it must be the https address of the folder holding the
+ * release files. Checking it here names the setting and the mistake instead
+ * of surfacing "Invalid URL" or a non-HTTPS refusal for a composed manifest
+ * URL, with advice to set the very setting that is wrong (#15163).
+ */
+export function downloadBaseUrlProblem(value: string): string | undefined {
+  const base = value.trim();
+  if (base.length === 0) {
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    return 'is not a full URL; it needs to start with https://';
+  }
+  if (parsed.protocol !== 'https:') {
+    return `uses ${parsed.protocol.replace(/:$/, '')}; only https:// downloads are allowed`;
+  }
+  // A bare trailing `?` or `#` leaves `search`/`hash` empty but still turns
+  // the appended manifest name into a query or fragment, so check the text.
+  if (/[?#]/.test(base)) {
+    return 'carries a query or fragment; ripr appends the manifest file name, so it needs a plain folder address';
+  }
+  if (/\.json$/i.test(parsed.pathname)) {
+    return 'names a file; it needs the folder that holds the manifest, without the file name';
+  }
+  return undefined;
+}
+
+export const DOWNLOAD_BASE_URL_REMEDY =
+  'Set ripr.server.downloadBaseUrl to the https:// address of the folder that holds the ripr release files, ' +
+  'or clear it to download from GitHub Releases.';
+
+/**
+ * `ripr.server.path` as the process launcher will see it. Settings are not
+ * shell input, so a leading `~` is not expanded for us: `~/.cargo/bin/ripr`
+ * (where `cargo install ripr` puts the binary) would be looked up as a
+ * literal directory named `~`. Only a leading `~` followed by a separator,
+ * or `~` alone, means the home directory; `~user` and a `~` elsewhere in
+ * the path are left as written.
+ */
+export function expandConfiguredServerPath(
+  configured: string,
+  homeDirectory: string = os.homedir(),
+  platform: NodeJS.Platform = process.platform
+): string {
+  const trimmed = configured.trim();
+  if (homeDirectory.length === 0) {
+    return trimmed;
+  }
+  if (trimmed === '~') {
+    return homeDirectory;
+  }
+  // A backslash is a separator only on Windows; elsewhere it is a file-name
+  // character, so `~\ripr` there is a bare name, not a home-relative path.
+  if (trimmed.startsWith('~/') || (platform === 'win32' && trimmed.startsWith('~\\'))) {
+    const pathApi = platform === 'win32' ? path.win32 : path.posix;
+    return pathApi.join(homeDirectory, trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+/**
+ * A relative `ripr.server.path` with a directory part (`./target/debug/ripr`,
+ * `bin\ripr.exe`) would be resolved against the extension host's working
+ * directory, which is not the workspace and differs between launches. Refuse
+ * it by name instead of reporting a confusing "could not start". A bare
+ * command name stays allowed: it is a PATH lookup, not a relative path.
+ */
+export function relativeConfiguredPathFailure(
+  configuredPath: string,
+  platform: NodeJS.Platform = process.platform
+): ResolveFailure | undefined {
+  if (platform === 'win32') {
+    // Fully qualified means a drive letter, colon and separator, or a UNC root
+    // (`\\server\share\x`). `C:ripr.exe` depends on the drive's current
+    // directory and `\tools\ripr.exe` on the current drive, so neither names
+    // one stable file even though the second is "absolute" to path.win32.
+    const fullyQualified = /^[A-Za-z]:[\\/]/.test(configuredPath) || /^[\\/]{2}[^\\/]/.test(configuredPath);
+    const bareCommand = !/[\\/:]/.test(configuredPath);
+    if (fullyQualified || bareCommand) {
+      return undefined;
+    }
+  } else if (path.posix.isAbsolute(configuredPath) || !configuredPath.includes('/')) {
+    return undefined;
+  }
+  return {
+    message: `configured ripr.server.path ${configuredPath} is not an absolute path.`,
+    detail:
+      `ripr.server.path is ${JSON.stringify(configuredPath)}, which depends on the current directory or drive. ` +
+      'It is not resolved against the workspace folder, so it cannot name one stable file.',
+    kind: 'other',
+    remedy: 'Set ripr.server.path to the full path of the ripr executable (a leading ~ means your home directory), or clear it.'
+  };
+}
+
 export type ServerSource = 'configured' | 'bundled' | 'managed_cache' | 'managed_download' | 'path';
 
 export interface ResolvedServer {
@@ -56,16 +159,27 @@ export interface ResolvedServer {
    * same way the probe used to.
    */
   readonly needsShell?: boolean;
+  /**
+   * Set when an unmanaged server (ripr.server.path or PATH) reports a version
+   * older than the extension expects and was still selected, because it was
+   * configured explicitly or no managed server could be obtained (#13638).
+   * The client shows it once; resolution never blocks on it.
+   */
+  readonly versionWarning?: string;
 }
 
 /**
  * Why resolution produced no usable server. `showMissingServerMessage` offers
  * "Copy Install Command" only for `missing_binary`; download, HTTP, checksum
  * and manifest failures are not repaired by `cargo install ripr` (#8588).
+ * `network` is a download that never got an answer from its host (no DNS,
+ * refused or dropped connection, fetch timeout), so the recovery names the
+ * connection and the offline route (#13638).
  */
 export type ResolveFailureKind =
   | 'missing_binary'
   | 'download'
+  | 'network'
   | 'http'
   | 'checksum'
   | 'manifest'
@@ -89,7 +203,8 @@ export interface ServerResolverRuntime {
     source: ServerSource,
     detail: string,
     useShell?: boolean,
-    installationState?: ResolvedServer['installationState']
+    installationState?: ResolvedServer['installationState'],
+    serverArgs?: readonly string[]
   ) => Promise<ResolvedServer | ResolveFailure>;
 }
 
@@ -101,17 +216,34 @@ export async function resolveServer(
   output: vscode.OutputChannel,
   runtime: ServerResolverRuntime = defaultResolverRuntime
 ): Promise<ResolvedServer | ResolveFailure> {
-  const configuredPath = config.serverPath.trim();
+  const configuredPath = expandConfiguredServerPath(config.serverPath);
   if (configuredPath.length > 0) {
+    const relativeFailure = relativeConfiguredPathFailure(configuredPath);
+    if (relativeFailure) {
+      return relativeFailure;
+    }
+    // On Windows, explicit paths may point to .cmd/.bat shims (e.g. npm global
+    // or Scoop wrappers), which require cmd.exe shell resolution (#14647).
+    // Direct .exe paths do not need a shell and retain native spawn errors.
+    const probeWithShell = process.platform === 'win32' && !/\.exe$/i.test(configuredPath);
     const configuredResult = await runtime.probeCandidate(
       configuredPath,
       'configured',
       `configured ripr.server.path ${configuredPath}`,
-      false,
-      'unmanaged'
+      probeWithShell,
+      'unmanaged',
+      config.serverArgs
     );
     if (isResolved(configuredResult)) {
-      return configuredResult;
+      const resolved = probeWithShell ? { ...configuredResult, needsShell: true } : configuredResult;
+      // An explicit path is honored as-is; an old binary only earns a warning.
+      let expected: string | undefined;
+      try {
+        expected = requestedServerVersion(context, config);
+      } catch {
+        expected = undefined;
+      }
+      return expected ? withStaleVersionWarning(resolved, expected, output) : resolved;
     }
     return { ...configuredResult, remedy: CONFIGURED_PATH_REMEDY };
   }
@@ -134,9 +266,14 @@ export async function resolveServer(
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { message: 'ripr.server.version is invalid.', detail, kind: 'other' };
+    const message =
+      config.serverVersion.trim().length > 0
+        ? 'ripr.server.version is invalid.'
+        : 'The matching ripr server version is unknown.';
+    return { message, detail, kind: 'other' };
   }
   let downloadFailure: string | undefined;
+  let downloadRemedy: string | undefined;
   let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
 
   if (platform) {
@@ -145,7 +282,8 @@ export async function resolveServer(
       bundled,
       'bundled',
       `bundled server for ${platform.target}`,
-      runtime
+      runtime,
+      config.serverArgs
     );
     if (isResolved(bundledResult)) {
       return bundledResult;
@@ -154,14 +292,21 @@ export async function resolveServer(
       output.appendLine(`Skipping bundled server: ${bundledResult.detail}`);
     }
 
-    const cached = await cachedServerInstallation(context, version, platform, distribution);
+    let cached: ManagedServerInstallation | undefined;
+    try {
+      cached = await cachedServerInstallation(context, version, platform, distribution);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { kind: 'other', message: 'Managed server resolution failed.', detail };
+    }
     if (cached) {
       const cachedResult = await runtime.probeCandidate(
         cached.executablePath,
         'managed_cache',
         `completed cached server ${version} for ${platform.target}`,
         false,
-        'complete'
+        'complete',
+        config.serverArgs
       );
       if (isResolved(cachedResult)) {
         return withManagedIdentity(cachedResult, cached);
@@ -174,15 +319,30 @@ export async function resolveServer(
     // (#5314). Pinning `ripr.server.version` asks for that exact managed
     // release, so the download keeps its place there.
     if (config.autoDownload && config.serverVersion.trim().length === 0) {
-      earlyPathResult = await probePathServer(runtime);
+      earlyPathResult = await probePathServer(runtime, config.serverArgs);
       if (isResolved(earlyPathResult)) {
-        output.appendLine('Using ripr on PATH; skipping the managed server download.');
-        return earlyPathResult;
+        // A PATH binary older than the requested release must not silently
+        // win over the download that would replace it (#13638). It stays the
+        // fallback if the download cannot produce a server.
+        if (!serverVersionOlderThan(earlyPathResult.binaryVersion, version)) {
+          output.appendLine('Using ripr on PATH; skipping the managed server download.');
+          return earlyPathResult;
+        }
+        output.appendLine(
+          `ripr on PATH reports ${earlyPathResult.binaryVersion}, older than the expected ${version}; trying the managed download.`
+        );
+      } else {
+        output.appendLine(`ripr on PATH is not usable (${earlyPathResult.detail}); trying the managed download.`);
       }
-      output.appendLine(`ripr on PATH is not usable (${earlyPathResult.detail}); trying the managed download.`);
     }
 
-    if (config.autoDownload) {
+    const mirrorProblem = config.autoDownload ? downloadBaseUrlProblem(config.downloadBaseUrl) : undefined;
+    if (mirrorProblem) {
+      downloadFailure =
+        `ripr.server.downloadBaseUrl ${JSON.stringify(config.downloadBaseUrl.trim())} ${mirrorProblem}.`;
+      downloadRemedy = DOWNLOAD_BASE_URL_REMEDY;
+      output.appendLine(`Skipping the managed server download: ${downloadFailure}`);
+    } else if (config.autoDownload) {
       try {
         const downloaded = await downloadServer(context, config, platform, version, output, distribution);
         const downloadedResult = await runtime.probeCandidate(
@@ -190,7 +350,8 @@ export async function resolveServer(
           'managed_download',
           `atomically installed server ${version} for ${platform.target}`,
           false,
-          'complete'
+          'complete',
+          config.serverArgs
         );
         if (isResolved(downloadedResult)) {
           return withManagedIdentity(downloadedResult, downloaded);
@@ -206,12 +367,12 @@ export async function resolveServer(
     downloadFailure = `No prebuilt ripr server target is known for ${process.platform}/${process.arch}.`;
   }
 
-  const pathResult = earlyPathResult ?? (await probePathServer(runtime));
+  const pathResult = earlyPathResult ?? (await probePathServer(runtime, config.serverArgs));
   if (isResolved(pathResult)) {
     if (downloadFailure) {
       output.appendLine(`Using PATH fallback after managed server resolution failed: ${downloadFailure}`);
     }
-    return pathResult;
+    return withStaleVersionWarning(pathResult, version, output);
   }
 
   const autoDownloadHint = config.autoDownload
@@ -220,32 +381,60 @@ export async function resolveServer(
   // A PATH probe of an installed-but-unusable binary is `other`, not a
   // missing executable. Copy Install Command is only honest for a binary
   // that was not found (#8588 CodeRabbit).
-  const kind = downloadFailure
-    ? classifyDownloadFailureKind(downloadFailure)
-    : pathResult.kind;
+  const kind = downloadRemedy
+    ? 'other'
+    : downloadFailure
+      ? classifyDownloadFailureKind(downloadFailure)
+      : pathResult.kind;
   return {
     message: 'ripr server is not available.',
     detail: [
       downloadFailure,
       pathResult.detail,
-      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload)}`
+      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload, downloadRemedy)}`
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n'),
-    kind
+    kind,
+    ...(downloadRemedy ? { remedy: downloadRemedy } : {})
   };
 }
 
+function withStaleVersionWarning(
+  resolved: ResolvedServer,
+  expectedVersion: string,
+  output: vscode.OutputChannel
+): ResolvedServer {
+  const versionWarning = staleServerVersionWarning(resolved, expectedVersion);
+  if (!versionWarning) {
+    return resolved;
+  }
+  output.appendLine(versionWarning);
+  return { ...resolved, versionWarning };
+}
+
 async function probePathServer(
-  runtime: ServerResolverRuntime
+  runtime: ServerResolverRuntime,
+  serverArgs?: readonly string[]
 ): Promise<ResolvedServer | ResolveFailure> {
   // On Windows, spawning with shell: false does no PATHEXT resolution, so
   // ripr.bat/ripr.cmd shims (Scoop, Chocolatey, manual PATH) fail to start
   // even though `ripr` works in a terminal (#2079). The command is the
   // constant string 'ripr --version' — no user input reaches the shell.
   const probeWithShell = process.platform === 'win32';
-  const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged');
+  const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged', serverArgs);
   return isResolved(pathResult) && probeWithShell ? { ...pathResult, needsShell: true } : pathResult;
+}
+
+/**
+ * Quote a server command containing whitespace or cmd.exe metacharacters when
+ * spawning through `shell: true`, so the path cannot split into another command.
+ */
+export function serverLaunchCommand(command: string, needsShell?: boolean): string {
+  const needsQuoting = needsShell
+    && !/^".*"$/.test(command)
+    && (/\s/.test(command) || hasUnsafeShellMetacharacter(command, true) || /[<>]/.test(command));
+  return needsQuoting ? `"${command}"` : command;
 }
 
 /**
@@ -258,6 +447,21 @@ export function missingServerRemedy(autoDownload: boolean): string {
     ? 'Install with cargo install ripr or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).'
     : 'Enable ripr.server.autoDownload, install with cargo install ripr, or set ripr.server.path.';
 }
+
+/**
+ * Recovery for a download that could not reach its host. "Retry" alone is a
+ * dead end without a connection, so it names the offline route: a local
+ * binary through `ripr.server.path`, or a reachable mirror (#13638).
+ */
+export const NETWORK_FAILURE_REMEDY =
+  'The download host could not be reached; check the network connection or proxy, then retry. ' +
+  'To work offline, set ripr.server.path to a ripr binary already on this machine ' +
+  '(ripr.server.downloadBaseUrl for a mirror).';
+
+// Node socket and resolver error codes for a request that got no HTTP
+// answer, plus this extension's own fetch-timeout and dropped-body messages.
+const NETWORK_FAILURE_PATTERN =
+  /\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ECONNABORTED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN)\b|socket hang up|Timed out while fetching|closed before completion/i;
 
 /**
  * Recovery sentence for a resolution failure. Cargo install is only honest
@@ -275,14 +479,18 @@ export function resolutionFailureRecovery(
   if (kind === 'missing_binary') {
     return missingServerRemedy(autoDownload);
   }
+  if (kind === 'network') {
+    return NETWORK_FAILURE_REMEDY;
+  }
   return 'Inspect the diagnostic, then retry or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).';
 }
 
 /**
  * Map a managed-download error string onto a resolution-failure kind.
- * Unknown download errors stay `download` (no install command) rather than
- * `missing_binary`. A missing prebuilt target is the one download-adjacent
- * case where `cargo install ripr` is the documented recovery.
+ * A request that never got an HTTP answer is `network`. Unknown download
+ * errors stay `download` (no install command) rather than `missing_binary`.
+ * A missing prebuilt target is the one download-adjacent case where
+ * `cargo install ripr` is the documented recovery.
  */
 export function classifyDownloadFailureKind(message: string): ResolveFailureKind {
   if (/checksum mismatch/i.test(message) || /admitted manifest SHA-256/i.test(message)) {
@@ -290,6 +498,11 @@ export function classifyDownloadFailureKind(message: string): ResolveFailureKind
   }
   if (/failed with HTTP \d+/i.test(message)) {
     return 'http';
+  }
+  // Before the manifest check: a dropped manifest response is a connection
+  // problem, not a malformed manifest.
+  if (NETWORK_FAILURE_PATTERN.test(message)) {
+    return 'network';
   }
   if (/manifest/i.test(message)) {
     return 'manifest';
@@ -349,8 +562,14 @@ export function requestedServerDistribution(
 }
 
 function packageServerVersion(context: vscode.ExtensionContext): string {
-  const version = context.extension?.packageJSON?.version;
-  return validateManagedServerVersion(typeof version === 'string' ? version.replace(/^v/, '') : '0.8.0');
+  const version = knownExtensionVersion(context);
+  if (version === undefined) {
+    throw new Error(
+      "The extension's own version could not be read, so the matching server version is unknown. " +
+        'Set ripr.server.version to the ripr release to use, or reinstall the extension.'
+    );
+  }
+  return validateManagedServerVersion(version);
 }
 
 function bundledServerPath(context: vscode.ExtensionContext, platform: RiprPlatform): string {
@@ -365,12 +584,13 @@ async function probeExistingCandidate(
   command: string,
   source: ServerSource,
   detail: string,
-  runtime: ServerResolverRuntime
+  runtime: ServerResolverRuntime,
+  serverArgs?: readonly string[]
 ): Promise<ResolvedServer | ResolveFailure> {
   if (!fs.existsSync(command)) {
     return { message: `${detail} was not found.`, detail: `${command} does not exist.`, kind: 'missing_binary' };
   }
-  return runtime.probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged');
+  return runtime.probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged', serverArgs);
 }
 
 function probeCandidate(
@@ -378,13 +598,14 @@ function probeCandidate(
   source: ServerSource,
   detail: string,
   useShell = false,
-  installationState: ResolvedServer['installationState'] = 'unmanaged'
+  installationState: ResolvedServer['installationState'] = 'unmanaged',
+  serverArgs: readonly string[] = ['lsp', '--stdio']
 ): Promise<ResolvedServer | ResolveFailure> {
   return probeServerVersion(command, detail, useShell).then(async (versionResult) => {
     if ('message' in versionResult) {
       return versionResult;
     }
-    const compatibility = await probeStandardLspCompatibility(command, useShell, START_TIMEOUT_MS);
+    const compatibility = await probeStandardLspCompatibility(command, useShell, START_TIMEOUT_MS, undefined, serverArgs);
     if (compatibility.status === 'incompatible') {
       return compatibilityFailure(detail, compatibility);
     }
@@ -552,4 +773,145 @@ function firstOutputLine(stdoutChunks: Buffer[], stderrChunks: Buffer[]): string
         line !== '#< CLIXML' &&
         !line.startsWith('__RIPR_PROBE_EXIT_CODE__')
     );
+}
+
+/**
+ * Server version parse/compare helpers. They are the single owner of the
+ * "is this reported server older than the extension expects" comparison: the
+ * setup diagnosis (`ripr_version_too_old`) and resolution (#13638) both use
+ * them, so a PATH binary rejected here is the same one diagnosis calls old.
+ */
+export function parseVersion(value: string): [number, number, number] | undefined {
+  for (let index = 0; index < value.length; index += 1) {
+    if (!isAsciiDigit(value.charCodeAt(index))) {
+      continue;
+    }
+    const major = readVersionNumber(value, index);
+    if (!major || value.charAt(major.nextIndex) !== '.') {
+      continue;
+    }
+    const minor = readVersionNumber(value, major.nextIndex + 1);
+    if (!minor || value.charAt(minor.nextIndex) !== '.') {
+      continue;
+    }
+    const patch = readVersionNumber(value, minor.nextIndex + 1);
+    if (!patch) {
+      continue;
+    }
+    return [major.value, minor.value, patch.value];
+  }
+  return undefined;
+}
+
+function readVersionNumber(value: string, startIndex: number): { value: number; nextIndex: number } | undefined {
+  let nextIndex = startIndex;
+  while (nextIndex < value.length && isAsciiDigit(value.charCodeAt(nextIndex))) {
+    nextIndex += 1;
+  }
+  if (nextIndex === startIndex) {
+    return undefined;
+  }
+  return {
+    value: Number(value.slice(startIndex, nextIndex)),
+    nextIndex
+  };
+}
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+export function compareVersions(left: [number, number, number], right: [number, number, number]): number {
+  for (let index = 0; index < left.length; index += 1) {
+    const diff = left[index] - right[index];
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
+/**
+ * A user-facing warning when a resolved unmanaged server reports a version
+ * older than the extension expects, or `undefined` when the version is current
+ * or cannot be compared. An unparseable version is not treated as old: the
+ * setup diagnosis already reports it as `ripr_version_unknown` (#13638).
+ */
+export function staleServerVersionWarning(
+  resolved: Pick<ResolvedServer, 'binaryVersion' | 'source' | 'command'>,
+  expectedVersion: string
+): string | undefined {
+  if (!serverVersionOlderThan(resolved.binaryVersion, expectedVersion)) {
+    return undefined;
+  }
+  const where = resolved.source === 'configured'
+    ? `ripr.server.path (${resolved.command})`
+    : 'ripr on PATH';
+  const update = resolved.source === 'configured'
+    ? 'Update that binary with cargo install ripr --locked, or point ripr.server.path at a current ripr.'
+    : 'Update it with cargo install ripr --locked, or set ripr.server.path to a current ripr.';
+  return `${where} reports ${resolved.binaryVersion}, older than the expected ripr ${expectedVersion}; some editor features may not work. ${update}`;
+}
+
+/**
+ * The SemVer prerelease identifiers that follow the first `x.y.z` in `value`
+ * (`0.11.0-rc.1` -> `['rc', '1']`), `[]` for a release, or `undefined` when no
+ * version parses. Build metadata (`+...`) is ignored, as SemVer requires.
+ */
+export function parsePrerelease(value: string): string[] | undefined {
+  const match = /(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(value);
+  if (!match) {
+    return undefined;
+  }
+  return match[4] ? match[4].split('.') : [];
+}
+
+function comparePrerelease(left: string[], right: string[]): number {
+  // A release (no identifiers) has higher precedence than any prerelease.
+  if (left.length === 0 || right.length === 0) {
+    return right.length - left.length;
+  }
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const a = left[index];
+    const b = right[index];
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) {
+      const diff = Number(a) - Number(b);
+      if (diff !== 0) {
+        return diff;
+      }
+    } else if (aNumeric !== bNumeric) {
+      return aNumeric ? -1 : 1;
+    } else if (a !== b) {
+      return a < b ? -1 : 1;
+    }
+  }
+  return left.length - right.length;
+}
+
+/**
+ * SemVer precedence of two reported version strings, or `undefined` when either
+ * does not parse. Shared by resolution and the setup diagnosis so a release
+ * candidate (`0.11.0-rc.1`) is older than its release (`0.11.0`).
+ */
+export function compareReportedVersions(reported: string, expected: string): number | undefined {
+  const actual = parseVersion(reported);
+  const wanted = parseVersion(expected);
+  const actualPre = parsePrerelease(reported);
+  const wantedPre = parsePrerelease(expected);
+  if (!actual || !wanted || !actualPre || !wantedPre) {
+    return undefined;
+  }
+  const core = compareVersions(actual, wanted);
+  return core !== 0 ? core : comparePrerelease(actualPre, wantedPre);
+}
+
+/** True only when both versions parse and `reported` is strictly older. */
+export function serverVersionOlderThan(reported: string | undefined, expected: string): boolean {
+  if (!reported) {
+    return false;
+  }
+  const order = compareReportedVersions(reported, expected);
+  return order !== undefined && order < 0;
 }

@@ -931,13 +931,14 @@ fn named_add_result(
     let ast::Expr::CallExpr(returned) = tail else {
         return None;
     };
-    let named_method_projection =
+    let named_call =
         named_add_field_projection(owner, index, test, assertion, operator.impl_type, integer);
     // `Self` is authenticated by the indexed Add impl only for this explicit
     // method/result projection. The older implicit-operator receipt keeps its
     // named-constructor requirement and its deliberate Self refusal.
     let returned_value = constructor(&returned, operator.impl_type).or_else(|| {
-        named_method_projection
+        named_call
+            .is_some()
             .then(|| constructor(&returned, "Self"))
             .flatten()
     })?;
@@ -953,8 +954,33 @@ fn named_add_result(
     if !((left == "self.0" && right == rhs) || (left == rhs && right == "self.0")) {
         return None;
     }
-    if named_method_projection {
-        return Some(());
+    // The dispatch and assertion checks establish which call was observed.
+    // The tuple-owner rule also checks whether that call can see this edit.
+    let agrees = |call: &str| {
+        context.probe.before.as_deref().is_some_and(|before| {
+            context
+                .probe
+                .location
+                .line
+                .checked_sub(owner.start_line)
+                .is_some_and(|line| {
+                    super::super::owner_value::TupleOwner {
+                        type_name: operator.impl_type,
+                        inner: integer,
+                        self_is_type: true,
+                    }
+                    .agrees_on_distinguishable_change(
+                        &owner.body,
+                        &owner.name,
+                        line,
+                        before,
+                        call,
+                    )
+                })
+        })
+    };
+    if let Some(call) = named_call {
+        return (!agrees(&call)).then_some(());
     }
     let test_source = &index.files().get(&test.file)?.source;
     if !test_applies_operator_to_owner(test, owner, &operator, Some(test_source), index) {
@@ -999,14 +1025,14 @@ fn named_add_result(
             let ast::Expr::BinExpr(actual) = actual else {
                 return false;
             };
+            let (Some(receiver), Some(argument)) = (actual.lhs(), actual.rhs()) else {
+                return false;
+            };
             actual.op_token().is_some_and(|token| token.text() == "+")
-                && actual
-                    .lhs()
-                    .is_some_and(|value| scalar_constructor(value, operator.impl_type, integer))
-                && actual
-                    .rhs()
-                    .is_some_and(|value| scalar_constructor(value, operator.impl_type, integer))
+                && scalar_constructor(receiver.clone(), operator.impl_type, integer)
+                && scalar_constructor(argument.clone(), operator.impl_type, integer)
                 && scalar_constructor(expected.clone(), operator.impl_type, integer)
+                && !agrees(&format!("{}.add({})", receiver.syntax(), argument.syntax()))
         })
         .then_some(())
 }
@@ -1020,17 +1046,7 @@ fn named_add_field_projection(
     assertion: &OracleFact,
     ty: &str,
     integer: &str,
-) -> bool {
-    named_add_field_projection_inner(owner, index, test, assertion, ty, integer).is_some()
-}
-fn named_add_field_projection_inner(
-    owner: &FunctionSummary,
-    index: &RustIndex,
-    test: &TestSummary,
-    assertion: &OracleFact,
-    ty: &str,
-    integer: &str,
-) -> Option<()> {
+) -> Option<String> {
     let source = &index.files().get(&test.file)?.source;
     if test.file != owner.file
         || !type_scope_is_clear(test, owner, source, ty, index)
@@ -1093,10 +1109,10 @@ fn named_add_field_projection_inner(
     let tokens = macro_call.token_tree()?.syntax().text().to_string();
     let inner = tokens.get(1..tokens.len().checked_sub(1)?)?;
     let arguments = parsed_function(&format!("fn args() {{ args({inner}) }}"))?;
-    let ast::Expr::CallExpr(call) = arguments.body()?.stmt_list()?.tail_expr()? else {
+    let ast::Expr::CallExpr(assertion_args) = arguments.body()?.stmt_list()?.tail_expr()? else {
         return None;
     };
-    let operands: Vec<_> = call.arg_list()?.args().collect();
+    let operands: Vec<_> = assertion_args.arg_list()?.args().collect();
     let [left, right] = operands.as_slice() else {
         return None;
     };
@@ -1115,5 +1131,5 @@ fn named_add_field_projection_inner(
                     integer,
                 )
         })
-        .then_some(())
+        .then(|| call.syntax().text().to_string())
 }

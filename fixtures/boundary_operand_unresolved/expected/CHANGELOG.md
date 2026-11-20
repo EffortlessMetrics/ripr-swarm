@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_operand_unresolved (10)
+
+Reason:
+RIPR-SPEC-0158 For boundary_operand_unresolved, retain the unresolved boundary input in the infection evidence and advice, and preserve structured evidence stages from RIPR-SPEC-0423.
+
+Command:
+`cargo xtask goldens bless boundary_operand_unresolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

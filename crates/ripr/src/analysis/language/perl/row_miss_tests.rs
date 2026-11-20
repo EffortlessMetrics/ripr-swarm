@@ -1,10 +1,9 @@
 //! Focused controls for Perl v2 row-local miss mapping (#5562).
 
 use super::tests::{
-    EXACT_RETURN_PACKET, SECOND_TEST, THRESHOLD_TEST, edited_packet, findings_from_packet,
-    first_finding_misses, only_finding, packet_array, rows_by_name, set_first, with_second_row,
+    EXACT_RETURN_PACKET, SECOND_TEST, THRESHOLD_TEST, edited_packet, first_finding_misses,
+    only_finding, packet_array, rows_by_name, set_first, with_second_row,
 };
-use super::*;
 use crate::app::PERL_FACT_PACKET_V2_SCHEMA;
 use crate::domain::{ExposureClass, RelatedTestMiss};
 

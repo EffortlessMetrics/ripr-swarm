@@ -536,6 +536,50 @@ fn jq_filter_matches(filter: &str, value: &Value) -> Result<bool, String> {
     }
 }
 
+#[test]
+fn private_rehearsal_binds_the_public_pr_before_using_its_body() -> Result<(), String> {
+    let workflow = workflow_text()?;
+    require_absent(&workflow, "  pull_request:")?;
+    require_absent(&workflow, "github.event.pull_request")?;
+    require_absent(&workflow, "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git")?;
+    require_fragment(&workflow, "repository: EffortlessMetrics/ripr")?;
+    require_fragment(&workflow, "refs/remotes/origin/main")?;
+    require_fragment(&workflow, "rehearsal_only:true")?;
+    let (_, remainder) = workflow
+        .split_once(
+            "jq -e --arg number \"$PR_NUMBER\" --arg head \"$PR_HEAD\" --arg base \"$BASE_SHA\" '",
+        )
+        .ok_or("missing public PR binding predicate")?;
+    let (predicate, _) = remainder
+        .split_once("' \"$pr\" > /dev/null")
+        .ok_or("public PR binding predicate is unbounded")?;
+    let filter = format!(r#""42" as $number | "head" as $head | "base" as $base | ({predicate})"#);
+    let valid = json!({
+        "number": 42, "state": "open", "head": {"sha": "head"},
+        "base": {"sha": "base", "ref": "main", "repo": {"full_name":"EffortlessMetrics/ripr"}},
+        "body": "promotion input"
+    });
+    if !jq_filter_matches(&filter, &valid)? {
+        return Err("matching public PR tuple was refused".into());
+    }
+    for (path, replacement) in [
+        ("/number", json!(41)),
+        ("/state", json!("closed")),
+        ("/head/sha", json!("new")),
+        ("/base/sha", json!("other")),
+        ("/base/ref", json!("release")),
+        ("/base/repo/full_name", json!("other/ripr")),
+        ("/body", Value::Null),
+    ] {
+        let mut changed = valid.clone();
+        *changed.pointer_mut(path).ok_or("invalid fixture pointer")? = replacement;
+        if jq_filter_matches(&filter, &changed)? {
+            return Err(format!("changed public PR input was accepted: {path}"));
+        }
+    }
+    Ok(())
+}
+
 fn workflow_disposition_is_authorized(manifest: &Value, path: &str) -> bool {
     let Some(dispositions) = manifest.get("dispositions").and_then(Value::as_array) else {
         return false;

@@ -205,6 +205,45 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Compound predicate boundary (#9637): comparison binds tighter than `&&`
+  and `||`, so the equality-boundary reading of a predicate with a top-level
+  connective uses only its one comparison operand, never the whole text
+  split at the first comparison operator. `s.starts_with('-') && s.len() > 1`
+  reads `s.len()` against `1`, not `s.starts_with('-') && s.len()`, which no
+  input can equal. The connective scan skips brackets and string and char
+  literals. A quoted operator (`s.starts_with('>')`) is not a comparison,
+  and whitespace inside a literal stays significant when the pre-edit
+  operand is compared. Two or more comparison operands, an operand the pre-edit text
+  already holds unchanged (`x > 1 && a` to `x > 1 && b`), an empty operand
+  (including a continuation line that starts with `&&` or `||`), a block
+  comment, or text the scan cannot balance, with or without a connective,
+  give no boundary reading, so the stage falls back to its existing unknown
+  or connective-change reason. One two-comparison shape is read (#14726): a
+  bare equality `x == A` edited to `x == A || x == B` (either order), where
+  the pre-edit text is that one comparison kept verbatim, the connective is a
+  single top-level `||`, the added operand is a bare `==` on the same left
+  side, and `A` and `B` are literals of different value. The reading is the
+  added `x == B`: an input equal to `B` makes it true and the kept `x == A`
+  false, so the predicate flips. An added `&&` conjunct, a third operand, a
+  `!=` or ordered comparison, another left side, a left side that is not a
+  plain place path (`it.next()`, `xs[i]`), a non-literal side, an escaped
+  literal (`"\x41"`), or a second literal equal in value to the first (`5`
+  and `05`) keeps no reading.
+  A `//` line comment ends the scanned text.
+  A balanced predicate with no top-level connective and no block comment is
+  read whole, as before. A
+  single-comparison compound is newly readable, so a test input at that
+  comparison's boundary can be observed there. Masking by a sibling operand
+  stays with propagation: the predicate finding of `label == "beta" && on`
+  called only with `on = false` reads `propagation_unknown`, not `exposed`.
+  A comparison joined by `&&` only to bare bool owner parameters
+  (`order_cents >= FREE_OVER_CENTS && !express`) is read by the guarded
+  boundary rule in RIPR-SPEC-0001 (#13037) instead: only a row that holds
+  every guard sits on its boundary, and a guarded shape that rule declines
+  gets no boundary reading here.
+  The Rust canonical gap discriminator reads the same single comparison
+  (#14719), so `a && s.len() > 1` mints `s.len==1`; every other predicate
+  shape keeps the whole-line discriminator it minted before.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,
@@ -337,6 +376,38 @@ exercised boundary from a missing one.
   in the function. Any other shape keeps the boundary operand unresolved
   (`infection_unknown`).
 
+### Bounded string-parse fold (#12771)
+
+An owner-call argument that is one whole call `helper("DIGITS")` reads as the
+integer the file's parse helper turns the literal into, exactly as the integer
+literal would have been, when every condition below holds. Anything else keeps
+the argument unread, so the boundary operand stays `infection_unknown`:
+
+- the argument is the helper name and one string literal of ASCII decimal digits
+  and nothing more: no sign, space, separator, escape, raw string, extra argument,
+  path, method or arithmetic around the call;
+- `helper` is declared exactly once in the test's own file, as a free function the
+  test can see (the module rule of the constant and nullary helper above): not
+  imported, not generic, not in an `impl` or `trait` block, no attribute, no
+  `async`/`const`/`unsafe`/`extern` qualifier, the test body binds no such name,
+  and no second `fn helper` exists anywhere in the file (a copy in a sibling
+  module or a nested `fn` makes the name ambiguous and refuses);
+- the function has exactly one `&str` parameter and a builtin integer return type
+  and its body is nothing but `param.parse().unwrap()`,
+  `param.parse::<T>().unwrap()` or the same with `.expect("..")`, `T` being the
+  return type. A `Result` or `Option` result, `trim`/`split`/`strip_*`, a default
+  through `unwrap_or`, a cast or arithmetic, a struct result or any second
+  statement refuses;
+- the parsed value fits the return type and stays below the evaluator's
+  `i32::MAX` bound; a literal the `unwrap` would panic on refuses.
+
+The step budget is this fixed shape: one parse, no loop, no recursion, no call
+into another function. The fold feeds the same owner row an integer literal
+would, so the existing boundary rules still decide the verdict: a row on each
+side without an equality row reads `weakly_exposed`, never credit. It resolves
+the helper in the test's own file only; a parser declared in another file or in
+the owner's crate, or one that returns a struct, is not read here.
+
 ### Literal-only integer folding for observation (#10479)
 
 A changed `return_value` expression made only of plain decimal literals, `+ - * / %`
@@ -404,6 +475,17 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
   string quotes stripped, so a computed `"a_b"` compares equal to a
   literal `"ab"`. The normalization is pre-existing and applies
   identically to parameter operands.
+- A flat owner prelude (#12771) may rebind what a boundary local reads.
+  Every statement between the owner's opening brace and the local's `let`
+  must be either `let NAME = !NAME;` for a parameter or
+  `const NAME: <integer type> = <decimal literal>;`. There must be no
+  braces, calls, macros or other statements, and no macro anywhere in the
+  body. Each rebound name may be mentioned elsewhere in the owner only in
+  the local's own initializer. A negated flag may appear there only as the
+  `if` condition, which is then read flipped. A constant replaces the
+  file's constant of that name. Any other shape keeps the earlier
+  rebinding refusal (`local-boundary-flag-loop`'s `for si in [false]`
+  stays unresolved).
 
 - A local that folds to a plain integer is compared only against an
   integer cell of the other operand's parameter. A string cell is the
@@ -447,14 +529,21 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
 8. Reject: the same local with tests at `(1_000, true)` and `(1_024,
    false)`: each input is the other flag's boundary, no row sits on
    `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
-9. Reject: `let si = !si;` before the same local, with tests at
-   `(1_024, true)`: the flag the local reads is the opposite of the
-   caller's literal, so the pinned 1_024 is not the boundary and the
-   verdict stays unresolved (`local-boundary-flag-shadowed`).
+9. Accept: `let si = !si;` before the same local, with tests at
+   `(1_024, true)`, `(1_023, true)` and `(999, true)`: the flag the local
+   reads is the opposite of the caller's literal, so `unit` is `1000` under
+   every row, the pinned 1_024 is not the boundary, no row sits on `unit`,
+   and the verdict is a gap (`local-boundary-flag-shadowed`, #12771). The
+   rebinding is read only in a flat owner prelude (see Required guards);
+   any other rebinding shape keeps the verdict unresolved.
 10. Reject: `for si in [false] { let unit = if si { KIB } else { KB }; .. }`
     with tests at `(1_024, true)` (`local-boundary-flag-loop`).
-11. Reject: a function-local `const KB: u64 = 2_000;` shadowing the file's
-    `KB` (`local-boundary-flag-alias`).
+11. Accept: a function-local `const KB: u64 = 2_000;` shadowing the file's
+    `KB`, read by `let unit = KB;`: `unit` is `2000`, the rows at `1_000`
+    and `2_500` are off it, and the verdict is a gap
+    (`local-boundary-flag-alias`, #12771). Only a plain decimal integer
+    `const` item in a flat owner prelude replaces the file constant; any
+    other declaration keeps the verdict unresolved.
 12. Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
     whose only direct row binds `bytes` to a string literal: the verdict
     stays `infection_unknown` (`bytesize-format-unit-first-run`).
@@ -536,10 +625,33 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
     receiver) and `method-hop-field-read-second-ctor` (a constructor the reader
     declines) and `method-hop-multi-caller-both-reached` (two owner callers
     reached) stay `infection_unknown`.
+28. Accept: `classify_tier(tier_from("9"))` and `classify_tier(tier_from("10"))`
+    with the file's one `fn tier_from(text: &str) -> u32 { text.parse().unwrap() }`
+    fold to the rows `tier = 9` and `tier = 10`, so the boundary `tier < 10`
+    edited to `tier <= 10` is hit and the exact assertions credit it
+    (`parse-fold-pinned`).
+29. Accept without credit: inputs `grade_from("3")` and `grade_from("20")` fold,
+    both sides are seen and no row sits on the boundary, so the edit reads
+    `weakly_exposed` (`parse-fold-loose`).
+30. Reject: the helper name is declared twice in the test file (a top-level
+    identity `band_from` and, in the test's own `mod shifted` with `use
+    super::*`, a shadowing `band_from` that adds 5). Picking either one is a
+    guess, and the outer one places the inputs on the boundary the test never
+    reaches, so the argument stays unread and the row stays `infection_unknown`
+    (`parse-fold-ambiguous`); the other refusals (`Result` or struct result,
+    `trim`, `unwrap_or`, cast, attribute, `async`, import, signed or padded
+    literal, value out of range) are `parse_helper` unit tests.
 
 ## Test Mapping
 
+Compound predicate boundary: `analysis/classify/activation.rs`
+`a_compound_predicate_reads_only_its_one_changed_comparison` and
+`crates/ripr/tests/compound_predicate_boundary.rs`.
+
 `analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
+`analysis/classify/argument_fold/parse_helper.rs` `tests` and `rust-verdict-corpus`
+cases `parse-fold-pinned`, `parse-fold-loose` and `parse-fold-ambiguous` (the
+string-parse fold);
 `rust-verdict-corpus` cases `spec0158-modfold-const-operand`,
 `spec0158-modfold-helper-call`, `spec0158-modfold-helper-shadowed`,
 `spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed` and
@@ -596,6 +708,9 @@ the #3295 family fixtures.
   `FoldScope` (the test's own file, for `const` operands and nullary
   helpers); the row reader (`owner_row_argument_values`) and same-test
   pairing consume it.
+- `analysis/classify/argument_fold/parse_helper.rs` — the string-parse fold of
+  one whole `helper("DIGITS")` argument; the row reader reads it before the
+  call-result reading, so a folded call is a row and an unfolded one stays a call.
 - `analysis/classify/activation.rs` — exact operand resolution and the
   boundary/missing-discriminator wiring; char-literal extraction in
   `scalar_values`; the method hop's receiver cell and `self.<index>`

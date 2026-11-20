@@ -40,7 +40,10 @@ fn independent_expected_argument(
         .iter()
         .enumerate()
         .filter(|(_, name)| {
-            top.receiver.as_deref() != Some(name.as_str())
+            top.receiver
+                .as_ref()
+                .and_then(|receiver| receiver.parameter())
+                != Some(name.as_str())
                 && !top
                     .arguments
                     .iter()

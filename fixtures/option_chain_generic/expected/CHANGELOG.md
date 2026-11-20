@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — option_chain_generic (3)
+
+Reason:
+RIPR-SPEC-0158 For option_chain_generic, preserve structured evidence stages from RIPR-SPEC-0423.
+
+Command:
+`cargo xtask goldens bless option_chain_generic --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

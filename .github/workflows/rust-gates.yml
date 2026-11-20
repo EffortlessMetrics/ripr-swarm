@@ -95,8 +95,8 @@ on:
         type: string
       test-shards:
         description: >-
-          1 runs the required nextest step in this job. 4 leaves it to
-          rust-test-shards.yml, which the caller must run after this job passes (#10507).
+          1 runs the required nextest step in this job. 2 leaves it to
+          rust-test-shards.yml, which the caller must also run and require (#10507).
         required: false
         default: 1
         type: number
@@ -105,6 +105,8 @@ on:
           The candidate admission reason. Only `history_sync_admitted` on a
           pull_request whose head equals admission-head changes anything: the
           diff-scoped PR evidence is then recorded not_applicable (#12437).
+          `mechanical_relocation_admitted` (#15217) does the same for a
+          verified relocation, on its pull_request run or singleton group.
         required: false
         default: ''
         type: string
@@ -129,7 +131,7 @@ on:
       scratch_message:
         value: ${{ jobs.rust-gates.outputs.scratch_message }}
       pr_evidence:
-        description: "`produced`, `not_applicable:history_sync:<head>`, or empty when the step did not run."
+        description: "`produced`, `not_applicable:history_sync:<head>`, `not_applicable:mechanical_relocation:<head>`, or empty when the step did not run."
         value: ${{ jobs.rust-gates.outputs.pr_evidence }}
 
 permissions:
@@ -199,7 +201,7 @@ jobs:
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
-      # directory age. The same action is the scheduled scratch-gc.yml authority.
+      # directory age. The same action is the scratch-gc.yml sweep authority.
       - name: Acquire scratch lease
         if: inputs.use-scratch
         uses: ./.github/actions/ci-scratch-lease
@@ -223,6 +225,7 @@ jobs:
         if: inputs.use-scratch
         env:
           CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+          CARGO_INCREMENTAL: "0"
           RUSTC_WRAPPER: sccache
           SCCACHE_DIR: /mnt/ci-cache/sccache
           SCCACHE_CACHE_SIZE: 15G
@@ -231,6 +234,7 @@ jobs:
         run: |
           {
             echo "CARGO_HOME=$CARGO_HOME"
+            echo "CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
             echo "RUSTC_WRAPPER=$RUSTC_WRAPPER"
             echo "SCCACHE_DIR=$SCCACHE_DIR"
             echo "SCCACHE_CACHE_SIZE=$SCCACHE_CACHE_SIZE"
@@ -283,11 +287,20 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
+      # Match the existing test profile before any Cargo build or cache key is
+      # evaluated. Scratch execution retains its selected resource environment.
+      - name: Align hosted dev and test debug settings
+        if: ${{ !inputs.use-scratch }}
+        run: echo 'CARGO_PROFILE_DEV_DEBUG=0' >> "$GITHUB_ENV"
+
       - name: Restore hosted Rust cache
+        # Best-effort existing default-branch entries; misses always recompute.
+        # Only an already-selected manual main qualification may refresh these
+        # entries. No ordinary push, recurring warmer, or broadened PR/G saves.
         if: ${{ !inputs.use-scratch }}
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -314,16 +327,43 @@ jobs:
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Prepare independent user-text base
-        # Prepares the exact first-parent base before running its policy matcher.
-        # These two short steps preserve the check-workflows per-block line bound.
+        id: user_text_base
+        # A queue head's first parent can be an unlanded constituent. Judge the
+        # complete group with its protected event base; PRs use their verified
+        # synthetic merge's first parent, including accepted base movement.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          base_sha="$(git rev-parse HEAD^1)"
+          checkout_sha="$(git rev-parse --verify HEAD^{commit})"
+          [[ "$EVENT_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$checkout_sha" = "$EVENT_SHA" ] || { echo "::error::user-text base: checkout does not match the event"; exit 1; }
+          case "$EVENT_NAME" in
+            merge_group)
+              base_sha="$GROUP_BASE_SHA"
+              [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] && [[ "$GROUP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$GROUP_HEAD_SHA" = "$checkout_sha" ] && [ "$base_sha" != "$checkout_sha" ] || { echo "::error::user-text base: invalid merge-group identities"; exit 1; }
+              git cat-file -e "${base_sha}^{commit}" && git merge-base --is-ancestor "$base_sha" "$checkout_sha" || { echo "::error::user-text base: group base is unavailable or not an ancestor"; exit 1; }
+              ;;
+            pull_request)
+              [[ "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::user-text base: invalid PR identities"; exit 1; }
+              parents="$(git rev-list --parents -n 1 "$checkout_sha")"
+              read -r _commit base_sha candidate_sha extra <<< "$parents"
+              [ -n "${base_sha:-}" ] && [ "${candidate_sha:-}" = "$PR_HEAD_SHA" ] && [ -z "${extra:-}" ] || { echo "::error::user-text base: checkout is not the PR's two-parent merge"; exit 1; }
+              git merge-base --is-ancestor "$PR_BASE_SHA" "$base_sha" || { echo "::error::user-text base: recorded PR base is unavailable or unrelated"; exit 1; }
+              ;;
+            *) echo "::error::user-text base: unsupported event"; exit 1 ;;
+          esac
           base_tree="$RUNNER_TEMP/user-text-base"
           git worktree add --detach "$base_tree" "$base_sha"
+          test "$(git -C "$base_tree" rev-parse HEAD)" = "$base_sha"
 
       - name: Recover pinned base compiler arity if needed
+        id: user_text_recovery
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: |
           set -euo pipefail
@@ -354,7 +394,38 @@ jobs:
             echo "::notice::base $base_sha recovered only the exact #12466 compiler-arity blob ($old_stub_blob -> $fixed_stub_blob); original user-text matcher remains authoritative"
           fi
 
+      - name: Recover pinned base missed-txt match if needed
+        # main at 5c223a5e (format.rs blob) does not compile: #13666 and #13720
+        # merged an uncovered OutputFormat::MissedTxt arm (E0004). Patch only that
+        # exact blob in the base worktree so the merge-base matcher can build;
+        # a no-op once main carries the #13848 fix.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/user-text-base"
+          base_sha="$(git -C "$base_tree" rev-parse HEAD)"
+          old_format_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/output/format.rs")"
+          if test "$old_format_blob" = "5c223a5e714540e314600f24f6f07373d136c475"; then
+            python3 - "$base_tree/crates/ripr/src/output/format.rs" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          before = "            | Self::RepoSarifCompact => false,\n"
+          after = "            | Self::RepoSarifCompact\n            | Self::MissedTxt => false,\n"
+          if source.count(before) != 1:
+              raise SystemExit("pinned base missed-txt recovery has an unexpected source shape")
+          path.write_text(source.replace(before, after, 1), encoding="utf-8")
+          PY
+            fixed_format_blob="$(git -C "$base_tree" hash-object crates/ripr/src/output/format.rs)"
+            test "$fixed_format_blob" = "cf05a4c4a649b292fe0cae25e43f2ce3d28d79b6"
+            git -C "$base_tree" diff --name-only | grep -vxF -e crates/ripr/src/output/format.rs -e crates/ripr/src/app/test_stub.rs && exit 1
+            echo "::notice::base $base_sha recovered only the exact #13848 missed-txt blob ($old_format_blob -> $fixed_format_blob); original user-text matcher remains authoritative"
+          fi
+
       - name: User-text goldens judged by the merge-base matcher
+        id: user_text_matcher
         # The PR's goldens are judged by the original matcher at the merge base,
         # so the PR cannot qualify a weakened version of its own gate (#11385).
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -367,57 +438,104 @@ jobs:
             exit 0
           fi
           cd "$base_tree"
-          cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+          if test -f tools/repo-policy/src/main.rs && grep -qF 'Some("check-user-text")' tools/repo-policy/src/main.rs; then
+            cargo policy check-user-text --tree "$GITHUB_WORKSPACE"
+          else
+            # Older trusted bases retain their original xtask judge (#8198).
+            cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+          fi
           cd "$GITHUB_WORKSPACE"
 
       - name: Repository policy preflight
         id: precommit
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+        # Includes dependency, process (with CLI exit vocabulary), and network
+        # policy. Preserve their original reports without launching them twice.
         run: cargo xtask ci-policy
 
       - name: Evidence promotion honesty
         id: promotion_honesty
         run: cargo xtask check-evidence-promotion-honesty
 
-      - name: Dependency policy
-        id: dependencies
-        run: cargo xtask check-dependencies
-
-      - name: Process policy
-        id: process_policy
-        run: cargo xtask check-process-policy
-
-      - name: Network policy
-        id: network_policy
-        run: cargo xtask check-network-policy
-
-      # Feature-gated test modules (lang-perl and other previews) compile only
-      # under their features; without this step two green PRs can break main
-      # together (#6854, #6879).
-      - name: All-features ripr target check
+      # Lint optional-feature code as well as type-checking it (#13152).
+      # Keep the default-feature workspace pass below: cfg(not(feature = ...))
+      # branches are absent from this all-features build.
+      - name: Strict all-features ripr Clippy
         id: all_features_check
-        run: cargo check -p ripr --all-targets --all-features
+        run: cargo clippy -p ripr --all-targets --all-features -- -D warnings
 
       - name: Strict workspace Clippy
         id: clippy
+        # #14589: bound simultaneous large lint units on the 16-GiB hosted route.
+        # Keep the scratch runner's configured capacity and every lint target.
+        env:
+          CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # PR-side `actions/checkout` checks out `refs/pull/N/merge`, whose base can
+      # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
+      # `origin/$BASE_REF` for the goldens gate so stale-base golden drift fails PR
+      # qualification instead of passing and ejecting in `merge_group` (#14999),
+      # then restore the admitted checkout so downstream steps keep `HEAD`.
+      - name: Prepare fresh base merge for goldens
+        id: goldens_fresh_merge
+        if: github.event_name == 'pull_request' && inputs.subject-sha == ''
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          orig_head="$(git rev-parse HEAD)"
+          echo "orig_head=$orig_head" >> "$GITHUB_OUTPUT"
+          pr_head="$(git rev-parse --verify -q HEAD^2 || true)"
+          if [ -z "$pr_head" ]; then
+            echo "::warning title=Fresh base merge skipped::HEAD^2 is unavailable; running goldens on checkout."
+            exit 0
+          fi
+          if ! git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"; then
+            echo "::warning title=Base fetch failed::could not re-read $BASE_REF; running goldens on checkout."
+            exit 0
+          fi
+          fresh_base="$(git rev-parse "origin/$BASE_REF")"
+          if [ "$(git rev-parse HEAD^1)" = "$fresh_base" ]; then
+            exit 0
+          fi
+          rc=0
+          git merge-tree --write-tree --no-messages "$pr_head" "$fresh_base" > /dev/null || rc=$?
+          if [ "$rc" -eq 1 ]; then
+            echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short "$pr_head"). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
+            echo "::warning title=Fresh base merge unavailable::git merge-tree exited $rc; running goldens on checkout."
+            exit 0
+          fi
+          git -c user.name=ci -c user.email=ci@invalid checkout --detach "$fresh_base"
+          git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
+          echo "switched=true" >> "$GITHUB_OUTPUT"
 
       # The gates below need only the `ripr` build, not the test run. They run before
       # the ~18-minute nextest step so a main-side drift (goldens, fixtures, capability
       # inventory, verdict corpora) fails the required run within minutes instead of
       # after the tests (#10341). A run that fails here reports no test results; the
       # next run does.
-      - name: Golden output contracts
-        id: goldens
-        run: cargo xtask goldens check
+      # One evaluation writes both reports and fails for either obligation.
+      - name: Golden and fixture contracts
+        id: goldens_fixtures
+        run: cargo xtask goldens check-with-fixtures
+
+      - name: Restore admitted checkout after goldens
+        id: goldens_restore_checkout
+        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'
+        env:
+          ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}
+        run: git checkout --detach "$ORIG_HEAD"
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.
       # This uses the actual canonical producer outputs; it does not rerun,
       # normalize, bless, or weaken the golden comparison.
       - name: Retain wildcard calibration producer outputs
-        if: always() && (steps.goldens.outcome == 'success' || steps.goldens.outcome == 'failure')
+        if: always() && (steps.goldens_fixtures.outcome == 'success' || steps.goldens_fixtures.outcome == 'failure')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}-wildcard-calibration-${{ github.run_attempt }}
@@ -439,10 +557,6 @@ jobs:
             target/ripr/fixtures/guarded_result_match_owner_observation/human*.txt
           if-no-files-found: error
           retention-days: 5
-
-      - name: Fixture contracts
-        id: fixtures
-        run: cargo xtask fixtures
 
       # Hosted wiring for #5531. Both commands build/run `ripr` (the fixture step
       # above just built it, so this reuses the artifacts) and compare the
@@ -492,8 +606,19 @@ jobs:
           echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
           exit 1
 
-      # Skipped only when the caller passes `test-shards: 4`; it then owns running
-      # the same tests as four partitions in rust-test-shards.yml and must fail
+      # #14263: the Rust-only build (`--no-default-features --features lang-rust`)
+      # is a supported configuration, and between Nov 11 and Nov 18 main added
+      # seven preview-only items that warned there because nothing failed. Lint
+      # its library here on routes that run tests in this job; with
+      # `test-shards: 2` shard 2 of rust-test-shards.yml runs the same command,
+      # off this job's critical path. Library only: test helpers still warn.
+      - name: Strict Rust-only ripr library Clippy
+        id: rust_only_clippy
+        if: inputs.test-shards == 1
+        run: cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings
+
+      # Skipped only when the caller passes `test-shards: 2`; it then owns running
+      # the same tests as two partitions in rust-test-shards.yml and must fail
       # the required result unless that workflow passes (routed-rust.yml `result`).
       - name: Required Rust tests
         id: rust-tests
@@ -553,6 +678,12 @@ jobs:
           HEAD_SHA: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
+          # Keeps this lane's pre-#12940 ceiling. The CLI default rose to 5000
+          # files, which admits this workspace into a run that needs more than
+          # this lane's 60 s budget, so without the pin every PR would spend
+          # 60 s to reach analysis_timeout instead of refusing in under a
+          # second. Raise both together only with a deliberate CI-cost change.
+          RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES: "1200"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
           # to 3500 for #3532 (3,060-line capability diff), then to 4500 for
           # #3674 (#3555 PR C, 4,321-line review-hardened capability diff),
@@ -576,12 +707,13 @@ jobs:
           # Large analyzer PRs need more than the 120s default for the
           # evidence producer's ripr check subprocess; #3709's 5,104-line
           # diff measured ~3,100s locally and exceeded 1,800s on CI, so
-          # the ceiling is 3,600s (measured locally per the raise rule;
-          # a hung producer wastes at most one hour — the scope guard
-          # still caps memory).
+          # the ceiling is 3,600s (measured locally per the raise rule).
+          # A failed run cost 64.1m here, 113.2m in gates and 216.2m overall,
+          # plus fresh analysis/rebuild costs for its successor (#13577).
           RIPR_PR_EVIDENCE_TIMEOUT_SECS: "3600"
-          # Align ripr check's own 600s budget (#5369) with the step ceiling.
-          RIPR_CHECK_TIMEOUT: "3600"
+          # Fire the typed analysis timeout first: the inner 3,300s budget plus
+          # its 2s grace exits around 3,302s, before the 3,600s wrapper.
+          RIPR_CHECK_TIMEOUT: "3300"
           EVENT_NAME: ${{ github.event_name }}
           ADMISSION_REASON: ${{ inputs.admission-reason }}
           ADMISSION_HEAD: ${{ inputs.admission-head }}
@@ -605,6 +737,17 @@ jobs:
             echo "::notice title=PR evidence not_applicable: history_sync::diff-scoped PR evidence is not applicable to history-sync head $HEAD_SHA (tested $g); every other gate ran (#12437)"
             { echo "### PR evidence"; echo ""; echo "- status: \`not_applicable\`"; echo "- reason: \`history_sync\`"; echo "- head: \`$HEAD_SHA\`; tested: \`$g\`; source: \`$SYNC_SOURCE\`; destination base: \`$SYNC_BASE\`"; } >> "$GITHUB_STEP_SUMMARY"
             echo "evidence=not_applicable:history_sync:$HEAD_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # #15217: a verified relocation moves inline test bodies out of line token for
+          # token, so these diff-scoped producers have no changed behavior to read.
+          if [ "$ADMISSION_REASON" = mechanical_relocation_admitted ]; then
+            [[ "$ADMISSION_HEAD" =~ ^[0-9a-f]{40}$ ]] && { [ "$EVENT_NAME" != pull_request ] || [ "$ADMISSION_HEAD" = "$HEAD_SHA" ]; } || { echo "::error::relocation binding refused: admitted head '$ADMISSION_HEAD' does not bind this $EVENT_NAME head '$HEAD_SHA'"; exit 1; }
+            mkdir -p target/ripr/pr
+            jq -n --arg head "$ADMISSION_HEAD" --arg tested "$HEAD_SHA" '{status: "not_applicable", reason: "mechanical_relocation", issue: 15217, head: $head, tested_commit: $tested, skipped: ["ripr-pr", "ripr-pr --check", "ripr-review-comments", "impacted-evidence", "ripr-pr-summary", "ripr-annotations", "schema sweep pr-evidence/review-comments rows"]}' > target/ripr/pr/not-applicable.json
+            echo "::notice title=PR evidence not_applicable: mechanical_relocation::diff-scoped PR evidence is not applicable to verified relocation head $ADMISSION_HEAD (tested $HEAD_SHA); every other gate ran (#15217)"
+            { echo "### PR evidence"; echo ""; echo "- status: \`not_applicable\`"; echo "- reason: \`mechanical_relocation\`"; echo "- head: \`$ADMISSION_HEAD\`; tested: \`$HEAD_SHA\`"; } >> "$GITHUB_STEP_SUMMARY"
+            echo "evidence=not_applicable:mechanical_relocation:$ADMISSION_HEAD" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
@@ -637,7 +780,7 @@ jobs:
           cargo run --quiet -p ripr -- doctor --json > target/ripr/sweep/doctor.json
           artifacts=(--artifact schemas/ripr/doctor.schema.json=target/ripr/sweep/doctor.json)
           # Only the typed history-sync record (#12437) withholds the PR rows.
-          if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [[ "$PR_EVIDENCE" != not_applicable:history_sync:* ]]; then
+          if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [[ "$PR_EVIDENCE" != not_applicable:* ]]; then
             artifacts+=(
               --artifact schemas/ripr/pr-evidence.schema.json=target/ripr/pr/repo-exposure.json
               --artifact schemas/ripr/review-comments.schema.json=target/ripr/review/comments.json
@@ -676,17 +819,16 @@ jobs:
           INTEGRATION_TREE: ${{ steps.admitted.outputs.tree }}
           EXECUTION_ROUTE: ${{ inputs.artifact-name }}
           FORMATTING_RESULT: ${{ steps.formatting.outcome }}
+          USER_TEXT_BASE_RESULT: ${{ steps.user_text_base.outcome }}
+          USER_TEXT_RECOVERY_RESULT: ${{ steps.user_text_recovery.outcome }}
+          USER_TEXT_MATCHER_RESULT: ${{ steps.user_text_matcher.outcome }}
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
           PROMOTION_HONESTY_RESULT: ${{ steps.promotion_honesty.outcome }}
           AGENT_SKILLS_RESULT: ${{ steps.agent_skills.outcome }}
-          DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
-          PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
-          NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
           ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
-          GOLDENS_RESULT: ${{ steps.goldens.outcome }}
-          FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
+          GOLDENS_FIXTURES_RESULT: ${{ steps.goldens_fixtures.outcome }}
           CAPABILITY_PRODUCERS_RESULT: ${{ steps.capability_producers.outcome }}
           CAPABILITY_DOCS_RESULT: ${{ steps.capability_docs.outcome }}
           VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
@@ -701,20 +843,16 @@ jobs:
             echo ""
             printf -- '- Workflow commit: `%s`\n- Subject head: `%s`\n- Run / attempt: `%s` / `%s`\n- Route: `%s`\n' "$GITHUB_SHA" "$SUBJECT_HEAD" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$EXECUTION_ROUTE"
             echo ""
-            echo '| Gate | Outcome |'
-            echo '| --- | --- |'
+            printf '| Gate | Outcome |\n| --- | --- |\n'
             printf '| formatting | %s |\n' "${FORMATTING_RESULT:-not_reported}"
+            printf '| user_text_base | %s |\n| user_text_recovery | %s |\n| user_text_matcher | %s |\n' "${USER_TEXT_BASE_RESULT:-not_reported}" "${USER_TEXT_RECOVERY_RESULT:-not_reported}" "${USER_TEXT_MATCHER_RESULT:-not_reported}"
             printf '| precommit | %s |\n' "${PRECOMMIT_RESULT:-not_reported}"
             printf '| promotion_honesty | %s |\n' "${PROMOTION_HONESTY_RESULT:-not_reported}"
             printf '| agent_skills | %s |\n' "${AGENT_SKILLS_RESULT:-not_reported}"
-            printf '| dependencies | %s |\n' "${DEPENDENCIES_RESULT:-not_reported}"
-            printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
-            printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
             printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
-            printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"
-            printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
+            printf '| goldens_fixtures | %s |\n' "${GOLDENS_FIXTURES_RESULT:-not_reported}"
             printf '| capability_producers | %s |\n' "${CAPABILITY_PRODUCERS_RESULT:-not_reported}"
             printf '| capability_docs | %s |\n' "${CAPABILITY_DOCS_RESULT:-not_reported}"
             printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
@@ -724,6 +862,7 @@ jobs:
             echo ""
             echo "Step timings are available in the Actions job view and workflow-jobs API."
             echo "The first failed step is authoritative. Skipped, cancelled, and not_reported are not passes."
+            echo "Dependency, process and network policies run inside precommit (ci-policy); their leaf reports retain individual diagnostics."
             echo "This summary is diagnostic; Ripr Rust Small Result remains the required check."
           } >> "$GITHUB_STEP_SUMMARY"
 

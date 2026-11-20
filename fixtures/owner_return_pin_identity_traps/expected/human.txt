@@ -2,24 +2,24 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_identity_traps/input
 
-Summary: 6 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 1 reached but not noticed, 0 no test path, 2 unclear. 6 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
+Summary: 4 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 2 reached but not noticed, 0 no test path. 4 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 6 changed behavior(s) checked, 6 finding(s)
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
-  File: ./src/lib.rs:21
+  Safe next action: follow the Next step below; this is static advisory evidence only
+  File: ./src/lib.rs:50
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Gap ID (for scripts): gap:rust:src/lib.rs:next_word:return_value:return_value:self.base*3
-  Changed behavior: self.base() * 3
+  Gap ID (for scripts): gap:rust:src/lib.rs:checked_half:return_value:return_value:ok_validate_x>>1
+  Changed behavior: Ok(validate(x)? >> 1)
   Missing check: No assertion was tied to the changed value
-  Related test: tests/trap_tests.rs:9 fixed_reader_overrides_next_word (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `fixed_reader_overrides_next_word` already has an exact assertion;
-    this does not establish observation of the returned value. Check whether the change can affect
-    the returned value. If it can, add a separating input and assert the exact returned value. If it
+  Related test: tests/trap_tests.rs:15 negative_input_exits_early (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `negative_input_exits_early` already has an exact assertion; this does
+    not establish observation of the returned value. Check whether the change can affect the
+    returned value. If it can, add a separating input and assert the exact returned value. If it
     cannot, test the changed effect separately; another input cannot distinguish unchanged returns
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -32,27 +32,25 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach yes: Related tests appear to reach next_word: fixed_reader_overrides_next_word
+    - reach yes: Related tests appear to reach checked_half: negative_input_exits_early
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 6 more detail line(s) in --format human-full
+    - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
-  ripr context --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
-No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
+  ripr explain --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:256c164c
+  ripr context --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:256c164c
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; follow the Next step above, then rerun `ripr check`
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/owner_return_pin_identity_traps/input --at src/lib.rs:50 --kind return_value
 
 Hidden:
-  5 finding(s) omitted: 3 lower-priority, 2 base-side evidence (not candidate edit targets).
-    - ./src/lib.rs:7 (unrevealed, lower-priority candidate); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
-    - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: unclear; reason: No relevant oracle was detected
-    - ./src/lib.rs:50 (weak, lower-priority candidate); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:55 (weak, lower-priority candidate); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:55 (unknown: static analysis limited, base-side); kind: unclear; reason: No strong assertion was detected
+  3 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:7 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
+    - ./src/lib.rs:21 (unrevealed); kind: return_value; reason: same as above
+    - ./src/lib.rs:55 (weak); kind: return_value; reason: No assertion was tied to the changed value
   Hidden classes:
     weak = tests reach it but check it only loosely
     unrevealed = tests reach it but nothing appears to notice a change
-    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

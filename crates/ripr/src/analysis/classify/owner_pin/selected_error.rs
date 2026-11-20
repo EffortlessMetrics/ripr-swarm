@@ -30,7 +30,7 @@ fn selected(
         ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
     ) || owner.item.container != FunctionContainer::Free
         || !owner.attrs.is_empty()
-        || !syntax.admits_equality_assertion(probe, test, assertion, index)
+        || !syntax.admits_equality_assertion(probe, Some(owner), test, assertion, index)
     {
         return None;
     }

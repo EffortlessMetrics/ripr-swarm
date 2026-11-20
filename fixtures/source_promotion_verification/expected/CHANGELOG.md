@@ -83,3 +83,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_promotion_verification (7)
+
+Reason:
+RIPR-SPEC-0149 Record the source-promotion fixture on the joined classifier with explicit unreferenced-owner reach evidence and typed stage rows.
+
+Command:
+`cargo xtask goldens bless source_promotion_verification --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

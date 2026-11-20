@@ -1,0 +1,441 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_predicate_added_disjunct_sibling_field/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:51be7e7d3615d400e1632de916f4a5946085882d33bbec18018723ce579a6711","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:9e9fd805",
+      "canonical_gap_id": "gap:rust:src/lib.rs:options_from_flag:field_construction:field_construction:verbose_flag==lit2d76_flag==lit2d2d766572626f7365",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:options_from_flag:field_construction:field_construction:verbose_flag==lit2d76_flag==lit2d2d766572626f7365",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "options_from_flag",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "verbose_flag==lit2d76_flag==lit2d2d766572626f7365"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:9e9fd805",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 10,
+        "expression": "verbose: flag == \"-v\" || flag == \"--verbose\""
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: verbose: flag == \"-v\" || flag == \"--verbose\""},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: verbose: flag == \"-v\" || flag == \"--verbose\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches constructed field: verbose: flag == \"-v\" || flag == \"--verbose\" (line 10)", "related test src/lib.rs:18 keeps_default_retries uses strong exact value oracle: assert_eq!(options_from_flag(\"--verbose\").retries, 3);", "related test src/lib.rs:25 reads_retries_in_a_closure_of_the_old_flag uses strong exact value oracle: assert_eq!(options_from_flag(\"-v\").verbose.then(|| boundary.retries), Some(3));", "related test src/lib.rs:20 reads_verbose_only_from_the_old_flag uses strong exact value oracle: assert_eq!((boundary.retries, options_from_flag(\"-v\").verbose), (3, true));", "source assertion argument value 3 at line 18", "source function argument value flag = \"--verbose\" at line 18", "source function argument value flag = \"--verbose\" at line 21", "source assertion argument value 3 at line 22", "source assertion argument value true at line 22", "source function argument value flag = \"-v\" at line 22", "source function argument value flag = \"--verbose\" at line 26", "source assertion argument value 3 at line 27"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"verbose: flag == \"-v\" || flag == \"--verbose\"","line":10}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: verbose: flag == \"-v\" || flag == \"--verbose\"", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "18": "assert_eq!(options_from_flag(\"--verbose\").retries, 3);",
+        "21": "let boundary = options_from_flag(\"--verbose\");",
+        "22": "assert_eq!((boundary.retries, options_from_flag(\"-v\").verbose), (3, true));",
+        "26": "let boundary = options_from_flag(\"--verbose\");",
+        "27": "assert_eq!(options_from_flag(\"-v\").verbose.then(|| boundary.retries), Some(3));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 18,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 18,
+            "value": "flag = \"--verbose\"",
+            "context": "function_argument",
+            "provenance": "fn keeps_default_retries() { assert_eq!(options_from_flag(\"--verbose\").retries, 3); }"
+          },
+          {
+            "line": 21,
+            "value": "flag = \"--verbose\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 22,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "flag = \"-v\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 26,
+            "value": "flag = \"--verbose\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 27,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "flag = \"-v\"",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 18,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 18,
+          "value": "flag = \"--verbose\"",
+          "context": "function_argument",
+          "provenance": "fn keeps_default_retries() { assert_eq!(options_from_flag(\"--verbose\").retries, 3); }"
+        },
+        {
+          "line": 21,
+          "value": "flag = \"--verbose\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 22,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "flag = \"-v\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 26,
+          "value": "flag = \"--verbose\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 27,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "flag = \"-v\"",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "keeps_default_retries",
+          "file": "src/lib.rs",
+          "line": 18,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(options_from_flag(\"--verbose\").retries, 3);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "reads_retries_in_a_closure_of_the_old_flag",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(options_from_flag(\"-v\").verbose.then(|| boundary.retries), Some(3));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "reads_verbose_only_from_the_old_flag",
+          "file": "src/lib.rs",
+          "line": 20,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!((boundary.retries, options_from_flag(\"-v\").verbose), (3, true));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:8be11d8d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:options_from_flag:predicate_boundary:predicate:flag==lit2d76_flag==lit2d2d766572626f7365",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:options_from_flag:predicate_boundary:predicate:flag==lit2d76_flag==lit2d2d766572626f7365",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "options_from_flag",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "flag==lit2d76_flag==lit2d2d766572626f7365"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:8be11d8d",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 10,
+        "expression": "flag == \"-v\" || flag == \"--verbose\""
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag"},
+        "infect": {"state":"yes","confidence":"medium","summary":"A related test passes \"--verbose\", which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence constructed field: verbose: flag == \"-v\" || flag == \"--verbose\""},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag", "infection yes: A related test passes \"--verbose\", which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change", "propagation yes: Changed behavior appears to influence constructed field: verbose: flag == \"-v\" || flag == \"--verbose\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches constructed field: verbose: flag == \"-v\" || flag == \"--verbose\" (line 10)", "related test src/lib.rs:18 keeps_default_retries uses weak exact value oracle: assert_eq!(options_from_flag(\"--verbose\").retries, 3);", "related test src/lib.rs:25 reads_retries_in_a_closure_of_the_old_flag uses strong exact value oracle: assert_eq!(options_from_flag(\"-v\").verbose.then(|| boundary.retries), Some(3));", "related test src/lib.rs:20 reads_verbose_only_from_the_old_flag uses strong exact value oracle: assert_eq!((boundary.retries, options_from_flag(\"-v\").verbose), (3, true));", "source assertion argument value 3 at line 18", "source function argument value flag = \"--verbose\" at line 18", "source function argument value flag == \"--verbose\" at line 18", "source function argument value flag = \"--verbose\" at line 21", "source function argument value flag == \"--verbose\" at line 21", "source assertion argument value 3 at line 22", "source assertion argument value true at line 22", "source function argument value flag = \"-v\" at line 22"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"verbose: flag == \"-v\" || flag == \"--verbose\"","line":10}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "A related test passes \"--verbose\", which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change", "Changed behavior appears to influence constructed field: verbose: flag == \"-v\" || flag == \"--verbose\"", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "18": "assert_eq!(options_from_flag(\"--verbose\").retries, 3);",
+        "21": "let boundary = options_from_flag(\"--verbose\");",
+        "22": "assert_eq!((boundary.retries, options_from_flag(\"-v\").verbose), (3, true));",
+        "26": "let boundary = options_from_flag(\"--verbose\");",
+        "27": "assert_eq!(options_from_flag(\"-v\").verbose.then(|| boundary.retries), Some(3));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 18,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 18,
+            "value": "flag = \"--verbose\"",
+            "context": "function_argument",
+            "provenance": "fn keeps_default_retries() { assert_eq!(options_from_flag(\"--verbose\").retries, 3); }"
+          },
+          {
+            "line": 18,
+            "value": "flag == \"--verbose\"",
+            "context": "function_argument",
+            "provenance": "fn keeps_default_retries() { assert_eq!(options_from_flag(\"--verbose\").retries, 3); } | exact input flag = \"--verbose\"; literal operand \"--verbose\" = \"--verbose\""
+          },
+          {
+            "line": 21,
+            "value": "flag = \"--verbose\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 21,
+            "value": "flag == \"--verbose\"",
+            "context": "function_argument",
+            "provenance": "let boundary = options_from_flag(\"--verbose\"); | exact input flag = \"--verbose\"; literal operand \"--verbose\" = \"--verbose\""
+          },
+          {
+            "line": 22,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "true",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 22,
+            "value": "flag = \"-v\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 26,
+            "value": "flag = \"--verbose\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 26,
+            "value": "flag == \"--verbose\"",
+            "context": "function_argument",
+            "provenance": "let boundary = options_from_flag(\"--verbose\"); | exact input flag = \"--verbose\"; literal operand \"--verbose\" = \"--verbose\""
+          },
+          {
+            "line": 27,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 27,
+            "value": "flag = \"-v\"",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 18,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 18,
+          "value": "flag = \"--verbose\"",
+          "context": "function_argument",
+          "provenance": "fn keeps_default_retries() { assert_eq!(options_from_flag(\"--verbose\").retries, 3); }"
+        },
+        {
+          "line": 18,
+          "value": "flag == \"--verbose\"",
+          "context": "function_argument",
+          "provenance": "fn keeps_default_retries() { assert_eq!(options_from_flag(\"--verbose\").retries, 3); } | exact input flag = \"--verbose\"; literal operand \"--verbose\" = \"--verbose\""
+        },
+        {
+          "line": 21,
+          "value": "flag = \"--verbose\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 21,
+          "value": "flag == \"--verbose\"",
+          "context": "function_argument",
+          "provenance": "let boundary = options_from_flag(\"--verbose\"); | exact input flag = \"--verbose\"; literal operand \"--verbose\" = \"--verbose\""
+        },
+        {
+          "line": 22,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "true",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 22,
+          "value": "flag = \"-v\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 26,
+          "value": "flag = \"--verbose\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 26,
+          "value": "flag == \"--verbose\"",
+          "context": "function_argument",
+          "provenance": "let boundary = options_from_flag(\"--verbose\"); | exact input flag = \"--verbose\"; literal operand \"--verbose\" = \"--verbose\""
+        },
+        {
+          "line": 27,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 27,
+          "value": "flag = \"-v\"",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "keeps_default_retries",
+          "file": "src/lib.rs",
+          "line": 18,
+          "oracle_strength": "weak",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(options_from_flag(\"--verbose\").retries, 3);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "reads_retries_in_a_closure_of_the_old_flag",
+          "file": "src/lib.rs",
+          "line": 25,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(options_from_flag(\"-v\").verbose.then(|| boundary.retries), Some(3));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "reads_verbose_only_from_the_old_flag",
+          "file": "src/lib.rs",
+          "line": 20,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!((boundary.retries, options_from_flag(\"-v\").verbose), (3, true));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

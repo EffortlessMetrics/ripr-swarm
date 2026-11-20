@@ -1,7 +1,9 @@
 mod npm_native;
+mod packages;
 mod payload;
 mod producer;
 mod qualification;
+mod wheel_native;
 
 use std::fs;
 use std::io::Read;
@@ -17,6 +19,10 @@ use tar::Builder;
 use crate::{command_success_owned, run_output, run_owned};
 
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
+    if let Some(artifacts) = optional_release_arg(args, "packages-from") {
+        let out_dir = required_release_arg(args, "out-dir", "PACKAGES_OUT_DIR")?;
+        return packages::produce_family(Path::new(&artifacts), Path::new(&out_dir));
+    }
     if let Some(payload_dir) = optional_release_arg(args, "npm-payload-dir") {
         let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
         let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;
@@ -24,6 +30,21 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
         let out_dir = required_release_arg(args, "out-dir", "NPM_NATIVE_OUT_DIR")?;
         return npm_native::produce(
+            Path::new(&payload_dir),
+            Path::new(&identity),
+            Path::new(&producer),
+            Path::new(&build_identity),
+            Path::new(&archive),
+            Path::new(&out_dir),
+        );
+    }
+    if let Some(payload_dir) = optional_release_arg(args, "wheel-payload-dir") {
+        let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
+        let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;
+        let build_identity = required_release_arg(args, "build-identity", "BUILD_IDENTITY")?;
+        let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
+        let out_dir = required_release_arg(args, "out-dir", "WHEEL_NATIVE_OUT_DIR")?;
+        return wheel_native::produce(
             Path::new(&payload_dir),
             Path::new(&identity),
             Path::new(&producer),
@@ -148,6 +169,7 @@ pub(crate) fn write_server_archive(
         }
     }
 
+    let archive_size_bytes = payload::check_archive_file_size_budget(&asset_path)?;
     let sha = sha256_file(&asset_path)?;
     write_release_server_receipt(
         version,
@@ -160,7 +182,10 @@ pub(crate) fn write_server_archive(
     let sha_path = dist_dir.join(format!("{asset_name}.sha256"));
     fs::write(&sha_path, format!("{sha}\n"))
         .map_err(|err| format!("failed to write {}: {err}", sha_path.display()))?;
-    eprintln!("wrote {}", asset_path.display());
+    eprintln!(
+        "wrote {} ({archive_size_bytes} bytes)",
+        asset_path.display()
+    );
     Ok(())
 }
 

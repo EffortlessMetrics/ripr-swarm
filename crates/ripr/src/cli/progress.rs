@@ -80,6 +80,18 @@ fn env_switch_on(value: Option<&str>) -> bool {
     })
 }
 
+/// Environment twin of the global `-v`/`--verbose` flag: harnesses that
+/// cannot edit argv (an editor server, an MCP host, a Git hook, CI) set it
+/// once to get the same stderr diagnostics.
+pub(crate) const VERBOSE_ENV: &str = "RIPR_VERBOSE";
+
+/// `RIPR_VERBOSE` semantics, the same switch parse as `RIPR_QUIET`: unset,
+/// empty, `0` or `false` (any case) leave verbose off; any other value turns
+/// it on.
+pub(crate) fn verbose_env_value(value: Option<&str>) -> bool {
+    env_switch_on(value)
+}
+
 /// `RIPR_QUIET` semantics: unset, empty, `0` or `false` (any case) leave
 /// progress on; any other value silences it.
 pub(crate) fn quiet_env_value(value: Option<&str>) -> bool {
@@ -146,22 +158,11 @@ pub(crate) fn elapsed_class(elapsed: Duration) -> Option<&'static str> {
 }
 
 pub(crate) const fn stage_token(stage: AnalysisProgressStage) -> &'static str {
-    match stage {
-        AnalysisProgressStage::LoadingInput => "loading_input",
-        AnalysisProgressStage::Analyzing => "analyzing",
-        AnalysisProgressStage::BuildingOutput => "building_output",
-        AnalysisProgressStage::Completed => "completed",
-        AnalysisProgressStage::Cancelled => "cancelled",
-        AnalysisProgressStage::Failed => "failed",
-    }
+    stage.as_str()
 }
 
 pub(crate) const fn scope_token(scope: AnalysisProgressScope) -> &'static str {
-    match scope {
-        AnalysisProgressScope::Diff => "diff",
-        AnalysisProgressScope::Worktree => "worktree",
-        AnalysisProgressScope::Repo => "repo",
-    }
+    scope.as_str()
 }
 
 pub(crate) const fn stage_is_terminal(stage: AnalysisProgressStage) -> bool {
@@ -327,9 +328,52 @@ pub(crate) struct CliProgressSink {
     inner: Arc<SinkInner>,
 }
 
+/// Build the writer behind [`CliProgressSink::for_stderr`]. Production keeps
+/// the raw `io::stderr()` handle: a closed stderr stays a discarded write
+/// result, not a `print!` panic. In a test build libtest intercepts only the
+/// macro output route, so the raw handle pushed progress lines past capture
+/// onto the real stderr. In the nightly Windows advisory's streamed log, where
+/// cargo merges harness stdout and stderr, such a line landed inside a
+/// concurrent harness row and the fail-closed summarizer refused the whole run
+/// (nightly 42342172389, run 2: `test cli::commands::check::gap_ledger_legend_
+/// tests::legend_marker_lives_under_the_workspace_output_tree_and_is_written_
+/// once ... ripr progress: loading_input [diff]`, 18015 announced vs 18014
+/// observed rows; #9272). Test builds publish through `std::eprint!` instead,
+/// which libtest captures per test. Pinned by
+/// `stderr_progress_is_captured_in_test_builds`, the stderr twin of #13303's
+/// stdout discriminator.
+fn capture_aware_stderr_writer() -> Box<dyn Write + Send> {
+    #[cfg(test)]
+    {
+        Box::new(CaptureAwareStderr)
+    }
+    #[cfg(not(test))]
+    {
+        Box::new(io::stderr())
+    }
+}
+
+/// Test-build `Write` front that publishes through the capture-aware
+/// `std::eprint!` route. It must not call back into the stderr notice owner:
+/// the sink already holds its projection mutex while writing.
+#[cfg(test)]
+struct CaptureAwareStderr;
+
+#[cfg(test)]
+impl Write for CaptureAwareStderr {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        std::eprint!("{}", String::from_utf8_lossy(buf));
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 impl CliProgressSink {
     pub(crate) fn for_stderr(tty: bool, policy: ProgressPolicy) -> Self {
-        let sink = Self::with_writer(Box::new(io::stderr()), tty, policy);
+        let sink = Self::with_writer(capture_aware_stderr_writer(), tty, policy);
         sink.hold_success_terminal();
         sink.install_as_stderr_notice_owner();
         sink
@@ -722,11 +766,24 @@ impl CliProgressSink {
     /// later events, so the refusal text that follows does not interleave
     /// with progress output.
     pub(crate) fn abandon(&self) {
+        self.abandon_or_close(None);
+    }
+
+    /// [`Self::abandon`] for a caller that owns the run's scope even before
+    /// the worker reports a stage (`pilot`'s deadline, #5444): the run always
+    /// ends with exactly one `cancelled` line at that scope, whether or not
+    /// the worker reached its first stage or its own cancellation checkpoint
+    /// before the process exits.
+    pub(crate) fn abandon_with_scope(&self, scope: AnalysisProgressScope) {
+        self.abandon_or_close(Some(scope));
+    }
+
+    fn abandon_or_close(&self, fallback: Option<AnalysisProgressScope>) {
         self.stop_heartbeat();
         {
             let mut projection = Self::lock_state(&self.inner);
             if !projection.terminal
-                && let Some(scope) = projection.current_scope
+                && let Some(scope) = projection.current_scope.or(fallback)
             {
                 Self::project_terminal(
                     &mut projection,
@@ -852,6 +909,22 @@ mod tests {
             assert!(!quiet_env_value(Some(off)), "{off:?} must keep progress");
         }
         assert!(!quiet_env_value(None), "unset keeps progress");
+    }
+
+    /// `RIPR_VERBOSE` turns verbose on for any value but the off spellings.
+    #[test]
+    fn verbose_env_value_enables_on_any_value_but_the_off_spellings() {
+        for on in ["1", "true", "yes", " 1 ", "anything"] {
+            assert!(verbose_env_value(Some(on)), "{on:?} must enable verbose");
+        }
+        for off in ["", "  ", "0", "false", "FALSE"] {
+            assert!(
+                !verbose_env_value(Some(off)),
+                "{off:?} must leave verbose off"
+            );
+        }
+        assert!(!verbose_env_value(None), "unset leaves verbose off");
+        assert_eq!(VERBOSE_ENV, "RIPR_VERBOSE");
     }
 
     /// #11598: the full decision table. Machine format plus a non-terminal
@@ -1481,6 +1554,32 @@ mod tests {
         assert!(!text.contains("completed"), "{text}");
     }
 
+    /// #5444: a deadline that fires before the worker's first stage still
+    /// closes the run with one `cancelled` line at the caller's scope, and a
+    /// worker terminal that lands before the controller acts is not doubled.
+    #[test]
+    fn abandon_with_scope_closes_a_run_the_worker_never_started() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.hold_success_terminal();
+        sink.abandon_with_scope(AnalysisProgressScope::Repo);
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.emit(event(AnalysisProgressStage::Cancelled));
+        assert_eq!(buffer.text(), "ripr progress: cancelled [repo]\n");
+
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        sink.emit(event(AnalysisProgressStage::Cancelled));
+        sink.abandon_with_scope(AnalysisProgressScope::Repo);
+        let text = buffer.text();
+        assert_eq!(
+            text.matches("ripr progress: cancelled").count(),
+            1,
+            "{text}"
+        );
+    }
+
     #[test]
     fn tty_overwrite_pads_to_the_longest_prior_line() {
         let long = format_heartbeat_line(AnalysisProgressStage::BuildingOutput, "10m");
@@ -1907,5 +2006,65 @@ mod tests {
             buffer.text().contains("ripr: second notice"),
             "try_emit_notice must use the sink writer"
         );
+    }
+
+    // Probe child for `stderr_progress_is_captured_in_test_builds`: the real
+    // `for_stderr` sink projects stages exactly as an in-process `check` does.
+    // Inside a captured harness run the lines must land in libtest's capture
+    // buffer (dropped for a passing test), never on the child's piped stderr.
+    #[test]
+    fn stderr_capture_probe_projects_progress() {
+        let sink = CliProgressSink::for_stderr(false, non_tty_policy());
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.emit(event(AnalysisProgressStage::Failed));
+    }
+
+    // The fail-closed windows-advisory summarizer parses `test NAME ... ok`
+    // rows out of the streamed cargo log, where cargo merges the harness's
+    // stdout and stderr (#9272). libtest intercepts only the macro output
+    // route, so the progress sink's raw `io::stderr()` handle bytes from an
+    // in-process command interleaved with a concurrent row and the summarizer
+    // refused the whole run (nightly 42342172389, run 2: `test cli::commands::
+    // check::gap_ledger_legend_tests::legend_marker_lives_under_the_workspace_
+    // output_tree_and_is_written_once ... ripr progress: loading_input [diff]`,
+    // 18015 announced vs 18014 observed). The stdout twin is #13303. This pin
+    // re-executes this harness as a child with piped output and fails when a
+    // progress line escapes capture. Renaming the probe requires renaming its
+    // exact name here with it.
+    #[test]
+    fn stderr_progress_is_captured_in_test_builds() -> Result<(), String> {
+        const PROBE: &str = "cli::progress::tests::stderr_capture_probe_projects_progress";
+        let harness = std::env::current_exe()
+            .map_err(|err| format!("resolve the current test harness: {err}"))?;
+        let output = std::process::Command::new(&harness)
+            .args(["--exact", PROBE, "--test-threads=1"])
+            // An ambient nocapture switch would print the probe's lines
+            // through the macro route and false-fail the pin.
+            .env_remove("RUST_TEST_NOCAPTURE")
+            .output()
+            .map_err(|err| format!("spawn capture child harness: {err}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            return Err(format!(
+                "capture child harness failed ({}): {stdout}\n{stderr}",
+                output.status
+            ));
+        }
+        // The exact success row, not the summary line: `test result: ok`
+        // also follows an ignored or filtered-out child.
+        if !stdout.contains(&format!("test {PROBE} ... ok")) {
+            return Err(format!(
+                "the pinned probe did not pass in the child harness (rename it here with the source): {stdout}"
+            ));
+        }
+        if stdout.contains(PROGRESS_PREFIX) || stderr.contains(PROGRESS_PREFIX) {
+            return Err(format!(
+                "progress lines escaped libtest capture into the child harness output; the test-build \
+                 stderr sink must keep the capture-aware macro route (see CliProgressSink::for_stderr):\n\
+                 stdout: {stdout}\nstderr: {stderr}"
+            ));
+        }
+        Ok(())
     }
 }

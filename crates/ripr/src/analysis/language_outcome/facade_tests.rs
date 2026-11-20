@@ -48,6 +48,8 @@ fn diff_carrier_projection_preserves_every_consumed_field() -> Result<(), String
             file_budget: 1,
             line_budget: 1,
             budget_disclosures: vec![],
+            over_limit_files: vec![],
+            line_budget_limits: vec![],
             selected_files: vec!["src/lib.rs".into()],
             unselected_files: vec!["src/other.rs".into()],
             selected_changed_lines: 1,

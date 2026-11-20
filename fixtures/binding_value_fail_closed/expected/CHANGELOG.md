@@ -564,3 +564,64 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (#12118)
+
+Reason:
+#12118: the `binding_predicate_relation` evidence on a finding retargeted from a changed `let` now names the changed `let` declaration line; only that evidence string in check.json changes, human output, classes and ids are unchanged.
+
+Operation:
+Manual edit: appended ` (changed `let <binding>` declared at line N)` to each `binding_predicate_relation` evidence string, N taken from the fixture diff.patch.
+
+Execution:
+Source-only edit; native `cargo xtask goldens bless` could not run because the local container is out of memory (SIGKILL compiling `ripr`); hosted `goldens check` is the proof.
+
+Updated:
+- `expected/check.json`
+
+## Pending — binding_value_fail_closed (42)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (43)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (44)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (45)
+
+Reason:
+RIPR-SPEC-0158 For binding_value_fail_closed, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,107 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_predicate_added_disjunct_sibling_field/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+WARNING ./src/lib.rs:10
+  id: probe:src_lib.rs:field_construction:9e9fd805
+
+Changed
+  before: verbose: flag == "-v"
+  after:  verbose: flag == "-v" || flag == "--verbose"
+
+Change type
+  a constructed field changed
+  family: field_construction
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::options_from_flag
+  gap id (for scripts): gap:rust:src/lib.rs:options_from_flag:field_construction:field_construction:verbose_flag==lit2d76_flag==lit2d2d766572626f7365
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches constructed field: verbose: flag == "-v" || flag == "--verbose"
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)
+  - local flow reaches constructed field: verbose: flag == "-v" || flag == "--verbose" (line 10)
+  - related test src/lib.rs:18 keeps_default_retries uses strong exact value oracle: assert_eq!(options_from_flag("--verbose").retries, 3);
+  - related test src/lib.rs:25 reads_retries_in_a_closure_of_the_old_flag uses strong exact value oracle: assert_eq!(options_from_flag("-v").verbose.then(|| boundary.retries), Some(3));
+  - related test src/lib.rs:20 reads_verbose_only_from_the_old_flag uses strong exact value oracle: assert_eq!((boundary.retries, options_from_flag("-v").verbose), (3, true));
+  - source assertion argument value 3 at line 18
+  - source function argument value flag = "--verbose" at line 18
+  - source function argument value flag = "--verbose" at line 21
+  - source assertion argument value 3 at line 22
+  - source assertion argument value true at line 22
+  - source function argument value flag = "-v" at line 22
+  - source function argument value flag = "--verbose" at line 26
+  - source assertion argument value 3 at line 27
+  - source values (showing 8 of 9 read from related tests; full list in --format json)
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast probe:src_lib.rs:field_construction:9e9fd805
+  ripr context --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:9e9fd805
+
+WARNING ./src/lib.rs:10
+  id: probe:src_lib.rs:predicate:8be11d8d
+
+Changed
+  before: flag == "-v"
+  after:  flag == "-v" || flag == "--verbose"
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::options_from_flag
+  gap id (for scripts): gap:rust:src/lib.rs:options_from_flag:predicate_boundary:predicate:flag==lit2d76_flag==lit2d2d766572626f7365
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag
+  - infection yes: A related test passes "--verbose", which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change
+  - propagation yes: Changed behavior appears to influence constructed field: verbose: flag == "-v" || flag == "--verbose"
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)
+  - local flow reaches constructed field: verbose: flag == "-v" || flag == "--verbose" (line 10)
+  - related test src/lib.rs:18 keeps_default_retries uses weak exact value oracle: assert_eq!(options_from_flag("--verbose").retries, 3); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:25 reads_retries_in_a_closure_of_the_old_flag uses strong exact value oracle: assert_eq!(options_from_flag("-v").verbose.then(|| boundary.retries), Some(3));
+  - related test src/lib.rs:20 reads_verbose_only_from_the_old_flag uses strong exact value oracle: assert_eq!((boundary.retries, options_from_flag("-v").verbose), (3, true));
+  - source assertion argument value 3 at line 18
+  - source function argument value flag = "--verbose" at line 18
+  - source function argument value flag == "--verbose" at line 18
+  - source function argument value flag = "--verbose" at line 21
+  - source function argument value flag == "--verbose" at line 21
+  - source assertion argument value 3 at line 22
+  - source assertion argument value true at line 22
+  - source function argument value flag = "-v" at line 22
+  - source values (showing 8 of 12 read from related tests; full list in --format json)
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Add boundary tests for below, equal, and above the changed threshold with exact assertions
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast probe:src_lib.rs:predicate:8be11d8d
+  ripr context --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast --at probe:src_lib.rs:predicate:8be11d8d

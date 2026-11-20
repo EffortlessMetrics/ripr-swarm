@@ -58,8 +58,8 @@ Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
 not run (the output says why), 130 interrupted standalone check. Full
 contract: docs/EXIT_CODES.md.
-Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and counts (any position, except on `ripr help --json`).
+Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
+verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
 ripr reads your changed code, imagines small bugs in it, and checks whether
 your tests would likely catch them. It does not run mutants or your tests and
@@ -77,14 +77,22 @@ pub(super) const HELP_ALL: &str = r#"ripr — complete command reference.
 
 Task-oriented overview: ripr --help
 Options for one command: ripr help <command>
-Machine catalog: ripr help --json  (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands
+Machine catalog: ripr help --json  (this route accepts no other arguments)
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
-                  mode, and change-point/finding counts; ripr pilot also prints a
+                  mode, scope, change-point/finding counts, per-phase timings,
+                  and one verdict line per finding naming its stage states and
+                  the first stage that is not yes; ripr pilot also prints a
                   per-stage timing table after a complete run. A -v/--verbose
                   token is always this global flag, never another flag's
-                  value.
+                  value. RIPR_VERBOSE=1 turns on the stderr diagnostics only,
+                  without editing argv and without changing stdout (unset,
+                  empty, 0 or false leave it off).
+
+Flag values: `--name value` and `--name=value` are the same on every command;
+tokens after a literal `--` are left as written. Switches take no value, so
+`--quiet=false` is refused: leave the switch out instead.
 
 Task map:
   Diagnose setup        ripr doctor
@@ -99,6 +107,7 @@ Task map:
 Setup:
   ripr doctor
   ripr capabilities [--language NAME] [--json | --markdown]
+  ripr completions <bash|zsh|fish|powershell>
   ripr init [--root PATH] [--ci github] [--mcp] [--agents TARGET] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--root PATH] [--json]
@@ -117,8 +126,8 @@ Analysis:
   ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|markdown|text|json] [--out PATH]
 
 Repair:
-  ripr repair [<item>] [--root PATH] [--base REF]
-  ripr continue [--attempt ID] [--root PATH]
+  ripr repair [<item>] [--root PATH] [--base REF] [--json]
+  ripr continue [--attempt ID] [--root PATH] [--json]
   ripr status [--attempt ID] [--root PATH] [--json]
 
 Editor & Agent:
@@ -143,7 +152,7 @@ Editor & Agent:
 
 PR & Review:
   ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
-  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check|--run-chain]
+  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--output-dir target/ripr/reports] [--check|--run-chain]
   ripr start-here [same options as first-pr]   [compatibility]
   ripr first-action [--root .] (--pr-guidance target/ripr/review/comments.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/first-useful-action.json]
   ripr review-comments --root . --base SHA --head SHA [--out target/ripr/review/comments.json]
@@ -154,14 +163,16 @@ PR & Review:
   ripr pr-ledger record --pr-number 123 --base SHA --head SHA (--gate target/ripr/reports/gate-decision.json|--baseline-delta target/ripr/reports/baseline-debt-delta.json|--zero-status target/ripr/reports/ripr-zero-status.json|--pr-guidance target/ripr/review/comments.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json) [--out target/ripr/reports/pr-evidence-ledger.json] [--out-jsonl .ripr/pr-evidence-ledger.jsonl]
   ripr pr-comments existing [--root .] [--raw target/ripr/review/existing-comments.raw.json|-] [--out target/ripr/review/existing-comments.json]
   ripr pr-comments plan --pr-guidance target/ripr/review/comments.json [--existing-comments target/ripr/review/existing-comments.json] [--mode off|plan|inline] [--out target/ripr/review/comment-publish-plan.json]
-  ripr pr-comments requests --pull-request N --head-sha SHA [--root .] [--plan target/ripr/review/comment-publish-plan.json] [--out-dir target/ripr/review/publish]
-  ripr pr-comments summary --pull-request N --head-sha SHA [--root .] [--pr-guidance target/ripr/review/comments.json] [--raw PATH|-] [--run-url URL] [--out-dir target/ripr/review/summary]
+  ripr pr-comments requests --pull-request N --head-sha SHA [--root .] [--plan target/ripr/review/comment-publish-plan.json] [--output-dir target/ripr/review/publish]
+  ripr pr-comments summary --pull-request N --head-sha SHA [--root .] [--pr-guidance target/ripr/review/comments.json] [--raw PATH|-] [--run-url URL] [--output-dir target/ripr/review/summary]
   ripr pr-review front-panel (--pr-guidance target/ripr/review/comments.json|--first-action target/ripr/reports/first-useful-action.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--assistant-health target/ripr/reports/assistant-loop-health.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/pr-review-front-panel.json]
   ripr coverage-grip frontier (--ledger target/ripr/reports/pr-evidence-ledger.json|--baseline-delta target/ripr/reports/baseline-debt-delta.json|--zero-status target/ripr/reports/ripr-zero-status.json) [--coverage target/ripr/reports/coverage-summary.json] [--out target/ripr/reports/coverage-grip-frontier.json]
   ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json [--out target/ripr/reports/test-oracle-assistant-proof.json]
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
 
 Policy & Gate:
+  ripr gate check --base REV [--head HEAD] [--mode acknowledgeable|visible-only|baseline-check|calibrated-gate] [--label LABEL] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
+  # one-command CI gate: review-comments then gate evaluate; exit 3 blocked, 2 could not complete
   ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--baseline PATH] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
   # acknowledgeable mode blocks eligible gaps unless the PR carries the configured waiver label (default: ripr-waive)
   # baseline-check and calibrated-gate modes require --baseline PATH (otherwise exit 2, config_error)

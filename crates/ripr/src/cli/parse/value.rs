@@ -7,7 +7,41 @@ pub(crate) fn expect_value<'a>(
 ) -> Result<&'a str, String> {
     args.get(idx)
         .map(|s| s.as_str())
-        .ok_or_else(|| format!("missing value for {flag}; pass a value right after it"))
+        .ok_or_else(|| missing_value(flag))
+}
+
+/// The refusal for a value flag with nothing after it. Parsers that read
+/// argv their own way (a following flag counts as a missing value) use it
+/// too, so every spelling of this refusal carries the typed code (#11979).
+pub(crate) fn missing_value(flag: &str) -> String {
+    let message = format!("missing value for {flag}; pass a value right after it");
+    // #11979: the typed code and flag travel to the JSON-requested boundary.
+    crate::cli::usage_refusal::note_missing_value(flag, &message);
+    message
+}
+
+/// The value of a path-taking flag, refused when it is empty or blank.
+///
+/// An empty path is almost always an unset shell variable (`--out "$DIR"`).
+/// Left alone it reaches the filesystem as the current directory or as a
+/// nameless file and fails far from the cause, or, for an output directory,
+/// writes into the working tree and exits 0.
+pub(crate) fn expect_path_value<'a>(
+    args: &'a [String],
+    idx: usize,
+    flag: &str,
+) -> Result<&'a str, String> {
+    let value = expect_value(args, idx, flag)?;
+    if value.trim().is_empty() {
+        // Typed like a missing value under a JSON request (#14859).
+        return Err(crate::cli::usage_refusal::empty_value(
+            flag,
+            &format!(
+                "{flag} requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)"
+            ),
+        ));
+    }
+    Ok(value)
 }
 
 /// Reconcile a `--root VALUE` occurrence against the root a command parser

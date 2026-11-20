@@ -141,3 +141,64 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (12)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (13)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (14)
+
+Reason:
+RIPR-SPEC-0001: head-only match-arm rows and their propagation sink name the arm's same-line result (#14420)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (15)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (16)
+
+Reason:
+RIPR-SPEC-0005 For inherent_receiver_operand_item_shadow, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

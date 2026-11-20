@@ -61,7 +61,8 @@ generic syntax reason.
   initializer and fails closed to the generic per-line probes.
 - The finding keeps its normal predicate-shaped classification and
   gains evidence: `binding_predicate_relation` names the binding, both
-  causal initializers, and the use line; when the initializer contains
+  causal initializers, the use line, and the changed `let` declaration
+  line (#12118); when the initializer contains
   an operation and the actual infection authority has not established its
   boundary input, `binding_predicate_value_unresolved` (a neutral
   disclosure prefix, deliberately outside the structured `limitation_*`
@@ -110,6 +111,11 @@ generic syntax reason.
   flips repair readiness.
 - A predicate line the diff itself changes keeps its own direct probe;
   the retarget never duplicates it.
+- Several changed bindings that are operands of the same comparison
+  (named in one `&&`/`||` term of the predicate line) retarget to it
+  once (#14132): the comparison keeps the probe the first changed
+  binding seeded. Changed bindings in different terms of one line
+  (`a < lo && c < hi`) keep their own probes.
 - Removed-only changed bindings do not retarget (base-side evidence per
   RIPR-SPEC-0151).
 

@@ -11,6 +11,7 @@ result means.
 | Inspect one change | [CLI first hour](QUICKSTART.md#cli-first-hour) | Run `ripr check`, choose the diff, and read the bounded next action. |
 | Try a small Rust example | [Your first focused Rust test](how-to/first-rust-test.md) | Create a small crate, inspect one boundary gap, run the focused test, and recheck the same production change. |
 | Understand a finding | [Static exposure model](STATIC_EXPOSURE_MODEL.md) · [Terminology](TERMINOLOGY.md) · [User text glossary](USER_TEXT_GLOSSARY.md) · [Finding triage](how-to/triage-a-finding.md) | How RIPR connects changed behavior, related tests, observations, and assertions — and where static analysis stops. |
+| Find out why ripr reported nothing or stopped | [Troubleshooting](TROUBLESHOOTING.md) | Match the line on your screen to its cause and fix; every quoted line is checked against the binary. |
 | Add one focused test | [Targeted test workflow](TARGETED_TEST_WORKFLOW.md) | Turn one supported gap into a focused test and compare before/after evidence. |
 | Try RIPR on one pull request | [First successful PR workflow](FIRST_PR_WORKFLOW.md) | Run one bounded adoption loop and retain reviewer-facing evidence. |
 | Work in VS Code | [Editor extension](EDITOR_EXTENSION.md) · [First run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) | Install the extension, inspect saved-workspace diagnostics, and complete one repair receipt. |
@@ -20,6 +21,8 @@ result means.
 | Hand work to a coding agent | [LLM operator guide](LLM_OPERATOR_GUIDE.md) · [Agent workflows](AGENT_WORKFLOWS.md) | Give an agent a bounded packet with evidence, edit limits, verification, and stop conditions. |
 | Configure RIPR or consume its output | [Configuration](CONFIGURATION.md) · [Output schema](OUTPUT_SCHEMA.md) · [Stability policy](SEMVER.md) | Repository policy, CLI and editor settings, JSON contracts, machine-readable states, and compatibility promises. |
 | Understand why you would want RIPR | [Why ripr](WHY_RIPR.md) | The problem, a checked example, and how it differs from coverage, mutation testing and formal verification. |
+| Switch from cargo-mutants | [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md) | Command, flag, config, CI and output map, and where the gaps are. |
+| See which mutations ripr reasons about | [Mutation operators ripr models](MUTATION_OPERATORS.md) | Per-operator, per-language matrix against cargo-mutants, mutmut and Stryker. |
 | Decide whether to adopt RIPR | [Proof and limits](PUBLIC_PROOF.md) | Scoreboard numbers with trends, mutation agreement, verdict-corpus rates, and where RIPR falls short. |
 | Check language and workflow maturity | [Support tiers](status/SUPPORT_TIERS.md) · [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md) | What is usable, preview, advisory, unavailable, or explicitly limited. |
 | Connect another client | [MCP workspace status](interop/mcp.md) · [Other LSP editors](interop/other-editors-lsp.md) · [Neovim LSP recipe](interop/neovim-lsp.md) | Read-only MCP status, Helix/Neovim/Zed setup, and a portable standard-LSP client path. |
@@ -43,11 +46,13 @@ alongside the report.
 
 ## Limits, recovery, and installation
 
+- [CLI reference](CLI_REFERENCE.md) — every command and option, generated from the binary's help.
 - [Exit codes](EXIT_CODES.md) — the three-value CLI exit contract and what each state means.
 - [Static limits](STATIC_LIMITS.md) — what syntax-first evidence could not safely infer, stated as part of the evidence.
 - [Repair attempt identity and recovery](REPAIR_ATTEMPT.md) — what a repair attempt is and how to recover its before/edit/after phases.
 - [Blocking readiness](BLOCKING_READINESS.md) — when an advisory RIPR gate may require acknowledgement or block CI.
 - [Install channels](INSTALL_CHANNELS.md) — every way to get `ripr`, observed against public registries, with their trade-offs.
+- [Windows](WINDOWS.md) — shells, paths, line endings, long paths and the editor on Windows.
 - [Server provisioning](SERVER_PROVISIONING.md) — extension-owned server installs, including pinned and offline paths.
 
 ## Contributing and repository operation

@@ -249,6 +249,43 @@ Updated:
 ## Pending — test_compared_with_non_literal_not_exact (20)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless test_compared_with_non_literal_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — test_compared_with_non_literal_not_exact (21)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless test_compared_with_non_literal_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — test_compared_with_non_literal_not_exact (22)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless test_compared_with_non_literal_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — test_compared_with_non_literal_not_exact (23)
+
+Reason:
 RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 
 Command:
@@ -258,3 +295,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — test_compared_with_non_literal_not_exact (24)
+
+Reason:
+RIPR-SPEC-0231 For test_compared_with_non_literal_not_exact, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless test_compared_with_non_literal_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`

@@ -19,14 +19,51 @@ fn run_ripr_in(
     args: &[&str],
     root: Option<&std::path::Path>,
 ) -> Result<std::process::Output, String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    run_program_in(env!("CARGO_BIN_EXE_ripr"), args, root)
+}
+
+/// The single process spawn point for this target (process-policy bound).
+fn run_program_in(
+    program: &str,
+    args: &[&str],
+    root: Option<&std::path::Path>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(program);
     command.args(args);
     if let Some(root) = root {
         command.current_dir(root);
     }
     command
         .output()
-        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+        .map_err(|error| format!("failed to run {program} {args:?}: {error}"))
+}
+
+/// Run `test` in a fresh Git repository root. Cargo runs this target from the
+/// package directory, which sits below the checkout's Git top level when built
+/// from the repository, and `init --ci` refuses a root below the top level
+/// (#15389); an adopter runs it at the repository root.
+fn in_git_root(
+    label: &str,
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-help-{label}-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let result = run_program_in("git", &["init", "-q"], Some(&root))
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git init failed: {output:?}"))
+            }
+        })
+        .and_then(|()| test(&root));
+    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+    result.and(cleanup)
 }
 
 #[test]
@@ -61,11 +98,17 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
             "provider {value:?}"
         );
     }
-    let gitlab = run_ripr(&["init", "--ci", "gitlab", "--dry-run", "--force"])?;
-    assert!(gitlab.status.success(), "{gitlab:?}");
-    let stdout = String::from_utf8_lossy(&gitlab.stdout);
-    assert!(stdout.contains(".gitlab-ci.yml"), "{stdout}");
-    assert!(stdout.contains("allow_failure: true"), "{stdout}");
+    in_git_root("init-gitlab", |root| {
+        let gitlab = run_ripr_in(
+            &["init", "--ci", "gitlab", "--dry-run", "--force"],
+            Some(root),
+        )?;
+        assert!(gitlab.status.success(), "{gitlab:?}");
+        let stdout = String::from_utf8_lossy(&gitlab.stdout);
+        assert!(stdout.contains(".gitlab-ci.yml"), "{stdout}");
+        assert!(stdout.contains("allow_failure: true"), "{stdout}");
+        Ok(())
+    })?;
     let missing = run_ripr(&["init", "--ci"])?;
     assert_eq!(missing.status.code(), Some(2));
     assert!(missing.stdout.is_empty());
@@ -78,16 +121,21 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
 
 #[test]
 fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String> {
-    let output = run_ripr(&["init", "--ci", "github", "--dry-run", "--force"])?;
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
-    assert!(stdout.contains("continue-on-error: true"), "{stdout}");
-    assert!(
-        stdout.contains("Rerun without --dry-run to apply."),
-        "{stdout}"
-    );
-    Ok(())
+    in_git_root("init-github", |root| {
+        let output = run_ripr_in(
+            &["init", "--ci", "github", "--dry-run", "--force"],
+            Some(root),
+        )?;
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
+        assert!(stdout.contains("continue-on-error: true"), "{stdout}");
+        assert!(
+            stdout.contains("Rerun without --dry-run to apply."),
+            "{stdout}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -852,6 +900,31 @@ fn group_help_preserves_explicit_errors_and_gate_flag_alias() -> Result<(), Stri
             assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
             assert_contains(args[0], &String::from_utf8_lossy(&output.stderr), error)?;
         }
+        // #14086: a gate flag typo is answered from the subcommand that
+        // parsed it. `gate evaluate` used to offer `gate check`'s `--base`,
+        // which it rejects, and `gate check` offered nothing.
+        for (args, suggestion) in [
+            (["gate", "check", "--bse", "x"], Some("--base")),
+            (["gate", "check", "--timeout", "5"], Some("--timeout-ms")),
+            (["gate", "check", "--out-m", "x"], Some("--out-md")),
+            (["gate", "check", "--pr-guidanc", "x"], None),
+            (["gate", "evaluate", "--mde", "x"], Some("--mode")),
+            (["gate", "evaluate", "--bse", "x"], None),
+            (["gate", "evaluate", "--hed", "x"], None),
+        ] {
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            match suggestion {
+                Some(flag) => assert_contains(
+                    "gate flag typo",
+                    &stderr,
+                    &format!("Did you mean `{flag}`?"),
+                )?,
+                None => assert!(!stderr.contains("Did you mean"), "{args:?}: {stderr}"),
+            }
+        }
         let alias = run_ripr_in(&["gate", "--pr-guidance"], Some(root))?;
         let explicit = run_ripr_in(&["gate", "evaluate", "--pr-guidance"], Some(root))?;
         assert_eq!(alias.status.code(), Some(2));
@@ -926,6 +999,61 @@ fn workflow_help_renders_one_workflow_with_bounded_sections() -> Result<(), Stri
         &rendered_help(&["help", "workflow", "adoption"])?,
         "Workflow: guided-adoption",
     )?;
+    Ok(())
+}
+
+/// A slip on one of `ripr help`'s own options, or a reach for a `workflow`
+/// command, is answered with the route that works. `help --al` used to be
+/// told to move the flag behind `check`, which has no such flag.
+#[test]
+fn help_route_typos_name_the_route_that_works() -> Result<(), String> {
+    for (args, expected) in [
+        (
+            &["help", "--al"][..],
+            "ripr: unknown help argument \"--al\". Did you mean `--all`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "--jsn"][..],
+            "ripr: unknown help argument \"--jsn\". Did you mean `--json`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "workflows"][..],
+            "ripr: unknown command \"workflows\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        (
+            &["workflow"][..],
+            "ripr: unknown command \"workflow\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        // Controls: a command typo and a top-level flag slip keep their own
+        // suggestions after `help`.
+        (
+            &["help", "chekc"][..],
+            "ripr: unknown command \"chekc\". Did you mean `check`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "--hlep"][..],
+            "ripr: unknown command \"--hlep\". Did you mean `--help`? Run `ripr --help`.",
+        ),
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            expected,
+            "{args:?}"
+        );
+    }
+    // The suggested routes themselves succeed.
+    for args in [
+        &["help", "--all"][..],
+        &["help", "--json"],
+        &["help", "workflow"],
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+        assert!(!output.stdout.is_empty(), "{args:?} printed nothing");
+    }
     Ok(())
 }
 

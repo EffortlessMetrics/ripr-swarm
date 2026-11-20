@@ -410,37 +410,6 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — rust_constructor_field_observation (2)
-
-Reason:
-RIPR-SPEC-0108: #1746 identity gate withholds Yes discriminator for unresolved caller chain (SPEC-0005 conservative diff-scoped principle); classification unchanged propagation_unknown
-
-Command:
-`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_constructor_field_observation (3)
-
-Reason:
-RIPR-SPEC-0108: withheld discriminator names actual linkage
-
-Command:
-`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_constructor_field_observation (4)
-
-Reason:
-RIPR-SPEC-0108: discriminate message follows delta-token confirmation; class unchanged
-
 ## Pending — rust_constructor_field_observation (33)
 
 Reason:
@@ -509,6 +478,89 @@ Updated:
 ## Pending — rust_constructor_field_observation (38)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (39)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (40)
+
+Reason:
+RIPR-SPEC-0162: the check digest states the analyzer limit once; a Why hint that the Analyzer limit line repeats word for word is dropped (#14308)
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (41)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (42)
+
+Reason:
+RIPR-SPEC-0108: #1746 identity gate withholds Yes discriminator for unresolved caller chain (SPEC-0005 conservative diff-scoped principle); classification unchanged propagation_unknown
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (43)
+
+Reason:
+RIPR-SPEC-0108: withheld discriminator names actual linkage
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (44)
+
+Reason:
+RIPR-SPEC-0108: discriminate message follows delta-token confirmation; class unchanged
+
+## Pending — rust_constructor_field_observation (45)
+
+Reason:
 RIPR-SPEC-0005 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 
 Command:
@@ -518,3 +570,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (46)
+
+Reason:
+RIPR-SPEC-0005 For rust_constructor_field_observation, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

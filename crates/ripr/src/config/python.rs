@@ -73,6 +73,7 @@ pub(crate) fn is_python_excluded_dir_everywhere(name: &str) -> bool {
 /// (`ExcludedEnvironment`) instead of silently vanishing from the run
 /// accounting. Environment, cache, and build subtrees are pruned at
 /// directory granularity and contribute no file count.
+#[cfg(any(test, feature = "lang-python"))]
 pub(crate) fn is_python_dir_pruned_from_repo_discovery(name: &str) -> bool {
     PYTHON_EXCLUDED_DIRS.contains(&name)
 }
@@ -124,6 +125,7 @@ pub(crate) fn is_declared_handwritten_python_path(declared: &[String], path: &Pa
 /// pruning an excluded-name directory: a declared hand-written file keeps
 /// its ancestor directories reachable so the file can be read and indexed
 /// (#7386).
+#[cfg(any(test, feature = "lang-python"))]
 pub(crate) fn declared_python_handwritten_under(declared: &[String], dir: &Path) -> bool {
     let mut prefix = crate::output::path::path_identity_key_on(dir, cfg!(windows), false);
     if !prefix.is_empty() && !prefix.ends_with('/') {
@@ -139,6 +141,62 @@ pub(crate) fn detect_python_project(root: &Path) -> bool {
         || PYTHON_SOURCE_DIR_MARKERS
             .iter()
             .any(|marker| dir_contains_python_source(&root.join(marker)))
+}
+
+/// Project-marker files that make a nested directory a Python package root.
+/// Narrower than [`PYTHON_PROJECT_MARKERS`]: `requirements.txt`, `tox.ini` and
+/// `noxfile.py` appear in docs and tooling directories that are not packages.
+const NESTED_PYTHON_PACKAGE_MARKERS: &[&str] =
+    &["pyproject.toml", "setup.py", "setup.cfg", "pytest.ini"];
+const NESTED_PYTHON_PACKAGE_MAX_DEPTH: usize = 3;
+const NESTED_PYTHON_PACKAGE_MAX_REPORTED: usize = 8;
+
+/// Python package roots below `root` (monorepo layout), as sorted
+/// root-relative paths. Bounded by depth and count; environment, cache and
+/// build directories are skipped, and a package root is not descended into.
+/// Empty when `root` itself is already a Python project, so the hint never
+/// competes with root detection. Presence-only: no file content is read.
+pub(super) fn nested_python_package_roots(root: &Path) -> Vec<std::path::PathBuf> {
+    if detect_python_project(root) {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    collect_nested_python_roots(root, Path::new(""), 1, &mut found);
+    found.sort();
+    found.truncate(NESTED_PYTHON_PACKAGE_MAX_REPORTED);
+    found
+}
+
+fn collect_nested_python_roots(
+    base: &Path,
+    relative: &Path,
+    depth: usize,
+    found: &mut Vec<std::path::PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(base.join(relative)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !file_type.is_dir() || name.starts_with('.') || is_python_excluded_dir_everywhere(name) {
+            continue;
+        }
+        let child = relative.join(name);
+        if NESTED_PYTHON_PACKAGE_MARKERS
+            .iter()
+            .any(|marker| base.join(&child).join(marker).is_file())
+        {
+            found.push(child);
+        } else if depth < NESTED_PYTHON_PACKAGE_MAX_DEPTH {
+            collect_nested_python_roots(base, &child, depth + 1, found);
+        }
+    }
 }
 
 /// Canonical root project-marker file name for a candidate name. Marker
@@ -550,6 +608,35 @@ mod tests {
         );
         write("src/visible.py")?;
         assert!(detect_python_project(&root));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn nested_python_package_roots_name_monorepo_packages_only() -> Result<(), String> {
+        let root = unique_test_root("nested-packages");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let write = |rel: &str| -> Result<(), String> {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().ok_or("no parent")?)
+                .map_err(|err| format!("create parent: {err}"))?;
+            std::fs::write(&path, "x = 1\n").map_err(|err| format!("write: {err}"))?;
+            Ok(())
+        };
+        write("services/b/pyproject.toml")?;
+        write("services/a/setup.py")?;
+        // Negative controls: environment dirs and non-package markers.
+        write("services/.venv/pyproject.toml")?;
+        write("venv/pyproject.toml")?;
+        write("docs/requirements.txt")?;
+        let found: Vec<String> = nested_python_package_roots(&root)
+            .iter()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(found, vec!["services/a", "services/b"]);
+        // A root that is itself a Python project reports no nested hint.
+        write("pyproject.toml")?;
+        assert!(nested_python_package_roots(&root).is_empty());
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }

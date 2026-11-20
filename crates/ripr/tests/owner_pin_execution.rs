@@ -596,7 +596,9 @@ fn owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle() -> Result<()
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert_eq!(2 + 2, 4);",
             false,
-            "strong",
+            // #14968: a literal-only assertion reads no value, so it supplies
+            // no oracle strength either.
+            "none",
         ),
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert!(weight(input) > 0);",
@@ -1509,13 +1511,27 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
     let test_file = "use super::*;\n#[test]\nfn checks() {\n    assert_eq!(weight(4), 12);\n}\n";
     let define = "macro_rules! define { ($name:ident ! ($($rest:tt)*)) => { macro_rules! $name { ($a:expr, $b:expr) => {{ let _ = (&$a, &$b); }}; } $($rest)* }; }";
     let wrap = "macro_rules! wrap { ($($tokens:tt)*) => { $($tokens)* }; }";
-    for (case, items, module, exposed, runtime_catches) in [
+    // httparse's `req!` shape (#14761): the wrapper forwards to its own
+    // second arm and asserts in its body, and a plain test sits between two
+    // of its calls. Its expansion binds nothing, so the plain test's
+    // `assert_eq!` is the standard one.
+    let recursive = "#[cfg(test)]\nmod tests {\n    use super::*;\n    macro_rules! case {\n        ($name:ident, $check:expr) => { case! { $name, $check, 1 } };\n        ($name:ident, $check:expr, $want:expr) => {\n            #[test]\n            fn $name() { assert_eq!($want, 1); $check; }\n        };\n    }\n    case! { first, assert_eq!(1, 1) }\n    #[test]\n    fn checks() {\n        assert_eq!(weight(4), 12);\n    }\n    case! { second, assert_eq!(2, 2) }\n}\n";
+    for (case, items, module, exposed, runtime_catches, tests) in [
         (
             "pass_through",
             format!("{wrap}\nfn _uses() {{ wrap!(assert_eq!(1, 1)); }}\n{inline_tests}"),
             None,
             false,
             true,
+            1,
+        ),
+        (
+            "recursive_asserting_wrapper",
+            recursive.to_string(),
+            None,
+            true,
+            true,
+            3,
         ),
         (
             "shadow_and_test_module_from_one_expansion",
@@ -1523,6 +1539,7 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
             Some(("tests.rs", test_file)),
             false,
             false,
+            1,
         ),
         (
             "no_implicit_prelude_hidden_in_arguments",
@@ -1532,6 +1549,7 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
             Some(("tests.rs", test_file)),
             false,
             false,
+            1,
         ),
     ] {
         let source = format!("{production}\n{items}\n");
@@ -1577,7 +1595,7 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
                 &runtime_source,
                 &modules,
                 &format!("wrapper runtime: {case}, wrong={wrong}"),
-                1,
+                tests,
                 wrong && runtime_catches,
             )?;
         }
@@ -2353,6 +2371,16 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
             "let_bound_results",
             "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit);\n        assert!(!miss);",
             true,
+        ),
+        (
+            "let_bound_results_named_in_messages",
+            "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            true,
+        ),
+        (
+            "let_bound_far_results_named_in_messages",
+            "let hit = gate(50);\n        let miss = gate(3);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            false,
         ),
         (
             "shadowed_owner",

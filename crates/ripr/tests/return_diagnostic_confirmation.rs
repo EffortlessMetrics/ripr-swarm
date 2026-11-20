@@ -868,6 +868,49 @@ fn returned_comparisons_preserve_unresolved_input_limits_after_shape_changes() -
 }
 
 #[test]
+fn a_readable_field_call_does_not_certify_another_calls_opaque_value() -> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-grid-flow/src/lib.rs.txt"
+    )
+    .replace(
+        "manifest.version < CURRENT - 2",
+        "CURRENT - 2 > manifest.version",
+    );
+    let diff =
+        include_str!("../../../fixtures/rust-verdict-corpus/cases/grid-flow-field-opaque.diff");
+    for (first, second, expected) in [
+        ("4", "lookup(5)", "infection_unknown"),
+        ("lookup(4)", "6", "infection_unknown"),
+        ("lookup(4)", "5", "exposed"),
+    ] {
+        let source = source
+            .replace("= lookup(4);", &format!("= {first};"))
+            .replace("= lookup(5);", &format!("= {second};"));
+        let report = check_report(&source, "", MANIFEST, diff)?;
+        let findings = report
+            .get("findings")
+            .and_then(|rows| rows.as_array())
+            .ok_or("missing comparison findings")?;
+        for family in ["predicate", "return_value"] {
+            let row = findings
+                .iter()
+                .find(|row| {
+                    row.pointer("/probe/family")
+                        .and_then(|value| value.as_str())
+                        == Some(family)
+                })
+                .ok_or_else(|| format!("missing {family} finding for {first}, {second}"))?;
+            if row.get("classification").and_then(|value| value.as_str()) != Some(expected) {
+                return Err(format!(
+                    "{first}, {second}: expected {family} to be {expected}: {row}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn direct_wording_observer_remains_exposed() -> Result<(), String> {
     let test = format!(
         "{}assert_eq!(default_check_description(), \"verifies catalog consistency\");\n}}\n",

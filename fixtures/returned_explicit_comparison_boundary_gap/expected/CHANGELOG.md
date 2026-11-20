@@ -208,6 +208,41 @@ Updated:
 ## Pending — returned_explicit_comparison_boundary_gap (17)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless returned_explicit_comparison_boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — returned_explicit_comparison_boundary_gap (18)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless returned_explicit_comparison_boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — returned_explicit_comparison_boundary_gap (19)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless returned_explicit_comparison_boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — returned_explicit_comparison_boundary_gap (20)
+
+Reason:
 RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 
 Command:
@@ -215,4 +250,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+- `expected/human.txt`
+
+## Pending — returned_explicit_comparison_boundary_gap (21)
+
+Reason:
+RIPR-SPEC-0108 For returned_explicit_comparison_boundary_gap, keep the repair advice aligned with the observed seam, owner and boundary.
+
+Command:
+`cargo xtask goldens bless returned_explicit_comparison_boundary_gap --reason "..."`
+
+Updated:
 - `expected/human.txt`

@@ -196,6 +196,8 @@ fn class_entries_for(
                 class_member: Some(entry.method_kind),
                 decorated: None,
                 instance_factory: false,
+                hops: 0,
+                cross_module: None,
             })
             .collect();
         entries.sort();

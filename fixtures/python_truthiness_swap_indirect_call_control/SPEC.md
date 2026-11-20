@@ -19,6 +19,13 @@ The finding stays `exposed`: the owner is mentioned other than as a direct
 call, so the rows do not cover every strong input and the swap rule keeps the
 existing verdict.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.py:python_preview:fc6faa73 -> exposed
+```
+
 ## Must Not
 
 Demote the finding to `weakly_exposed` while a strong test reaches the owner

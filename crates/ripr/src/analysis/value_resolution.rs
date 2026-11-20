@@ -348,49 +348,6 @@ impl ValueEnvFacts {
             bare_std_path_buf_imported: path_constructor_imports.path_buf,
         }
     }
-}
-
-/// Per-test, per-seam resolution environment. The expensive
-/// seam-independent scans live in [`ValueEnvFacts`]; each call-arg
-/// lookup is a `BTreeMap` lookup plus a small list scan.
-pub(crate) struct ValueEnv<'a> {
-    seam: &'a RepoSeam,
-    facts: &'a ValueEnvFacts,
-}
-
-impl<'a> ValueEnv<'a> {
-    pub(crate) fn new(seam: &'a RepoSeam, facts: &'a ValueEnvFacts) -> Self {
-        Self { seam, facts }
-    }
-
-    /// Resolve a single owner-call argument to one or more
-    /// `(value, ValueContext)` records. Empty vec means "could not
-    /// resolve" - caller leaves the arg as opaque (preserves the
-    /// existing `activation_unknown` classification semantics).
-    #[cfg(test)]
-    pub(crate) fn resolve(&self, arg: &str) -> Vec<(String, ValueContext)> {
-        let trimmed = arg.trim().trim_end_matches([',', ';']);
-        self.resolve_expr_at_position(
-            trimmed,
-            SourcePosition {
-                line: usize::MAX,
-                column: usize::MAX,
-            },
-            true,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn resolve_at(&self, arg: &str, call_line: usize) -> Vec<(String, ValueContext)> {
-        self.resolve_at_position(
-            arg,
-            SourcePosition {
-                line: call_line,
-                column: usize::MAX,
-            },
-        )
-    }
-
     pub(crate) fn resolve_at_call(
         &self,
         arg: &str,
@@ -422,6 +379,30 @@ impl<'a> ValueEnv<'a> {
             || self.field_assignment_is_invalidated(object, assignment.position, call_position)
     }
 
+    #[cfg(test)]
+    pub(crate) fn resolve_at(&self, arg: &str, call_line: usize) -> Vec<(String, ValueContext)> {
+        self.resolve_at_position(
+            arg,
+            SourcePosition {
+                line: call_line,
+                column: usize::MAX,
+            },
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve(&self, arg: &str) -> Vec<(String, ValueContext)> {
+        let trimmed = arg.trim().trim_end_matches([',', ';']);
+        self.resolve_expr_at_position(
+            trimmed,
+            SourcePosition {
+                line: usize::MAX,
+                column: usize::MAX,
+            },
+            true,
+        )
+    }
+
     fn resolve_at_position(
         &self,
         arg: &str,
@@ -446,7 +427,7 @@ impl<'a> ValueEnv<'a> {
         if let Some(inner) = unwrap_option_or_result(trimmed) {
             return self.resolve_identifier_or_literal_at(inner.as_str(), call_position);
         }
-        if let Some(inner) = unwrap_path_literal_constructor(trimmed, self.facts) {
+        if let Some(inner) = unwrap_path_literal_constructor(trimmed, self) {
             return self.resolve_identifier_or_literal_at(inner.as_str(), call_position);
         }
         self.resolve_identifier_or_literal_at(trimmed, call_position)
@@ -457,9 +438,6 @@ impl<'a> ValueEnv<'a> {
         expr: &str,
         call_position: SourcePosition,
     ) -> Vec<(String, ValueContext)> {
-        // If it parses as a literal, just emit it. Re-uses the upstream
-        // scalar_values shape implicitly: integers, floats, strings,
-        // chars, simple paths.
         if looks_like_literal(expr) {
             return vec![(expr.to_string(), ValueContext::FunctionArgument)];
         }
@@ -477,10 +455,9 @@ impl<'a> ValueEnv<'a> {
                 .collect();
         }
         if let Some((object, field)) = field_projection(expr)
-            && let Some(binding) = self.facts.struct_field_bindings.get(object)
+            && let Some(binding) = self.struct_field_bindings.get(object)
             && binding.position.at_or_before(call_position)
             && !self
-                .facts
                 .struct_field_invalidations
                 .get(object)
                 .is_some_and(|positions| {
@@ -496,19 +473,16 @@ impl<'a> ValueEnv<'a> {
             return Vec::new();
         }
 
-        // 2. Let binding.
-        if let Some(value) = self.facts.let_bindings.get(expr) {
+        if let Some(value) = self.let_bindings.get(expr) {
             return vec![(value.as_ref().to_owned(), ValueContext::FunctionArgument)];
         }
-        // 3. Rstest case (positional).
         if let Some(idx) = self
-            .facts
             .case_param_names
             .iter()
             .position(|n| n.as_ref() == expr)
         {
             let mut out = Vec::new();
-            for case in &self.facts.rstest_cases {
+            for case in &self.rstest_cases {
                 if let Some(value) = case.get(idx) {
                     out.push((value.as_ref().to_owned(), ValueContext::TableRow));
                 }
@@ -517,15 +491,13 @@ impl<'a> ValueEnv<'a> {
                 return out;
             }
         }
-        // 4. Table-row binding.
-        if let Some(values) = self.facts.table_bindings.get(expr) {
+        if let Some(values) = self.table_bindings.get(expr) {
             return values
                 .iter()
                 .map(|v| (v.as_ref().to_owned(), ValueContext::TableRow))
                 .collect();
         }
-        // 5. Same-file const/static.
-        if let Some(value) = self.facts.module_constants.get(expr) {
+        if let Some(value) = self.module_constants.get(expr) {
             return vec![(value.as_ref().to_owned(), ValueContext::FunctionArgument)];
         }
         Vec::new()
@@ -538,7 +510,6 @@ impl<'a> ValueEnv<'a> {
         call_position: SourcePosition,
     ) -> Option<&FieldAssignmentBinding> {
         let local_binding = self
-            .facts
             .local_binding_positions
             .get(object)?
             .iter()
@@ -546,7 +517,6 @@ impl<'a> ValueEnv<'a> {
             .filter(|position| position.at_or_before(call_position))
             .max_by_key(|position| (position.line, position.column))?;
         let assignment = self
-            .facts
             .field_assignments
             .get(object)?
             .get(field)?
@@ -565,8 +535,7 @@ impl<'a> ValueEnv<'a> {
         assignment_position: SourcePosition,
         call_position: SourcePosition,
     ) -> bool {
-        self.facts
-            .field_assignment_invalidations
+        self.field_assignment_invalidations
             .get(object)
             .is_some_and(|positions| {
                 positions.iter().any(|position| {
@@ -574,6 +543,56 @@ impl<'a> ValueEnv<'a> {
                         && position.at_or_before(call_position)
                 })
             })
+    }
+}
+
+/// Per-test, per-seam resolution environment. The expensive
+/// seam-independent scans live in [`ValueEnvFacts`]; each call-arg
+/// lookup is a `BTreeMap` lookup plus a small list scan.
+pub(crate) struct ValueEnv<'a> {
+    seam: &'a RepoSeam,
+    facts: &'a ValueEnvFacts,
+}
+
+impl<'a> ValueEnv<'a> {
+    pub(crate) fn new(seam: &'a RepoSeam, facts: &'a ValueEnvFacts) -> Self {
+        Self { seam, facts }
+    }
+
+    /// Resolve a single owner-call argument to one or more
+    /// `(value, ValueContext)` records. Empty vec means "could not
+    /// resolve" - caller leaves the arg as opaque (preserves the
+    /// existing `activation_unknown` classification semantics).
+    #[cfg(test)]
+    pub(crate) fn resolve(&self, arg: &str) -> Vec<(String, ValueContext)> {
+        self.facts.resolve(arg)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve_at(&self, arg: &str, call_line: usize) -> Vec<(String, ValueContext)> {
+        self.facts.resolve_at(arg, call_line)
+    }
+
+    pub(crate) fn resolve_at_call(
+        &self,
+        arg: &str,
+        call_line: usize,
+        call_name: &str,
+        call_text: &str,
+    ) -> Vec<(String, ValueContext)> {
+        self.facts
+            .resolve_at_call(arg, call_line, call_name, call_text)
+    }
+
+    pub(crate) fn field_assignment_value_unresolved_at_call(
+        &self,
+        arg: &str,
+        call_line: usize,
+        call_name: &str,
+        call_text: &str,
+    ) -> bool {
+        self.facts
+            .field_assignment_value_unresolved_at_call(arg, call_line, call_name, call_text)
     }
 
     /// Builder-method facts for the test body. The method name must
@@ -1663,12 +1682,21 @@ fn extract_rstest_cases(test: &TestSummary) -> (Vec<Vec<String>>, Vec<String>) {
 fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnParam>) {
     let mut cases: Vec<Vec<String>> = Vec::new();
     let mut is_rstest = false;
+    let mut test_case_rows: Vec<Vec<String>> = Vec::new();
+    let mut is_test_case = false;
     for attr in &test.attrs {
         if attr_matches_name_or_call(attr, "rstest") {
             is_rstest = true;
             continue;
         }
-        if let Some(args) = attr_call_args(attr, "case") {
+        if let Some(args) = test_case_attr_args(attr) {
+            is_test_case = true;
+            if let Some(row) = test_case_row_inputs(args) {
+                test_case_rows.push(row);
+            }
+            continue;
+        }
+        if let Some(args) = rstest_case_attr_args(attr) {
             // `#[case]` without args - no scalar values to capture.
             if args.is_empty() {
                 continue;
@@ -1677,14 +1705,42 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
             cases.push(split_top_level(args));
         }
     }
+    if is_test_case {
+        // A function that mixes `test_case` rows with rstest rows has no
+        // single binding rule, so it binds nothing.
+        if is_rstest || !cases.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        // A `#[should_panic]` function passes when its checks fail, and an
+        // `#[ignore]` one does not run: no row input reaches a check.
+        if test.attrs.iter().any(|attr| {
+            let attr = attr.trim_start();
+            attr.starts_with("#[should_panic") || attr.starts_with("#[ignore")
+        }) {
+            return (Vec::new(), Vec::new());
+        }
+        // `test_case` fills every parameter from the row, positionally; a
+        // row whose cell count differs from the parameter count cannot be
+        // aligned and binds nothing (the readable rows still do, since each
+        // row is its own generated test).
+        let params = extract_fn_params(&test.body);
+        let rows = test_case_rows
+            .into_iter()
+            .filter(|row| row.len() == params.len())
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        return (rows, params);
+    }
     if !is_rstest && cases.is_empty() {
         return (Vec::new(), Vec::new());
     }
     // rstest binds case values positionally to the `#[case]` parameters
     // only; the others are fixtures. Without any `#[case]` marker every
     // parameter counts, as before #4601. (Rows written inside the legacy
-    // `#[rstest(a, case(..))]` attribute and named `#[case::name(..)]`
-    // rows are not parsed, so they bind nothing.)
+    // `#[rstest(a, case(..))]` attribute are not parsed, so they bind
+    // nothing; named `#[case::name(..)]` rows bind like plain ones.)
     let params = extract_fn_params(&test.body);
     let params = if params.iter().any(|param| param.is_case) {
         params.into_iter().filter(|param| param.is_case).collect()
@@ -1721,7 +1777,7 @@ fn test_case_bound_context(test: &TestSummary, ident: &str) -> Option<(Vec<Vec<S
     Some((cases, position))
 }
 
-/// Number of rstest `#[case(..)]` rows on `test`.
+/// Number of rstest `#[case(..)]` / `#[case::name(..)]` rows on `test`.
 pub(crate) fn rstest_case_row_count(test: &TestSummary) -> usize {
     let (cases, _) = extract_rstest_case_params(test);
     cases.len()
@@ -1759,6 +1815,113 @@ pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<S
         .collect()
 }
 
+/// The argument text of a `#[test_case(..)]` row from the `test_case` crate,
+/// spelled `test_case`, `test_case::test_case` or `::test_case::test_case`.
+fn test_case_attr_args(attr: &str) -> Option<&str> {
+    let inner = attr_inner(attr)?;
+    let open = inner.find('(')?;
+    let path = inner[..open]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let path = path.strip_prefix("::").unwrap_or(&path);
+    if path != "test_case" && path != "test_case::test_case" {
+        return None;
+    }
+    inner[open + 1..].strip_suffix(')').map(str::trim)
+}
+
+/// The input cells of one `test_case` row: the comma-separated arguments
+/// before its top-level `=> expectation` or `; "name"` suffix. `None` when the
+/// row is unbalanced, has no arguments, its expectation or name marks the
+/// generated test ignored (`=> ignore ..`, `inconclusive`), since an ignored
+/// row's inputs never run, or its expectation is anything but one plain
+/// literal (`=> panics`, `matches`, `with`, `using`, `it`). Commas, `=>` and `;` inside strings, chars or
+/// brackets do not split.
+fn test_case_row_inputs(args: &str) -> Option<Vec<String>> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut previous = '\0';
+    let mut cells = Vec::new();
+    let mut start = 0usize;
+    // The inputs end at the one top-level `=>` or, without one, at the
+    // `;` that starts the name; the name starts at the first top-level `;`
+    // after either. Both are found outside strings and brackets.
+    let mut arrow: Option<usize> = None;
+    let mut semicolon: Option<usize> = None;
+    for (at, character) in args.char_indices() {
+        if let Some(open) = quote {
+            if character == open && previous != '\\' {
+                quote = None;
+            }
+            previous = if previous == '\\' { '\0' } else { character };
+            continue;
+        }
+        match character {
+            '"' | '\'' => quote = Some(character),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 && arrow.is_none() => {
+                cells.push(args[start..at].trim().to_string());
+                start = at + 1;
+            }
+            '>' if depth == 0 && previous == '=' => {
+                if arrow.is_some() {
+                    return None;
+                }
+                arrow = Some(at - 1);
+            }
+            ';' if depth == 0 => {
+                semicolon = Some(at);
+                break;
+            }
+            _ => {}
+        }
+        previous = character;
+    }
+    if quote.is_some() {
+        return None;
+    }
+    let end = arrow.or(semicolon).unwrap_or(args.len());
+    let suffix = &args[end..];
+    if suffix
+        .split(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .any(|word| word == "ignore" || word == "inconclusive")
+    {
+        return None;
+    }
+    // Only a plain `=> literal` expectation keeps the body's own checks
+    // meaning what they say. `=> panics` passes exactly when the body fails,
+    // and `matches`/`with`/`using`/`it` hand the result to other code, so
+    // such a row binds nothing.
+    if let Some(arrow) = arrow {
+        let expectation = args[arrow + 2..semicolon.unwrap_or(args.len())].trim();
+        if !is_plain_row_expectation(expectation) {
+            return None;
+        }
+    }
+    cells.push(args[start..end].trim().to_string());
+    if cells.iter().any(String::is_empty) {
+        return None;
+    }
+    Some(cells)
+}
+
+/// A `test_case` expectation that is one plain literal: a boolean, a number
+/// (optionally negated, with a suffix) or a string with no quote or escape.
+fn is_plain_row_expectation(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    let number = digits.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+    let quoted = text.len() >= 2
+        && text.starts_with('"')
+        && text.ends_with('"')
+        && !text[1..text.len() - 1].contains(['"', '\\']);
+    number || quoted || text == "true" || text == "false"
+}
+
 fn attr_matches_name_or_call(attr: &str, name: &str) -> bool {
     let Some(inner) = attr_inner(attr) else {
         return false;
@@ -1773,6 +1936,31 @@ fn attr_call_args<'a>(attr: &'a str, name: &str) -> Option<&'a str> {
     let inner = attr_inner(attr)?;
     let rest = inner.strip_prefix(name)?.trim_start();
     let args = rest.strip_prefix('(')?.strip_suffix(')')?.trim();
+    Some(args)
+}
+
+/// Arguments of an rstest case row: `#[case(..)]` or its named form
+/// `#[case::description(..)]`, which rstest documents for readable test
+/// names and which carries the same positional row.
+fn rstest_case_attr_args(attr: &str) -> Option<&str> {
+    if let Some(args) = attr_call_args(attr, "case") {
+        return Some(args);
+    }
+    let inner = attr_inner(attr)?;
+    let open = inner.find('(')?;
+    // A path may be spaced (`case :: equal`), as the syntax reader accepts.
+    let path = inner[..open]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let description = path.strip_prefix("case::")?;
+    let identifier = description.strip_prefix("r#").unwrap_or(description);
+    let mut chars = identifier.chars();
+    let starts = chars.next().is_some_and(|c| c == '_' || c.is_alphabetic());
+    if !starts || !chars.all(|c| c == '_' || c.is_alphanumeric()) {
+        return None;
+    }
+    let args = inner[open..].strip_prefix('(')?.strip_suffix(')')?.trim();
     Some(args)
 }
 

@@ -14,6 +14,14 @@ Spec: RIPR-SPEC-0228
 
 The finding stays `exposed`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:call_deletion:3c28bb05 -> exposed
+probe:src_lib.rs:side_effect:fe1fff37 -> exposed
+```
+
 ## Must Not
 
 Demote an exact collection pin.

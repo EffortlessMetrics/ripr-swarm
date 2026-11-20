@@ -179,6 +179,21 @@ pub(crate) fn create_output_dir(path: &Path, relocate_flag: &str) -> Result<(), 
 
 fn create_output_dir_error(path: &Path, err: &io::Error, relocate_flag: &str) -> String {
     let message = format!("create {} failed: {err}", path.display());
+    // The flag names a directory; a file in the way is a wrong flag value,
+    // not an OS mystery, so say so instead of `File exists (os error 17)`
+    // (#14313).
+    if err.kind() == io::ErrorKind::AlreadyExists {
+        return format!(
+            "{relocate_flag} {} is an existing file, but {relocate_flag} names the directory the artifacts are written into; pass a directory path (new or existing) with {relocate_flag} PATH",
+            crate::output::path::human_path(path)
+        );
+    }
+    if err.kind() == io::ErrorKind::NotADirectory {
+        return format!(
+            "{relocate_flag} {} cannot be created because part of that path is a file, not a directory; pass a directory path with {relocate_flag} PATH",
+            crate::output::path::human_path(path)
+        );
+    }
     if is_unwritable_output_dir(err) {
         format!("{message}; write elsewhere with {relocate_flag} PATH")
     } else {
@@ -503,7 +518,7 @@ mod output_dir_tests {
     use crate::testing::unwritable_output::OutputDirFixture;
 
     const PILOT_HINT: &str = "write elsewhere with --out PATH";
-    const FIRST_PR_HINT: &str = "write elsewhere with --out-dir PATH";
+    const FIRST_PR_HINT: &str = "write elsewhere with --output-dir PATH";
 
     #[test]
     fn permission_denied_names_the_relocate_flag() {
@@ -520,26 +535,29 @@ mod output_dir_tests {
     #[test]
     fn read_only_filesystem_names_the_relocate_flag() {
         let err = io::Error::new(io::ErrorKind::ReadOnlyFilesystem, "Read-only file system");
-        let message = create_output_dir_error(Path::new("target/ripr/reports"), &err, "--out-dir");
+        let message =
+            create_output_dir_error(Path::new("target/ripr/reports"), &err, "--output-dir");
         assert!(message.contains(FIRST_PR_HINT), "{message}");
         assert!(!message.contains(PILOT_HINT), "{message}");
     }
 
     #[test]
-    fn already_exists_does_not_name_the_relocate_flag() {
+    fn already_exists_says_the_flag_names_a_directory() {
         let err = io::Error::new(io::ErrorKind::AlreadyExists, "File exists");
         let message = create_output_dir_error(Path::new("target/ripr/pilot"), &err, "--out");
-        assert!(
-            message.contains("create target/ripr/pilot failed: File exists"),
-            "{message}"
+        assert_eq!(
+            message,
+            "--out target/ripr/pilot is an existing file, but --out names the directory the artifacts are written into; pass a directory path (new or existing) with --out PATH"
         );
+        assert!(!message.contains("os error"), "{message}");
         assert!(!message.contains("write elsewhere"), "{message}");
     }
 
     #[test]
     fn not_a_directory_does_not_name_the_relocate_flag() {
         let err = io::Error::new(io::ErrorKind::NotADirectory, "Not a directory");
-        let message = create_output_dir_error(Path::new("target/ripr/reports"), &err, "--out-dir");
+        let message =
+            create_output_dir_error(Path::new("target/ripr/reports"), &err, "--output-dir");
         assert!(!message.contains("write elsewhere"), "{message}");
     }
 
@@ -624,16 +642,19 @@ mod output_dir_tests {
     }
 
     #[test]
-    fn occupying_file_create_does_not_name_the_flag() -> Result<(), String> {
+    fn occupying_file_is_a_wrong_flag_value_not_an_unwritable_tree() -> Result<(), String> {
         let env = OutputDirFixture::occupying_file("helper-file", "pilot")?;
         let error = match create_output_dir(&env.target, "--out") {
             Err(error) => error,
             Ok(()) => return Err("file path must fail".to_string()),
         };
+        // A file in the way says the flag names a directory (#14313), with
+        // no raw `os error` tail.
         assert!(
-            error.contains(&format!("create {} failed:", env.target.display())),
+            error.contains("is an existing file, but --out names the directory"),
             "{error}"
         );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying the path is not a not-writable tree: {error}"

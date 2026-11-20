@@ -91,6 +91,7 @@ fn session_over(snapshot: super::workspace::Snapshot) -> WorkspaceSession {
     WorkspaceSession {
         last_good: Some(Arc::new(snapshot)),
         desired_source: RefreshSource::Worktree,
+        desired_source_defaulted: false,
         ..Default::default()
     }
 }
@@ -875,6 +876,7 @@ fn withheld_verdict_keeps_an_earlier_finding_level_reason() {
         fix_site: None,
         ineligibility: Some("missing_discriminator"),
         seam_detail: None,
+        proposed_new_test: None,
     }
     .with_seam_verdict(Some(&withheld));
     assert_eq!(not_ready.ineligibility, Some("missing_discriminator"));

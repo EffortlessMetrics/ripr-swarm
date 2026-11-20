@@ -24,7 +24,7 @@ remain available under [Package and server details](#package-and-server-details)
    workspace state, not unsaved editor buffers.
 3. Run `ripr: Show Status`. It names the selected workspace root, server source,
    analysis state, enabled languages, and the next safe action.
-4. Let analysis refresh, or run `ripr: Refresh Diagnostics`. Use
+4. Let analysis refresh, or run `ripr: Refresh Full Analysis`. Use
    `ripr: Restart Server` after changing server or startup settings.
 5. Open Problems and hover a RIPR diagnostic to inspect the changed behavior,
    related test, missing discriminator, or static limitation.
@@ -88,6 +88,19 @@ Open VSX extension:
 The extension is a universal VSIX preview client. It does not yet publish
 platform-specific VSIXs with bundled native binaries.
 
+### Activation
+
+The extension starts when a Rust, TypeScript, JavaScript or Python file opens,
+when one of its commands runs, or when a workspace folder root holds a project
+marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
+(`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
+`tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
+list and the markers the extension checks before starting analysis are the
+same set.
+
+When `ripr.server.version` is empty, the expected server version is the
+extension's own version from its manifest.
+
 ### Server Resolution
 
 On activation, the extension resolves the server in this order and records the
@@ -97,7 +110,7 @@ selected source in the `ripr` output channel:
 1. ripr.server.path
 2. bundled server binary, if present
 3. downloaded cached server binary
-4. ripr on PATH, when ripr.server.version is empty (before any download)
+4. ripr on PATH, when ripr.server.version is empty and its version is not older than the expected server version (before any download)
 5. verified first-run download from GitHub Releases
 6. ripr on PATH, when ripr.server.version is set or the download failed
 7. actionable error
@@ -152,6 +165,12 @@ separate supply-chain boundary.
 ## Settings
 
 - `ripr.server.path`: explicit path to the `ripr` executable. Empty by default.
+  Use the full path; a leading `~` means your home directory (for example
+  `~/.cargo/bin/ripr`). A relative path such as `./target/debug/ripr` is
+  refused, because it would not be resolved against the workspace folder. On
+  Windows the full path starts with a drive letter, a colon and a separator,
+  or with a UNC root; `C:ripr.exe` and `\tools\ripr.exe` are refused the same way. A
+  bare command name is looked up on `PATH`.
 - `ripr.enabled`: enables saved-workspace diagnostics, hovers, status, and code
   actions. Defaults to `true`; set it to `false` to hide the main status-bar
   item and skip starting the language server. `ripr: Show Status` still names
@@ -162,8 +181,11 @@ separate supply-chain boundary.
   needed. Defaults to `true`.
 - `ripr.server.version`: pinned server version. Empty means match the extension
   version.
-- `ripr.server.downloadBaseUrl`: override the manifest base URL for internal
-  mirrors.
+- `ripr.server.downloadBaseUrl`: the `https://` address of the folder that
+  holds the ripr release files, for an internal mirror. Give the folder, not
+  the manifest file. Empty uses GitHub Releases. A value that is not a plain
+  `https://` folder address skips the managed download, and the
+  unavailable-server message names the setting and what is wrong with it.
 - `ripr.check.mode`: preferred editor check mode for LSP diagnostics and
   context commands. Defaults to `draft`.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.
@@ -207,7 +229,7 @@ place to check when no diagnostics appear.
 
 - disabled by `ripr.enabled = false` (main status-bar item hidden; `ripr: Show Status` still names it)
 - workspace unresolved (main status-bar item stays visible as `ripr: open workspace`)
-- server unavailable (main status-bar item hidden; the missing-server warning and `ripr: Show Status` still name it)
+- server unavailable (main status-bar item stays visible as `ripr: server missing`; clicking it runs `ripr: Show Status`)
 - analysis queued
 - analysis running
 - analysis complete (ripr-flagged changes present)
@@ -297,13 +319,20 @@ quieter.
 
 ## Commands
 
+The `ripr: Get Started` walkthrough (Command Palette, `Welcome: Open
+Walkthrough...`) covers trusting the workspace, opening a Rust file, checking
+that the server started with `ripr: Diagnose Setup`, reading the first
+finding, and acting on it.
+
 - `ripr: Restart Server`
-- `ripr: Refresh Diagnostics`
+- `ripr: Refresh Full Analysis`
 - `ripr: Select Workspace Root`
 - `ripr: Show Output`
 - `ripr: Show Status`
+- `ripr: Show Repair Attempt Status`
 - `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
+- `ripr: Start or Continue Repair`
 - `ripr: Copy Current Repair Packet`
 - `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`
@@ -330,7 +359,6 @@ quieter.
 - `ripr: Open Report`
 - `ripr: Show Main Analysis Limit`
 - `ripr: Show Result Record Status`
-- `ripr: Show Repair Attempt Status`
 - `ripr: Copy Result Record Command (Result Record Status)`
 - `ripr: Open Repair Attempt History`
 - `ripr: Show Repair Route Summary`
@@ -351,8 +379,8 @@ without re-running workspace analysis.
 ### Start Current Repair
 
 The `ripr: Start Current Repair` command is editor-side orchestration over the
-current projected gap. It selects the current or nearest `ripr` gap diagnostic,
-asks the LSP for the existing code actions at that diagnostic range, and runs
+current projected gap. It selects the `ripr` gap or seam diagnostic that
+contains the cursor, or else the nearest one, asks the LSP for the existing code actions at that diagnostic range, and runs
 one of those already-bounded actions. It does not read report files, parse hover
 text, rerun hidden analysis, generate tests, edit source, or change gate
 authority.
@@ -360,8 +388,12 @@ authority.
 When a current repair is available, the command offers the same actions exposed
 on the diagnostic: copy the first repair packet, copy the gap repair packet,
 open the best related test, copy the verify command, copy the receipt command,
-or copy a static-limit note. If only refresh/setup actions are available, the
-command reports that no current bounded repair action is available.
+or copy a static-limit note. When the server lists the start (or the repair
+packet) disabled, the command shows the server's reason instead. For example,
+while the production change is uncommitted it names the commit step to run
+first (#13636). If only refresh/setup actions are available and the server names
+no reason, the command reports that no current bounded repair action is
+available.
 
 ### Actionable Gap Queue Actions
 
@@ -422,7 +454,9 @@ server can provide seam-aware code actions:
 
 The repair-start, targeted-test, assertion, and related-test actions are
 conditional. `Start repair: copy repair command` is shown only when
-`ripr agent repair` would accept the seam: it passes the fail-closed
+`ripr agent repair` would accept the seam (while tracked source files are
+uncommitted it is listed disabled with the commit command to run first,
+#13636): it passes the fail-closed
 repair-packet flip (RIPR-SPEC-0087 §8) and its recommended test file is a test
 surface, or is the seam's own source file with exactly one governed inline
 `#[cfg(test)]` module that the repair is confined to. Any other seam (for
@@ -521,6 +555,12 @@ instead reads
 Download, HTTP, checksum, and manifest failures use diagnostic/retry
 guidance instead of `cargo install ripr`.
 
+When the download never reached its host (no DNS answer, a refused or dropped
+connection, or the 30-second fetch timeout), the message says so and names the
+offline route: check the network connection or proxy and retry, or set
+`ripr.server.path` to a `ripr` binary already on the machine
+(`ripr.server.downloadBaseUrl` for a mirror).
+
 Actions depend on the resolution failure kind.
 
 Missing binary:
@@ -590,6 +630,15 @@ the refresh duration, total diagnostic count, finding count, seam diagnostic
 count, published file count, and cleared file count. If a newer refresh
 supersedes an older one, the older result is not published.
 
+On Linux, the server rereads a file on a network or FUSE mount (NFS, SMB/CIFS,
+sshfs and similar) every time it compares the file with the saved disk copy,
+because that file's timestamps come from another machine's clock and can't
+show a change reliably (#12170). Windows always rereads the file, so nothing
+there can lag. On macOS and BSD the server can't yet tell a network mount from
+a local disk, so it uses the same local-clock check for both. If a workspace
+on a network mount there is edited from another machine, a diagnostic can lag
+until the file is saved again or `ripr.refresh` runs.
+
 Refresh failures clear previously published diagnostics and log a warning with
 the failure reason. Normal refreshes and one-off failures do not show user-facing
 popups; the output stream is the intended place to inspect refresh state.
@@ -614,9 +663,10 @@ LSP diagnostics include a stable JSON `data` payload for editor commands:
 }
 ```
 
-Diagnostics remain advisory. `exposed` and weak or missing exposure
-findings render as warnings; `propagation_unknown` and `static_unknown`
-are informational.
+Diagnostics remain advisory. By default, `weakly_exposed`,
+`reachable_unrevealed`, `no_static_path` and `infection_unknown` findings
+render as warnings; `exposed`, `propagation_unknown` and `static_unknown` are
+informational.
 
 ## Hover Content
 

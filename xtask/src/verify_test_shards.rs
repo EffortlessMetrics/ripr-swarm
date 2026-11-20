@@ -29,6 +29,12 @@
 //! unpartitioned step retained, so consumers of the `<artifact>-nextest-<attempt>`
 //! evidence read the same shape, plus `shards-summary.txt`. Any problem is a
 //! failure; a missing file is a failure, never a pass.
+//!
+//! The default expectation is the required shards' command. `--all-features`
+//! opts into the Test Analytics variant (#12916): the same hash partitions and
+//! `ci` profile, with the `--all-features` selection that lane has always run.
+//! The flag changes only the expected `command` receipt (and its combined
+//! echo); every other conservation check is unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -43,6 +49,7 @@ struct Options {
     run_id: String,
     shards: u32,
     out: PathBuf,
+    all_features: bool,
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
@@ -82,8 +89,13 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut values: BTreeMap<&str, String> = BTreeMap::new();
+    let mut all_features = false;
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
+        if flag == "--all-features" {
+            all_features = true;
+            continue;
+        }
         let name = match flag.as_str() {
             "--dir" => "dir",
             "--artifact" => "artifact",
@@ -127,6 +139,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         run_id: take("run-id")?,
         shards,
         out: PathBuf::from(take("out")?),
+        all_features,
     })
 }
 
@@ -154,10 +167,11 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
     let mut first_environment = String::new();
     let mut first_dir = None;
     let mut used_attempts = BTreeSet::new();
+    let singleton = singleton_shard(options);
 
     for shard in 1..=options.shards {
         let tag = format!("shard {shard}");
-        let (dir, shard_attempt) = match select_shard_dir(options, shard) {
+        let (dir, shard_attempt) = match select_shard_dir(options, shard, &singleton) {
             Ok(Some(selected)) => selected,
             Ok(None) => {
                 problems.push(format!(
@@ -309,7 +323,15 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
 /// attempts, or name a future attempt, are not evidence. Eligible numeric
 /// suffixes must use canonical decimal spelling: aliases would make selection
 /// depend on directory enumeration order or permit fallback past newer evidence.
-fn select_shard_dir(options: &Options, shard: u32) -> Result<Option<(PathBuf, u32)>, String> {
+fn select_shard_dir(
+    options: &Options,
+    shard: u32,
+    singleton: &Result<Option<(u32, u32)>, String>,
+) -> Result<Option<(PathBuf, u32)>, String> {
+    if let Some((observed_shard, attempt)) = singleton.as_ref().map_err(Clone::clone)? {
+        return Ok((*observed_shard == shard).then(|| (options.dir.clone(), *attempt)));
+    }
+
     let Ok(current) = options.attempt.parse::<u32>() else {
         return Ok(None);
     };
@@ -345,6 +367,95 @@ fn select_shard_dir(options: &Options, shard: u32) -> Result<Option<(PathBuf, u3
         }
     }
     Ok(best)
+}
+
+/// The pinned download action extracts a single pattern match directly into
+/// `--dir`, including any archive-internal nesting. Its artifact name is then
+/// unavailable: the workflow download filter owns that prefix boundary. Never
+/// reinterpret an artifact-named child as flat, or combine the two layouts.
+/// The receipt supplies only discovery identity; all ordinary checks below
+/// still validate its context, status, inputs, XML and complete partition cover.
+fn singleton_shard(options: &Options) -> Result<Option<(u32, u32)>, String> {
+    let Ok(entries) = fs::read_dir(&options.dir) else {
+        return Ok(None);
+    };
+    let mut contexts = Vec::new();
+    let mut named = false;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("cannot inspect artifact layout: {err}"))?;
+        let path = entry.path();
+        if path.is_dir()
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .contains("-nextest-shard-")
+        {
+            named = true;
+        } else if path.is_dir() {
+            find_files(&path, "run-context.txt", &mut contexts);
+        } else if entry.file_name() == "run-context.txt" {
+            contexts.push(path);
+        }
+    }
+    if contexts.is_empty() {
+        return Ok(None);
+    }
+    if named {
+        return Err("mixed singleton and artifact-named shard layouts".to_string());
+    }
+    let [context_path] = contexts.as_slice() else {
+        return Err(format!(
+            "singleton layout has {} run contexts",
+            contexts.len()
+        ));
+    };
+    let context = fs::read_to_string(context_path)
+        .map_err(|err| format!("cannot read singleton run context: {err}"))?;
+    let identity = |key: &str| -> Result<&str, String> {
+        let values: Vec<_> = context
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .filter(|(name, _)| name.trim() == key)
+            .collect();
+        match values.as_slice() {
+            [(name, value)] if *name == key => Ok(*value),
+            _ => Err(format!(
+                "singleton run context needs one canonical `{key}` assignment"
+            )),
+        }
+    };
+    let positive = |value: &str| -> Result<u32, String> {
+        match value.parse::<u32>() {
+            Ok(value_number) if value_number > 0 && value_number.to_string() == value => {
+                Ok(value_number)
+            }
+            _ => Err(format!(
+                "singleton identity `{value}` is not a canonical positive integer"
+            )),
+        }
+    };
+    let attempt = positive(identity("run_attempt")?)?;
+    let current = options
+        .attempt
+        .parse::<u32>()
+        .map_err(|err| err.to_string())?;
+    if attempt > current {
+        return Err(format!(
+            "singleton attempt {attempt} is later than verifying attempt {current}"
+        ));
+    }
+    let partition = identity("shard")?;
+    let (number, count) = partition
+        .split_once('/')
+        .ok_or_else(|| "singleton shard identity needs a partition".to_string())?;
+    let shard = positive(number)?;
+    let count = positive(count)?;
+    if count != options.shards || shard > count {
+        return Err(format!(
+            "singleton partition `{partition}` does not name an expected shard"
+        ));
+    }
+    Ok(Some((shard, attempt)))
 }
 
 /// List lines with terminal colour escapes removed: the hosted job sets
@@ -594,10 +705,17 @@ fn check_context(
             ));
         }
     }
-    let command = format!(
-        "cargo nextest run --workspace --profile ci --partition hash:{shard}/{}",
-        options.shards
-    );
+    let command = if options.all_features {
+        format!(
+            "cargo nextest run --workspace --all-features --profile ci --partition hash:{shard}/{}",
+            options.shards
+        )
+    } else {
+        format!(
+            "cargo nextest run --workspace --profile ci --partition hash:{shard}/{}",
+            options.shards
+        )
+    };
     let expected = [
         ("repository", options.repository.clone()),
         ("checkout_sha", options.sha.clone()),
@@ -804,9 +922,14 @@ fn check_junit(
 /// the shard evidence came from — including a single distinct earlier attempt,
 /// so reused results are never presented as fresh.
 fn combined_context(first: &str, options: &Options, used_attempts: &BTreeSet<u32>) -> String {
+    let features = if options.all_features {
+        " --all-features"
+    } else {
+        ""
+    };
     let mut out = format!(
         "repository={}\ncheckout_sha={}\nrun_id={}\nrun_attempt={}\nprofile=ci\n\
-         shards={}/{} verified\ncommand=cargo nextest run --workspace --profile ci \
+         shards={}/{} verified\ncommand=cargo nextest run --workspace{features} --profile ci \
          (as {} partitions)\n",
         options.repository,
         options.sha,
@@ -850,7 +973,14 @@ mod tests {
             run_id: "7".to_string(),
             shards,
             out: dir.join("out"),
+            all_features: false,
         }
+    }
+
+    fn options_all_features(dir: &Path, shards: u32) -> Options {
+        let mut options = options_attempt(dir, shards, "1");
+        options.all_features = true;
+        options
     }
 
     fn case(identity: &str) -> String {
@@ -874,6 +1004,13 @@ mod tests {
     fn context_attempt(shard: u32, shards: u32, attempt: u32) -> String {
         format!(
             "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition hash:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\n{INPUT_HEADER}\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
+        )
+    }
+
+    fn context_all_features(shard: u32, shards: u32) -> String {
+        context(shard, shards).replace(
+            "cargo nextest run --workspace --profile ci",
+            "cargo nextest run --workspace --all-features --profile ci",
         )
     }
 
@@ -1057,6 +1194,65 @@ mod tests {
 
     fn rewrite(root: &Path, shard: u32, name: &str, text: &str) {
         let _ = fs::write(shard_dir(root, shard).join(name), text);
+    }
+
+    /// Test Analytics (#12916) runs the same partitions with `--all-features`;
+    /// its receipts must verify under `--all-features` and fail without it.
+    #[test]
+    fn all_features_shards_pass_and_combine() -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-shards-all-features");
+        lay_out(&root, false)?;
+        for shard in 1..=2 {
+            rewrite(
+                &root,
+                shard,
+                "run-context.txt",
+                &context_all_features(shard, 2),
+            );
+        }
+        let outcome = verify(
+            &options_all_features(&root, 2),
+            Ok(vec![BLOB.to_string(); 4]),
+        );
+        let without_flag = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
+        let _ = fs::remove_dir_all(&root);
+        assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+        assert!(
+            outcome
+                .context
+                .contains("command=cargo nextest run --workspace --all-features --profile ci"),
+            "{}",
+            outcome.context
+        );
+        assert!(
+            without_flag
+                .problems
+                .iter()
+                .any(|problem| problem.contains("command")),
+            "{:?}",
+            without_flag.problems
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn all_features_flag_rejects_default_feature_receipts() -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-shards-all-features-mismatch");
+        lay_out(&root, false)?;
+        let outcome = verify(
+            &options_all_features(&root, 2),
+            Ok(vec![BLOB.to_string(); 4]),
+        );
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            outcome
+                .problems
+                .iter()
+                .any(|problem| problem.contains("command")),
+            "{:?}",
+            outcome.problems
+        );
+        Ok(())
     }
 
     #[test]

@@ -28,6 +28,57 @@ CONSUMER = importlib.util.module_from_spec(CONSUMER_SPEC)
 CONSUMER_SPEC.loader.exec_module(CONSUMER)
 
 
+def write_contract_inputs(root, version):
+    (root / "Cargo.toml").write_text(f'[workspace.package]\nversion = "{version}"\n', encoding="utf-8")
+    for relative in ("Cargo.lock", "rust-toolchain.toml", "packaging/python/pyproject.toml"):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(PACKAGE.ROOT / relative, target)
+
+
+def setUpModule():
+    # Exercise prerelease packaging even when this source tree targets a stable release.
+    temporary = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(temporary.cleanup)
+    root = Path(temporary.name)
+    write_contract_inputs(root, "0.11.0-alpha.1")
+    actual_contract = PACKAGE.source_contract
+
+    def fixture_contract(source=PACKAGE.ROOT):
+        return actual_contract(root if source == PACKAGE.ROOT else source)
+
+    patch = mock.patch.object(PACKAGE, "source_contract", fixture_contract)
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
+
+
+class NpmSourceContractTests(unittest.TestCase):
+    def test_native_job_uses_public_immutable_wheel_controller_and_same_event_guard(self):
+        workflow = (PACKAGE.ROOT / ".github/workflows/npm-package-qualification.yml").read_text()
+        triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertEqual(triggers.strip(), "workflow_dispatch:")
+        native = workflow.split("\n  native:\n", 1)[1].split("\n  package:\n", 1)[0]
+        package = workflow.split("\n  package:\n", 1)[1].split("\n  consumer:\n", 1)[0]
+        self.assertRegex(native, r"(?m)^    uses: EffortlessMetrics/ripr/\.github/workflows/python-wheel-qualification\.yml@[0-9a-f]{40}$")
+        guard = (
+            "    if: >-\n"
+            "      github.repository == 'EffortlessMetrics/ripr' &&\n"
+            "      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n"
+        )
+        for job in (native, package):
+            self.assertIn(guard, job)
+
+    def test_only_prerelease_workspace_versions_can_supply_native_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_contract_inputs(root, "0.11.0")
+            with self.assertRaisesRegex(ValueError, "prerelease version required"):
+                PACKAGE.source_contract(root)
+            write_contract_inputs(root, "0.11.0-alpha.2")
+            pin = PACKAGE.source_contract(root)
+            self.assertEqual((pin["native_version"], pin["python_version"]), ("0.11.0-alpha.2", "0.11.0a2"))
+
+
 def wheel_fixture():
     pin = PACKAGE.source_contract()
     prefix = f"ripr_rs-{pin['python_version']}"

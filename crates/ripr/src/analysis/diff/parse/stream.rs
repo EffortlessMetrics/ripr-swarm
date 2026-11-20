@@ -168,6 +168,7 @@ fn parse_lines<'a, E>(
 
         if state.handle_binary_files_sentinel(raw) {
             state.record_binary_deletion(raw);
+            state.record_binary_section(raw);
             continue;
         }
 
@@ -216,10 +217,23 @@ fn parse_lines<'a, E>(
     Ok(ParsedDiff {
         changed_files: files.into_values().collect(),
         deleted_file_count: state.deleted_file_count(),
+        deleted_paths: state.deleted_paths().to_vec(),
+        binary_paths: state
+            .binary_paths()
+            .iter()
+            .filter(|path| keep(path))
+            .cloned()
+            .collect(),
         submodule_file_count: state.submodule_file_count(),
+        symlink_file_count: state
+            .symlink_paths()
+            .iter()
+            .filter(|path| keep(path))
+            .count(),
         renamed_file_count: state.renamed_file_count(),
         pure_rename_file_count: state.pure_rename_file_count(),
         pure_rename_paths: state.pure_rename_paths(),
+        copy_destination_paths: state.copy_destination_paths(),
         truncated_file_sections: state.truncated_file_sections(),
         raw_line1_bom_paths: state.raw_line1_bom_paths(),
         limitations: state.limitations(),

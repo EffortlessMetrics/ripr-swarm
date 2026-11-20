@@ -109,6 +109,10 @@ Cargo. The existing 45-minute workflow timeout remains the execution limit.
 
 Before the command, at most 46 times at 60-second intervals, and at completion,
 the adapter emits coverage_storage.v1 records prefixed ripr-coverage-storage.
+Each summary also reports a bounded Linux host-memory observation from
+`/proc/meminfo`: total and available memory, and total and free swap, in KiB.
+Unavailable, malformed or truncated input is explicit. These non-atomic host
+samples do not establish a peak, container limit, or cause of runner loss.
 Summary, bucket, inspected-profile-entry and end records share a sequence
 number. Each record starts on a new line, uses one write of at most 4 KiB, and
 flushes immediately so it stays identifiable beside concurrent test output.
@@ -357,7 +361,7 @@ observations for both diagnostics checks, and successful Clippy completion.
 Missing, ambiguous or malformed recipe boundaries, partial execution and stale
 run evidence fail the job. Native compiler, LLVM and profile observations stay
 in the job output. This route replaces the duplicate stable Cargo commands. It
-follows that workflow's existing main-push, manual-dispatch and
+follows that workflow's existing daily-schedule, manual-dispatch and
 `clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
 the job does not become a required merge gate or run full workspace coverage.
 The existing future-Clippy job continues to inspect deferred lints on Rust

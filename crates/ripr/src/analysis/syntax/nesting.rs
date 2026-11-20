@@ -36,12 +36,69 @@ pub(crate) const RUST_OPERATOR_RUN_BUDGET: usize = 4_096;
 
 /// Parse `text` as a Rust source file when it is within the nesting budget
 /// and parses without errors; `None` otherwise.
+///
+/// The nesting estimate reads every byte of `text`, and callers ask about the
+/// same large file once per (probe, test, assertion): on this repository's
+/// self-check the estimate alone was about 6% of worker samples, nearly all
+/// repeats for files whose parse was already memoized (#15396). A parse-memo
+/// entry therefore remembers that its text passed the budget, and a later
+/// call for the same text skips the estimate. Only a text that passed the
+/// estimate is ever marked, so a refused text is estimated (and refused) on
+/// every call, exactly as before.
 pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
-    if rust_nesting_refusal(text).is_some() {
+    if !memoized_within_nesting_budget(text) && rust_nesting_refusal(text).is_some() {
         return None;
     }
+    #[cfg(test)]
+    CLEAN_PARSE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let (parse, error_count) = parse_source_file_checked(text);
+    mark_within_nesting_budget(text);
     (error_count == 0).then_some(parse)
+}
+
+/// Whether the per-thread parse memo holds `text` and an earlier
+/// [`parse_clean_source_file`] call found it within the nesting budget.
+fn memoized_within_nesting_budget(text: &str) -> bool {
+    if text.len() > PARSE_CACHE_MAX_BYTES {
+        return false;
+    }
+    PARSE_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .iter()
+            .any(|entry| entry.within_nesting_budget && entry.source == text)
+    })
+}
+
+/// Records that `text`, which just passed the nesting estimate and was
+/// parsed (so it is the front memo entry when it fits the memo), is within
+/// the budget.
+fn mark_within_nesting_budget(text: &str) {
+    if text.len() > PARSE_CACHE_MAX_BYTES {
+        return;
+    }
+    PARSE_CACHE.with(|cache| {
+        if let Some(entry) = cache
+            .borrow_mut()
+            .iter_mut()
+            .find(|entry| entry.source == text)
+        {
+            entry.within_nesting_budget = true;
+        }
+    });
+}
+
+/// [`CLEAN_PARSE_CALLS`] on this thread so far.
+#[cfg(test)]
+pub(crate) fn nesting_parse_calls() -> usize {
+    CLEAN_PARSE_CALLS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Parses that reached the parser on this thread, so a test can prove a
+    /// producer parses each file once.
+    pub(crate) static CLEAN_PARSE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// [`parse_clean_source_file`] memoized per thread for small texts.
@@ -81,8 +138,42 @@ thread_local! {
 
 thread_local! {
     static CLEAN_PARSE_MEMO: std::cell::RefCell<
-        std::collections::HashMap<String, Option<Parse<SourceFile>>>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
+        std::collections::HashMap<
+            String,
+            Option<Parse<SourceFile>>,
+            std::hash::BuildHasherDefault<WordHasher>,
+        >,
+    > = std::cell::RefCell::new(std::collections::HashMap::default());
+}
+
+/// Word-at-a-time multiplicative hasher for the per-thread parse memo.
+///
+/// The memo keys are whole test bodies and every lookup hashed the full text
+/// with the default SipHash (#13577: the shadow checks asked once per oracle).
+/// The memo is thread-local, bounded and holds only texts this process read, so
+/// DoS resistance buys nothing; a collision only costs an equality comparison.
+#[derive(Default)]
+struct WordHasher(u64);
+
+impl std::hash::Hasher for WordHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        const K: u64 = 0x517c_c1b7_2722_0a95;
+        let mix = |hash: u64, word: u64| (hash.rotate_left(5) ^ word).wrapping_mul(K);
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            let mut word = [0u8; 8];
+            word.copy_from_slice(chunk);
+            self.0 = mix(self.0, u64::from_le_bytes(word));
+        }
+        let mut tail = [0u8; 8];
+        let rest = chunks.remainder();
+        tail[..rest.len()].copy_from_slice(rest);
+        self.0 = mix(self.0, u64::from_le_bytes(tail));
+    }
 }
 
 /// Parse with the current edition, retrying as Rust 2021 when that fails.
@@ -109,15 +200,23 @@ pub(crate) fn parse_source_file_checked(text: &str) -> (Parse<SourceFile>, usize
     }
     PARSE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(position) = cache.iter().position(|(source, _, _)| source == text) {
+        if let Some(position) = cache.iter().position(|entry| entry.source == text) {
             // Move-to-front keeps the hot file resident.
             let entry = cache.remove(position);
-            let result = (entry.1.clone(), entry.2);
+            let result = (entry.parse.clone(), entry.error_count);
             cache.insert(0, entry);
             return result;
         }
         let (parse, error_count) = parse_source_file_uncached(text);
-        cache.insert(0, (text.to_string(), parse.clone(), error_count));
+        cache.insert(
+            0,
+            ParseCacheEntry {
+                source: text.to_string(),
+                parse: parse.clone(),
+                error_count,
+                within_nesting_budget: false,
+            },
+        );
         cache.truncate(PARSE_CACHE_ENTRIES);
         (parse, error_count)
     })
@@ -140,7 +239,16 @@ const PARSE_CACHE_ENTRIES: usize = 4;
 /// bound.
 const PARSE_CACHE_MAX_BYTES: usize = 2 * 1024 * 1024;
 
-type ParseCacheEntries = Vec<(String, Parse<SourceFile>, usize)>;
+/// One memoized parse. `within_nesting_budget` is set only by
+/// [`parse_clean_source_file`] after `source` passed the nesting estimate.
+struct ParseCacheEntry {
+    source: String,
+    parse: Parse<SourceFile>,
+    error_count: usize,
+    within_nesting_budget: bool,
+}
+
+type ParseCacheEntries = Vec<ParseCacheEntry>;
 
 thread_local! {
     static PARSE_CACHE: std::cell::RefCell<ParseCacheEntries> =
@@ -187,9 +295,18 @@ fn parse_source_file_uncached(text: &str) -> (Parse<SourceFile>, usize) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Nesting estimates [`rust_nesting_refusal`] ran on this thread, so a test
+    /// can prove a memoized clean text is not estimated again.
+    static NESTING_REFUSAL_ESTIMATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Typed `rust_nesting_budget` static-limit reason when `text` is over any
 /// nesting budget, else `None`.
 pub(crate) fn rust_nesting_refusal(text: &str) -> Option<String> {
+    #[cfg(test)]
+    NESTING_REFUSAL_ESTIMATES.with(|estimates| estimates.set(estimates.get() + 1));
     let estimate = estimate_rust_nesting(text);
     if estimate.depth > RUST_NESTING_BUDGET {
         return Some(format!(
@@ -223,8 +340,35 @@ pub(crate) struct NestingEstimate {
 /// Comments, string, raw string and char literals are skipped so their
 /// contents cannot inflate the estimate. Over-estimates only cost a lexical
 /// fallback; the scan never recurses, so it is safe on any input.
+///
+/// `#"` and `##` lex differently by edition. Edition 2024 reserves them as a
+/// two-byte error token and lexes what follows as code, so the quote that
+/// follows `#` opens no string; earlier editions read `#` then a string.
+/// The analyzer parses the current edition first and retries older ones, so
+/// each reading can nest what the other hides inside a string. Parentheses
+/// after a stray `#"` aborted the process this way (#13494). When the first
+/// reading meets such a prefix, the second reading runs too and the larger
+/// estimate wins.
 pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
+    let (estimate, saw_guarded_prefix) = estimate_rust_nesting_reading(text, false);
+    if !saw_guarded_prefix {
+        return estimate;
+    }
+    let (reserved, _) = estimate_rust_nesting_reading(text, true);
+    NestingEstimate {
+        depth: estimate.depth.max(reserved.depth),
+        else_if_chain: estimate.else_if_chain.max(reserved.else_if_chain),
+        operator_run: estimate.operator_run.max(reserved.operator_run),
+    }
+}
+
+/// One scan under a single lexing of `#"` and `##`: when `reserved_prefix` is
+/// true they are the two-byte edition 2024 error token and what follows is
+/// code. The flag returned says whether the text carries such a prefix in
+/// code position, which is when the other reading can differ.
+fn estimate_rust_nesting_reading(text: &str, reserved_prefix: bool) -> (NestingEstimate, bool) {
     let bytes = text.as_bytes();
+    let mut saw_guarded_prefix = false;
     let mut estimate = NestingEstimate::default();
     let mut depth = 0usize;
     let mut unary_run = 0usize;
@@ -264,6 +408,16 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         }
         let follows_closed_group = previous_closed_group;
         previous_closed_group = matches!(byte, b')' | b']');
+        if byte == b'#' && matches!(next, Some(b'"' | b'#')) {
+            saw_guarded_prefix = true;
+            if reserved_prefix {
+                index += 2;
+                after_operand = false;
+                unary_run = 0;
+                previous_word_was_else = false;
+                continue;
+            }
+        }
         if byte == b'"' {
             index = skip_string(bytes, index + 1);
             after_operand = true;
@@ -426,7 +580,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         }
         index += 1;
     }
-    estimate
+    (estimate, saw_guarded_prefix)
 }
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
@@ -1495,7 +1649,10 @@ mod tests {
 
 #[cfg(test)]
 mod memoized_parse_tests {
-    use super::{parse_clean_source_file, parse_clean_source_file_memoized};
+    use super::{
+        RUST_NESTING_BUDGET, estimate_rust_nesting, parse_clean_source_file,
+        parse_clean_source_file_memoized, rust_nesting_refusal,
+    };
 
     #[test]
     fn memoized_parse_matches_the_direct_parse_for_clean_and_broken_text() {
@@ -1539,6 +1696,147 @@ mod memoized_parse_tests {
         assert_eq!(
             parse_clean_source_file_memoized(&body).map(|p| p.syntax_node().to_string()),
             parse_clean_source_file(&body).map(|p| p.syntax_node().to_string()),
+        );
+    }
+
+    /// #13494: edition 2024 reads `#"` as a two-byte error token and lexes what
+    /// follows as code, so a `(` run after it nests the parser although the
+    /// 2021 reading hides it inside a string. `ripr check` aborted on this
+    /// shape with a stack overflow; the larger of the two readings must win.
+    #[test]
+    fn a_guarded_string_prefix_cannot_hide_nesting_inside_a_string() {
+        let hidden_in_2021 = format!(
+            "pub fn f(&x#\"elf, y: u32{}) -> u64 {{\n    let r = \"x\";\n}}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        let estimate = estimate_rust_nesting(&hidden_in_2021);
+        assert!(
+            estimate.depth > RUST_NESTING_BUDGET,
+            "2024 reading nests the run: {estimate:?}"
+        );
+        assert!(rust_nesting_refusal(&hidden_in_2021).is_some());
+        assert!(parse_clean_source_file(&hidden_in_2021).is_none());
+
+        // An identifier ending in `r` still reaches the prefix branch.
+        let after_identifier = format!(
+            "pub fn f(bar#\"elf, y: u32{}) -> u64 {{\n    let r = \"x\";\n}}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        assert!(rust_nesting_refusal(&after_identifier).is_some());
+
+        // The other direction: the 2021 reading closes the string at `x"` and
+        // sees the run; the 2024 reading opens a string there and hides it.
+        let hidden_in_2024 = format!(
+            "fn g() {{ let _ = #\"x\"{}; }}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        assert!(rust_nesting_refusal(&hidden_in_2024).is_some());
+    }
+
+    /// Negative controls for the reserved-prefix reading: a raw string spelled
+    /// with `#"` holds its parentheses as data, and a shallow body with a stray
+    /// prefix or a `##` escape is not refused.
+    #[test]
+    fn guarded_prefix_readings_leave_raw_strings_and_shallow_bodies_alone() {
+        let run = "(".repeat(2 * RUST_NESTING_BUDGET);
+        let raw = format!("fn f() {{ let s = r#\"{run}\"#; }}\n");
+        assert!(rust_nesting_refusal(&raw).is_none(), "raw string is data");
+        let shallow = "fn f(&x#\"elf, y: u32) { let r = \"x\"; }\n";
+        assert!(rust_nesting_refusal(shallow).is_none());
+        // `##"` is the two-byte token and then a plain string in both
+        // readings, so the run stays data; advancing one byte would read it as
+        // code.
+        let double = format!("fn f() {{ let _ = ##\"{run}\"; }}\n");
+        assert!(
+            rust_nesting_refusal(&double).is_none(),
+            "`##` string is data"
+        );
+        let escaped = "fn f() { quote::quote! { ##name } }\n";
+        assert!(rust_nesting_refusal(escaped).is_none());
+        assert!(estimate_rust_nesting(shallow).depth < 16);
+    }
+}
+
+#[cfg(test)]
+mod nesting_budget_memo_tests {
+    use super::{
+        NESTING_REFUSAL_ESTIMATES, PARSE_CACHE_ENTRIES, RUST_NESTING_BUDGET,
+        parse_clean_source_file, parse_source_file_checked, rust_nesting_refusal,
+    };
+
+    fn estimates() -> usize {
+        NESTING_REFUSAL_ESTIMATES.with(std::cell::Cell::get)
+    }
+
+    /// #15396: a clean text the parse memo holds is estimated once, however
+    /// often it is asked for, and every answer is the parse a fresh call gives.
+    #[test]
+    fn a_memoized_clean_text_skips_the_nesting_estimate_on_later_calls() {
+        let text = "fn nesting_memo_probe_15396() { if a { b } else if c { d } }\n";
+        let before = estimates();
+        for _ in 0..5 {
+            let parse = parse_clean_source_file(text).map(|p| p.syntax_node().to_string());
+            assert_eq!(parse.as_deref(), Some(text));
+        }
+        assert_eq!(
+            estimates() - before,
+            1,
+            "a memoized clean text was re-estimated"
+        );
+    }
+
+    /// A text parsed without the budget check (straight through
+    /// `parse_source_file_checked`) is not marked, so the first clean ask
+    /// still estimates it; a text over the budget is refused and estimated on
+    /// every call because it is never marked.
+    #[test]
+    fn only_a_text_that_passed_the_estimate_is_marked() {
+        let unchecked = "fn nesting_memo_unchecked_15396() { let x = 1; }\n";
+        assert_eq!(parse_source_file_checked(unchecked).1, 0);
+        let before = estimates();
+        assert!(parse_clean_source_file(unchecked).is_some());
+        assert!(parse_clean_source_file(unchecked).is_some());
+        assert_eq!(
+            estimates() - before,
+            1,
+            "an unchecked memo entry skipped the estimate"
+        );
+
+        let deep = format!(
+            "fn nesting_memo_deep_15396() {{ let _ = {}1{}; }}\n",
+            "(".repeat(RUST_NESTING_BUDGET + 8),
+            ")".repeat(RUST_NESTING_BUDGET + 8)
+        );
+        assert!(
+            rust_nesting_refusal(&deep).is_some(),
+            "fixture must exceed the budget"
+        );
+        let before = estimates();
+        for _ in 0..3 {
+            assert!(parse_clean_source_file(&deep).is_none());
+        }
+        assert_eq!(
+            estimates() - before,
+            3,
+            "a refused text was served from the memo"
+        );
+    }
+
+    /// A marked text pushed out of the memo is estimated again on its next ask.
+    #[test]
+    fn an_evicted_text_is_estimated_again() {
+        let target = "fn nesting_memo_evicted_15396() {}\n";
+        assert!(parse_clean_source_file(target).is_some());
+        for n in 0..PARSE_CACHE_ENTRIES {
+            let filler = format!("fn nesting_memo_filler_15396_{n}() {{}}\n");
+            assert!(parse_clean_source_file(&filler).is_some());
+        }
+        let before = estimates();
+        assert!(parse_clean_source_file(target).is_some());
+        assert_eq!(
+            estimates() - before,
+            1,
+            "an evicted text skipped the estimate"
         );
     }
 }

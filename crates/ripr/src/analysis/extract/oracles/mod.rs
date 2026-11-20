@@ -7,10 +7,13 @@ mod reach;
 mod scan;
 
 pub(crate) use arguments::{
-    assertion_observed_operand, assertion_oracle_text, equality_assertion_arguments,
-    outer_assertion_condition,
+    assertion_compares_only_literals, assertion_observed_operand, assertion_oracle_text,
+    equality_assertion_arguments, outer_assertion_condition,
 };
-pub(crate) use classify::{classify_assertion, classify_assertion_with, is_inequality_assertion};
+pub(crate) use classify::{
+    assertion_reads_placeholder, classify_assertion, classify_assertion_with,
+    is_inequality_assertion, without_unfilled_expected, without_unfilled_expected_parts,
+};
 pub(crate) use pattern_admission::LazyDecls;
 #[cfg(test)]
 pub(crate) use pattern_admission::table_builds;
@@ -21,13 +24,15 @@ pub(crate) use patterns::{
     is_exact_membership_any_assertion, is_inline_unwrap_err_error_assertion,
     is_unwrap_err_bound_error_assertion,
 };
-pub(crate) use reach::retain_reached_oracles;
+pub(crate) use reach::{lines_touching_unreached, retain_reached_oracles};
 pub(crate) use scan::{
     err_return_guard_oracles, err_return_guard_twin, extract_assertions, extract_assertions_in,
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
     terminal_err_return_guard_oracle,
 };
-pub(crate) use scan::{uncompared_unwrap_err, unwrap_err_bound_variables};
+pub(crate) use scan::{
+    placeholder_bound_variables, uncompared_unwrap_err, unwrap_err_bound_variables,
+};
 
 #[cfg(test)]
 mod tests {

@@ -150,6 +150,45 @@ pub(super) fn assertion_comparison(line: &str) -> Option<AssertionComparison> {
     .map(|(_, comparison)| comparison)
 }
 
+/// #14968: whether the outermost assertion compares nothing but literals
+/// (`assert!(true)`, `assert!(false)`, `assert_eq!(1, 1)`,
+/// `assert_eq!("a", "a")`). Such an assertion reads no runtime value, so it
+/// cannot observe any changed behavior, whatever else its test calls.
+///
+/// Fail closed toward the existing credit: only a known assertion macro
+/// whose every compared operand holds numeric literals, `true`/`false`,
+/// string or character literals and operators qualifies. Any identifier
+/// (a binding, a constant, a call, a nested macro), a byte/raw string
+/// prefix, an unknown macro or an empty operand leaves the assertion as it
+/// was.
+pub(crate) fn assertion_compares_only_literals(line: &str) -> bool {
+    let operands = match assertion_comparison(line) {
+        Some(AssertionComparison::Operands { left, right, .. }) => vec![left, right],
+        Some(AssertionComparison::Condition(condition)) => vec![condition],
+        None => return false,
+    };
+    operands
+        .iter()
+        .all(|operand| operand_is_literal_only(operand))
+}
+
+/// Every word of the masked operand is a numeric literal (its suffix
+/// included: `1u32`, `0x1F`) or `true`/`false`. Masking blanks string,
+/// character and comment text, so their contents never count as words.
+fn operand_is_literal_only(operand: &str) -> bool {
+    // Masking blanks a whole string literal, quotes included, so emptiness
+    // is read from the operand itself.
+    if operand.trim().is_empty() {
+        return false;
+    }
+    mask_comments_and_strings(operand)
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
+        .all(|word| {
+            word.starts_with(|ch: char| ch.is_ascii_digit()) || matches!(word, "true" | "false")
+        })
+}
+
 pub(super) fn ensure_assertion_arguments(line: &str) -> Option<Vec<String>> {
     macro_invocation_arguments(line, "ensure!")
 }
@@ -498,7 +537,43 @@ pub(super) fn comparable_expression(expression: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{assertion_oracle_text, equality_assertion_arguments};
+    use super::{
+        assertion_compares_only_literals, assertion_oracle_text, equality_assertion_arguments,
+    };
+
+    #[test]
+    fn literal_only_assertions_are_recognized_and_reads_are_not() {
+        for text in [
+            "assert!(true);",
+            "assert!(false);",
+            "std::assert!(true);",
+            "debug_assert!(!false, \"never {}\", value);",
+            "assert_eq!(1, 1);",
+            "assert_eq!(2 + 2, 4u32);",
+            "assert_ne!(0x1F, 1.5e3);",
+            "assert_eq!(\"a\", \"a\");",
+            "assert_eq!('x', 'x');",
+            "assert!(1 < 2 /* owner(5) */);",
+        ] {
+            assert!(assertion_compares_only_literals(text), "{text}");
+        }
+        for text in [
+            "assert!(r == 5);",
+            "assert!(f(5) > 0);",
+            "assert_eq!(f(5), 7);",
+            "assert_eq!(LIMIT, 3);",
+            "assert!(matches!(1, 1));",
+            "assert!(cfg!(test));",
+            "assert_eq!(b\"a\", b\"a\");",
+            "assert_eq!(1.max(2), 2);",
+            "assert_matches!(1, 1);",
+            "check!(true);",
+            "assert!();",
+            "let _ = f(5);",
+        ] {
+            assert!(!assertion_compares_only_literals(text), "{text}");
+        }
+    }
 
     #[test]
     fn oracle_operands_exclude_all_diagnostic_arguments() {

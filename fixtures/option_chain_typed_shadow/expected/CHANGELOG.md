@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — option_chain_typed_shadow (3)
+
+Reason:
+RIPR-SPEC-0157 For option_chain_typed_shadow, preserve structured evidence stages from RIPR-SPEC-0423.
+
+Command:
+`cargo xtask goldens bless option_chain_typed_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

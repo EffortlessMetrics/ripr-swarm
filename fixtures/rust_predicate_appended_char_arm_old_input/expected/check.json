@@ -1,0 +1,251 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_predicate_appended_char_arm_old_input/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:191bd3b41955f9a8d7d002929619dcee5e76e0d7775176f07b09c6397f7a8cea","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:7a595285",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_separator:predicate_boundary:predicate:c==lit2c_c==lit3b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_separator:predicate_boundary:predicate:c==lit2c_c==lit3b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_separator",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "c==lit2c_c==lit3b"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.84,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:7a595285",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "c == ',' || c == ';'"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_separator: comma_separates, dot_does_not_separate"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: c ==     || c =="},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: c ==     || c ==", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: c ==     || c == (line 2)", "related test src/lib.rs:9 comma_separates uses weak relational check oracle: assert!(is_separator(','));", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "source function argument value c = ',' at line 9", "source function argument value c = '.' at line 11", "missing discriminator c == ';': No related test call uses c equal to ';'; observed c values: ',', '.'; target ';' value: ';'"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"c ==     || c ==","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: c ==     || c ==", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "Related tests contain input values, but the equality-boundary check is missing"],
+      "missing": ["Missing check value: c == ';'", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "9": "fn comma_separates() { assert!(is_separator(',')); }",
+        "11": "fn dot_does_not_separate() { assert!(!is_separator('.')); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 9,
+            "value": "c = ','",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "c = '.'",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "c == ';'",
+            "reason": "No related test call uses c equal to ';'; observed c values: ',', '.'; target ';' value: ';'",
+            "flow_sink": {"kind":"return_value","text":"c ==     || c ==","line":2}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 9,
+          "value": "c = ','",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "c = '.'",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "c == ';'",
+          "reason": "No related test call uses c equal to ';'; observed c values: ',', '.'; target ';' value: ';'",
+          "flow_sink": {"kind":"return_value","text":"c ==     || c ==","line":2}
+        }
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "comma_separates",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(is_separator(','));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "dot_does_not_separate",
+          "file": "src/lib.rs",
+          "line": 11,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!is_separator('.'));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:6fca459e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_separator:return_value:return_value:c==lit2c_c==lit3b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_separator:return_value:return_value:c==lit2c_c==lit3b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_separator",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "c==lit2c_c==lit3b"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:6fca459e",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "c == ',' || c == ';'"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_separator: comma_separates, dot_does_not_separate"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: c == ',' || c == ';'"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: c == ',' || c == ';'", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: c == ',' || c == ';' (line 2)", "related test src/lib.rs:9 comma_separates uses weak relational check oracle: assert!(is_separator(','));", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "source function argument value c = ',' at line 9", "source function argument value c = '.' at line 11"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"c == ',' || c == ';'","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: c == ',' || c == ';'", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach is_separator: comma_separates, dot_does_not_separate"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "9": "fn comma_separates() { assert!(is_separator(',')); }",
+        "11": "fn dot_does_not_separate() { assert!(!is_separator('.')); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 9,
+            "value": "c = ','",
+            "context": "function_argument"
+          },
+          {
+            "line": 11,
+            "value": "c = '.'",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 9,
+          "value": "c = ','",
+          "context": "function_argument"
+        },
+        {
+          "line": 11,
+          "value": "c = '.'",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "comma_separates",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(is_separator(','));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "dot_does_not_separate",
+          "file": "src/lib.rs",
+          "line": 11,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!is_separator('.'));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

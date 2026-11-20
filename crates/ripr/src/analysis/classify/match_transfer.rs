@@ -440,7 +440,7 @@ enum GuardCmp {
 /// else (boolean combinators, method calls beyond `len()`, ordering
 /// comparisons on strings or chars, mixed types) refuses the whole
 /// match rather than guessing.
-fn evaluate_guard(guard: &str, inputs: &ExactInputs) -> Option<bool> {
+pub(super) fn evaluate_guard(guard: &str, inputs: &ExactInputs) -> Option<bool> {
     let guard = strip_outer_parens(guard);
     let (operator, lhs, rhs) = split_comparison(guard)?;
     let lhs = guard_operand(lhs, inputs)?;
@@ -725,14 +725,14 @@ mod tests {
             start_line: 1,
             end_line: 10,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }

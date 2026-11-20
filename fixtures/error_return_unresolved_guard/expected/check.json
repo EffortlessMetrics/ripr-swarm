@@ -29,6 +29,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach run_slow: cancelled_return_is_exact", "infection unknown: error return guard unresolved: `cancelled` guards the changed `Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })` (earliest unsupported edge: expression `Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })` is not a supported operation chain)", "propagation yes: Complete propagation witness reaches error variant: Result::Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches error variant: Result::Err(OpError { code: -32800, message: \"operation cancelled\".to_string() }) (line 16)", "related test tests/q.rs:4 cancelled_return_is_exact uses strong exact value oracle: assert_eq!(err.message, \"operation cancelled\");", "source function argument value cancelled = true at line 5", "source assertion argument value \"operation cancelled\" at line 7"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })","line":16}
@@ -111,6 +118,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach run_slow: cancelled_return_is_exact", "infection unknown: error return guard unresolved: `cancelled` guards the changed `Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })` (earliest unsupported edge: expression `Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })` is not a supported operation chain)", "propagation yes: Complete propagation witness reaches constructed field: message: \"operation cancelled\".to_string()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches constructed field: message: \"operation cancelled\".to_string() (line 16)", "related test tests/q.rs:4 cancelled_return_is_exact uses strong exact value oracle: assert_eq!(err, cancelled_error());", "related test tests/q.rs:4 cancelled_return_is_exact uses strong exact value oracle: assert_eq!(err.message, \"operation cancelled\");", "source function argument value cancelled = true at line 5", "source assertion argument value \"operation cancelled\" at line 7"],
       "flow_sinks": [
         {"kind":"struct_field","text":"message: \"operation cancelled\".to_string()","line":16}
@@ -203,6 +217,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach run_slow: cancelled_return_is_exact", "infection unknown: error return guard unresolved: `cancelled` guards the changed `Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })` (earliest unsupported edge: expression `Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })` is not a supported operation chain)", "propagation yes: Complete propagation witness reaches error variant: Result::Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches error variant: Result::Err(OpError { code: -32800, message: \"operation cancelled\".to_string() }) (line 16)", "related test tests/q.rs:4 cancelled_return_is_exact uses strong exact value oracle: assert_eq!(err, cancelled_error());", "related test tests/q.rs:4 cancelled_return_is_exact uses strong exact value oracle: assert_eq!(err.message, \"operation cancelled\");", "source function argument value cancelled = true at line 5", "source assertion argument value \"operation cancelled\" at line 7"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(OpError { code: -32800, message: \"operation cancelled\".to_string() })","line":16}

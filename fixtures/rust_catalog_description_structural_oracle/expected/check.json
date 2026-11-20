@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: \"verifies catalog consistency\".to_string()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: \"verifies catalog consistency\".to_string() (line 11)", "related test tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations uses strong exact value oracle: assert_eq!(\n        entry_description_violations(&catalog),\n        Vec::<String>::new()\n    );"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"verifies catalog consistency\".to_string()","line":11}

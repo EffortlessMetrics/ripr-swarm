@@ -1,21 +1,16 @@
 import * as assert from 'assert';
 import * as crypto from 'crypto';
-import { EventEmitter } from 'events';
-import { ClientRequest, IncomingMessage } from 'http';
-import https = require('https');
-import { PassThrough } from 'stream';
+import { withManifestResponses } from '../manifestResponses';
 import {
   DistributionDescriptor,
   resolveDistributionRequest
 } from '../../src/distributionDescriptor';
 import {
   FetchAdmittedManifest,
-  FetchManifest,
   fetchAdmittedManifestForDistribution,
   fetchManifestForDistribution,
   isDirectManifestNotFound,
-  ManifestFetchError,
-  ServerManifest
+  ManifestFetchError
 } from '../../src/downloader';
 
 const stable: DistributionDescriptor = {
@@ -38,10 +33,6 @@ const catalog: DistributionDescriptor = {
     }
   ]
 };
-
-function manifest(version: string): ServerManifest {
-  return { version, assets: {} };
-}
 
 function notFound(url: string, redirected: boolean): ManifestFetchError {
   return new ManifestFetchError(`GET ${url} failed with HTTP 404.`, { statusCode: 404, redirected });
@@ -89,39 +80,6 @@ function producerManifest(overrides: Record<string, unknown> = {}): Buffer {
   return Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
-async function withManifestResponses(
-  responses: Array<{ status: number; body: Buffer }>,
-  run: (requested: string[]) => Promise<void>
-): Promise<void> {
-  const original = https.get;
-  const requested: string[] = [];
-  https.get = ((url: string, callback: (response: IncomingMessage) => void) => {
-    requested.push(url);
-    const selected = responses[requested.length - 1];
-    assert.ok(selected, `unexpected request ${url}`);
-    const request = new EventEmitter() as ClientRequest;
-    request.setTimeout = () => request;
-    request.destroy = (error?: Error) => {
-      if (error) { request.emit('error', error); }
-      return request;
-    };
-    process.nextTick(() => {
-      const stream = new PassThrough();
-      const response = stream as unknown as IncomingMessage;
-      response.statusCode = selected.status;
-      response.headers = {};
-      callback(response);
-      stream.end(selected.body);
-    });
-    return request;
-  }) as typeof https.get;
-  try {
-    await run(requested);
-  } finally {
-    https.get = original;
-  }
-}
-
 suite('Distribution manifest fallback', () => {
   test('real admitted RC bytes pass and changed bytes fail against the same catalog digest', async () => {
     const bytes = producerManifest();
@@ -165,16 +123,18 @@ suite('Distribution manifest fallback', () => {
 
   test('falls back to the RC placement on a direct 404 of the preferred manifest', async () => {
     const distribution = resolveDistributionRequest('0.11.0', catalog);
+    const bytes = Buffer.from(JSON.stringify({ version: '0.11.0', assets: {} }));
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
     const requested: string[] = [];
-    const fetchImpl: FetchManifest = async (url) => {
+    const fetchImpl = async (url: string) => {
       requested.push(url);
       if (requested.length === 1) {
         throw notFound(url, false);
       }
-      return manifest('0.11.0');
+      return bytes;
     };
-    const result = await fetchManifestForDistribution('', distribution, '0.11.0', fetchImpl);
-    assert.strictEqual(result.version, '0.11.0');
+    const result = await fetchManifestForDistribution('', distribution, '0.11.0', digest, fetchImpl);
+    assert.strictEqual(result.manifest.parsed.version, '0.11.0');
     assert.deepStrictEqual(requested, [
       'https://github.com/EffortlessMetrics/ripr/releases/download/v0.11.0/ripr-server-manifest-v0.11.0.json',
       'https://github.com/EffortlessMetrics/ripr/releases/download/v0.11.0-rc.1/ripr-server-manifest-v0.11.0.json'
@@ -303,12 +263,12 @@ suite('Distribution manifest fallback', () => {
     ];
     for (const [name, failure] of failures) {
       let calls = 0;
-      const fetchImpl: FetchManifest = async () => {
+      const fetchImpl = async () => {
         calls += 1;
         throw failure;
       };
       await assert.rejects(
-        fetchManifestForDistribution('', distribution, '0.11.0', fetchImpl),
+        fetchManifestForDistribution('', distribution, '0.11.0', 'a'.repeat(64), fetchImpl),
         (error: unknown) => error === failure,
         name
       );
@@ -322,27 +282,27 @@ suite('Distribution manifest fallback', () => {
       statusCode: 500,
       redirected: false
     });
-    const fetchImpl: FetchManifest = async (url) => {
+    const fetchImpl = async (url: string) => {
       if (url.includes('v0.11.0-rc.1')) {
         throw serverError;
       }
       throw notFound(url, false);
     };
     await assert.rejects(
-      fetchManifestForDistribution('', distribution, '0.11.0', fetchImpl),
+      fetchManifestForDistribution('', distribution, '0.11.0', 'a'.repeat(64), fetchImpl),
       (error: unknown) => error === serverError
     );
   });
 
-  test('propagates a single candidate failure with its original error', async () => {
+  test('an unpinned schema-1 catalogue never follows its named fallback', async () => {
     const failure = notFound('https://example.invalid/legacy', false);
     let calls = 0;
-    const fetchImpl: FetchManifest = async () => {
+    const fetchImpl = async () => {
       calls += 1;
       throw failure;
     };
     await assert.rejects(
-      fetchManifestForDistribution('', undefined, '0.10.1', fetchImpl),
+      fetchManifestForDistribution('', resolveDistributionRequest('0.11.0', catalog), '0.11.0', undefined, fetchImpl),
       (error: unknown) => error === failure
     );
     assert.strictEqual(calls, 1);

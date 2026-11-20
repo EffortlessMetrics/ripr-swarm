@@ -116,6 +116,39 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(extracted, false);
   });
 
+  test('catalog and descriptor evidence must bind the same manifest before extraction', async () => {
+    const observed = 'a'.repeat(64);
+    const admitted = 'b'.repeat(64);
+    const request = {
+      ...installRequest(root, '1.2.3'),
+      admittedManifestSha256: observed,
+      expectedManifestSha256: admitted,
+      distributionIdentity: 'channel-identity'
+    };
+    let extracted = false;
+    const run = operations('manifest-join', '1.2.3', async () => { extracted = true; });
+    const incompatible = {
+      ...run,
+      resolveArchive: async () => ({
+        ...(await run.resolveArchive()), manifestSha256: observed, admittedManifestSha256: admitted
+      })
+    };
+    await assert.rejects(installManagedServer(request, incompatible), /digest and descriptor admission stamp disagree/);
+    assert.strictEqual(extracted, false);
+
+    const matching = { ...request, admittedManifestSha256: admitted };
+    const consistent = {
+      ...run,
+      resolveArchive: async () => ({
+        ...(await run.resolveArchive()), manifestSha256: admitted, admittedManifestSha256: admitted
+      })
+    };
+    const installed = await installManagedServer(matching, consistent);
+    assert.strictEqual(installed.receipt.manifestSha256, admitted);
+    assert.strictEqual(installed.receipt.distributionIdentity, matching.distributionIdentity);
+    assert.strictEqual((await readManagedServerInstallation(matching))?.executablePath, installed.executablePath);
+  });
+
   test('concurrent installs stage once and converge on one completed installation', async () => {
     const request = installRequest(root, '2.0.0');
     let extractCalls = 0;

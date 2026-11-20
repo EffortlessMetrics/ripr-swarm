@@ -1,11 +1,21 @@
-name: Source Promotion Contract
+name: Private Source Promotion Rehearsal
 
 on:
-  pull_request:
-    types: [opened, edited, synchronize, reopened]
-    branches: [main]
   workflow_dispatch:
     inputs:
+      phase:
+        description: Rehearse the public PR contract or post-merge reachability
+        type: choice
+        required: true
+        options: [pr-contract, post-merge]
+      public_pr:
+        description: Public ripr PR number (PR contract only)
+        required: false
+        type: string
+      pr_body_sha256:
+        description: SHA-256 of the exact public PR body UTF-8 bytes (PR contract only)
+        required: false
+        type: string
       control_commit:
         description: Exact source-repository control commit containing immutable promotion inputs
         required: true
@@ -23,30 +33,54 @@ on:
         required: true
         type: string
       main_head:
-        description: Exact merged source-main SHA for post-merge reachability
-        required: true
+        description: Exact merged public source-main SHA (post-merge only)
+        required: false
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: source-promotion-contract-${{ github.event.pull_request.number || github.ref }}
+  group: source-promotion-rehearsal-${{ inputs.phase }}-${{ inputs.join_head }}
   cancel-in-progress: true
 
 jobs:
   promotion-contract:
-    name: Source Promotion Contract
-    if: >-
-      github.event_name == 'pull_request' &&
-      contains(github.event.pull_request.body, '<!-- source-promotion: true -->')
+    name: Rehearse public PR promotion contract
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && inputs.phase == 'pr-contract'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Bind the public PR and immutable dispatch inputs
+        id: public-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.public_pr }}
+          PR_HEAD: ${{ inputs.join_head }}
+          BASE_SHA: ${{ inputs.source_parent }}
+          SOURCE_MAIN: ${{ inputs.source_main }}
+          CONTROL_COMMIT: ${{ inputs.control_commit }}
+          BODY_SHA256: ${{ inputs.pr_body_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          for sha in "$PR_HEAD" "$BASE_SHA" "$CONTROL_COMMIT"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
+          test "$SOURCE_MAIN" = "$BASE_SHA"
+          pr="$RUNNER_TEMP/public-promotion-pr.json"
+          gh api "repos/EffortlessMetrics/ripr/pulls/$PR_NUMBER" > "$pr"
+          jq -e --arg number "$PR_NUMBER" --arg head "$PR_HEAD" --arg base "$BASE_SHA" '
+            (.number | tostring) == $number and .state == "open" and
+            .base.repo.full_name == "EffortlessMetrics/ripr" and .base.ref == "main" and
+            .head.sha == $head and .base.sha == $base and (.body | type) == "string"
+          ' "$pr" > /dev/null
+          jq -j '.body' "$pr" > "$RUNNER_TEMP/public-promotion-body"
+          test "$(sha256sum "$RUNNER_TEMP/public-promotion-body" | cut -d' ' -f1)" = "$BODY_SHA256"
+
       - name: Check out the exact PR head with full history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: EffortlessMetrics/ripr
+          ref: ${{ inputs.join_head }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -57,16 +91,17 @@ jobs:
       - name: Build verifier from trusted base source
         id: trusted-verifier
         env:
-          SOURCE_PARENT: ${{ github.event.pull_request.base.sha }}
+          SOURCE_PARENT: ${{ inputs.source_parent }}
         run: |
           set -euo pipefail
           trusted_dir="$RUNNER_TEMP/ripr-trusted-verifier"
           trusted_target="$RUNNER_TEMP/ripr-trusted-target"
-          git clone --no-checkout "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$trusted_dir"
+          git clone --no-checkout https://github.com/EffortlessMetrics/ripr.git "$trusted_dir"
           git -C "$trusted_dir" fetch --no-tags origin "$SOURCE_PARENT"
+          git -C "$trusted_dir" merge-base --is-ancestor "$SOURCE_PARENT" refs/remotes/origin/main
           git -C "$trusted_dir" checkout --detach "$SOURCE_PARENT"
           test "$(git -C "$trusted_dir" rev-parse HEAD)" = "$SOURCE_PARENT"
-          CARGO_TARGET_DIR="$trusted_target" cargo build --locked --manifest-path "$trusted_dir/Cargo.toml" -p xtask --bin xtask
+          (cd "$trusted_dir" && CARGO_TARGET_DIR="$trusted_target" cargo build --locked --manifest-path "$trusted_dir/Cargo.toml" -p xtask --bin xtask)
           verifier="$trusted_target/debug/xtask"
           test -x "$verifier"
           echo "path=$verifier" >> "$GITHUB_OUTPUT"
@@ -75,10 +110,10 @@ jobs:
       - name: Verify promotion inputs and PR-head binding
         id: inputs
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_CONTROL: ${{ inputs.control_commit }}
+          PR_HEAD: ${{ inputs.join_head }}
+          BASE_SHA: ${{ inputs.source_parent }}
+          PR_NUMBER: ${{ inputs.public_pr }}
           CONTROL_REPOSITORY_URL: https://github.com/EffortlessMetrics/ripr.git
           CONTROL_INPUTS_PATH: docs/release/source-promotion/contract-inputs.json
           PREFLIGHT_PATH: docs/release/source-promotion/preflight.json
@@ -131,11 +166,13 @@ jobs:
           test "$(git rev-parse --verify "$BASE_SHA^{commit}")" = "$BASE_SHA" || fail "base SHA is not an exact commit"
 
           validation_phase=control_marker
-          marker_count=$(printf '%s\n' "$PR_BODY" | grep -F '<!-- source-promotion-control:' | wc -l || true)
+          PR_BODY=$(cat "$RUNNER_TEMP/public-promotion-body")
+          marker_count=$(printf '%s\n' "$PR_BODY" | grep -Fc '<!-- source-promotion-control:' || true)
           test "$marker_count" -eq 1 || fail "exactly one source-promotion-control marker is required"
           control_marker=$(printf '%s\n' "$PR_BODY" | grep -E '^<!-- source-promotion-control: [0-9a-f]{40} -->$' || true)
           test "$(printf '%s\n' "$control_marker" | sed '/^$/d' | wc -l)" -eq 1 || fail "exactly one lowercase source-promotion-control marker is required"
           control_commit=$(printf '%s\n' "$control_marker" | sed -E 's/.*: ([0-9a-f]{40}) -->/\1/')
+          test "$control_commit" = "$EXPECTED_CONTROL" || fail "public PR control commit differs from dispatch input"
           validation_phase=control_repository
           control_dir="$RUNNER_TEMP/ripr-promotion-control"
           git clone --no-checkout "$CONTROL_REPOSITORY_URL" "$control_dir" || fail "unable to clone the source control repository"
@@ -267,9 +304,11 @@ jobs:
             ([.rules[]?.type] | index("update") != null) and
             ([.rules[]?.type] | index("deletion") != null)
           ' >/dev/null || fail_live "live protected candidate-tag ruleset is missing or mismatched"
-          printf '%s\n' "validation_phase=live_governance" "validation_reason=live governance checks passed" "validation_status=passed" >> "$GITHUB_OUTPUT"
-          echo "tag=passed" >> "$GITHUB_OUTPUT"
-          echo "ruleset=passed" >> "$GITHUB_OUTPUT"
+          {
+            printf '%s\n' "validation_phase=live_governance" "validation_reason=live governance checks passed" "validation_status=passed"
+            echo "tag=passed"
+            echo "ruleset=passed"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run the exact full-history verifier
         id: verify
@@ -313,9 +352,10 @@ jobs:
       - name: Write the normalized SHA-bound contract receipt and summary
         if: always()
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUBLIC_BINDING: ${{ steps.public-pr.outcome }}
+          PR_NUMBER: ${{ inputs.public_pr }}
+          BASE_SHA: ${{ inputs.source_parent }}
+          PR_HEAD: ${{ inputs.join_head }}
           SOURCE_MAIN: ${{ steps.inputs.outputs.source_main }}
           SOURCE_PARENT: ${{ steps.inputs.outputs.source_parent }}
           JOIN_HEAD: ${{ steps.inputs.outputs.join_head }}
@@ -337,6 +377,12 @@ jobs:
           SOURCE_PROMOTION_OUT: ${{ runner.temp }}/ripr-source-promotion
         run: |
           set -euo pipefail
+          if [[ "$PUBLIC_BINDING" != success ]]; then
+            VALIDATION_PHASE=public_pr_binding
+            VALIDATION_REASON="public PR identity, marker or body commitment did not bind"
+            VALIDATION_STATUS=rejected
+          fi
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then PR_NUMBER=null; fi
           out="$SOURCE_PROMOTION_OUT"
           mkdir -p "$out"
           validation_log="$out/source-promotion-validation.log"
@@ -441,9 +487,9 @@ jobs:
             --argjson parents "$parents" \
             --argjson checks "$checks" \
             --argjson failure_reasons "$failure_reasons" \
-            '{schema:$schema,status:$status,pr_number:$pr_number,base_sha:$base_sha,head_sha:$head_sha,version:$version,source_main:$source_main,source_parent:$source_parent,join_head:$join_head,control_commit:$control_commit,trusted_verifier_sha:$trusted_verifier_sha,verifier_receipt_status:$verifier_receipt_status,verifier_exit_code:$verifier_exit_code,validation:{status:$validation_status,phase:$validation_phase,reason:$validation_reason},inputs:{preflight:$preflight,resolution_manifest:$resolution_manifest},control_sidecars:{contract_inputs:$control_inputs_path,preflight:$control_preflight_path,resolution_manifest:$control_resolution_manifest_path},preflight_sha256:$preflight_sha256,resolution_manifest_sha256:$resolution_sha256,parents:$parents,tree:$tree,merge_base:$merge_base,inventory:{conflicts:($conflict_count|tonumber? // $conflict_count),source_survivors:($survivor_count|tonumber? // $survivor_count),swarm_exclusions:($exclusion_count|tonumber? // $exclusion_count)},version_state:$version_state,governance:{protected_candidate_tag:$live_tag,protected_ruleset:$live_ruleset},checks:$checks,failure_reasons:$failure_reasons,claim_boundary:["Exact PR head, ordered two-parent ancestry, reviewed tree, metadata identity, live protected tag and ruleset bindings only.","No merge, publication, tag, release, settings, branch-protection, or product-correctness claim."]}' > "$contract"
+            '{rehearsal_only:true,source_repository:"EffortlessMetrics/ripr",schema:$schema,status:$status,pr_number:$pr_number,base_sha:$base_sha,head_sha:$head_sha,version:$version,source_main:$source_main,source_parent:$source_parent,join_head:$join_head,control_commit:$control_commit,trusted_verifier_sha:$trusted_verifier_sha,verifier_receipt_status:$verifier_receipt_status,verifier_exit_code:$verifier_exit_code,validation:{status:$validation_status,phase:$validation_phase,reason:$validation_reason},inputs:{preflight:$preflight,resolution_manifest:$resolution_manifest},control_sidecars:{contract_inputs:$control_inputs_path,preflight:$control_preflight_path,resolution_manifest:$control_resolution_manifest_path},preflight_sha256:$preflight_sha256,resolution_manifest_sha256:$resolution_sha256,parents:$parents,tree:$tree,merge_base:$merge_base,inventory:{conflicts:($conflict_count|tonumber? // $conflict_count),source_survivors:($survivor_count|tonumber? // $survivor_count),swarm_exclusions:($exclusion_count|tonumber? // $exclusion_count)},version_state:$version_state,governance:{protected_candidate_tag:$live_tag,protected_ruleset:$live_ruleset},checks:$checks,failure_reasons:$failure_reasons,claim_boundary:["Exact PR head, ordered two-parent ancestry, reviewed tree, metadata identity, live protected tag and ruleset bindings only.","No merge, publication, tag, release, settings, branch-protection, or product-correctness claim."]}' > "$contract"
           {
-            echo "## Source Promotion Contract"
+            echo "## Private rehearsal of the public source promotion contract"
             echo ""
             echo "- normalized status: **$status**"
             printf '%s\n' "- PR head / candidate SHA: $PR_HEAD"
@@ -459,17 +505,7 @@ jobs:
             printf '%s\n' "- conflicts: $conflict_count; source survivors: $survivor_count; swarm exclusions: $exclusion_count"
             printf '%s\n' "- version/changelog state: $version_state"
             echo ""
-            echo "Use Create a merge commit."
-            echo "Do not use Squash and merge."
-            echo "Do not use Rebase and merge."
-            echo ""
-            echo '```bash'
-            echo "gh pr merge $PR_NUMBER --repo EffortlessMetrics/ripr \\"
-            echo "  --merge \\"
-            echo "  --match-head-commit $PR_HEAD"
-            echo '```'
-            echo ""
-            echo "This workflow never executes the merge command. Unrelated PRs skip this job; a skipped job is not a promotion pass."
+            echo "This workflow never executes the merge command. Only the public repository can authorize promotion."
             if test "$status" != verified; then
               echo ""
               printf '%s\n' "Failure reasons: $failure_reasons"
@@ -480,7 +516,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: source-promotion-contract-${{ github.event.pull_request.head.sha }}
+          name: private-rehearsal-source-promotion-contract-${{ inputs.join_head }}
           path: ${{ runner.temp }}/ripr-source-promotion
           if-no-files-found: error
 
@@ -499,15 +535,28 @@ jobs:
             .verifier_exit_code == "0"
           ' "$SOURCE_PROMOTION_CONTRACT"
   post-merge-reachability:
-    name: Source Promotion Post-Merge Reachability
-    if: github.event_name == 'workflow_dispatch'
+    name: Rehearse public post-merge reachability
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && inputs.phase == 'post-merge'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Validate exact post-merge input syntax
+        env:
+          MAIN_HEAD: ${{ inputs.main_head }}
+          JOIN_HEAD: ${{ inputs.join_head }}
+          SOURCE_PARENT: ${{ inputs.source_parent }}
+          SOURCE_MAIN: ${{ inputs.source_main }}
+          CONTROL_COMMIT: ${{ inputs.control_commit }}
+        run: |
+          set -euo pipefail
+          for sha in "$MAIN_HEAD" "$JOIN_HEAD" "$SOURCE_PARENT" "$SOURCE_MAIN" "$CONTROL_COMMIT"; do [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; done
+          test "$SOURCE_PARENT" = "$SOURCE_MAIN"
+
       - name: Check out source main with full history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          repository: EffortlessMetrics/ripr
+          ref: ${{ inputs.main_head }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -518,6 +567,7 @@ jobs:
       - name: Fetch immutable promotion control sidecar
         id: control
         env:
+          MAIN_HEAD: ${{ inputs.main_head }}
           CONTROL_COMMIT: ${{ inputs.control_commit }}
           CONTROL_REPOSITORY_URL: https://github.com/EffortlessMetrics/ripr.git
           CONTROL_INPUTS_PATH: docs/release/source-promotion/contract-inputs.json
@@ -529,6 +579,9 @@ jobs:
         run: |
           set -euo pipefail
           fail() { printf '%s\n' "post-merge contract rejected: $1" >&2; exit 1; }
+          [[ "$MAIN_HEAD" =~ ^[0-9a-f]{40}$ ]] || fail "main_head must be an exact lowercase SHA"
+          test "$(git rev-parse HEAD)" = "$MAIN_HEAD" || fail "public main rehearsal subject mismatch"
+          git merge-base --is-ancestor "$MAIN_HEAD" refs/remotes/origin/main || fail "main_head is not in public main history"
           test "$(printf '%s' "$CONTROL_COMMIT" | grep -E '^[0-9a-f]{40}$')" = "$CONTROL_COMMIT" || fail "control_commit must be an exact lowercase SHA"
           test "$(printf '%s' "$EXPECTED_SOURCE_MAIN" | grep -E '^[0-9a-f]{40}$')" = "$EXPECTED_SOURCE_MAIN" || fail "source_main must be an exact lowercase SHA"
           test "$(printf '%s' "$EXPECTED_SOURCE_PARENT" | grep -E '^[0-9a-f]{40}$')" = "$EXPECTED_SOURCE_PARENT" || fail "source_parent must be an exact lowercase SHA"
@@ -584,11 +637,12 @@ jobs:
           test "$SOURCE_PARENT" = "$(printf '%s' "$SOURCE_PARENT" | grep -E '^[0-9a-f]{40}$')"
           trusted_dir="$RUNNER_TEMP/ripr-trusted-verifier"
           trusted_target="$RUNNER_TEMP/ripr-trusted-target"
-          git clone --no-checkout "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$trusted_dir"
+          git clone --no-checkout https://github.com/EffortlessMetrics/ripr.git "$trusted_dir"
           git -C "$trusted_dir" fetch --no-tags origin "$SOURCE_PARENT"
+          git -C "$trusted_dir" merge-base --is-ancestor "$SOURCE_PARENT" refs/remotes/origin/main
           git -C "$trusted_dir" checkout --detach "$SOURCE_PARENT"
           test "$(git -C "$trusted_dir" rev-parse HEAD)" = "$SOURCE_PARENT"
-          CARGO_TARGET_DIR="$trusted_target" cargo build --locked --manifest-path "$trusted_dir/Cargo.toml" -p xtask --bin xtask
+          (cd "$trusted_dir" && CARGO_TARGET_DIR="$trusted_target" cargo build --locked --manifest-path "$trusted_dir/Cargo.toml" -p xtask --bin xtask)
           verifier="$trusted_target/debug/xtask"
           test -x "$verifier"
           echo "path=$verifier" >> "$GITHUB_OUTPUT"
@@ -623,7 +677,7 @@ jobs:
           jq -e '.status == "verified" and .checks.main_reachability == "passed"' \
             "$SOURCE_PROMOTION_OUT/source-promotion-verification.json"
           {
-            echo "## Source Promotion Post-Merge Reachability"
+            echo "## Private rehearsal of public post-merge reachability"
             echo ""
             printf '%s\n' "Exact join $JOIN_HEAD remains reachable from merged source main $MAIN_HEAD."
             echo "A flattened equivalent tree is rejected because the verifier requires the exact J object."
@@ -644,12 +698,12 @@ jobs:
           mkdir -p "$out"
           status=rejected
           if test -f "$out/source-promotion-verification.json" && jq -e '.status == "verified"' "$out/source-promotion-verification.json" >/dev/null; then status=verified; fi
-          jq -n --arg schema 'ripr.source_promotion_post_merge_contract.v1' --arg status "$status" --arg control_commit "$CONTROL_COMMIT" --arg join_head "$JOIN_HEAD" --arg source_main "$SOURCE_MAIN" --arg source_parent "$SOURCE_PARENT" --arg main_head "$MAIN_HEAD" '{schema:$schema,status:$status,control_commit:$control_commit,join_head:$join_head,source_main:$source_main,source_parent:$source_parent,main_head:$main_head}' > "$out/source-promotion-post-merge-contract.json"
+          jq -n --arg schema 'ripr.source_promotion_post_merge_contract.v1' --arg status "$status" --arg control_commit "$CONTROL_COMMIT" --arg join_head "$JOIN_HEAD" --arg source_main "$SOURCE_MAIN" --arg source_parent "$SOURCE_PARENT" --arg main_head "$MAIN_HEAD" '{rehearsal_only:true,source_repository:"EffortlessMetrics/ripr",schema:$schema,status:$status,control_commit:$control_commit,join_head:$join_head,source_main:$source_main,source_parent:$source_parent,main_head:$main_head}' > "$out/source-promotion-post-merge-contract.json"
 
       - name: Upload SHA-bound post-merge receipts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: source-promotion-post-merge-${{ inputs.join_head }}-${{ inputs.main_head }}
+          name: private-rehearsal-source-promotion-post-merge-${{ inputs.join_head }}-${{ inputs.main_head }}
           path: ${{ runner.temp }}/ripr-source-promotion
           if-no-files-found: error

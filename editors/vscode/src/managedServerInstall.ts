@@ -31,13 +31,6 @@ export interface InstallReceiptV1 {
   readonly executableSha256: string;
   readonly binaryVersion: string;
   /**
-   * Descriptor-admitted manifest digest bound at install time. Absent on
-   * legacy and undescribed-flow receipts; a distribution-bound request
-   * carrying an expected digest never accepts those, so a cache entry
-   * admitted under a different manifest cannot be reused.
-   */
-  readonly manifestSha256?: string;
-  /**
    * Exact manifest location observed when these bytes were admitted.
    * This is provenance/observation evidence only: cache currentness remains
    * bound to distributionIdentity + manifestSha256, so identical RC bytes are
@@ -76,6 +69,14 @@ export interface ManagedServerInstallRequest {
    * explicitly offline-trusted on version and local self-consistency alone.
    */
   readonly admittedManifestSha256?: string;
+  readonly distributionIdentity?: string;
+  /**
+   * Descriptor-admitted manifest digest the install must be bound to. When
+   * present, only receipts stamped with the same digest are cache-eligible;
+   * a changed manifest under an otherwise identical version/ref rejects as
+   * contradiction instead of overwriting or reusing the live entry.
+   */
+  readonly expectedManifestSha256?: string;
 }
 
 export interface ResolvedArchive {
@@ -86,6 +87,20 @@ export interface ResolvedArchive {
   readonly manifestPlacement?: ManifestPlacement;
   /** Raw-byte SHA-256 of the manifest the archive digest came from. */
   readonly manifestSha256?: string;
+  /**
+   * Descriptor-admitted manifest digest the archive was selected under.
+   * Present only when the downloader admitted the manifest bytes against
+   * the resolved distribution; the staged receipt binds to it below.
+   */
+  readonly admittedManifestSha256?: string;
+  /**
+   * Exact manifest URL used to select this archive. Observation only; it is
+   * retained in the completed receipt but is deliberately not a cache key.
+   */
+  readonly selectedManifestUrl?: string;
+  readonly manifestSelection?: ManagedManifestSelection;
+  readonly preferredManifestObservation?: PreferredManifestObservation;
+  readonly fallbackManifestObservation?: FallbackManifestObservation;
 }
 
 /**
@@ -460,6 +475,19 @@ async function stageAndPromote(
     ) {
       throw new Error('Resolved server manifest does not match the admitted manifest SHA-256.');
     }
+    if (
+      request.expectedManifestSha256 !== undefined &&
+      resolved.admittedManifestSha256 !== request.expectedManifestSha256
+    ) {
+      throw new Error(
+        'Distribution-bound install requires the archive admitted under the expected manifest digest; refusing before extraction.'
+      );
+    }
+    if (resolved.manifestSha256 !== undefined && resolved.admittedManifestSha256 !== undefined
+      && !safeDigestEquals(resolved.manifestSha256, resolved.admittedManifestSha256)) {
+      throw new Error('Resolved manifest digest and descriptor admission stamp disagree.');
+    }
+    const manifestSha256 = resolved.manifestSha256 ?? resolved.admittedManifestSha256;
     if (!isSha256(resolved.expectedSha256)) {
       throw new Error('Server manifest asset digest is not a SHA-256 value.');
     }
@@ -498,15 +526,12 @@ async function stageAndPromote(
       ...(resolved.manifestUrl !== undefined && resolved.manifestUrl.length > 0 ? { manifestUrl: resolved.manifestUrl } : {}),
       platformTarget: request.platformTarget,
       executableName: request.executableName,
-      ...(resolved.manifestSha256 !== undefined ? { manifestSha256: resolved.manifestSha256 } : {}),
+      ...(manifestSha256 !== undefined ? { manifestSha256 } : {}),
       archiveSha256,
       executableSha256,
       binaryVersion,
       ...(request.distributionIdentity !== undefined
         ? { distributionIdentity: request.distributionIdentity }
-        : {}),
-      ...(resolved.admittedManifestSha256 !== undefined
-        ? { manifestSha256: resolved.admittedManifestSha256 }
         : {}),
       ...(resolved.selectedManifestUrl !== undefined
         ? { selectedManifestUrl: resolved.selectedManifestUrl }

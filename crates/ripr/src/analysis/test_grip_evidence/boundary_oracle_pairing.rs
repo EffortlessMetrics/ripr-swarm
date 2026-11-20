@@ -36,9 +36,9 @@ pub(super) fn missing(
     // its predicate. Other return values gain no boundary requirement.
     if seam.kind() == crate::analysis::seams::SeamKind::ReturnValue {
         probe.family = ProbeFamily::ReturnValue;
-        let unconditional = OwnerReturnPin::establish(&probe, owner, index)
-            .is_some_and(|pin| pin.is_unconditional_boolean_tail());
-        if !unconditional {
+        let projects_boundary = OwnerReturnPin::establish(&probe, owner, index)
+            .is_some_and(|pin| pin.can_project_returned_boundary());
+        if !projects_boundary {
             return false;
         }
         let Some(predicate) = returned_boundary_probe(&probe, owner, index, true) else {
@@ -163,7 +163,9 @@ pub(super) fn missing(
                     entry_admitted: &entry_admitted,
                     entry_loan: &loan,
                 },
-                &|test, assertion| syntax.admits_equality_assertion(&probe, test, assertion, index),
+                &|test, assertion| {
+                    syntax.admits_equality_assertion(&probe, Some(owner), test, assertion, index)
+                },
                 index,
             )
         });
@@ -174,7 +176,9 @@ pub(super) fn missing(
         Some(owner),
         tests,
         &direct_activation,
-        &|test, assertion| syntax.admits_equality_assertion(&probe, test, assertion, index),
+        &|test, assertion| {
+            syntax.admits_equality_assertion(&probe, Some(owner), test, assertion, index)
+        },
         &|test, assertion| {
             boolean_pin
                 .as_ref()

@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach retries: builder_leaves_the_callers_copy_alone", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: self.retries = n * 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches constructed field: self.retries = n * 2 (line 8)", "related test tests/opts_tests.rs:4 builder_leaves_the_callers_copy_alone uses strong exact value oracle: assert_eq!(o.retries, 3);", "source function argument value n = 5 at line 6", "source assertion argument value 3 at line 7", "missing discriminator self.retries = n * 2: No field-value assertion observes the constructed field: self.retries = n * 2"],
       "flow_sinks": [
         {"kind":"struct_field","text":"self.retries = n * 2","line":8}
@@ -107,8 +114,8 @@
       "stop_reasons": ["fixture_opaque"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. A related test mentions a fixture, builder, or generator; inspect its produced input before deciding another case is needed. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. A related test mentions a fixture, builder, or generator; inspect its produced input before deciding another case is needed. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. A related test mentions a fixture, builder, or generator; inspect its produced input before deciding another case is needed. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. A related test mentions a fixture, builder, or generator; inspect its produced input before deciding another case is needed. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

@@ -17,14 +17,13 @@ Start here:
   Changed behavior: x > 101
   Missing check (1 of 3): Changed boundary input is unresolved: call identity does not resolve to
     the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
-  Related test (1 of 4 matched rows): tests/it.rs:13 at
+  Related test (1 of 4 matched rows): tests/it.rs:10 high
   Next step: Open the related test, check whether it reaches the changed code, and inspect other
     existing tests. Trace their inputs through the local or computed operand (including default and
     empty cases) to see which side of the changed condition they exercise, then name an input that
     would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
-    strengthen a test only if this inspection finds a gap. Compare the original and changed
-    implementations with a focused run using the project's configured test runner (`cargo test` for
-    ordinary Cargo tests). Static classification may remain unknown
+    tighten a test only if this finds a gap; compare old and new code with the project's configured
+    test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -36,9 +35,9 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach yes: Related tests appear to reach thr: at, high, local
-    - infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
-    - 12 more detail line(s) in --format human-full
+    - reach yes: Related tests appear to reach thr: high, local, low
+    - propagation yes: Changed behavior appears to influence returned value: x > 101
+    - 11 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
@@ -51,7 +50,7 @@ Write a test for it:
 Hidden:
   2 finding(s) omitted: 1 lower-priority, 1 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:2 (unknown: infection unclear, base-side); kind: predicate; reason: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
-    - ./src/lib.rs:2 (unknown: infection unclear, lower-priority candidate); kind: return_value; reason: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
+    - ./src/lib.rs:2 (unknown: infection unclear, lower-priority candidate); kind: return_value; reason: same as above
   Hidden classes:
     unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full

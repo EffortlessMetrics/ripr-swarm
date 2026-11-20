@@ -15,7 +15,8 @@ use crate::analysis_outcome::{
 };
 use crate::app::Mode;
 use crate::domain::{
-    Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+    Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+    StageEvidence, StageState,
 };
 use crate::output::markdown::powershell_command;
 use crate::output::path::display_path;
@@ -29,6 +30,7 @@ mod native_artifacts;
 mod panic_outcome;
 mod spec_0237;
 mod timeout_retry;
+mod unreadable;
 
 fn seam(file: &str, line: usize, expression: &str) -> RepoSeam {
     RepoSeam::new(
@@ -54,6 +56,8 @@ fn missing() -> MissingDiscriminatorFact {
         value: "input that hits the boundary: amount >= discount_threshold".to_string(),
         reason: "observed values do not include the equality-boundary case".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }
 }
 
@@ -101,6 +105,7 @@ fn pilot_context(artifacts: &PilotArtifacts) -> PilotSummaryContext<'_> {
         current_change: None,
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
     }
 }
 
@@ -182,6 +187,7 @@ fn pilot_context_with_python<'a>(
         current_change: None,
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
     }
 }
 
@@ -763,7 +769,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
 
     assert!(
-        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
+        md.contains("- Seam limit reached: analyzed 3 of 7 seams, kept as the inventory's path-order slice plus seams your change touches that fit the budget, then ranked by actionability within that slice -- a Rust recommendation, when present, is the highest-ranked seam in this slice, not of the whole repository; actionable-seam and owner counts below cover this slice only\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
         "{md}"
     );
     assert!(
@@ -996,7 +1002,7 @@ fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
     let mut unresolved = classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::h", 12);
     unresolved.evidence.reach = stage(StageState::No);
     unresolved.evidence.activate = stage(StageState::Unknown);
-    unresolved.evidence.activate.summary = "Boundary activation operand is a local computed value for seam `x > limit`; add analyzer support before emitting an actionable repair packet".to_string();
+    unresolved.evidence.activate.summary = "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `x > limit`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
     let entries = [unreached, quoting, limited, unresolved];
     let ranked = top_actionable_seams(&entries, 5, None);
     assert_eq!(
@@ -1148,6 +1154,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     let limited = PilotSummaryContext {
         seam_limit: Some(&limit),
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&entries, limited);
@@ -1221,6 +1228,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         current_change: None,
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
     };
 
     let json = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_summary_json(
@@ -1474,6 +1482,7 @@ fn pilot_terminal_keeps_unchecked_count_guidance_when_limit_cut_an_empty_ranking
     let limited = PilotSummaryContext {
         seam_limit: Some(&limit),
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&entries, limited);
@@ -1546,6 +1555,7 @@ fn pilot_route_lines_say_no_gaps_only_about_the_rust_code_it_checked() {
         language_routes: Some(&routes),
         seam_limit: Some(&limit),
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -1744,6 +1754,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
         current_change: None,
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
     };
 
     let json = render_pilot_timeout_summary_json(context);
@@ -1806,6 +1817,7 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
         current_change: None,
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
     }
 }
 
@@ -2337,6 +2349,8 @@ fn route_ready_entry_at(test_files: &[&str], file: &str, line: usize) -> Classif
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }],
         related,
     );
@@ -2456,6 +2470,75 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+/// #13624: a gap beside a skipped unreadable path may only be a test hidden
+/// there, so the same route-ready seam that is offered with no limitation is
+/// neither ranked nor offered a repair on any surface once a path was skipped.
+#[test]
+fn pilot_offers_no_gap_or_repair_while_an_unreadable_path_was_skipped() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let entries = [route_ready_entry(&["tests/pricing.rs"])];
+    let command = format!(
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(".")),
+        entries[0].seam.id().as_str()
+    );
+    // Positive control: with no limitation the repair is offered.
+    let control: serde_json::Value = serde_json::from_str(&render_pilot_summary_json(
+        &entries,
+        pilot_context(&artifacts),
+    ))
+    .map_err(|e| e.to_string())?;
+    assert_eq!(
+        control["next"]["repair_command"].as_str(),
+        Some(command.as_str())
+    );
+
+    let limitations = [AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Restore read access, then re-run.",
+        )?,
+    )
+    .with_path("tests/locked")?
+    .with_affected_items(1)?
+    .with_detail("unchanged Rust path could not be read")?];
+    let mut context = pilot_context(&artifacts);
+    context.inventory_evidence_limitations = &limitations;
+    let json = render_pilot_summary_json(&entries, context);
+    let summary: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    assert_eq!(
+        summary["top_actionable_seams"],
+        serde_json::json!([]),
+        "{json}"
+    );
+    assert!(summary["next"]["repair_command"].is_null(), "{json}");
+    assert!(summary["next"]["outcome_command"].is_null(), "{json}");
+    let terminal = render_pilot_terminal(&entries, context);
+    let md = render_pilot_summary_md(&entries, context);
+    for (name, text) in [("terminal", &terminal), ("markdown", &md), ("json", &json)] {
+        assert!(!text.contains(&command), "{name} offered a repair\n{text}");
+    }
+    assert!(terminal.contains("tests/locked"), "{terminal}");
+    assert!(terminal.contains("no gap is ranked"), "{terminal}");
+    assert!(!terminal.contains("some changed files"), "{terminal}");
+    assert!(md.contains("no gap is ranked"), "{md}");
+    // The closing guidance must not offer the snapshot pair either (JSON nulls it).
+    for (name, text) in [("terminal", &terminal), ("markdown", &md)] {
+        assert!(
+            text.contains("Restore read access to the Rust path"),
+            "{name}\n{text}"
+        );
+        assert!(
+            !text.contains("ripr outcome"),
+            "{name} offered an outcome\n{text}"
+        );
+        assert!(!text.contains("--phase after"), "{name}\n{text}");
     }
     Ok(())
 }
@@ -3165,6 +3248,7 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
         language_routes: Some(&routes),
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -3200,6 +3284,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
         language_routes: Some(&go_only),
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -3250,6 +3335,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
             language_routes: Some(&with_rust),
             seam_limit: None,
             repo_exposure_byte_bound: None,
+            inventory_evidence_limitations: &[],
             ..pilot_context(&artifacts)
         },
     );
@@ -3274,6 +3360,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
             language_routes: Some(&plain),
             seam_limit: None,
             repo_exposure_byte_bound: None,
+            inventory_evidence_limitations: &[],
             ..pilot_context(&artifacts)
         },
     );
@@ -3289,6 +3376,34 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     );
     assert!(parsed["next"]["outcome_command"].is_string(), "{json}");
     Ok(())
+}
+
+/// #13624: Rust disabled and the only Rust lives in an unreadable directory.
+/// The readable count is 0 and must render as unknown, never a made-up count
+/// and never as "no Rust files".
+#[test]
+fn pilot_rust_exclusion_of_an_unreadable_only_tree_has_no_invented_count() {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let excluded =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &[])
+            .with_unanalyzed(Vec::new(), true)
+            .with_rust_exclusion(Some(0));
+    let context = PilotSummaryContext {
+        language_routes: Some(&excluded),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    let md = render_pilot_summary_md(&[], context);
+    for (name, text) in [("terminal", &terminal), ("markdown", &md)] {
+        assert!(
+            text.contains("an unreadable path (file count unknown)"),
+            "{name}\n{text}"
+        );
+        assert!(!text.contains("0 files"), "{name}\n{text}");
+        assert!(!text.contains("1 file"), "{name}\n{text}");
+    }
 }
 
 #[test]
@@ -3307,6 +3422,7 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
         language_routes: Some(&excluded),
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -3349,6 +3465,7 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
             language_routes: Some(&plain),
             seam_limit: None,
             repo_exposure_byte_bound: None,
+            inventory_evidence_limitations: &[],
             ..pilot_context(&artifacts)
         },
     );
@@ -3379,6 +3496,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
         language_routes: Some(&routes),
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let json = render_pilot_summary_json(&[], context);
@@ -3417,6 +3535,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
             language_routes: Some(&plain),
             seam_limit: None,
             repo_exposure_byte_bound: None,
+            inventory_evidence_limitations: &[],
             ..pilot_context(&artifacts)
         },
     );
@@ -3452,6 +3571,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         language_routes: Some(&supplementary),
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     assert_eq!(
@@ -3475,6 +3595,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         language_routes: Some(&required),
         seam_limit: None,
         repo_exposure_byte_bound: None,
+        inventory_evidence_limitations: &[],
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -3552,6 +3673,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             language_routes: Some(&enabled_ts),
             seam_limit: None,
             repo_exposure_byte_bound: None,
+            inventory_evidence_limitations: &[],
             ..pilot_context(&artifacts)
         };
         let enabled_terminal = render_pilot_terminal(&[], enabled_context);
@@ -3603,6 +3725,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             language_routes: Some(&perl_only),
             seam_limit: None,
             repo_exposure_byte_bound: None,
+            inventory_evidence_limitations: &[],
             ..pilot_context(&artifacts)
         };
         let terminal = render_pilot_terminal(&[], context);
@@ -3801,6 +3924,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
             language_routes: Some(&disabled_ts),
             seam_limit: None,
             repo_exposure_byte_bound: None,
+            inventory_evidence_limitations: &[],
             ..pilot_context(&artifacts)
         };
         let disabled_terminal = render_pilot_terminal(&[], disabled_context);
@@ -4199,6 +4323,7 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
         Some(Ok(ClassifiedChangeReport {
             classified: vec![on_change],
             absent_file_limitations: Vec::new(),
+            evidence_limitations: Vec::new(),
         })),
     );
     assert_eq!(
@@ -4229,6 +4354,7 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
                 vec![],
             )],
             absent_file_limitations: Vec::new(),
+            evidence_limitations: Vec::new(),
         })),
     );
     assert_eq!(inventory_limit, None);
@@ -4259,6 +4385,253 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
     let (mut classified, mut inventory_limit) = (Vec::new(), limit());
     let folded = docs_change.fold_classified_change(&mut classified, &mut inventory_limit, None);
     assert_eq!(folded.caveat_limit, None);
+}
+
+/// #13340: a change classification whose evidence warm failed must not read as a
+/// completed analysis. The unarmed control classifies real evidence first, so the
+/// fixture demonstrably reaches the walk; the armed run then keeps the seam-limit
+/// caveat and names the pass-wide `producer_failure` in every pilot rendering.
+#[test]
+fn failed_evidence_warm_in_change_classification_is_disclosed_and_keeps_the_caveat()
+-> Result<(), String> {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("clock before UNIX_EPOCH: {err}"))?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-pilot-failed-warm-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::create_dir_all(dir.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    let fixture = Fixture(dir);
+    let root = fixture.0.as_path();
+    let write = |relative: &str, text: &str| {
+        std::fs::write(root.join(relative), text).map_err(|err| format!("write {relative}: {err}"))
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = 'failed-warm-fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+    )?;
+    write("src/lib.rs", "pub mod pricing;\n")?;
+    write(
+        "src/pricing.rs",
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n",
+    )?;
+    write(
+        "tests/pricing.rs",
+        "#[test]\nfn discounted_total_applies_at_threshold() {\n    assert_eq!(failed_warm_fixture::pricing::discounted_total(100, 100), 90);\n}\n",
+    )?;
+
+    let config = crate::config::RiprConfig::default();
+    let changed_files = [PathBuf::from("src/pricing.rs")];
+    let classify = || {
+        crate::analysis::classify_seams_in_files_at_with_config(
+            root,
+            &config,
+            &changed_files,
+            &changed_files,
+            &|_| true,
+        )
+    };
+    let artifacts = pilot_artifacts();
+    // Fold one classification into a change whose inventory seam limit cut
+    // exactly the seams on the change, and render it every way pilot does.
+    let fold_and_render = |report: ClassifiedChangeReport| -> Result<_, String> {
+        let on_change = changed("src/pricing.rs", 2);
+        let cut = report
+            .classified
+            .iter()
+            .filter(|entry| on_change.touches(entry))
+            .count();
+        assert!(cut > 0, "fixture must classify a seam on the changed line");
+        let mut classified = Vec::new();
+        let mut limit = Some(crate::analysis::SeamLimitInfo {
+            analyzed: 0,
+            total: cut,
+            source: crate::analysis::SeamLimitSource::Default,
+        });
+        let folded =
+            on_change.fold_classified_change(&mut classified, &mut limit, Some(Ok(report)));
+        let caveat = folded.caveat_limit;
+        let change = on_change
+            .clone()
+            .with_evidence_limitations(folded.evidence_limitations)
+            .with_seams_counted(&classified, caveat);
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(&change);
+        let json: serde_json::Value =
+            serde_json::from_str(&render_pilot_summary_json(&classified, context))
+                .map_err(|error| error.to_string())?;
+        let texts = [
+            render_pilot_terminal(&classified, context),
+            render_pilot_summary_md(&classified, context),
+        ];
+        Ok((
+            limit.is_some(),
+            change.seams().and_then(|seams| seams.unanalyzed),
+            change.evidence_limitations().len(),
+            json,
+            texts,
+        ))
+    };
+    let disclosure = |line: &str| {
+        line.to_lowercase()
+            .contains("current change limitation: producer_failure: part of the analysis failed.")
+    };
+
+    // Control, unarmed: real evidence clears the caveat and says nothing.
+    let (limit_kept, unanalyzed, count, json, texts) = fold_and_render(classify()?)?;
+    assert!(!limit_kept, "a complete classification clears the limit");
+    assert_eq!(unanalyzed, None);
+    assert_eq!(count, 0);
+    assert!(json["current_change"].get("evidence_limitations").is_none());
+    for text in &texts {
+        assert!(!text.contains("producer_failure"), "{text}");
+    }
+
+    // Armed: the same fixture now carries the pass-wide failure.
+    let failed = {
+        let _armed = crate::analysis::test_grip_evidence::WarmPanicGuard::arm(1);
+        classify()?
+    };
+    assert_eq!(failed.evidence_limitations.len(), 1);
+    let (limit_kept, unanalyzed, count, json, texts) = fold_and_render(failed)?;
+    assert!(limit_kept, "a failed warm must not clear the seam limit");
+    assert!(
+        unanalyzed.is_some_and(|(analyzed, total)| analyzed == 0 && total > 0),
+        "the seam-limit caveat stays and the cut seams do not count as analyzed: {unanalyzed:?}"
+    );
+    assert_eq!(count, 1);
+    assert_eq!(
+        json["current_change"]["evidence_limitations"],
+        serde_json::json!(["producer_failure"])
+    );
+    assert_eq!(
+        json["current_change"]["actionable_seams_in_change"], 0,
+        "opaque stand-ins are never an actionable repair signal"
+    );
+    for text in &texts {
+        assert!(text.lines().any(disclosure), "{text}");
+    }
+    Ok(())
+}
+
+/// #13340: a failed inventory evidence warm is disclosed by the pilot summary
+/// JSON, Markdown and terminal. The unarmed control runs on a separate root first
+/// (the cache replays healthy walks); armed runs use fresh roots with arm(1) and
+/// arm(2). A healthy run carries no trace of the field.
+#[test]
+fn failed_inventory_evidence_warm_is_disclosed_in_every_pilot_rendering() -> Result<(), String> {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = |label: &str| -> Result<Fixture, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock before UNIX_EPOCH: {err}"))?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-pilot-inventory-warm-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+        let fixture = Fixture(dir);
+        let write = |relative: &str, text: &str| {
+            std::fs::write(fixture.0.join(relative), text)
+                .map_err(|err| format!("write {relative}: {err}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = 'inventory-warm-fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+        )?;
+        write("src/lib.rs", "pub mod pricing;\n")?;
+        write(
+            "src/pricing.rs",
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            "tests/pricing.rs",
+            "#[test]\nfn discounted_total_applies_at_threshold() {\n    assert_eq!(inventory_warm_fixture::pricing::discounted_total(100, 100), 90);\n}\n",
+        )?;
+        Ok(fixture)
+    };
+    let config = crate::config::RiprConfig::default();
+    let changed_files = [PathBuf::from("src/pricing.rs")];
+    let artifacts = pilot_artifacts();
+    let render = |root: &Path| -> Result<_, String> {
+        let report = crate::analysis::classify_seams_in_files_at_with_config(
+            root,
+            &config,
+            &changed_files,
+            &changed_files,
+            &|_| true,
+        )?;
+        let mut context = pilot_context(&artifacts);
+        context.inventory_evidence_limitations = &report.evidence_limitations;
+        let json_text = render_pilot_summary_json(&report.classified, context);
+        let json: serde_json::Value =
+            serde_json::from_str(&json_text).map_err(|error| error.to_string())?;
+        let texts = [
+            render_pilot_terminal(&report.classified, context),
+            render_pilot_summary_md(&report.classified, context),
+        ];
+        Ok((report.evidence_limitations.len(), json_text, json, texts))
+    };
+
+    // Control, unarmed, on its own root: nothing is disclosed anywhere.
+    let healthy_root = fixture("healthy")?;
+    let (count, healthy_text, healthy, texts) = render(&healthy_root.0)?;
+    assert_eq!(count, 0);
+    assert!(healthy.get("inventory_evidence_limitations").is_none());
+    assert!(!healthy_text.contains("producer_failure"), "{healthy_text}");
+    for text in &texts {
+        assert!(
+            !text.to_lowercase().contains("inventory limitation"),
+            "{text}"
+        );
+        assert!(!text.contains("producer_failure"), "{text}");
+    }
+
+    // Armed on fresh roots, at two distinct warm points.
+    for point in [1, 2] {
+        let root = fixture(&format!("armed{point}"))?;
+        let _armed = crate::analysis::test_grip_evidence::WarmPanicGuard::arm(point);
+        let (count, _, json, texts) = render(&root.0)?;
+        assert_eq!(count, 1, "arm({point}) must fail the warm");
+        let entries = json["inventory_evidence_limitations"]
+            .as_array()
+            .ok_or_else(|| format!("expected the array: {json}"))?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["category"], "producer_failure");
+        assert_eq!(entries[0]["scope"], "pass_wide");
+        assert!(entries[0]["producer_stage"].is_string(), "{}", entries[0]);
+        assert!(entries[0]["repair_route"].is_string(), "{}", entries[0]);
+        assert_eq!(
+            json["top_actionable_seams"],
+            serde_json::json!([]),
+            "opaque stand-ins are never an actionable repair signal"
+        );
+        for text in &texts {
+            assert!(
+                text.to_lowercase().contains(
+                    "inventory limitation: producer_failure: part of the analysis failed;"
+                ),
+                "{text}"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Supply a typed producer fact while keeping the output oracle literal.
@@ -4302,6 +4675,7 @@ fn pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_s
             Some(Ok(ClassifiedChangeReport {
                 classified: supplement,
                 absent_file_limitations: vec![missing_changed_file_limitation()?],
+                evidence_limitations: Vec::new(),
             })),
         );
         assert_eq!(folded.added, usize::from(mixed));
@@ -4326,6 +4700,7 @@ fn pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_s
             Some(Ok(ClassifiedChangeReport {
                 classified: Vec::new(),
                 absent_file_limitations: Vec::new(),
+                evidence_limitations: Vec::new(),
             })),
         );
         let recovered = change.with_absent_file_limitations(recovered.absent_file_limitations);
@@ -4651,12 +5026,22 @@ fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
     assert!(changed("src/b.rs", 21).touches(&multi_line));
     assert!(!changed("src/b.rs", 22).touches(&multi_line));
     assert!(!changed("src/b.rs", 19).touches(&multi_line));
-    // A pure deletion anchors at the new-side position it was removed from.
+    // A pure deletion anchors at the new-side line where the removed code was:
+    // `+29,0` names the line before the gap, so the anchor is 30 (#13098).
     let deletion = PilotCurrentChange::from_diff_text(
         Path::new("."),
         None,
         "diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -30 +29,0 @@\n-    removed();\n",
     );
+    let at_30 = classified_with(
+        SeamGripClass::Ungripped,
+        "src/b.rs",
+        30,
+        Vec::new(),
+        Vec::new(),
+    );
+    assert!(deletion.touches(&at_30));
+    // The line before the gap is not where the removed code was.
     let at_29 = classified_with(
         SeamGripClass::Ungripped,
         "src/b.rs",
@@ -4664,7 +5049,7 @@ fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
         Vec::new(),
         Vec::new(),
     );
-    assert!(deletion.touches(&at_29));
+    assert!(!deletion.touches(&at_29));
     // An absolute root is stripped from seam paths before matching.
     let absolute = PilotCurrentChange::from_diff_text(
         Path::new("/repo"),

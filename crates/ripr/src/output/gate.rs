@@ -4,6 +4,7 @@ mod input;
 mod model;
 mod presentation;
 mod repair_route;
+mod structured_acknowledgements;
 
 use super::gap_decision_ledger::{self, GapRecord};
 use super::review_comments::SUMMARY_REASON_NO_SAFE_PLACEMENT;
@@ -25,6 +26,7 @@ use serde_json::Value;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -37,6 +39,13 @@ pub(crate) const GATE_STATUS_CONFIG_ERROR: &str = "config_error";
 /// maps this token to process exit 3 (`docs/EXIT_CODES.md`); `help --json`
 /// uses the same bytes as the `gate_evaluate` serde key.
 pub(crate) const GATE_STATUS_BLOCKED: &str = "blocked";
+/// Top-level status for a completed non-blocking run that is not a clean
+/// enforcing `pass`: advisory evidence was recorded, or the mode is
+/// visible-only (which never blocks on findings and so never reads `pass`).
+const GATE_STATUS_ADVISORY: &str = "advisory";
+/// The warning that marks a calibrated-gate block caused by a changed file the
+/// parser declined (#14485). The inline CLI detail looks for it.
+pub(crate) const UNPARSED_BLOCK_WARNING: &str = "gate mode calibrated-gate blocks while a changed file was not parsed: no seam was judged for it, so the absence of a gate candidate is not evidence that the change is tested; make the file parse, or run in a mode that does not block on unjudged changes";
 /// The closed top-level `status` set a gate decision may carry
 /// (`schemas/ripr/gate-decision.schema.json`, in schema order), mirrored
 /// from the `top_level_status` producer. Consumers validating an unknown
@@ -228,6 +237,43 @@ pub(crate) fn build_gate_decision_report(
         }
         None => None,
     };
+    let structured_acknowledgements = match input.acknowledgements.as_ref() {
+        Some(path) => {
+            let resolved = resolve_root_path(&input.root, path);
+            let display = display_path(path);
+            let ledger_result = consumed
+                .read_toml_text_and_record(&resolved, &display)
+                .and_then(|(text, digest)| {
+                    consumed.acknowledgements = Some(digest);
+                    structured_acknowledgements::load_structured_acknowledgements_from_text(
+                        &text, &display,
+                    )
+                });
+            match ledger_result {
+                Ok(ledger) => {
+                    if config_errors.is_empty() {
+                        if let Err(error) = structured_acknowledgements::validate_ledger_root(
+                            &ledger,
+                            &display_path(&input.root),
+                            &display,
+                        ) {
+                            config_errors.push(error);
+                            None
+                        } else {
+                            Some(ledger)
+                        }
+                    } else {
+                        Some(ledger)
+                    }
+                }
+                Err(error) => {
+                    config_errors.push(error);
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     let candidates = if config_errors.is_empty() {
         if let Some(records) = gap_ledger.as_ref() {
             candidates_from_gap_ledger(records)
@@ -280,12 +326,37 @@ pub(crate) fn build_gate_decision_report(
     } else {
         None
     };
+    // #14082: a changed file the parser declined yields no seams, and a seam
+    // withheld as a static limitation never becomes a candidate, so zero
+    // candidates from either is not a clean result. The warnings keep the
+    // top-level status off `pass` and reach the Markdown warnings section.
+    let mut unjudged_blocking = 0usize;
+    if let Some(scope) = analysis_scope.as_ref() {
+        let declined = parser_declined_scope_warning(scope);
+        // #14485: calibrated-gate is the mode whose job is to stop a merge, so
+        // a changed file nobody judged blocks there instead of only warning.
+        // baseline-check keeps the advisory outcome: its contract is that
+        // only new debt blocks, and the baseline delta already tracks debt in
+        // a declined file (#9598). The malformed case blocks too, because
+        // coverage of the changed files is then not established.
+        if declined.is_some() && input.mode == GateMode::CalibratedGate {
+            unjudged_blocking = 1;
+            warnings.push(UNPARSED_BLOCK_WARNING.to_string());
+        }
+        warnings.extend(declined);
+        warnings.extend(static_limited_scope_warning(scope));
+    }
     let policy = GatePolicy {
         mode: input.mode,
         threshold: DEFAULT_THRESHOLD.to_string(),
         acknowledgement_labels: acknowledgement_labels(input),
         default_workflow_posture: "advisory".to_string(),
     };
+    let gate_root = display_path(&input.root);
+    let today = crate::output::suppressions::current_iso_date();
+    let legacy_acknowledgement_label = acknowledgement_label(&policy, &labels);
+    let mut acknowledgement_match_counters = structured_acknowledgements::MatchCounters::default();
+    let structured_loaded = structured_acknowledgements.is_some();
     let mut decisions = candidates
         .iter()
         .map(|candidate| {
@@ -293,6 +364,12 @@ pub(crate) fn build_gate_decision_report(
                 candidate,
                 &policy,
                 &labels,
+                legacy_acknowledgement_label.as_deref(),
+                structured_acknowledgements.as_ref(),
+                structured_loaded,
+                &mut acknowledgement_match_counters,
+                &today,
+                &gate_root,
                 &recommendation_calibration,
                 &mutation_calibration,
                 &baseline,
@@ -345,7 +422,7 @@ pub(crate) fn build_gate_decision_report(
         &warnings,
         &config_errors,
         input.mode,
-        exception_blocking,
+        exception_blocking + unjudged_blocking,
     )
     .to_string();
     Ok(GateDecisionReport {
@@ -372,6 +449,10 @@ pub(crate) fn build_gate_decision_report(
             baseline: input.baseline.as_ref().map(|path| display_path(path)),
             exception_policy: input
                 .exception_policy
+                .as_ref()
+                .map(|path| display_path(path)),
+            acknowledgements: input
+                .acknowledgements
                 .as_ref()
                 .map(|path| display_path(path)),
         },
@@ -430,6 +511,7 @@ fn build_gate_subject(
         ("mutation_calibration", input.mutation_calibration.as_ref()),
         ("baseline", input.baseline.as_ref()),
         ("exception_policy", input.exception_policy.as_ref()),
+        ("acknowledgements", input.acknowledgements.as_ref()),
     ] {
         let Some(path) = path else {
             continue;
@@ -448,12 +530,13 @@ fn build_gate_subject(
             "mutation_calibration" => consumed.mutation_calibration.clone(),
             "baseline" => consumed.baseline.clone(),
             "exception_policy" => consumed.exception_policy.clone(),
+            "acknowledgements" => consumed.acknowledgements.clone(),
             // repo_exposure, sarif_policy, agent_verify, agent_receipt are
             // validated readable but not parsed for decisions; they hash a
             // fresh read at subject-build time.
             _ => {
                 let resolved = resolve_root_path(&input.root, path);
-                std::fs::read(&resolved)
+                crate::bounded_input::read(&resolved)
                     .ok()
                     .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
             }
@@ -564,11 +647,6 @@ fn read_baseline(
 }
 
 fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
-    let nearby_test_changed = value
-        .pointer("/summary/unchanged_tests")
-        .and_then(Value::as_bool)
-        .map(|unchanged| !unchanged)
-        .unwrap_or(false);
     let mut candidates = Vec::new();
     for source in ["comments", "summary_only"] {
         for item in value
@@ -577,12 +655,7 @@ fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
             .into_iter()
             .flatten()
         {
-            candidates.push(candidate_from_guidance_item(
-                source,
-                item,
-                nearby_test_changed,
-                false,
-            ));
+            candidates.push(candidate_from_guidance_item(source, item, false));
         }
     }
     for item in value
@@ -591,12 +664,7 @@ fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
         .into_iter()
         .flatten()
     {
-        candidates.push(candidate_from_guidance_item(
-            "suppressed",
-            item,
-            nearby_test_changed,
-            true,
-        ));
+        candidates.push(candidate_from_guidance_item("suppressed", item, true));
     }
     candidates
 }
@@ -605,12 +673,23 @@ fn candidates_from_gap_ledger(records: &[GapRecord]) -> Vec<GateCandidate> {
     records.iter().map(candidate_from_gap_record).collect()
 }
 
-fn candidate_from_guidance_item(
-    source: &str,
-    item: &Value,
-    nearby_test_changed: bool,
-    suppressed: bool,
-) -> GateCandidate {
+/// Whether the producer named a changed test that reaches this card's owner
+/// (#13893). Only this per-card evidence keeps a candidate advisory: the
+/// PR-wide `summary.unchanged_tests` flag says some test changed somewhere,
+/// not that the change touches this gap, and a card without the field (an
+/// older producer) gets no waiver.
+fn guidance_item_has_changed_reaching_test(item: &Value) -> bool {
+    item.get("changed_reaching_tests")
+        .and_then(Value::as_array)
+        .is_some_and(|tests| {
+            tests
+                .iter()
+                .any(|test| test.as_str().is_some_and(|name| !name.trim().is_empty()))
+        })
+}
+
+fn candidate_from_guidance_item(source: &str, item: &Value, suppressed: bool) -> GateCandidate {
+    let nearby_test_changed = guidance_item_has_changed_reaching_test(item);
     let route_facts = normalize_route_source(GateRouteSource::ReviewCard(item));
     let source_id = item
         .get("id")
@@ -621,11 +700,15 @@ fn candidate_from_guidance_item(
         .to_string();
     let placement = GatePlacement {
         path: string_field(item.pointer("/placement/path"))
-            .or_else(|| string_field(item.pointer("/seam/file"))),
+            .or_else(|| string_field(item.pointer("/seam/file")))
+            // Flat suppressed entries (withheld changed gaps #13892, summary-cap
+            // and nearby-test entries) carry a flat file/line.
+            .or_else(|| string_field(item.get("file"))),
         line: item
             .pointer("/placement/line")
             .and_then(Value::as_u64)
-            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64)),
+            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64))
+            .or_else(|| item.get("line").and_then(Value::as_u64)),
     };
     let recommended_file = item
         .pointer("/suggested_test/recommended_file")
@@ -759,10 +842,22 @@ fn candidate_from_gap_record(record: &GapRecord) -> GateCandidate {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "policy:1966: gate decision threads policy, baseline, causal, and acknowledgement state for one candidate"
+)]
 fn gate_decision(
     candidate: &GateCandidate,
     policy: &GatePolicy,
-    labels: &[String],
+    _labels: &[String],
+    legacy_acknowledgement_label: Option<&str>,
+    structured_acknowledgements: Option<
+        &structured_acknowledgements::StructuredAcknowledgementLedger,
+    >,
+    structured_loaded: bool,
+    acknowledgement_match_counters: &mut structured_acknowledgements::MatchCounters,
+    today: &str,
+    gate_root: &str,
     recommendation_calibration: &CalibrationIndex,
     mutation_calibration: &CalibrationIndex,
     baseline: &BaselineIndex,
@@ -810,7 +905,6 @@ fn gate_decision(
     // `is_baseline_new = true` is the deferred deprecation question.
     let baseline_match_kind = (!canonical_hit && fallback_hit)
         .then(|| BASELINE_MATCH_KIND_LEGACY_PATH_LINE_CLASS.to_string());
-    let acknowledgement_label = acknowledgement_label(policy, labels);
     let causal_attribution = causal_delta
         .map(|authority| authority.attribution_for(candidate.canonical_gap_id.as_deref()));
     let causal_allows_blocking = causal_attribution
@@ -825,6 +919,81 @@ fn gate_decision(
         &mutation_calibration,
         causal_allows_blocking,
     );
+    let acknowledgement_resolution = if would_block {
+        structured_acknowledgements::resolve_candidate_acknowledgement(
+            structured_acknowledgements,
+            acknowledgement_match_counters,
+            today,
+            gate_root,
+            candidate.canonical_gap_id.as_deref(),
+            candidate.seam_id.as_deref(),
+            legacy_acknowledgement_label,
+            structured_loaded,
+        )
+    } else {
+        structured_acknowledgements::CandidateAcknowledgement::None
+    };
+    let (
+        acknowledgement_label,
+        acknowledgement_id,
+        acknowledgement_match_kind,
+        acknowledgement_actor,
+        acknowledgement_reason,
+        acknowledgement_expires_at,
+        acknowledgement_review_after,
+        acknowledgement_global_scope,
+        acknowledgement_limitation,
+    ) = match &acknowledgement_resolution {
+        structured_acknowledgements::CandidateAcknowledgement::Applied(applied) => (
+            legacy_acknowledgement_label.map(str::to_string),
+            Some(applied.acknowledgement_id.clone()),
+            Some(applied.match_kind.clone()),
+            Some(applied.actor.clone()),
+            Some(applied.reason.clone()),
+            applied.expires_at.clone(),
+            applied.review_after.clone(),
+            Some(applied.global_scope),
+            None,
+        ),
+        structured_acknowledgements::CandidateAcknowledgement::LegacyGlobal { label } => (
+            Some(label.clone()),
+            None,
+            Some(structured_acknowledgements::MATCH_KIND_LEGACY_LABEL.to_string()),
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+        ),
+        structured_acknowledgements::CandidateAcknowledgement::Limitation { kind, detail } => (
+            legacy_acknowledgement_label.map(str::to_string),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(format!("{kind}: {detail}")),
+        ),
+        structured_acknowledgements::CandidateAcknowledgement::None => (
+            legacy_acknowledgement_label.map(str::to_string),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+    };
+    let acknowledged = matches!(
+        acknowledgement_resolution,
+        structured_acknowledgements::CandidateAcknowledgement::Applied(_)
+            | structured_acknowledgements::CandidateAcknowledgement::LegacyGlobal { .. }
+    );
     let route_limited = candidate_is_policy_eligible_without_route(candidate)
         && !gate_repair_route_is_complete(candidate);
     let decision = if candidate.suppressed || candidate.configured_off {
@@ -834,7 +1003,7 @@ fn gate_decision(
         && !route_limited
     {
         "not_applicable"
-    } else if would_block && acknowledgement_label.is_some() {
+    } else if would_block && acknowledged {
         "acknowledged"
     } else if would_block {
         "blocking"
@@ -852,6 +1021,9 @@ fn gate_decision(
             recommendation_calibration: &recommendation_calibration,
             mutation_calibration: &mutation_calibration,
             acknowledgement_label: acknowledgement_label.as_deref(),
+            acknowledgement_id: acknowledgement_id.as_deref(),
+            acknowledgement_global_scope,
+            acknowledgement_limitation: acknowledgement_limitation.as_deref(),
         },
         // #2640: the configured labels travel alongside the matched one so a
         // blocking reason can name the label that would have acknowledged it.
@@ -884,6 +1056,14 @@ fn gate_decision(
             threshold: policy.threshold.clone(),
             acknowledgement_label,
             baseline_identity,
+            acknowledgement_id,
+            acknowledgement_match_kind,
+            acknowledgement_actor,
+            acknowledgement_reason,
+            acknowledgement_expires_at,
+            acknowledgement_review_after,
+            acknowledgement_global_scope,
+            acknowledgement_limitation,
         },
         evidence: GateEvidence {
             missing_discriminator: candidate.missing_discriminator.clone(),
@@ -1112,6 +1292,11 @@ fn gate_reason(
     context: GateReasonContext<'_>,
     configured_acknowledgement_labels: &[String],
 ) -> String {
+    if candidate.suppression_reason.as_deref() == Some("static_limitation") {
+        return "changed gap withheld from repair guidance as `static_limitation`; \
+                preserved as advisory, not resolved"
+            .to_string();
+    }
     if candidate.suppressed || candidate.configured_off {
         return format!(
             "configured-hidden or suppressed candidate preserved as `{}`",
@@ -1175,7 +1360,7 @@ fn gate_reason(
             return format!("static limitation keeps this candidate advisory: {why}");
         }
         if candidate.nearby_test_changed {
-            return "nearby focused test changed in this PR, so the candidate stays advisory"
+            return "a test changed in this PR reaches this owner, so the candidate stays advisory"
                 .to_string();
         }
         if !has_concrete_guidance(candidate) {
@@ -1185,11 +1370,27 @@ fn gate_reason(
             .to_string();
     }
     match context.decision {
-        "acknowledged" => format!(
-            "policy-eligible gap acknowledged by {}",
+        "acknowledged" => {
+            if let Some(id) = context.acknowledgement_id {
+                format!("policy-eligible gap acknowledged by structured record `{id}`")
+            } else {
+                let label = context
+                    .acknowledgement_label
+                    .unwrap_or(DEFAULT_ACKNOWLEDGEMENT_LABEL);
+                if context.acknowledgement_global_scope == Some(true) {
+                    format!(
+                        "policy-eligible gap acknowledged by {label} (global_scope=true legacy compatibility)"
+                    )
+                } else {
+                    format!("policy-eligible gap acknowledged by {label}")
+                }
+            }
+        }
+        "blocking" if context.acknowledgement_limitation.is_some() => format!(
+            "policy-eligible gap blocks under acknowledgeable mode ({})",
             context
-                .acknowledgement_label
-                .unwrap_or(DEFAULT_ACKNOWLEDGEMENT_LABEL)
+                .acknowledgement_limitation
+                .unwrap_or("acknowledgement_limitation")
         ),
         "blocking"
             if candidate.source == "gap_decision_ledger"
@@ -1328,29 +1529,104 @@ fn compute_new_unsuppressed(
     }
 }
 
+/// The gate warning for an analysis scope that discloses parser-declined
+/// files (#9598): nesting budget, parse error or non-UTF-8 sent them to the
+/// lexical fallback, which extracts no seams. `None` when the key is absent
+/// or an empty list; a malformed value warns too, because coverage of the
+/// changed files is then not established.
+fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
+    let files = match scope.get("parser_declined_files")? {
+        Value::Array(items) if items.is_empty() => return None,
+        Value::Array(items) => items
+            .iter()
+            .map(|item| item.as_str().map(|file| format!("`{file}`")))
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    Some(match files {
+        Some(files) => format!(
+            "analysis_scope lists parser_declined_files (not parsed: nesting budget, parse \
+             error or non-UTF-8): {}; no seams were extracted from them, so the absence of \
+             a gate candidate there is not evidence that their changes are tested; fix each \
+             file so it parses, then rerun",
+            files.join(", ")
+        ),
+        None => "analysis_scope has a malformed parser_declined_files, so which changed \
+                 files were parsed is not established and the absence of a gate candidate \
+                 is not evidence that the changes are tested; regenerate the gate input, \
+                 then rerun"
+            .to_string(),
+    })
+}
+
+/// The gate warning for an analysis scope that discloses reviewed-scope seams
+/// withheld as static limitations (`static_limited_omitted_seams`, present
+/// only when nonzero): ripr could not judge them, so they are not blocking
+/// candidates (the changed-scope gap seams among them are evaluated as
+/// `suppressed`, #13892) and their absence is not a clean result. A value that is not a
+/// non-negative integer warns too.
+fn static_limited_scope_warning(scope: &Value) -> Option<String> {
+    let value = scope.get("static_limited_omitted_seams")?;
+    Some(match value.as_u64() {
+        Some(0) => return None,
+        Some(count) => format!(
+            "analysis_scope lists static_limited_omitted_seams: {count} seam(s) in the reviewed \
+             scope were withheld because their static evidence is opaque or unknown at a \
+             stage; they are not blocking candidates (changed-scope gap seams among them are \
+             listed as suppressed decisions), so the absence of a blocking candidate for \
+             them is not evidence that the changes are tested; run `ripr check` on the same diff to \
+             inspect them"
+        ),
+        None => "analysis_scope has a malformed static_limited_omitted_seams, so how many \
+                 seams were withheld as static limitations is not established and \
+                 the absence of a gate candidate is not evidence that the changes are \
+                 tested; regenerate the gate input, then rerun"
+            .to_string(),
+    })
+}
+
 fn top_level_status(
     summary: &GateSummary,
     warnings: &[String],
     config_errors: &[String],
     mode: GateMode,
-    exception_blocking: usize,
+    non_candidate_blocking: usize,
 ) -> &'static str {
     if !config_errors.is_empty() {
         GATE_STATUS_CONFIG_ERROR
-    } else if summary.blocking > 0 || exception_blocking > 0 {
+    } else if summary.blocking > 0 || non_candidate_blocking > 0 {
         GATE_STATUS_BLOCKED
     } else if summary.acknowledged > 0 {
         "acknowledged"
-    } else if mode == GateMode::VisibleOnly
-        || summary.advisory > 0
-        || summary.suppressed > 0
-        || summary.unknown_confidence > 0
-        || !warnings.is_empty()
-    {
-        "advisory"
+    } else if mode == GateMode::VisibleOnly || has_advisory_evidence(summary, warnings) {
+        GATE_STATUS_ADVISORY
     } else {
         "pass"
     }
+}
+
+/// Evidence that reads `advisory` in every mode: an advisory, suppressed or
+/// unknown-confidence candidate, or a warning.
+fn has_advisory_evidence(summary: &GateSummary, warnings: &[String]) -> bool {
+    summary.advisory > 0
+        || summary.suppressed > 0
+        || summary.unknown_confidence > 0
+        || !warnings.is_empty()
+}
+
+/// Whether a report reads `advisory` only because visible-only mode never
+/// blocks on findings: the run recorded no advisory evidence and no
+/// exception-policy violation. `top_level_status` owns the status; this names
+/// the one case where the token says nothing about findings, so the renderer
+/// can disclose it (#7445) without changing the status vocabulary.
+pub(super) fn advisory_from_visible_only_posture_alone(report: &GateDecisionReport) -> bool {
+    report.status == GATE_STATUS_ADVISORY
+        && report.mode == GateMode::VisibleOnly
+        && !has_advisory_evidence(&report.summary, &report.warnings)
+        && report
+            .exception_policy
+            .as_ref()
+            .is_none_or(|policy| policy.violations.is_empty())
 }
 
 fn acknowledgement_labels(input: &GateEvaluateInput) -> Vec<String> {
@@ -1369,7 +1645,7 @@ fn read_json_value_and_bytes_with_display(
     display: &Path,
 ) -> Result<(Value, Vec<u8>), String> {
     let display = display_path(display);
-    let bytes = fs::read(path).map_err(|err| {
+    let bytes = crate::bounded_input::read(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {
@@ -1383,7 +1659,7 @@ fn read_json_value_and_bytes_with_display(
 
 fn read_json_value_with_display(path: &Path, display: &Path) -> Result<Value, String> {
     let display = display_path(display);
-    let text = fs::read_to_string(path).map_err(|err| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {

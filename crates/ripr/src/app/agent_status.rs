@@ -35,6 +35,8 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod test_run;
+
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
 
 /// Unresolved seam placeholder a status command embeds when no seam id is
@@ -200,6 +202,20 @@ pub(crate) struct AgentStatusRepairAttempt {
     /// its prepared head: the recovery its after phase would print when it
     /// refuses (attempt authority's narration).
     pub(crate) diverged_recovery: Option<DivergedHeadRecovery>,
+    /// For an interrupted focused finish with no retained terminal evidence:
+    /// the recovery limitation status reports instead of reading the shared
+    /// compatibility receipt as this attempt's.
+    pub(crate) focused_recovery: Option<FocusedRecovery>,
+}
+
+/// One route for an interrupted focused finish: either retry the after phase
+/// with the same caller-reported result, or start a new attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FocusedRecovery {
+    pub(crate) limitation: &'static str,
+    /// Whether the after phase can recover this finish when it is re-run
+    /// with the same `--test-result FILE`.
+    pub(crate) retry_same_result: bool,
 }
 
 /// The workflow receipt read against one attempt. Only a `ready_to_finish`
@@ -320,18 +336,32 @@ impl AgentStatusCommand {
 }
 
 impl AgentStatusReport {
-    /// The first issued receipt that records no test run. A cold agent reads
-    /// `status: complete` plus movement `improved` as a pass, even when the
-    /// focused test fails; this names the missing test run explicitly.
-    pub(crate) fn unrun_test_receipt(&self) -> Option<&AgentReceiptReading> {
-        self.repair_attempts
+    /// Every issued receipt that records no ripr-run test, paired with its
+    /// attempt id, most telling first (#14146): a caller-reported failure,
+    /// then `none recorded`, then a caller-reported pass, attempt order within
+    /// each. A cold agent reads `status: complete` plus movement `improved` as
+    /// a pass, even when the focused test fails; this names the test-run axis
+    /// explicitly, and one attempt's `none recorded` never hides another
+    /// attempt's reported failure.
+    pub(crate) fn unrun_test_receipts(&self) -> Vec<(&str, &AgentReceiptReading)> {
+        let mut readings = self
+            .repair_attempts
             .iter()
-            .find_map(|attempt| match &attempt.receipt {
+            .filter_map(|attempt| match &attempt.receipt {
                 AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
-                    Some(reading)
+                    Some((attempt.attempt_id.as_str(), reading))
                 }
                 _ => None,
             })
+            .collect::<Vec<_>>();
+        readings.sort_by_key(|(_, reading)| test_run::aggregate_rank(reading));
+        readings
+    }
+
+    /// The one test-run reading the aggregate JSON `test_run` object reports:
+    /// the most telling of [`Self::unrun_test_receipts`].
+    pub(crate) fn unrun_test_receipt(&self) -> Option<(&str, &AgentReceiptReading)> {
+        self.unrun_test_receipts().into_iter().next()
     }
 
     /// #10984: a current gap-bound attempt that finished with its own retained
@@ -403,7 +433,7 @@ pub(crate) fn build_agent_status_report_from(
     };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
     let (store_flag, store_locator) = match resolve_store(
@@ -581,7 +611,7 @@ fn attempt_receipt(
     match load_attempt_terminal_receipt(root, manifest) {
         AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
             path,
-            reading: AgentReceiptReading::from_value(&value),
+            reading: test_run::issued_reading(manifest, &value),
         },
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
@@ -590,7 +620,12 @@ fn attempt_receipt(
         // terminal evidence (above). One finished without it (by the C2b build,
         // which issued none) never consults the one-slot compatibility file,
         // which another attempt's receipt may occupy.
-        AttemptTerminalReceipt::NotRetained if manifest.gap_binding.is_some() => {
+        AttemptTerminalReceipt::NotRetained
+            if manifest.gap_binding.is_some() || after.focused_result.is_some() =>
+        {
+            // A focused finish records its complete evidence under the
+            // attempt. A standalone compatibility receipt cannot stand in for
+            // the after phase's durable evaluation outcome.
             AgentStatusAttemptReceipt::NotIssued
         }
         AttemptTerminalReceipt::NotRetained => {
@@ -802,14 +837,14 @@ fn status_repair_attempt(
         || manifest
             .last_after_refusal
             .as_ref()
-            .is_some_and(|refusal| refusal.reason.contains("--phase before"))
+            .is_some_and(|refusal| start_recipe_offset(&refusal.reason).is_some())
         || matches!(
             &receipt,
             AgentStatusAttemptReceipt::Issued { reading, .. }
                 if reading
                     .recommended_action
                     .as_deref()
-                    .is_some_and(|action| action.contains("--phase before"))
+                    .is_some_and(|action| start_recipe_offset(action).is_some())
         );
     let seam_refused =
         (command_is_restart || carries_start_recipe) && gate.check(&manifest.seam_id).is_some();
@@ -870,6 +905,7 @@ fn status_repair_attempt(
             }
         }),
         diverged_recovery,
+        focused_recovery: focused_receipt_recovery(root, manifest),
     }
 }
 
@@ -897,9 +933,31 @@ fn sentence_breaks(line: &str) -> impl Iterator<Item = usize> + '_ {
         .filter(|&i| line[..i].matches('`').count().is_multiple_of(2))
 }
 
+/// Start recipes include the bare compatibility hint recorded by receipt
+/// refusal, not only the fully spelled before-phase command. Match prose
+/// markers without changing the original path or command bytes.
+fn start_recipe_offset(line: &str) -> Option<usize> {
+    let lower = line.to_ascii_lowercase();
+    let bare = [
+        "start a new attempt with `ripr agent repair",
+        "start a new attempt with `ripr repair",
+    ]
+    .into_iter()
+    .filter_map(|marker| {
+        lower
+            .find(marker)
+            .map(|at| at + marker.find('`').unwrap_or(0) + 1)
+    })
+    .min();
+    line.find("--phase before").into_iter().chain(bare).min()
+}
+
+/// What replaces a withheld new-attempt recipe (#8766).
+pub(crate) const START_RECIPE_WITHHELD: &str =
+    "a new attempt is not offered: the repair gate does not admit a new start";
+
 fn without_start_recipe_in_line(line: &str) -> String {
-    const WITHHELD: &str =
-        "a new attempt is not offered: the repair gate does not admit a new start";
+    const WITHHELD: &str = START_RECIPE_WITHHELD;
     const MARKERS: [&str; 6] = [
         "Then start a new attempt",
         "To keep the change,",
@@ -916,7 +974,7 @@ fn without_start_recipe_in_line(line: &str) -> String {
     ];
     const AFTER: &str = "--phase after";
     let mut line = line.to_string();
-    while let Some(at) = line.find("--phase before") {
+    while let Some(at) = start_recipe_offset(&line) {
         // The recipe lives in one sentence; a sentence ends at ". " outside
         // a backtick span (a command can contain `--root . --store x`).
         let sentence_start = sentence_breaks(&line)
@@ -934,9 +992,10 @@ fn without_start_recipe_in_line(line: &str) -> String {
                 end
             });
         let window = &line[window_start..at];
+        let lower_window = window.to_ascii_lowercase();
         let start = MARKERS
             .iter()
-            .filter_map(|marker| window.find(marker))
+            .filter_map(|marker| lower_window.find(&marker.to_ascii_lowercase()))
             .min()
             .or_else(|| FALLBACKS.iter().find_map(|marker| window.rfind(marker)))
             .map_or(at, |i| window_start + i);
@@ -1117,7 +1176,34 @@ fn finished_attempt_warnings(
                         ),
                         None => String::new(),
                     }
-                ),
+                ) + &match attempt.focused_recovery {
+                    // An interrupted focused finish has no issued receipt;
+                    // say why. A retryable finish names only the same-result
+                    // retry; any other names the new-attempt route the gate
+                    // admits.
+                    Some(recovery) if recovery.retry_same_result => {
+                        format!(". {}", recovery.limitation)
+                    }
+                    Some(FocusedRecovery { limitation, .. }) => format!(
+                        ". {limitation}{}",
+                        match gate.check(&attempt.seam_id) {
+                            Some(refusal) => format!(
+                                ". {}",
+                                repair_start_withheld_note(root_display, &attempt.seam_id, &refusal)
+                            ),
+                            None => format!(
+                                ". Start a new attempt with `{}`",
+                                new_repair_attempt_command(
+                                    root_display,
+                                    &attempt.seam_id,
+                                    attempt.gap_base.as_deref(),
+                                    store_flag
+                                )
+                            ),
+                        }
+                    ),
+                    None => String::new(),
+                },
             }),
             _ => {}
         }
@@ -1281,6 +1367,8 @@ fn canonical_next_action_for_inventory(
         transition_to: None,
         restart_route: store.locator.to_string(),
         check_case: None,
+        check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -1751,6 +1839,65 @@ struct PilotDeclinedOnly {
     /// A seam limit also cut the run, so seams past the cut were never
     /// classified and splitting the files alone leaves the scan incomplete.
     seam_limit_applied: bool,
+    /// The evidence pass failed (#13340), read from the summary's
+    /// `inventory_evidence_limitations` or the repo exposure report: the
+    /// run's counts are not a settled result, whatever the declined files say.
+    evidence_failed: bool,
+}
+
+/// Paths a complete `ripr pilot` run skipped because they were unreadable
+/// (#13624), read from the summary's `inventory_evidence_limitations`. Pilot
+/// ranks and offers nothing then, so a rerun changes nothing until read
+/// access is restored. Not a failed evidence pass and not transient.
+fn pilot_unreadable_paths(root: &Path) -> Option<(usize, Vec<String>)> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    if !(complete && no_seams && no_repair_start) {
+        return None;
+    }
+    let entries = summary
+        .pointer("/inventory_evidence_limitations")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|entry| {
+            entry.pointer("/category").and_then(Value::as_str)
+                == Some(
+                    crate::analysis_outcome::AnalysisLimitationKind::LanguageScopeUnsupported
+                        .as_str(),
+                )
+        })
+        .collect::<Vec<_>>();
+    // A refused name (for example `C:locked.rs`) degrades to a pathless entry;
+    // it still counts, and is described without a name.
+    let paths = entries
+        .iter()
+        .filter_map(|entry| entry.pointer("/path").and_then(Value::as_str))
+        .map(|path| crate::terminal_text::terminal_safe(path.to_string()))
+        .collect::<Vec<_>>();
+    (!entries.is_empty()).then_some((entries.len(), paths))
+}
+
+fn pilot_unreadable_paths_message(total: usize, paths: &[String]) -> String {
+    let unnamed = total.saturating_sub(paths.len());
+    let mut parts = paths.iter().take(3).cloned().collect::<Vec<_>>();
+    if paths.len() > 3 {
+        parts.push(format!("{} more", paths.len() - 3));
+    }
+    if unnamed > 0 {
+        parts.push(format!("{unnamed} path(s) whose name could not be shown"));
+    }
+    let listed = parts.join(", ");
+    format!(
+        "the last complete `ripr pilot` run ranked no gap because it could not read {listed}: a gap may only be a test hidden in an unreadable path, so none is ranked or offered. This is an unreadable path, not a failed evidence pass: restore read access, then rerun `ripr pilot`. `target/ripr/pilot/pilot-summary.json` lists them under `inventory_evidence_limitations`"
+    )
 }
 
 fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
@@ -1785,10 +1932,16 @@ fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
     let seam_limit_applied = summary
         .pointer("/seam_limit")
         .is_some_and(|limit| !limit.is_null());
+    let evidence_failed = summary
+        .pointer("/inventory_evidence_limitations")
+        .and_then(Value::as_array)
+        .is_some_and(|entries| !entries.is_empty())
+        || pilot_repo_exposure_limits(root).is_some_and(|limits| limits.evidence_failed);
     Some(PilotDeclinedOnly {
         file_count,
         files,
         seam_limit_applied,
+        evidence_failed,
     })
 }
 
@@ -1815,63 +1968,111 @@ fn pilot_declined_only_message(declined: &PilotDeclinedOnly, root_display: &str)
     } else {
         ""
     };
+    // The failure may be transient, unlike the parse limit: it is its own
+    // step, never folded into the declined-files repair.
+    let evidence = if declined.evidence_failed {
+        " The evidence pass also failed (`producer_failure`, `run_status: limited_seam_evidence` in `target/ripr/pilot/repo-exposure.json`), so the zero-gap result is a failed pass, not a settled result and not a verdict on the spots; it may be transient, so read the limitation's `repair_route` in that file."
+    } else {
+        ""
+    };
     format!(
-        "the last complete `ripr pilot` run ranked no gap because a parse limit declined {files}, so their gaps are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
+        "the last complete `ripr pilot` run ranked no gap because a parse limit declined {files}, so their gaps are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit}{evidence} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
         pilot_select_command(root_display)
     )
 }
 
-/// Whether the pilot run's repo exposure report says a seam limit cut the
-/// classified seams, so seams past the cut were never classified. `None`
-/// when the report is missing or unreadable: status cannot tell.
-fn pilot_seam_limit_applied(root: &Path) -> Option<bool> {
+/// What the pilot run's repo exposure report says limited the walk, read from
+/// `limitations[]` categories as well as `run_status`, because the failed
+/// seam-evidence status (#13340) outranks a seam cap or declined files in
+/// `run_status` while their entries still appear.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PilotRepoExposureLimits {
+    /// A seam limit cut the classified seams, so seams past the cut were
+    /// never classified.
+    seam_limit_applied: bool,
+    /// A parse limit declined Rust files (#9308). Their seams were never
+    /// analyzed, and raising a seam limit cannot restore them.
+    declined_files: bool,
+    /// The seam-evidence pass failed (#13340): every seam carries the opaque
+    /// stand-in, so the withheld count is a failed pass, not a result.
+    evidence_failed: bool,
+}
+
+/// `None` when the report is missing, unreadable or has no `run_status`:
+/// status cannot tell what limited the run.
+fn pilot_repo_exposure_limits(root: &Path) -> Option<PilotRepoExposureLimits> {
     let text = std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT)).ok()?;
     let report = serde_json::from_str::<Value>(&text).ok()?;
     let run_status = report.pointer("/run_status").and_then(Value::as_str)?;
-    Some(run_status == "seam_limit_applied")
-}
-
-/// Whether the pilot run's repo exposure report says a parse limit declined
-/// Rust files (#9308). Their seams were never analyzed, and raising a seam
-/// limit cannot restore them.
-fn pilot_declined_files(root: &Path) -> bool {
-    std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|report| {
-            report
-                .pointer("/run_status")
-                .and_then(Value::as_str)
-                .map(|status| status == "limited_declined_files")
+    let entries = report.pointer("/limitations").and_then(Value::as_array);
+    let has_category = |category: &str, pass_wide: bool| {
+        entries.is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("category").and_then(Value::as_str) == Some(category)
+                    && (!pass_wide
+                        || entry.get("scope").and_then(Value::as_str) == Some("pass_wide"))
+            })
         })
-        .unwrap_or(false)
+    };
+    Some(PilotRepoExposureLimits {
+        seam_limit_applied: run_status == "seam_limit_applied"
+            || !crate::output::repo_exposure::seam_limit_cut_controls_from_parts(
+                Some(run_status),
+                entries,
+            )
+            .is_empty(),
+        declined_files: run_status == "limited_declined_files"
+            || has_category(
+                crate::output::repo_exposure::GeneratedRustSkip::DECLINED_CATEGORY,
+                false,
+            ),
+        evidence_failed: run_status == crate::output::repo_exposure::EVIDENCE_FAILED_RUN_STATUS
+            || has_category(
+                crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure.as_str(),
+                true,
+            ),
+    })
 }
 
-fn pilot_withheld_message(
-    withheld: u64,
-    seam_limit_applied: Option<bool>,
-    declined_files: bool,
-) -> String {
+fn pilot_withheld_message(withheld: u64, limits: Option<PilotRepoExposureLimits>) -> String {
     let items = if withheld == 1 {
         "1 item".to_string()
     } else {
         format!("{withheld} items")
     };
     let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
-    if seam_limit_applied.is_none() {
+    let Some(limits) = limits else {
         // Fail closed: without the report, status cannot rule out a cut.
         return format!(
             "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether an analysis limit cut the run; rerun pilot, and if it reports an analysis limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
         );
+    };
+    if limits.evidence_failed {
+        // The opacity is a failed evidence pass, usually transient, so
+        // neither "withheld again" nor "no repair applies" is established,
+        // and the other limits that fired still stand.
+        let seam_limit = if limits.seam_limit_applied {
+            " A limit on how many spots ripr analyzes also cut the run, so after the rerun raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT if it reports a cut."
+        } else {
+            ""
+        };
+        let declined = if limits.declined_files {
+            " It also declined Rust files with a parse limit (named in `target/ripr/pilot/pilot-summary.json` as `declined_rust_files`): split those files below the Rust parse budget."
+        } else {
+            ""
+        };
+        return format!(
+            "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. The evidence pass failed (`producer_failure`, `run_status: limited_seam_evidence` in `target/ripr/pilot/repo-exposure.json`), so that opacity is a failed pass, not a settled result and not a verdict on the spots, and no repair applies yet. The failure may be transient: rerun `ripr pilot` after the producer recovers, and read the limitation's `repair_route` in `target/ripr/pilot/repo-exposure.json`.{seam_limit}{declined}"
+        );
     }
-    if seam_limit_applied == Some(true) {
+    if limits.seam_limit_applied {
         // A gap may sit past the cut, so "no repair applies" would claim an
         // absence the run did not establish; raising the limit is the step.
         return format!(
             "the last complete `ripr pilot` run ranked no gap: it withheld at least {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A limit on how many spots ripr analyzes cut the run short, so repairable gaps may sit past the cut: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
         );
     }
-    if declined_files {
+    if limits.declined_files {
         // Seams in the declined files were never analyzed, so "no repair
         // applies" would claim an absence the run did not establish.
         return format!(
@@ -2195,17 +2396,23 @@ fn legacy_next_command(
             }
             return None;
         }
+        // #13624: pilot skipped an unreadable Rust path and ranked nothing,
+        // so a rerun changes nothing until read access is restored.
+        if let Some((total, paths)) = pilot_unreadable_paths(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_unreadable_rust_path_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_unreadable_paths_message(total, &paths),
+            });
+            return None;
+        }
         // #5497: pilot withheld every seam as a static limitation, so a
         // rerun ranks nothing again; name the inspection route instead.
         if let Some(withheld) = pilot_withheld_every_seam(root) {
             warnings.push(AgentStatusWarning {
                 kind: "pilot_withheld_static_limitations_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: pilot_withheld_message(
-                    withheld,
-                    pilot_seam_limit_applied(root),
-                    pilot_declined_files(root),
-                ),
+                message: pilot_withheld_message(withheld, pilot_repo_exposure_limits(root)),
             });
             return None;
         }
@@ -2491,7 +2698,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
-        "test_run": report.unrun_test_receipt().map(test_not_run_json),
+        "test_run": report.unrun_test_receipt().map(|(attempt_id, reading)| test_run::aggregate_test_run_json(attempt_id, reading)),
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
     });
     serde_json::to_string_pretty(&value)
@@ -2517,11 +2724,19 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         None if nothing_started => rendered.push_str("No repair in progress.\n"),
         None => rendered.push_str("Seam: unknown\n"),
     }
-    if let Some(reading) = report.unrun_test_receipt() {
-        rendered.push_str(&format!(
-            "Test run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+    let test_runs = report.unrun_test_receipts();
+    match test_runs.as_slice() {
+        [(_, reading)] => rendered.push_str(&format!("{}\n", test_run::test_run_line(reading))),
+        // #14146: several finished attempts each speak for themselves, so a
+        // reported failure on one is never hidden behind another's reading.
+        several => {
+            for (attempt_id, reading) in several {
+                rendered.push_str(&format!(
+                    "{}\n",
+                    test_run::attempt_test_run_line(attempt_id, reading)
+                ));
+            }
+        }
     }
 
     if !nothing_started {
@@ -2887,7 +3102,7 @@ pub(crate) fn selected_attempt_status_reading(
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
     let workflow_receipt = read_workflow_receipt(root);
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let view = status_repair_attempt(
         command_root,
         store_locator,
@@ -3039,6 +3254,9 @@ pub(crate) fn build_agent_attempt_status(
         _ => {}
     }
     let mut limitations = manifest.limitations.clone();
+    if let Some(limitation) = focused_receipt_recovery_limitation(root, &manifest) {
+        limitations.push(limitation.to_string());
+    }
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
@@ -3134,6 +3352,81 @@ fn corrupt_attempt_status(
     }
 }
 
+/// An unfinished focused evidence set is not a legacy compatibility result.
+/// Status cannot assume the shared receipt is the accepted one; the after
+/// phase verifies the exact durable digests before recovering it.
+pub(crate) fn focused_receipt_recovery_limitation(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Option<&'static str> {
+    focused_receipt_recovery(root, manifest).map(|recovery| recovery.limitation)
+}
+
+/// The recovery route for an interrupted focused finish, matching what the
+/// after phase enforces: it recovers only a durable-v1 finish with no
+/// evaluation or an accepted one whose receipt and verify files exist with the
+/// accepted digests, and only when re-run with the same `--test-result FILE`.
+pub(crate) fn focused_receipt_recovery(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Option<FocusedRecovery> {
+    let new_attempt = |limitation| {
+        Some(FocusedRecovery {
+            limitation,
+            retry_same_result: false,
+        })
+    };
+    let retry = |limitation| {
+        Some(FocusedRecovery {
+            limitation,
+            retry_same_result: true,
+        })
+    };
+    if manifest.state != RepairAttemptState::ReadyToFinish
+        || !manifest.terminal_artifacts.is_empty()
+    {
+        return None;
+    }
+    let pending = manifest.after.as_ref()?.focused_result.as_ref()?;
+    if manifest.last_after_refusal.is_some() {
+        return new_attempt(
+            "the focused finish ended in a recorded refusal; inspect that refusal and start a new attempt",
+        );
+    }
+    if pending.receipt_protocol.as_deref() != Some("durable-v1") {
+        return new_attempt(
+            "the focused receipt recovery protocol is not durable-v1, so the after phase cannot restore it; start a new attempt",
+        );
+    }
+    match &manifest.focused_receipt_evaluation {
+        None => retry(
+            "no focused receipt evaluation is recorded yet; if the after phase is no longer running, retry with the same --test-result FILE and, for a trust-bound attempt, its original edit authority",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => new_attempt(
+            "focused receipt evaluation has started but no outcome is recorded; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+            if !crate::app::repair_attempt::focused_accepted_projection_present(root, manifest) =>
+        {
+            new_attempt(
+                "the focused receipt decision was committed but its receipt and verify files are not present with the accepted digests, so the after phase cannot recover it; if the after phase is no longer running, start a new attempt",
+            )
+        }
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+            if crate::app::repair_attempt::trust_apply_record_blocks_focused_recovery(
+                root, manifest,
+            ) =>
+        {
+            new_attempt(
+                "the focused receipt decision was committed, but this trust-bound attempt's apply record path is already occupied, so the after phase cannot recover it; if the after phase is no longer running, start a new attempt",
+            )
+        }
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => retry(
+            "the focused receipt decision was committed; if the after phase is no longer running, retry with the same --test-result FILE (an after phase without it is refused) and, for a trust-bound attempt, its original edit authority; recovery rechecks that result against the current HEAD, the attempt and its test file and the exact committed receipt and verify bytes",
+        ),
+    }
+}
+
 /// The #4798 status-class projection for one validated attempt. It composes
 /// the manifest's operational state, the receipt the attempt actually
 /// retained (never another attempt's compatibility projection), and
@@ -3155,7 +3448,14 @@ fn attempt_status_class(
             _ => "limited",
         },
         RepairAttemptState::ReadyToFinish => {
-            if manifest.terminal_artifacts.is_empty() {
+            if manifest.terminal_artifacts.is_empty()
+                && manifest
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| after.focused_result.is_some())
+            {
+                "limited"
+            } else if manifest.terminal_artifacts.is_empty() {
                 // Finished before attempt-local terminal retention existed:
                 // any reading travels through the one-slot compatibility
                 // projection, which is exactly the strength it has earned
@@ -3308,6 +3608,8 @@ fn canonical_next_action_for_attempt(
         transition_to: None,
         restart_route,
         check_case: None,
+        check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -3554,7 +3856,7 @@ pub(crate) fn render_agent_attempt_status_json(
         "canonical_next_action": report.canonical_next_action.as_ref().map(|action| {
             crate::output::next_action::render_next_action_json_value(action)
         }),
-        "test_run": report.test_run.as_ref().map(test_not_run_json),
+        "test_run": report.test_run.as_ref().map(test_run::test_run_json),
         "claim_boundary": report.claim_boundary,
         "limitations": report.limitations,
         "non_claims": report.non_claims,
@@ -3649,10 +3951,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
     }
 
     if let Some(reading) = &report.test_run {
-        rendered.push_str(&format!(
-            "\nTest run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+        rendered.push_str(&format!("\n{}\n", test_run::test_run_line(reading)));
     }
 
     rendered.push_str("\n## Claim Boundary\n\n");
@@ -3958,17 +4257,28 @@ fn modified_unix_ms(time: Option<SystemTime>) -> Option<u64> {
 mod tests {
     #[test]
     fn pilot_withheld_items_are_not_called_gaps() {
-        for (limit, declined) in [
-            (None, false),
-            (Some(true), false),
-            (Some(false), true),
-            (Some(false), false),
+        let limits = |seam_limit_applied, declined_files, evidence_failed| {
+            Some(PilotRepoExposureLimits {
+                seam_limit_applied,
+                declined_files,
+                evidence_failed,
+            })
+        };
+        for limit in [
+            None,
+            limits(true, false, false),
+            limits(false, true, false),
+            limits(false, false, false),
+            limits(false, false, true),
+            limits(true, true, true),
         ] {
             for (count, noun) in [(1, "1 item"), (2, "2 items")] {
-                let message = pilot_withheld_message(count, limit, declined);
+                let message = pilot_withheld_message(count, limit);
                 assert!(
                     message.contains(&format!(
                         "{noun} whose static evidence is unknown or opaque"
+                    )) || message.contains(&format!(
+                        "at least {noun} whose static evidence is unknown or opaque"
                     )),
                     "{message}"
                 );
@@ -3984,13 +4294,71 @@ mod tests {
     #[test]
     fn pilot_withheld_message_separates_declined_files_from_a_seam_cut() {
         // #9308: raising a seam limit cannot restore a declined file's seams.
-        let declined = pilot_withheld_message(2, Some(false), true);
+        let declined = pilot_withheld_message(
+            2,
+            Some(PilotRepoExposureLimits {
+                declined_files: true,
+                ..PilotRepoExposureLimits::default()
+            }),
+        );
         assert!(declined.contains("declined_rust_files"), "{declined}");
         assert!(!declined.contains("RIPR_PILOT_SEAM_BUDGET"), "{declined}");
-        let cut = pilot_withheld_message(2, Some(true), false);
+        let cut = pilot_withheld_message(
+            2,
+            Some(PilotRepoExposureLimits {
+                seam_limit_applied: true,
+                ..PilotRepoExposureLimits::default()
+            }),
+        );
         assert!(cut.contains("RIPR_PILOT_SEAM_BUDGET"), "{cut}");
-        let plain = pilot_withheld_message(2, Some(false), false);
+        let plain = pilot_withheld_message(2, Some(PilotRepoExposureLimits::default()));
         assert!(plain.contains("no repair attempt applies"), "{plain}");
+    }
+
+    /// #13340: a failed seam-evidence warm is a transient pass failure, not
+    /// the settled opaque-evidence story: it never says a rerun withholds
+    /// again or that no repair applies, and it keeps the other limits.
+    #[test]
+    fn pilot_withheld_message_names_a_failed_evidence_warm() {
+        let failed = pilot_withheld_message(
+            3,
+            Some(PilotRepoExposureLimits {
+                evidence_failed: true,
+                ..PilotRepoExposureLimits::default()
+            }),
+        );
+        for expected in [
+            "withheld 3 items",
+            "producer_failure",
+            "limited_seam_evidence",
+            "rerun `ripr pilot` after the producer recovers",
+        ] {
+            assert!(failed.contains(expected), "{failed}");
+        }
+        for banned in [
+            "withholds them again",
+            "no repair attempt applies",
+            "RIPR_PILOT_SEAM_BUDGET",
+            "declined_rust_files",
+        ] {
+            assert!(!failed.contains(banned), "{failed}");
+        }
+        let mixed = pilot_withheld_message(
+            3,
+            Some(PilotRepoExposureLimits {
+                seam_limit_applied: true,
+                declined_files: true,
+                evidence_failed: true,
+            }),
+        );
+        for expected in [
+            "producer_failure",
+            "RIPR_PILOT_SEAM_BUDGET",
+            "declined_rust_files",
+        ] {
+            assert!(mixed.contains(expected), "{mixed}");
+        }
+        assert!(!mixed.contains("withholds them again"), "{mixed}");
     }
 
     use super::*;
@@ -4059,6 +4427,43 @@ mod tests {
         );
         std::fs::remove_dir_all(&empty).map_err(|err| format!("remove: {err}"))?;
         std::fs::remove_dir_all(&cargo).map_err(|err| format!("remove: {err}"))?;
+        Ok(())
+    }
+
+    /// #13624: a named and a pathless (refused name) unreadable-path
+    /// limitation are both detected by category, and neither reads as a failed
+    /// evidence pass or a "rerun pilot" recommendation.
+    #[test]
+    fn pilot_unreadable_paths_detects_named_and_pathless_entries() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("unreadable-paths");
+        let summary = |limitations: &str| {
+            format!(
+                r#"{{"status":"complete","top_actionable_seams":[],"next":{{"repair_command":null}},"inventory_evidence_limitations":[{limitations}]}}"#
+            )
+        };
+        let named = r#"{"category":"language_scope_unsupported","path":"src/locked"}"#;
+        let pathless = r#"{"category":"language_scope_unsupported"}"#;
+        let other = r#"{"category":"producer_failure"}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary(&format!("{named},{pathless}")),
+        )?;
+        let (total, paths) = pilot_unreadable_paths(&root).ok_or("both entries must match")?;
+        let message = pilot_unreadable_paths_message(total, &paths);
+        assert_eq!((total, paths.clone()), (2, vec!["src/locked".to_string()]));
+        assert!(
+            message.contains("src/locked, 1 path(s) whose name could not be shown"),
+            "{message}"
+        );
+        assert!(message.contains("restore read access"), "{message}");
+        assert!(!message.contains("transient"), "{message}");
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &summary(pathless))?;
+        let (total, paths) = pilot_unreadable_paths(&root).ok_or("pathless must match")?;
+        assert_eq!((total, paths.len()), (1, 0));
+        assert!(pilot_unreadable_paths_message(total, &paths).contains("1 path(s) whose name"));
+        write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &summary(other))?;
+        assert!(pilot_unreadable_paths(&root).is_none());
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove: {err}"))?;
         Ok(())
     }
 
@@ -5208,7 +5613,9 @@ mod tests {
             delta_sha256: "sha256:fixture-delta".to_string(),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: EditCageVerdict {
                 status: EditCageVerdictStatus::Compliant,
@@ -5342,6 +5749,78 @@ mod tests {
         Ok(())
     }
 
+    /// #13203: an accepted, trust-bound focused finish is recoverable only while
+    /// nothing exists at the apply-record compatibility path, so status offers
+    /// the same-result retry only then and the new-attempt route otherwise.
+    #[test]
+    fn trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied()
+    -> Result<(), String> {
+        use crate::app::repair_attempt::{FocusedReceiptEvaluation, PendingFocusedResult};
+        use sha2::{Digest, Sha256};
+        let digest = |bytes: &[u8]| {
+            let mut rendered = String::from("sha256:");
+            for byte in Sha256::digest(bytes) {
+                rendered.push_str(&format!("{byte:02x}"));
+            }
+            rendered
+        };
+        let root = unique_agent_status_test_dir("trust-apply-occupied");
+        let receipt = b"{\"receipt\":true}\n";
+        let verify = b"{\"verify\":true}\n";
+        write_file(
+            &root.join(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            std::str::from_utf8(receipt).map_err(|error| error.to_string())?,
+        )?;
+        write_file(
+            &root.join(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            std::str::from_utf8(verify).map_err(|error| error.to_string())?,
+        )?;
+        let mut manifest = ready_to_finish_manifest()?;
+        if let Some(after) = manifest.after.as_mut() {
+            after.focused_result = Some(PendingFocusedResult {
+                record: "{}".to_string(),
+                custody: "test".to_string(),
+                receipt_protocol: Some("durable-v1".to_string()),
+            });
+        }
+        manifest.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+            receipt_sha256: digest(receipt),
+            verify_sha256: digest(verify),
+        });
+        // Without a trust binding the occupied path is irrelevant.
+        let apply = root.join(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+        write_file(&apply, "{\"earlier\":true}\n")?;
+        let untrusted = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            untrusted.is_some_and(|recovery| recovery.retry_same_result),
+            "{untrusted:?}"
+        );
+        manifest
+            .artifacts
+            .push(crate::app::repair_attempt::RepairAttemptArtifact {
+                role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+                path: "target/ripr/repair-attempts/x/artifacts/binding.json".to_string(),
+                sha256: "sha256:binding".to_string(),
+                bytes: 1,
+            });
+        let occupied = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            occupied.is_some_and(|recovery| !recovery.retry_same_result
+                && recovery
+                    .limitation
+                    .contains("apply record path is already occupied")),
+            "{occupied:?}"
+        );
+        std::fs::remove_file(&apply).map_err(|error| error.to_string())?;
+        let free = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            free.is_some_and(|recovery| recovery.retry_same_result),
+            "{free:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     fn ready_to_finish_manifest() -> Result<RepairAttemptManifest, String> {
         use crate::app::repair_attempt::{RepairAttemptAfter, RepairAttemptId};
         use crate::edit_cage::{EditCageVerdict, EditCageVerdictStatus};
@@ -5370,7 +5849,9 @@ mod tests {
                 delta_sha256: "sha256:delta".to_string(),
                 delta_binding: None,
                 receipt_projection_predecessor: None,
+                focused_result: None,
                 packet_sha256: "sha256:packet".to_string(),
+                line_ending_only_paths: Vec::new(),
                 current: true,
                 verdict: EditCageVerdict {
                     status: EditCageVerdictStatus::Compliant,
@@ -5378,6 +5859,7 @@ mod tests {
                     violations: Vec::new(),
                 },
             }),
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -5408,6 +5890,16 @@ mod tests {
         let workflow = root.join("target/ripr/workflow");
         std::fs::create_dir_all(&workflow)
             .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+        // The selected external test file is pure-insertion confined (#8710),
+        // so the baseline needs it committed and clean at HEAD.
+        if !root.join("tests/target.rs").exists() {
+            write_file(&root.join("tests/target.rs"), "#[test]\nfn existing() {}\n")?;
+            run_git(root, &["add", "tests/target.rs"])?;
+            run_git(
+                root,
+                &["commit", "--no-gpg-sign", "-m", "baseline external test"],
+            )?;
+        }
         let before = workflow.join("before-status-honesty.json");
         let packet = workflow.join("packet-status-honesty.json");
         let baseline = workflow.join("baseline-status-honesty.json");
@@ -5934,6 +6426,7 @@ mod tests {
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         }
     }
 
@@ -6963,6 +7456,76 @@ mod tests {
         Ok(())
     }
 
+    /// #13340: status reads the failed evidence warm from the retained
+    /// `repo-exposure.json` (typed fixtures: the consumer only reads the file),
+    /// including a failure that coexists with a seam cap, and leaves the
+    /// healthy shapes byte-identical.
+    #[test]
+    fn agent_status_reads_a_failed_evidence_warm_in_the_pilot_report() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-withheld-failed-warm");
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            r#"{"status": "complete", "top_actionable_seams": [], "withheld_static_limitations_total": 9, "next": {"repair_command": null}}"#,
+        )?;
+        let failure = r#"{"category": "producer_failure", "producer_stage": "seam_evidence", "scope": "pass_wide", "repair_route": "rerun"}"#;
+        let cap = r#"{"category": "pilot_seam_budget_applied", "seams_analyzed": 5, "seams_total": 9, "limit_source": "default", "control": "RIPR_PILOT_SEAM_BUDGET", "repair_route": "raise"}"#;
+        let warning_for = |report: &str| -> Result<String, String> {
+            write_file(&root.join(PILOT_REPO_EXPOSURE_ARTIFACT), report)?;
+            let status = build_agent_status_report(&root, Path::new("."));
+            if status.next_command.is_some() {
+                return Err(format!("must stop: {:?}", status.next_command));
+            }
+            status
+                .warnings
+                .iter()
+                .find(|warning| {
+                    warning.kind == "pilot_withheld_static_limitations_no_repair_target"
+                })
+                .map(|warning| warning.message.clone())
+                .ok_or_else(|| format!("expected a withheld warning: {:?}", status.warnings))
+        };
+
+        let failed = warning_for(&format!(
+            r#"{{"run_status": "limited_seam_evidence", "limitations": [{failure}]}}"#
+        ))?;
+        assert!(failed.contains("producer_failure"), "{failed}");
+        assert!(
+            failed.contains("rerun `ripr pilot` after the producer recovers"),
+            "{failed}"
+        );
+        assert!(!failed.contains("withholds them again"), "{failed}");
+        assert!(!failed.contains("no repair attempt applies"), "{failed}");
+        assert!(!failed.contains("RIPR_PILOT_SEAM_BUDGET"), "{failed}");
+
+        // Mixed: the failure outranks the cap in run_status, but the cap
+        // entry still names its control.
+        let mixed = warning_for(&format!(
+            r#"{{"run_status": "limited_seam_evidence", "limitations": [{cap}, {failure}]}}"#
+        ))?;
+        assert!(mixed.contains("producer_failure"), "{mixed}");
+        assert!(mixed.contains("RIPR_PILOT_SEAM_BUDGET"), "{mixed}");
+        assert!(!mixed.contains("withholds them again"), "{mixed}");
+
+        // The category alone is enough when run_status is a different status.
+        let by_category = warning_for(&format!(
+            r#"{{"run_status": "seam_limit_applied", "limitations": [{cap}, {failure}]}}"#
+        ))?;
+        assert!(by_category.contains("producer_failure"), "{by_category}");
+
+        // A per-file producer_failure (no pass_wide scope) is not the
+        // pass-wide failure, and a healthy report keeps the opaque story.
+        let per_file = warning_for(
+            r#"{"run_status": "complete", "limitations": [{"category": "producer_failure", "path": "src/lib.rs"}]}"#,
+        )?;
+        assert!(per_file.contains("withholds them again"), "{per_file}");
+        let healthy = warning_for(r#"{"run_status": "complete"}"#)?;
+        assert!(healthy.contains("no repair attempt applies"), "{healthy}");
+        assert!(!healthy.contains("producer_failure"), "{healthy}");
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     /// #5497: a complete pilot run that withheld every seam as a static
     /// limitation ranks nothing, so `select_seam` would rerun the same pilot
     /// forever. Status stops and names the inspection route.
@@ -7144,6 +7707,80 @@ mod tests {
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
         }
+
+        // #13340: a failed evidence pass named by the summary (or the repo
+        // exposure report) adds its own transient step beside the repair.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined),
+        )?;
+        let plain = build_agent_status_report(&root, Path::new("."));
+        let plain = plain
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert!(!plain.contains("producer_failure"), "{plain}");
+        let failure = r#"{"category": "producer_failure", "producer_stage": "seam_evidence", "scope": "pass_wide", "repair_route": "rerun"}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary(
+                "complete",
+                "[]",
+                "null",
+                &declined.replacen(
+                    "\"declined_rust_files\"",
+                    &format!(
+                        "\"inventory_evidence_limitations\": [{failure}], \"declined_rust_files\""
+                    ),
+                    1,
+                ),
+            ),
+        )?;
+        let by_summary = build_agent_status_report(&root, Path::new("."));
+        let by_summary = by_summary
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert!(by_summary.contains("producer_failure"), "{by_summary}");
+        assert!(by_summary.contains("may be transient"), "{by_summary}");
+        assert!(by_summary.contains("Split the file(s)"), "{by_summary}");
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined),
+        )?;
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            &format!(r#"{{"run_status": "limited_seam_evidence", "limitations": [{failure}]}}"#),
+        )?;
+        let by_report = build_agent_status_report(&root, Path::new("."));
+        let by_report = by_report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert!(by_report.contains("may be transient"), "{by_report}");
+        // A healthy report beside the same summary keeps the plain message.
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "limited_declined_files"}"#,
+        )?;
+        let healthy = build_agent_status_report(&root, Path::new("."));
+        let healthy = healthy
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert_eq!(healthy, plain);
 
         // Controls: each keeps its previous routing.
         for control in [
@@ -7541,6 +8178,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -7566,6 +8204,7 @@ mod tests {
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         }
     }
 
@@ -7578,6 +8217,7 @@ mod tests {
             analysis_outcome_error: None,
             verification_status: None,
             test_changed: None,
+            reported_test_run: None,
         }
     }
 
@@ -8136,6 +8776,104 @@ mod tests {
                     "{label}: human lost the empty next action:\n{human}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #14146: with several finished attempts, the aggregate test-run reading
+    /// names the attempt it speaks for, and one attempt's `none recorded`
+    /// never hides another attempt's caller-reported failure.
+    #[test]
+    fn aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure()
+    -> Result<(), String> {
+        use crate::output::agent_receipt::ReportedTestRun;
+        let issued = |id: &str, run: Option<ReportedTestRun>| {
+            let mut reading = AgentReceiptReading::from_value(&serde_json::json!({
+                "verification": {"status": "verification_not_run"},
+                "test_changed": "tests/p.rs"
+            }));
+            reading.reported_test_run = run;
+            let mut attempt = synthetic_attempt(id, &format!("seam-{id}"), "finished", None);
+            attempt.receipt = AgentStatusAttemptReceipt::Issued {
+                path: format!("{id}/receipt.json"),
+                reading,
+            };
+            attempt
+        };
+        let report_of = |repair_attempts: Vec<AgentStatusRepairAttempt>| AgentStatusReport {
+            root: ".".to_string(),
+            seam: None,
+            artifacts: Vec::new(),
+            repair_attempts,
+            missing_commands: Vec::new(),
+            next_command: None,
+            warnings: Vec::new(),
+        };
+        let failing = ReportedTestRun {
+            file: "tests/p.rs".to_string(),
+            ran: 1,
+            passed: 0,
+            failed: 1,
+        };
+
+        // A (earlier, no run recorded) and B (reported failure): the reading
+        // first in attempt order is A's, which the old aggregate printed alone.
+        let report = report_of(vec![issued("a", None), issued("b", Some(failing.clone()))]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("Test run (attempt `a`): none recorded. ") {
+            return Err(format!("A's reading must name its attempt:\n{markdown}"));
+        }
+        if !markdown.contains(
+            "Test run (attempt `b`): reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (0 passed, 1 failed). The reported run has a failing test",
+        ) {
+            return Err(format!("B's reported failure must be shown:\n{markdown}"));
+        }
+        if markdown.find("attempt `b`") > markdown.find("attempt `a`") {
+            return Err(format!("the reported failure must come first:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b"
+            || json["test_run"]["status"] != "caller_reported"
+            || json["test_run"]["failed"] != 1
+        {
+            return Err(format!(
+                "JSON must report B's failure: {}",
+                json["test_run"]
+            ));
+        }
+
+        // One finished attempt keeps the unlabeled line; JSON names it.
+        let report = report_of(vec![issued("a", None)]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("\nTest run: none recorded. ")
+            || markdown.contains("Test run (attempt")
+        {
+            return Err(format!("one attempt keeps the plain line:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "a" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "JSON must name the one attempt: {}",
+                json["test_run"]
+            ));
+        }
+
+        // A reported pass ranks behind a missing run on another attempt.
+        let passing = ReportedTestRun {
+            passed: 1,
+            failed: 0,
+            ..failing
+        };
+        let report = report_of(vec![issued("a", Some(passing)), issued("b", None)]);
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "a missing run outranks a reported pass: {}",
+                json["test_run"]
+            ));
         }
         Ok(())
     }

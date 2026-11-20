@@ -353,6 +353,43 @@ Updated:
 ## Pending — wildcard_oracle_wildcard_wrong (25)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — wildcard_oracle_wildcard_wrong (26)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — wildcard_oracle_wildcard_wrong (27)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — wildcard_oracle_wildcard_wrong (28)
+
+Reason:
 RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 
 Command:
@@ -362,3 +399,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — wildcard_oracle_wildcard_wrong (29)
+
+Reason:
+RIPR-SPEC-0108 For wildcard_oracle_wildcard_wrong, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
+
+Updated:
+- `expected/check.json`
