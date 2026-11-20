@@ -233,3 +233,91 @@ fn ts_negated_tobe_pins_no_identity() {
         "unconditional toBe with a dynamic expected pins identity: {plain:?}"
     );
 }
+
+/// Jasmine `toBeTrue()` / `toBeFalse()` are exact boolean matchers: they read
+/// the same `exact_value` / strong credit and expected value as
+/// `toBe(true)` / `toBe(false)`, instead of `unknown` (first-run finding).
+#[test]
+fn ts_jasmine_boolean_matchers_read_like_tobe_boolean() -> Result<(), String> {
+    for (jasmine, jest, expected) in [
+        ("toBeTrue()", "toBe(true)", "true"),
+        ("toBeFalse()", "toBe(false)", "false"),
+    ] {
+        let got = extracted_assertion(&format!("  expect(price(150)).{jasmine};"));
+        let want = extracted_assertion(&format!("  expect(price(150)).{jest};"));
+        assert_eq!(
+            got.oracle_kind,
+            OracleKind::ExactValue,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(
+            got.oracle_strength,
+            OracleStrength::Strong,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(got.oracle_kind, want.oracle_kind, "{jasmine}");
+        assert_eq!(got.oracle_strength, want.oracle_strength, "{jasmine}");
+        assert_eq!(got.oracle_confidence, want.oracle_confidence, "{jasmine}");
+        assert_eq!(
+            got.expected_value_or_variant.as_deref(),
+            Some(expected),
+            "{jasmine}: {got:?}"
+        );
+        assert!(!got.has_dynamic_matcher_arg, "{jasmine}: {got:?}");
+        let got_finding = finding_for_body(&format!("  expect(price(150)).{jasmine};"))?;
+        let want_finding = finding_for_body(&format!("  expect(price(150)).{jest};"))?;
+        assert_eq!(got_finding.class, want_finding.class, "{jasmine}");
+        assert!(
+            !format!("{got_finding:?}").contains("custom_matcher"),
+            "{jasmine} must not read as an unrecognised matcher: {got_finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `.not.toBeTrue()` / `.not.toBeFalse()` take the same capped credit as
+/// `.not.toBe(true)`: relational / weak, with no expected value.
+#[test]
+fn ts_negated_jasmine_boolean_matchers_match_negated_tobe() {
+    for (jasmine, jest) in [("toBeTrue()", "toBe(true)"), ("toBeFalse()", "toBe(false)")] {
+        let got = extracted_assertion(&format!("  expect(price(150)).not.{jasmine};"));
+        let want = extracted_assertion(&format!("  expect(price(150)).not.{jest};"));
+        assert_eq!(
+            got.oracle_kind,
+            OracleKind::RelationalCheck,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(
+            got.oracle_strength,
+            OracleStrength::Weak,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(got.oracle_kind, want.oracle_kind, "{jasmine}");
+        assert_eq!(got.oracle_strength, want.oracle_strength, "{jasmine}");
+        assert!(
+            got.expected_value_or_variant.is_none(),
+            "{jasmine}: {got:?}"
+        );
+    }
+}
+
+/// Jasmine `toHaveSize(n)` reads like `toHaveLength(n)`, plain and negated.
+#[test]
+fn ts_jasmine_tohavesize_reads_like_tohavelength() {
+    for negation in ["", ".not"] {
+        let got = extracted_assertion(&format!("  expect(price(150)){negation}.toHaveSize(2);"));
+        let want = extracted_assertion(&format!("  expect(price(150)){negation}.toHaveLength(2);"));
+        assert_eq!(
+            got.oracle_kind,
+            OracleKind::RelationalCheck,
+            "{negation}: {got:?}"
+        );
+        assert_eq!(
+            got.oracle_strength,
+            OracleStrength::Weak,
+            "{negation}: {got:?}"
+        );
+        assert_eq!(got.oracle_kind, want.oracle_kind, "{negation}");
+        assert_eq!(got.oracle_strength, want.oracle_strength, "{negation}");
+    }
+}

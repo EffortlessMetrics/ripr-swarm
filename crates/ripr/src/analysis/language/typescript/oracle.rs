@@ -5,6 +5,9 @@ use super::*;
 pub(crate) fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) {
     match matcher {
         "toBe" | "toEqual" | "toStrictEqual" => (OracleKind::ExactValue, OracleStrength::Strong),
+        // Jasmine `toBeTrue()` / `toBeFalse()` pass only for the exact boolean
+        // (`=== true` / `=== false`): the same strength as `toBe(true)`.
+        "toBeTrue" | "toBeFalse" => (OracleKind::ExactValue, OracleStrength::Strong),
         "toThrow" | "toThrowError" => (OracleKind::BroadError, OracleStrength::Weak),
         "toMatchSnapshot" | "toMatchInlineSnapshot" => {
             (OracleKind::Snapshot, OracleStrength::Medium)
@@ -24,6 +27,8 @@ pub(crate) fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) 
         | "toBeLessThan"
         | "toBeLessThanOrEqual"
         | "toHaveLength"
+        // Jasmine `toHaveSize(n)` is the `toHaveLength` analogue.
+        | "toHaveSize"
         | "toHaveProperty"
         // RIPR-SPEC-0249: passes for any instance of the class or a subclass;
         // a predicate change can read it strong (`ts_instance_class_facts`).
@@ -1579,6 +1584,15 @@ pub(crate) fn expect_assertion_from_expression(
         None
     };
 
+    // Jasmine `toBeTrue()` / `toBeFalse()` carry their expected boolean in the
+    // matcher name, so they read the same expected value as `toBe(true)` /
+    // `toBe(false)`. A negated assertion carries no expected value (#8712).
+    let expected_value_or_variant = match (negated, matcher, outer_call.arguments.len()) {
+        (false, "toBeTrue", 0) => Some("true".to_string()),
+        (false, "toBeFalse", 0) => Some("false".to_string()),
+        _ => expected_value_or_variant,
+    };
+
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, matcher);
 
@@ -2970,6 +2984,9 @@ pub(crate) fn expect_assertion_chain<'a>(
 fn negated_oracle_cap(matcher: &str) -> (OracleKind, OracleStrength) {
     match matcher {
         "toBe"
+        | "toBeTrue"
+        | "toBeFalse"
+        | "toHaveSize"
         | "toEqual"
         | "toStrictEqual"
         | "toContain"
