@@ -378,8 +378,9 @@ impl ClassifiedProbeEvidence {
                         !test_fails_on_both_diff_versions(
                             test,
                             owner,
-                            context.probe.before.as_deref(),
-                            context.probe.after.as_deref(),
+                            context.probe,
+                            pin_syntax,
+                            context.workspace_complete,
                             context.index,
                         ) || !contradicted_assertion_reading_is_established(
                             test,

@@ -4691,16 +4691,34 @@ pub(in crate::analysis) fn baseline_owner(
 pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     test: &TestSummary,
     owner: &FunctionSummary,
-    before: Option<&str>,
-    after: Option<&str>,
+    probe: &crate::domain::Probe,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    workspace_complete: bool,
     index: &RustIndex,
 ) -> bool {
-    let Some(baseline_owner) = baseline_owner(owner, before, after) else {
+    let Some(baseline_owner) =
+        baseline_owner(owner, probe.before.as_deref(), probe.after.as_deref())
+    else {
         return false;
     };
     let mut fails_on_candidate = false;
     let mut fails_on_base = false;
     for oracle in &test.assertions {
+        if workspace_complete
+            && matches!(probe.family, crate::domain::ProbeFamily::Predicate)
+            && let Some((before, after)) =
+                crate::analysis::classify::boolean_projection_matches_versions(
+                    owner,
+                    &baseline_owner,
+                    test,
+                    oracle,
+                    index,
+                    pin_syntax,
+                )
+        {
+            fails_on_base |= !before;
+            fails_on_candidate |= !after;
+        }
         if !fails_on_candidate
             && matches!(
                 assertion_verdict_for_test(Some(owner), &oracle.text, test, index),

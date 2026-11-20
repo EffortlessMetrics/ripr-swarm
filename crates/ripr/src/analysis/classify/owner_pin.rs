@@ -48,13 +48,14 @@ mod call_term_fold;
 pub(in crate::analysis) fn integer_literal_fits_type(text: &str, ty: &str) -> bool {
     call_term_fold::integer_literal_fits_type(text, ty)
 }
+mod boolean_projection;
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
 mod helper_arguments;
 mod nominal_observer;
-mod predicate_tuple;
+pub(in crate::analysis) use boolean_projection::boolean_projection_matches_versions;
 pub(super) use nominal_observer::NominalObserverMemo;
 mod selected_error;
 pub(in crate::analysis) use selected_error::selected_unit_error_return;
@@ -3466,11 +3467,19 @@ fn test_fn_byte_range(
 }
 
 fn assertion_byte_range(index: &RustIndex, test: &TestSummary, line: usize) -> Option<(u32, u32)> {
-    let facts = index.files().get(&test.file)?;
     let oracle = test
         .assertions
         .iter()
         .find(|assertion| assertion.line == line)?;
+    oracle_byte_range(index, test, oracle)
+}
+
+fn oracle_byte_range(
+    index: &RustIndex,
+    test: &TestSummary,
+    oracle: &OracleFact,
+) -> Option<(u32, u32)> {
+    let facts = index.files().get(&test.file)?;
     let tree = index.source_syntax.get(index, &test.file)?.tree()?;
     let lines = LineIndex::new(&facts.source);
     // The oracle text keeps its statement terminator while the `MacroCall`
@@ -3482,7 +3491,7 @@ fn assertion_byte_range(index: &RustIndex, test: &TestSummary, line: usize) -> O
     }
     for call in tree.syntax().descendants().filter_map(ast::MacroCall::cast) {
         let range = call.syntax().text_range();
-        if lines.line(range.start()) != line {
+        if lines.line(range.start()) != oracle.line {
             continue;
         }
         let invoked = call.syntax().text().to_string();
@@ -4898,9 +4907,15 @@ pub(in crate::analysis) fn primitive_bool_projected_result_identity(
             .iter()
             .all(|side| side.trim_start().starts_with('('))
     {
-        return predicate_tuple::distinguishes(owner, probe, test, compared, index, syntax)
-            && builtin_type_unshadowed("bool", index, syntax)
-            && syntax.admits(test, assertion, index);
+        return crate::analysis::test_grip_evidence::baseline_owner(
+            owner,
+            probe.before.as_deref(),
+            probe.after.as_deref(),
+        )
+        .is_some_and(|baseline| {
+            boolean_projection_matches_versions(owner, &baseline, test, assertion, index, syntax)
+                .is_some_and(|(before, after)| before != after)
+        });
     }
     let normalized = primitive_bool_negated_operands(compared).or_else(|| {
         if !whole_boolean_tail || !assertion.text.contains("u8") {
@@ -4973,7 +4988,7 @@ fn bool_to_u8_operands<'a>(
         // The trusted assertion is still a macro token tree in the source
         // index. Its parsed cast keyword cannot introduce an import rename.
         let source = &index.files().get(&test.file)?.source;
-        let (start, end) = assertion_byte_range(index, test, assertion.line)?;
+        let (start, end) = oracle_byte_range(index, test, assertion)?;
         let start = usize::try_from(start).ok()?;
         let invocation = source.get(start..usize::try_from(end).ok()?)?;
         if invocation != assertion.text.trim().trim_end_matches(';').trim_end() {

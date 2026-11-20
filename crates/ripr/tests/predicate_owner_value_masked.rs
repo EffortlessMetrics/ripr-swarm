@@ -222,11 +222,11 @@ fn a_tuple_of_boolean_owner_calls_must_match_on_exactly_one_version() -> Result<
         ),
         (
             "assert_eq!((over(10), over(9)), (true, true));",
-            "weakly_exposed",
+            "infection_unknown",
         ),
         (
             "assert_eq!((over(10), over(10)), (true, false));",
-            "weakly_exposed",
+            "infection_unknown",
         ),
         ("assert_eq!((over(10), 1).1, 1);", "weakly_exposed"),
         (
@@ -265,6 +265,47 @@ fn a_tuple_without_standard_equality_cannot_pin_the_owner() -> Result<(), String
         return Err(format!(
             "expected weakly_exposed for a 13-tuple, got {class:?}"
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn all_tuple_and_scalar_assertions_must_allow_the_same_version() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            "assert_eq!(over(10) as u8, 1); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!(!over(10), true); assert_eq!((over(10), over(9)), (true, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false)); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false)); assert_eq!((over(11), over(9)), (false, true));",
+            "infection_unknown",
+        ),
+        (
+            "assert!(over(10)); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false)); assert_eq!((over(9), over(10)), (false, true));",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (false, false)); assert_eq!((over(9), over(10)), (false, false));",
+            "exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
     }
     Ok(())
 }
