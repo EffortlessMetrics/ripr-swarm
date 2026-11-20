@@ -2,8 +2,8 @@ use crate::analysis;
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
-    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
-    reconcile_root,
+    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_path_value,
+    expect_value, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -14,6 +14,17 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
+
+/// Missing-required-input refusals (#14076). Each names where the value comes
+/// from, so the reader is not left at "requires X". The exact text is pinned
+/// by `tests/cli_error_message_snapshots.rs`.
+const ZERO_STATUS_REQUIRES_DELTA: &str = "zero status requires --delta <path>; pass the baseline debt delta JSON that `ripr baseline diff` writes, for example `--delta target/ripr/reports/baseline-debt-delta.json`";
+const CALIBRATE_REQUIRES_MUTANTS_JSON: &str = "calibrate cargo-mutants requires --mutants-json <path>; run `cargo mutants` first, then pass its `mutants.out` directory or `mutants.out/outcomes.json`";
+const CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON: &str = "calibrate cargo-mutants requires --repo-exposure-json <path>; capture one with `ripr check --format repo-exposure-json > repo-exposure.json`, then pass `--repo-exposure-json repo-exposure.json`";
+const PR_LEDGER_REQUIRES_PR_NUMBER: &str = "pr-ledger record requires --pr-number <value>; pass the pull request number or a local identifier, for example `--pr-number 123`";
+const PR_LEDGER_REQUIRES_BASE: &str = "pr-ledger record requires --base <revision>; pass the pull request's base commit, for example `--base origin/main`";
+const PR_LEDGER_REQUIRES_HEAD: &str = "pr-ledger record requires --head <revision>; pass the pull request's head commit, for example `--head HEAD`";
+const PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT: &str = "pr-review front-panel requires at least one explicit artifact input; pass one, for example `--pr-guidance target/ripr/review/comments.json` (run `ripr help pr-review` for the list)";
 
 #[path = "commands/agent.rs"]
 mod agent;
@@ -269,7 +280,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     let options = parse_evidence_health_options(args)?;
     if !options.root.is_dir() {
         return Err(format!(
-            "evidence-health root {} is not a directory",
+            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
             options.root.display()
         ));
     }
@@ -951,11 +962,9 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
         i += 1;
     }
 
-    let mutants_json = mutants_json
-        .ok_or_else(|| "calibrate cargo-mutants requires --mutants-json <path>".to_string())?;
-    let repo_exposure_json = repo_exposure_json.ok_or_else(|| {
-        "calibrate cargo-mutants requires --repo-exposure-json <path>".to_string()
-    })?;
+    let mutants_json = mutants_json.ok_or_else(|| CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())?;
+    let repo_exposure_json =
+        repo_exposure_json.ok_or_else(|| CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())?;
     if let Some(out) = out.as_deref() {
         refuse_output_naming_input(
             "calibrate cargo-mutants",
@@ -1169,7 +1178,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
                 let reconciled = reconcile_root(
                     &root,
                     root_explicit,
-                    expect_value(args, i, "--root")?,
+                    expect_path_value(args, i, "--root")?,
                     "evidence-health",
                 )?;
                 root = reconciled;
@@ -1177,15 +1186,15 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
             }
             "--out" => {
                 i += 1;
-                out = PathBuf::from(expect_value(args, i, "--out")?);
+                out = PathBuf::from(expect_path_value(args, i, "--out")?);
             }
             "--out-md" => {
                 i += 1;
-                out_md = PathBuf::from(expect_value(args, i, "--out-md")?);
+                out_md = PathBuf::from(expect_path_value(args, i, "--out-md")?);
             }
             "--mutation-calibration" => {
                 i += 1;
-                mutation_calibration = Some(PathBuf::from(expect_value(
+                mutation_calibration = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--mutation-calibration",
@@ -1265,7 +1274,7 @@ fn parse_ripr_zero_status_options(args: &[String]) -> Result<RiprZeroStatusOptio
         i += 1;
     }
 
-    let delta = delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?;
+    let delta = delta.ok_or_else(|| ZERO_STATUS_REQUIRES_DELTA.to_string())?;
     refuse_output_naming_input(
         "zero status",
         &[("--out", &out), ("--out-md", &out_md)],
@@ -1485,10 +1494,10 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         {
             forbidden.push(input);
         }
-        if forbidden
-            .iter()
-            .any(|path| output::path::same_output_leaf(jsonl, path))
-        {
+        if forbidden.iter().any(|path| {
+            output::path::same_output_leaf(jsonl, path)
+                || output::path::output_replaces_input(jsonl, path)
+        }) {
             return Err(
                 "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
                     .to_string(),
@@ -1497,10 +1506,9 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
     }
 
     Ok(PrEvidenceLedgerOptions {
-        pr_number: pr_number
-            .ok_or_else(|| "pr-ledger record requires --pr-number <value>".to_string())?,
-        base: base.ok_or_else(|| "pr-ledger record requires --base <revision>".to_string())?,
-        head: head.ok_or_else(|| "pr-ledger record requires --head <revision>".to_string())?,
+        pr_number: pr_number.ok_or_else(|| PR_LEDGER_REQUIRES_PR_NUMBER.to_string())?,
+        base: base.ok_or_else(|| PR_LEDGER_REQUIRES_BASE.to_string())?,
+        head: head.ok_or_else(|| PR_LEDGER_REQUIRES_HEAD.to_string())?,
         labels,
         gate,
         baseline_delta,
@@ -1833,9 +1841,7 @@ fn parse_pr_review_front_panel_options(
         && coverage_frontier.is_none()
         && receipt.is_none()
     {
-        return Err(
-            "pr-review front-panel requires at least one explicit artifact input".to_string(),
-        );
+        return Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string());
     }
 
     refuse_output_naming_input(
@@ -3209,7 +3215,7 @@ mod tests {
         assert_eq!(pr_review(&args(&[])), Ok(()));
         assert_eq!(
             pr_review(&args(&["front-panel"])),
-            Err("pr-review front-panel requires at least one explicit artifact input".to_string())
+            Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string())
         );
         assert_eq!(
             pr_review(&args(&["bogus"])),
@@ -3258,7 +3264,7 @@ mod tests {
         assert_eq!(zero(&args(&[])), Ok(()));
         assert_eq!(
             zero(&args(&["status"])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             zero(&args(&["unknown"])),
@@ -3266,7 +3272,7 @@ mod tests {
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&[])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&["--delta", ""])),
@@ -4663,7 +4669,7 @@ language = "rust"
                 "--gate",
                 "gate.json"
             ])),
-            Err("pr-ledger record requires --pr-number <value>".to_string())
+            Err(PR_LEDGER_REQUIRES_PR_NUMBER.to_string())
         );
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[
@@ -5703,11 +5709,11 @@ language = "rust"
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--repo-exposure-json", "repo.json"])),
-            Err("calibrate cargo-mutants requires --mutants-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--mutants-json", "mutants.json"])),
-            Err("calibrate cargo-mutants requires --repo-exposure-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())
         );
     }
     #[test]

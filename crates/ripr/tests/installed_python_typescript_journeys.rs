@@ -3684,6 +3684,62 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     Ok(())
 }
 
+/// #15060: the derived module-tree scan bundle, written between the start and
+/// the finish (as any check does), is not bound. The missing-projection
+/// reconstruction must leave it out too, or a cleaned-up workflow directory
+/// reads stale. A later rewrite of the bundle keeps the attempt current.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_projection_cleanup_ignores_the_derived_scan_bundle() -> Result<(), String> {
+    const BUNDLE: &str = "target/ripr/cache/repo-module-tree-scans/0.1/scans.json";
+    let attempt = GapAttempt::start("gap-projection-cleanup-bundle")?;
+    let bundle = attempt.root.join(BUNDLE);
+    let parent = bundle.parent().ok_or("bundle has no parent")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    std::fs::write(&bundle, b"{\"derived\":1}").map_err(|error| error.to_string())?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(output.status.success(), true, "finish gap attempt")?;
+    let manifest = attempt.manifest_for_only_attempt()?;
+    if manifest["after"]["verdict"]["changed_paths"]
+        .as_array()
+        .is_none_or(|paths| paths.iter().any(|path| path == BUNDLE))
+    {
+        return Err(format!("the finish bound the derived bundle: {manifest}"));
+    }
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        Ok(document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .is_some_and(|row| row["head_current"] == true))
+    };
+    if !current()? {
+        return Err("newly finished attempt was not current".to_string());
+    }
+    std::fs::write(&bundle, b"{\"derived\":2}").map_err(|error| error.to_string())?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let absent_current = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    if !absent_current? || !current()? {
+        return Err(
+            "the derived bundle made the projection cleanup or a rewrite read stale".to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(feature = "lang-typescript")]
 #[test]
 fn gap_cleanup_does_not_hide_unrelated_bound_neighbor() -> Result<(), String> {
