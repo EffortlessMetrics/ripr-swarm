@@ -441,6 +441,46 @@ pub(super) fn old_class_outside(
             .is_some_and(|ancestry| !ancestry.iter().any(|name| name == new))
 }
 
+/// Whether no name in `names` is bound in the owner function's own scope (a
+/// parameter, a local assignment, an `except .. as` target), so each raised
+/// name reads as the module-level class it spells (#15356 review: a local
+/// `ValueError = InvalidVersion` makes both raises construct one class). An
+/// owner whose `def` cannot be found at module or class level, or whose scope
+/// is unreadable (a nested scope or a `lambda`), refuses. With no module text
+/// nothing local is known, and the caller's own hierarchy rule decides.
+pub(super) fn owner_scope_leaves_unbound(
+    source: Option<&str>,
+    owner: &PythonOwner,
+    names: &[&str],
+) -> bool {
+    let Some(source) = source else {
+        return true;
+    };
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<module>"), source) else {
+        return false;
+    };
+    let text = SourceText::new(source);
+    let is_owner = |function: &ast::StmtFunctionDef| {
+        function.name.as_str() == owner.name
+            && line_for_range_start(&text, function.range) == owner.start_line
+    };
+    let function = module.body.iter().find_map(|stmt| match stmt {
+        Stmt::FunctionDef(function) if is_owner(function) => Some(function),
+        Stmt::ClassDef(class) => class.body.iter().find_map(|inner| match inner {
+            Stmt::FunctionDef(function) if is_owner(function) => Some(function),
+            _ => None,
+        }),
+        _ => None,
+    });
+    function
+        .and_then(|function| function_bound_names(&function.args, &function.body, source))
+        .is_some_and(|locals| {
+            names
+                .iter()
+                .all(|name| !locals.iter().any(|local| local.as_str() == *name))
+        })
+}
+
 /// The builtin class and its ancestors up to `BaseException`.
 fn builtin_chain(name: &str) -> Option<Vec<&str>> {
     let mut chain = vec![name];

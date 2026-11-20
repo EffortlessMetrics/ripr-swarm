@@ -488,3 +488,55 @@ fn residual_an_imported_alias_of_the_old_builtin_is_still_credited() -> Check {
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn an_exact_context_that_does_not_run_the_owner_credits_nothing() -> Check {
+    // A broad context runs the owner; the exact context in the same test pins
+    // some other raise, so neither notices the swap (#15356 review).
+    let imports =
+        format!("import pytest\nfrom verlib.errors import InvalidVersion\n{IMPORT_RELEASE}");
+    let unrelated = format!(
+        "{imports}\n\ndef test_rejects():\n    with pytest.raises(Exception, match=\"invalid version\"):\n        parse_release(\"1.x\")\n    with pytest.raises(InvalidVersion, match=\"invalid version\"):\n        raise InvalidVersion(\"invalid version\")\n"
+    );
+    let finding = classify(SOURCE, &unrelated, Some(OLD), NEW)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // Control: the exact context runs the owner.
+    let owner_run = format!(
+        "{imports}\n\ndef test_rejects():\n    with pytest.raises(Exception, match=\"invalid version\"):\n        parse_release(\"1.x\")\n    with pytest.raises(InvalidVersion, match=\"invalid version\"):\n        parse_release(\"2.x\")\n"
+    );
+    let finding = classify(SOURCE, &owner_run, Some(OLD), NEW)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "control: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_local_alias_of_a_raised_name_credits_nothing() -> Check {
+    // `ValueError = InvalidVersion` in the owner makes both raises construct
+    // the same class, so the exact assertion passes before and after.
+    let aliased = SOURCE.replace(
+        "    parts = text.strip()",
+        "    ValueError = InvalidVersion\n    parts = text.strip()",
+    );
+    let tests = matching_tests(
+        &format!("from verlib.errors import InvalidVersion\n{IMPORT_RELEASE}"),
+        "InvalidVersion",
+    );
+    let finding = classify(&aliased, &tests, Some(OLD), NEW)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // A parameter spelling the new class is refused too.
+    let parameter = SOURCE.replace(
+        "def parse_release(text):",
+        "def parse_release(text, InvalidVersion=ValueError):",
+    );
+    let finding = classify(&parameter, &tests, Some(OLD), NEW)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "parameter: {finding:?}"
+    );
+    Ok(())
+}

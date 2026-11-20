@@ -34,10 +34,11 @@
 use super::assertion_selection::PythonAssertionFocus;
 use super::exception_variant::{
     builtin_exception_parent, expected_classes, known_not_subclass, old_class_outside,
-    raised_type_name,
+    owner_scope_leaves_unbound, raised_type_name,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, import_source_module_matches_owner, module_name_identifies_owner_for,
+    PythonRelatedCandidate, exception_body_observes_token, import_source_module_matches_owner,
+    module_name_identifies_owner_for,
 };
 use super::source_facts::parse_module_result;
 use super::{PythonAssertion, PythonOwner};
@@ -152,6 +153,10 @@ pub(super) fn python_raised_type_pin_gap(
     }
     let owner_import = owner.imports.iter().find(|import| import.alias == new_type);
     let builtin = builtin_exception_parent(&new_type).is_some();
+    // Both raised names must read as module-level classes in the owner's
+    // scope, or neither escape below can tell the two raises apart.
+    let scope_clear =
+        owner_scope_leaves_unbound(owner_source, owner, &[old_type.as_str(), new_type.as_str()]);
     let mut seen = false;
     for candidate in related_candidates
         .iter()
@@ -164,8 +169,19 @@ pub(super) fn python_raised_type_pin_gap(
             .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
         {
             seen = true;
-            let exact = expected_classes(&assertion.text)
-                .is_some_and(|classes| classes == [new_type.clone()]);
+            // An escape credits only an assertion whose own `with` body (or
+            // callable call) runs the owner: another exception context in
+            // the same test pins some other raise (#15356 review).
+            let runs_owner = scope_clear
+                && exception_body_observes_token(
+                    &assertion.gate_text,
+                    &assertion.text,
+                    assertion.exception_body_end,
+                    &owner.name,
+                );
+            let exact = runs_owner
+                && expected_classes(&assertion.text)
+                    .is_some_and(|classes| classes == [new_type.clone()]);
             let rebinding = &test.constant_rebinding;
             let test_import = test.imports.iter().find(|import| import.alias == new_type);
             let resolves = !rebinding.module_opaque
@@ -213,8 +229,9 @@ pub(super) fn python_raised_type_pin_gap(
             // not to satisfy fails against the new raise, which the edit does
             // notice (RIPR-SPEC-0238 example 14). The old name must not be bound
             // or imported by the test module (no star import either).
-            let stale = expected_classes(&assertion.text)
-                .is_some_and(|classes| classes.iter().all(|class| *class == old_type))
+            let stale = runs_owner
+                && expected_classes(&assertion.text)
+                    .is_some_and(|classes| classes.iter().all(|class| *class == old_type))
                 && !rebinding.module_bound.contains(&old_type)
                 && test
                     .imports
