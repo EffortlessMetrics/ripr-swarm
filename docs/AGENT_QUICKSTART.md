@@ -117,7 +117,7 @@ tracked edits when any exist; pass `source: "committed"` or
 refresh. The server does not watch the worktree.
 
 The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
-(11,884 bytes on the wire) at every session start. Register it only if your
+(12,075 bytes on the wire) at every session start. Register it only if your
 agent prefers tools. `ripr` must be on
 `PATH`.
 

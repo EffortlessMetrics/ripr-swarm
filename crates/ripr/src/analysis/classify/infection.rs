@@ -1975,7 +1975,7 @@ fn chain_is_first_decision(function: &str, chain: &str) -> bool {
 
 /// Whether `ty` is `&str`, `&'a str`, `String` or `&String`: types whose
 /// `==` against a string literal compares the text itself.
-fn is_plain_string_type(ty: &str) -> bool {
+pub(in crate::analysis::classify) fn is_plain_string_type(ty: &str) -> bool {
     let compact = ty.split_whitespace().collect::<Vec<_>>().join(" ");
     let Some(borrowed) = compact.strip_prefix('&') else {
         return compact == "String";

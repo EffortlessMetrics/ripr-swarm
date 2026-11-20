@@ -1190,6 +1190,32 @@ pub(super) const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
     "from_output",
 ];
 
+/// The owner and the names the bounded reverse walk says reach it (#15026).
+pub(in crate::analysis) struct OwnerCallers<'a> {
+    owner_name: String,
+    reaching: HashSet<&'a str>,
+}
+
+impl OwnerCallers<'_> {
+    /// Whether `test` calls the owner or a function the bounded name walk says
+    /// reaches it. Unlike [`OwnerReach::test_may_reach`] it never fails open
+    /// (no implicit dispatch, untraced path or unindexed call counts): it only
+    /// orders related tests so the one nearest the owner is named first, and
+    /// an unknown call must not move a row.
+    pub(in crate::analysis) fn test_calls_owner_or_caller(&self, test: &TestFact) -> bool {
+        test.calls.iter().any(|call| {
+            let name = call.name.as_str();
+            // Name checks first: the declaration check formats only for a
+            // call that already names the owner or a caller.
+            (name == self.owner_name || self.reaching.contains(name))
+                && !is_macro_call(name)
+                && !(name == test.name
+                    && contains_identifier(&call.text, "fn")
+                    && call.text.contains(&format!("fn {name}")))
+        })
+    }
+}
+
 /// The reverse name walk from one owner, for asking whether a test may run
 /// it ([`TransitiveReachIndex::owner_reach`]).
 pub(in crate::analysis) struct OwnerReach<'g, 'a> {
@@ -2194,6 +2220,16 @@ impl<'a> TransitiveReachIndex<'a> {
             .into_iter()
             .flat_map(|name| graph.by_name.get(name).into_iter().flatten().copied())
             .collect()
+    }
+
+    /// Only the bounded reverse name walk to `owner_name`, without the
+    /// implicit-dispatch and untraced-path work of [`Self::owner_reach`]:
+    /// enough to order related tests by owner nearness (#15026).
+    pub(in crate::analysis) fn owner_callers(&self, owner_name: &str) -> OwnerCallers<'a> {
+        OwnerCallers {
+            owner_name: owner_name.to_string(),
+            reaching: self.graph().names_reaching(owner_name),
+        }
     }
 
     /// The names that may lead to `owner_name`, computed once so every

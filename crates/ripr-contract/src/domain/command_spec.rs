@@ -972,4 +972,100 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn pytest_display_quotes_for_the_named_host_only() {
+        let display = |path: &str, windows: bool| {
+            python_pytest_verify_display(path, "TestA::test_b", windows)
+        };
+        // A plain path stays readable on both hosts; on Windows the `::`
+        // separator joins the token and must not force quotes.
+        for windows in [false, true] {
+            assert_eq!(
+                display("tests/test_a.py", windows).as_deref(),
+                Some("python -m pytest tests/test_a.py::TestA::test_b"),
+                "windows={windows}"
+            );
+        }
+        assert_eq!(
+            display("my tests/test_a.py", false).as_deref(),
+            Some("python -m pytest 'my tests/test_a.py'::TestA::test_b")
+        );
+        assert_eq!(
+            display("my tests/test_a.py", true).as_deref(),
+            Some("python -m pytest \"my tests/test_a.py::TestA::test_b\"")
+        );
+        // A colon is an ordinary byte on Windows and quoted on POSIX.
+        assert_eq!(
+            display("a:b.py", false).as_deref(),
+            Some("python -m pytest 'a:b.py'::TestA::test_b")
+        );
+        assert_eq!(
+            display("it's.py", false).as_deref(),
+            Some("python -m pytest 'it'\\''s.py'::TestA::test_b")
+        );
+        assert_eq!(
+            display("say \"hi\".py", true).as_deref(),
+            Some("python -m pytest \"say \"\"hi\"\".py::TestA::test_b\"")
+        );
+        // An empty token is quoted, never emitted bare.
+        assert_eq!(
+            display("", false).as_deref(),
+            Some("python -m pytest ''::TestA::test_b")
+        );
+        // Bytes that Windows shells expand inside double quotes get no command.
+        for path in ["$(x).py", "`x`.py", "%X%.py"] {
+            assert_eq!(display(path, true), None, "{path:?}");
+            assert!(display(path, false).is_some(), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn unittest_display_quotes_the_module_for_the_named_host_only() {
+        let display = |path: &str, windows: bool| {
+            python_unittest_verify_display(path, "TestA.test_b", windows)
+        };
+        for windows in [false, true] {
+            assert_eq!(
+                display("tests/test_a.py", windows).as_deref(),
+                Some("python -m unittest tests.test_a.TestA.test_b"),
+                "windows={windows}"
+            );
+        }
+        assert_eq!(
+            display("my tests/test_a.py", false).as_deref(),
+            Some("python -m unittest 'my tests.test_a'.TestA.test_b")
+        );
+        assert_eq!(
+            display("my tests/test_a.py", true).as_deref(),
+            Some("python -m unittest \"my tests.test_a.TestA.test_b\"")
+        );
+        // A literal dot in the path would select a different module.
+        assert_eq!(display("tests/v1.2/test_a.py", false), None);
+    }
+
+    #[test]
+    fn command_tokens_drop_empty_words_and_keep_quoted_whitespace() {
+        assert_eq!(
+            command_tokens("a  'b c'\t\"d e\"  f"),
+            ["a", "b c", "d e", "f"]
+        );
+        assert_eq!(command_tokens("   "), Vec::<String>::new());
+    }
+
+    #[test]
+    fn broad_snapshot_recognition_needs_every_marker() {
+        for partial in [
+            "ripr agent verify --before target/before.repo-exposure.json --json",
+            "ripr agent verify --before before.json --after after.json",
+            "ripr agent verify --after target/after.repo-exposure.json",
+            "cat --before x --after target/after.repo-exposure.json",
+            "cat target/after.repo-exposure.json",
+        ] {
+            assert!(
+                !verify_command_is_unbounded_repo_exposure_snapshot_compare(partial),
+                "{partial:?}"
+            );
+        }
+    }
 }

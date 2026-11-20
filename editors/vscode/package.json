@@ -44,6 +44,12 @@
     "workspaceContains:Cargo.toml",
     "workspaceContains:ripr.toml",
     "workspaceContains:pyproject.toml",
+    "workspaceContains:setup.py",
+    "workspaceContains:setup.cfg",
+    "workspaceContains:requirements.txt",
+    "workspaceContains:pytest.ini",
+    "workspaceContains:tox.ini",
+    "workspaceContains:noxfile.py",
     "workspaceContains:tsconfig.json",
     "workspaceContains:jsconfig.json",
     "onCommand:ripr.restartServer",
@@ -89,7 +95,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^24.19.2",
-    "@types/vscode": "~1.90.0",
+    "@types/vscode": "~1.91.0",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.2",
     "mocha": "^10.8.2",
@@ -134,7 +140,7 @@
         "ripr.server.path": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a ripr executable. Overrides bundled, downloaded, and PATH server resolution.",
+          "description": "Absolute path to a ripr executable; a leading ~ means your home directory. Overrides bundled, downloaded, and PATH server resolution.",
           "scope": "resource"
         },
         "ripr.server.args": {
@@ -164,7 +170,7 @@
         "ripr.server.downloadBaseUrl": {
           "type": "string",
           "default": "",
-          "description": "Override the server manifest base URL for internal mirrors. Empty uses GitHub Releases.",
+          "description": "The https:// address of the folder that holds the ripr release files (the manifest and archives), for an internal mirror. Give the folder, not the manifest file. Empty uses GitHub Releases.",
           "scope": "resource"
         },
         "ripr.check.mode": {

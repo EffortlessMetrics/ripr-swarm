@@ -12,6 +12,7 @@ mod const_flow;
 mod constant_tail_change;
 pub(in crate::analysis) use constant_tail_change::{
     ConstantTailChange, base_side_may_rebind_trusted_macros, constant_tail_change,
+    is_equal_constant_respelling,
 };
 #[cfg(feature = "lang-rust")]
 mod tier_flow;
@@ -76,6 +77,8 @@ mod value_transfer;
 mod variant_field_pattern;
 
 pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
+#[cfg(feature = "lang-python")]
+pub(in crate::analysis) use activation::sort_value_facts;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_gap_is_placed,
     assigned_field_of, assigned_field_read_confirms, assigned_field_seed_is_visible,
@@ -85,7 +88,7 @@ pub(in crate::analysis) use activation::{
     literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
     owner_receiver_borrow, owner_writes_field_only_at_probe, predicate_line_bool_guards,
     pushed_collection_compared_whole, pushed_literal_path, repo_seam_unselected_arm,
-    signature_parameters, sort_value_facts, test_binds_owner_type,
+    signature_parameters, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -147,8 +150,11 @@ pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, assertion_confirms_captured_log_exact_membership, is_ignored,
     should_panic_tests_deciding_changed_panic, withhold_call_budget_gap,
     withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
-    withhold_read_limited_workspace_gap, withhold_should_panic_gap,
-    withhold_truncated_discovery_gap, withhold_unsupported_gap,
+    withhold_should_panic_gap, withhold_unsupported_gap,
+};
+#[cfg(feature = "lang-typescript")]
+pub(in crate::analysis) use gap_admission::{
+    withhold_read_limited_workspace_gap, withhold_truncated_discovery_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -209,16 +215,18 @@ pub(in crate::analysis) use propagation_witness::{
     test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_change_witness, constant_tail_witness, early_return_literal_witness,
-    fallible_literal_witness, format_tail_witness, result_map_witness,
+    changes_constant_owner_tail, constant_tail_change_witness, constant_tail_witness,
+    early_return_literal_witness, fallible_literal_witness, format_tail_witness,
+    result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs_with, invokes_opaque_macro, is_proximity_only,
-    is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
-    owner_runs_through_language_dispatch, owner_tested_through_production_caller,
-    owner_unreferenced_in_workspace, reach_evidence, relation_establishes_reach,
+    is_trait_impl_method, names_identifier_outside_fn_definition, out_of_root_member_identity,
+    owner_may_be_reached_unseen, owner_runs_through_language_dispatch,
+    owner_tested_through_production_caller, owner_unreferenced_in_workspace, reach_evidence,
+    relation_establishes_reach,
 };
 pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,

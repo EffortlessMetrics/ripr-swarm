@@ -34,7 +34,7 @@ ripr init --ci github
 ```
 
 Add `--dry-run` to print the workflow without writing it. The generated
-workflow reads two repository variables and leaves both unset, so it is
+workflow reads two gate repository variables and leaves both unset, so it is
 advisory only: it summarizes findings and uploads reports, and the job never
 fails.
 
@@ -136,6 +136,12 @@ message names the way out: use `visible-only` to start without blocking, then
 run `ripr baseline create --from target/ripr/reports/gate-decision.json --out .ripr/gate-baseline.json`,
 commit the result and pass it with `--baseline` (`RIPR_GATE_BASELINE`). A
 `blocked` decision, by contrast, exits 3.
+
+A `RIPR_GATE_MODE` value that is not a gate mode (`visible_only`, say) also
+fails the job: the workflow treats any value other than empty or
+`visible-only` as blocking, and the gate refuses the value. In all three
+cases the failing `Run RIPR` step's error annotation and the first block of
+the job summary state the cause and, for a setup problem, the way out.
 
 ## GitLab merge requests
 

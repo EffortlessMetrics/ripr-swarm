@@ -510,7 +510,7 @@ mod term_activation;
 mod test_activation;
 mod truthiness_swap;
 use static_limits::{
-    PythonStaticLimit, has_identifier_boundary, line_prefix_before,
+    PrefixScan, PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
 mod cli_runner;
@@ -1942,7 +1942,10 @@ impl PythonAdapter {
                 .iter()
                 .map(|changed| changed.path.as_path()),
         );
-        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
+        limitations.extend(limitations_for_absent_changed_files(
+            &options.root,
+            &absent_changed_files,
+        )?);
         let absent_changed_paths = absent_changed_files
             .iter()
             .map(|path| normalized_path(path))

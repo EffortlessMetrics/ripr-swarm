@@ -187,6 +187,10 @@ share one rule in `analysis/classify/call_identity.rs`:
   keeps the test's relation. The initializer is not read, so a `const` that
   aliases the owner itself is withheld as well; an item inside a nested
   block stays unsettled as above;
+- scopes record every name without its raw prefix: `use crate::b::r#render;`
+  binds `render`, as do a raw rename, a raw path segment and a raw item or
+  module name (#14087). A call spelled `r#render(..)` in the test body is
+  still not read and stays unsettled;
 - a test whose every call of the name settles on another definition is not
   related to the owner through any signal (direct call, file, module or
   name affinity), so it supplies neither reach nor confirming tokens;
@@ -214,6 +218,16 @@ a residual that reads unsettled. A
 same-named `fn` in another crate of the package (an integration test's or a
 binary's root) or an `extern` declaration is no settled rival and keeps
 refusing the pin.
+
+A package is named by its directory below the analysis root, including the
+directories above a `crates/` segment (#15299). A workspace nested below the
+root (`rust/crates/alpha`, `w2/crates/alpha`), as in a mixed-language
+monorepo, keeps its members apart: `w2/crates/alpha` and `w2/crates/beta`
+are two packages whose same-named `fn`s are no rivals of each other, and
+`w1/crates/alpha` and `w2/crates/alpha` in two workspaces are two packages,
+so one workspace's test never relates to the other's owner. Reading the
+nested workspace from the repository root gives the same relation as reading
+it with `--root w2`.
 
 ## Non-Goals
 
@@ -366,6 +380,8 @@ The competitor and owner-crate foreign-import rules above still apply.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
+- `crates/ripr/tests/nested_workspace_package_identity.rs::a_member_of_a_workspace_below_the_root_keeps_its_own_test`
+- `crates/ripr/tests/nested_workspace_package_identity.rs::the_same_crate_path_in_two_workspaces_names_two_packages`
 
 ## Path keywords never seed assertion-target affinity (#9171)
 

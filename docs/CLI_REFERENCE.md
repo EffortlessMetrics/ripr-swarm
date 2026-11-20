@@ -412,6 +412,9 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
+  --quiet              Drop the phase's progress narration and `wrote <path>`
+                       lines from stderr, like `ripr repair --quiet` and
+                       `RIPR_QUIET`. Results and refusal prose always print.
   --seam-id ID         Select one visible seam; required for `before` and the
                        compatibility selector for `after`. For `--phase before`,
                        a seam ID, a `ripr check` finding ID (`probe:` /
@@ -1712,10 +1715,12 @@ Environment variables:
                                           an unparseable value fails the run.
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
-                                          like --quiet (check, explain, context,
-                                          pilot, repair, continue). Any value except
-                                          empty, 0 or false silences it; stdout, exit
-                                          codes and errors are unchanged.
+                                          like --quiet on every command that takes
+                                          it (check, explain, context, pilot,
+                                          evidence-health, repair, continue, status,
+                                          agent repair, reports ci-packet). Any value
+                                          except empty, 0 or false silences it;
+                                          stdout, exit codes and errors are unchanged.
   RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
                                           machine format on a non-terminal stderr,
                                           where it is off by default. Any value
@@ -3905,7 +3910,7 @@ Write reviewer-first report projections from explicit artifacts.
 
 Usage:
   ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
-  ripr reports ci-packet [--root PATH] [--step NAME]...
+  ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
   ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
@@ -3929,6 +3934,7 @@ Index options:
 CI packet options:
   --root PATH           Checkout to analyze and write target/ripr and target/ci under. Defaults to current directory.
   --step NAME           Run only the named step (repeatable), still under its condition, to reproduce one step locally.
+  --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 CI summary options:
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
@@ -4046,11 +4052,12 @@ Examples:
 Run the generated CI workflow's RIPR steps and write its artifact packet.
 
 Usage:
-  ripr reports ci-packet [--root PATH] [--step NAME]...
+  ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
 
 CI packet options:
   --root PATH           Checkout to analyze and write target/ripr and target/ci under. Defaults to current directory.
   --step NAME           Run only the named step (repeatable), still under its condition, to reproduce one step locally.
+  --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 The CI packet runs the RIPR steps of the `ripr init --ci github` workflow:
 pilot, the agent-loop start, the PR diff capture and guidance, the inline

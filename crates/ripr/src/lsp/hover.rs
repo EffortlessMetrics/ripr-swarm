@@ -1414,7 +1414,16 @@ fn push_editor_commands(
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
     if let Some(repair) = repair_start_command_for(entry, &root) {
-        lines.push(format!("- repair (start here): `{repair}`"));
+        // #13636: the start refuses a dirty production premise; name the
+        // commit step first, as the inert "Start repair" action does.
+        if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {
+            lines.push(format!(
+                "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
+            ));
+            lines.push(format!("- then repair: `{repair}`"));
+        } else {
+            lines.push(format!("- repair (start here): `{repair}`"));
+        }
     }
     lines.push(format!(
         "- packet: `{}`",

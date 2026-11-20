@@ -84,6 +84,8 @@ pub(crate) fn probes_for_file_with_relations(
     // the old lines of a multi-line `&&`/`||` chain that an added predicate
     // carries whole as `before` (`family_before`).
     let mut guard_edit_counterparts = Vec::<usize>::new();
+    // #14938: old lines whose replacement only respelled a returned constant.
+    let mut equal_constant_counterparts = Vec::<usize>::new();
     let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // Rebuilt once per file and shared by every reader of the old file (#7637).
@@ -253,6 +255,17 @@ pub(crate) fn probes_for_file_with_relations(
             if let Some(&removed_index) = removed_at.get(old_line) {
                 skip_removed[removed_index] = true;
             }
+        }
+    }
+    // #15110: a complete item moved within its owner, with no other change,
+    // is the same program.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let moved = super::moved_item::moved_item_lines(changed, &facts.source, old_source);
+        for (flag, line) in skip_added.iter_mut().zip(&changed.added_lines) {
+            *flag |= moved.added.contains(&line.new_side_line);
+        }
+        for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
+            *flag |= moved.removed.contains(&line.line);
         }
     }
     // A line that is byte-identical on both sides of one replacement run
@@ -575,6 +588,55 @@ pub(crate) fn probes_for_file_with_relations(
                                 .any(|other| other.family != ProbeFamily::ReturnValue)
                     })
             };
+            // #14938: a returned constant respelled as the same value
+            // (`65` as `0x41`, `"A"` as `"\x41"`, `1.0` as `1e0`) changed
+            // no behavior, so no test could notice it and the line seeds no
+            // probe. Only a line that is wholly that value (a tail, maybe
+            // `return`ed, with its `;` or `,`) qualifies, so text outside
+            // the shape is known unchanged and a string or comment elsewhere
+            // on the line cannot hide an edit.
+            let equal_constant_return = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::ReturnValue
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let shape_text = canonical_probe_text(text, shape.text);
+                        let bare = |line: &str| {
+                            let line = line.trim();
+                            let line = line.strip_prefix("return ").unwrap_or(line);
+                            line.strip_suffix([';', ','])
+                                .unwrap_or(line)
+                                .trim()
+                                .to_string()
+                        };
+                        // The statement envelope must match too: `65;`
+                        // becoming `return 0x41;` adds an early return.
+                        let envelope = |line: &str| {
+                            let line = line.trim();
+                            (
+                                line.starts_with("return "),
+                                line.ends_with(';'),
+                                line.ends_with(','),
+                            )
+                        };
+                        let value = bare(&shape_text);
+                        bare(text) == value
+                            && envelope(text) == envelope(removed)
+                            && crate::analysis::classify::is_equal_constant_respelling(
+                                &bare(removed),
+                                &value,
+                            )
+                    })
+            };
+            // The removed line it replaced is the same value too, so it seeds
+            // no deleted-behavior probe either.
+            // The line is wholly that constant, so every other shape on it
+            // (`true == false` inside `return !false == false;`) lies inside
+            // the same unchanged value and is dropped too.
+            let equal_constant_line = canonical_shapes.iter().any(&equal_constant_return);
+            if let Some(removed) = changed.replaced_line_counterpart(added.new_side_line)
+                && equal_constant_line
+            {
+                equal_constant_counterparts.push(removed.line);
+            }
             // A guard-only edit (`n if 0 > n =>` from `n if n < 0 =>`) is
             // the guard's predicate finding: its boundary pairing is the
             // discriminator the edit needs, and arm selection never
@@ -691,6 +753,7 @@ pub(crate) fn probes_for_file_with_relations(
                 .filter(|shape| {
                     !unchanged_return(shape)
                         && !respelled_return(shape)
+                        && !equal_constant_line
                         && !guard_only_arm(shape)
                         && !carried_header(shape)
                         && !unchanged_in_header(shape)
@@ -842,7 +905,32 @@ pub(crate) fn probes_for_file_with_relations(
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
-            probes.extend(retargeted);
+            // #14132: two changed bindings that are operands of one comparison
+            // (`let hix = ..; let tix = ..; if hix < tix`) each retarget to
+            // it. The comparison is one changed behavior, so it keeps the one
+            // probe the first changed binding seeded. Bindings in different
+            // terms of one line (`a < b && c < d`) keep their own probes.
+            for seeded in retargeted {
+                let already_retargeted = probes.iter().any(|kept| {
+                    kept.probe.family == seeded.probe.family
+                        && kept.probe.location.line == seeded.probe.location.line
+                        && kept.probe.expression == seeded.probe.expression
+                        && kept
+                            .binding_relation
+                            .as_ref()
+                            .zip(seeded.binding_relation.as_ref())
+                            .is_some_and(|(kept, seeded)| {
+                                bindings_share_a_comparison(
+                                    &seeded.predicate_expression,
+                                    &kept.binding,
+                                    &seeded.binding,
+                                )
+                            })
+                });
+                if !already_retargeted {
+                    probes.push(seeded);
+                }
+            }
             continue;
         }
         // #11400: a changed `const` value is its readers' new return value.
@@ -892,6 +980,7 @@ pub(crate) fn probes_for_file_with_relations(
     }
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
+    let represented_value_lines = represented_value_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         if crate::analysis::cancellation::checkpoint().is_err() {
             break;
@@ -935,6 +1024,9 @@ pub(crate) fn probes_for_file_with_relations(
         // the old guard; probing the old line again would read the same
         // guard as deleted behavior.
         if guard_edit_counterparts.contains(&removed.line) {
+            continue;
+        }
+        if equal_constant_counterparts.contains(&removed.line) {
             continue;
         }
         if let Some(definition) = removed_macros
@@ -1026,6 +1118,19 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #7807: the same holds for any removed line that reads only the
+            // catch-all because it is classified without its context (a tail
+            // `x * 5` or `input`), when its block replacement's probe models
+            // the value at that position (`return_value`, `error_path`) and
+            // carries the WHOLE removed text as `before`. That probe already
+            // judges the replaced code; the base-side twin only repeats it.
+            // Any other replacement family (an operator swap read as
+            // `call_deletion`) is a weaker model, so the twin stays.
+            if family == ProbeFamily::StaticUnknown
+                && represented_value_lines.contains(&removed.line)
+            {
+                continue;
+            }
             // #9183: a deleted field declaration with no replacement is type
             // syntax in the old source, not a deleted construction. The
             // replacement checks above ran on the lexical family, so an
@@ -1080,6 +1185,35 @@ fn replaced_literal_is_paired(
                         .is_some_and(|before| before == text || before == literal)
             })
     })
+}
+
+/// Old-side lines of removed lines whose positional replacement (one map of
+/// [`ChangedFile::replacement_counterparts`], built once per file) carries a
+/// `return_value` or `error_path` probe whose `before` is the whole removed
+/// text (#7807). A removed line holding more than one statement
+/// (`*state = 1; x * 5`, a `;` before its end) is never included: the value
+/// probe models only the returned expression, not the other statement.
+fn represented_value_replacements(
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> std::collections::BTreeSet<usize> {
+    let counterparts = changed.replacement_counterparts();
+    probes
+        .iter()
+        .filter(|seeded| {
+            matches!(
+                seeded.probe.family,
+                ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
+            )
+        })
+        .filter_map(|seeded| {
+            let removed = counterparts.get(&seeded.probe.location.line)?;
+            let text = removed.text.trim();
+            let single_statement = !text.strip_suffix(';').unwrap_or(text).contains(';');
+            (single_statement && seeded.probe.before.as_deref() == Some(text))
+                .then_some(removed.line)
+        })
+        .collect()
 }
 
 /// True when a trimmed changed line is one literal and nothing else: a
@@ -2726,6 +2860,20 @@ fn added_run_start(
     starts: &std::collections::BTreeMap<usize, usize>,
 ) -> usize {
     ChangedFile::added_run_start_from(starts, added_new_side_line)
+}
+
+/// Whether two bindings are named in the same `&&`/`||` term of a predicate
+/// line, so they are operands of one comparison (#14132).
+fn bindings_share_a_comparison(predicate_line: &str, first: &str, second: &str) -> bool {
+    let names = |term: &str, name: &str| {
+        term.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| word == name)
+    };
+    // Comment and string text is not an operand: `a < lo && c < hi { // a`.
+    mask_comments_and_strings(predicate_line)
+        .split("&&")
+        .flat_map(|term| term.split("||"))
+        .any(|term| names(term, first) && names(term, second))
 }
 
 fn has_matching_added_line(
@@ -7480,6 +7628,67 @@ mod tests {
         assert!(
             base_side.iter().all(|probe| probe.location.line == 9),
             "the kept probe is the deleted line's, not the replaced one's: {mixed:?}"
+        );
+    }
+
+    /// #7807: a changed tail expression (`x * 5` -> `x * 10`) reads only the
+    /// catch-all on the removed side, where it is classified without its
+    /// context. The added return-value probe carries the whole removed text
+    /// as `before`, so no base-side twin is added. The same text deleted
+    /// outright in a later hunk keeps its removed-side probe.
+    #[test]
+    fn a_replaced_tail_expression_adds_no_base_side_static_unknown_twin() {
+        let head = "pub fn scaled(x: i32) -> i32 {\n    x * 10\n}\n";
+        let probes = single_shape_probes(
+            "    x * 10",
+            "    x * 5",
+            ProbeShapeKind::ReturnValue,
+            "x * 10",
+            head,
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown
+                    && probe.before.as_deref() == Some("x * 5")),
+            "fixture: the added probe must pair the removed expression: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != "x * 5"),
+            "a replaced tail expression must not get its own removed-side probe: {probes:?}"
+        );
+
+        let mixed = shapes_probes_with_deletions(
+            "    x * 10",
+            "    x * 5",
+            &[(9, "    x * 5")],
+            &[(ProbeShapeKind::ReturnValue, "x * 10")],
+            head,
+        );
+        let base_side: Vec<&Probe> = mixed
+            .iter()
+            .filter(|probe| probe.expression == "x * 5")
+            .collect();
+        assert!(
+            !base_side.is_empty() && base_side.iter().all(|probe| probe.location.line == 9),
+            "only the unpaired deletion keeps a removed-side probe: {mixed:?}"
+        );
+
+        // Control: an old line that also held a write models more than the
+        // returned value, so its removed-side probe stays.
+        let write = single_shape_probes(
+            "    x * 10",
+            "    *state = 1; x * 5",
+            ProbeShapeKind::ReturnValue,
+            "x * 10",
+            "pub fn scaled(state: &mut i32, x: i32) -> i32 {\n    x * 10\n}\n",
+        );
+        assert!(
+            write
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::StaticUnknown
+                    && probe.expression == "*state = 1; x * 5"),
+            "a removed line with a second statement keeps its probe: {write:?}"
         );
     }
 

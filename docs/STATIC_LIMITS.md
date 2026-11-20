@@ -35,6 +35,7 @@ rust_macro_reach_unresolved
 rust_macro_wrapped_test_call_unresolved
 rust_macro_wrapped_assertion_unresolved
 rust_value_propagation_unresolved
+rust_field_match_selector_unresolved
 rust_subprocess_binary_reach_unresolved
 wrapper_error_binding_unresolved
 python_transitive_reach_unresolved
@@ -44,6 +45,7 @@ rust_panic_outcome_unresolved
 rust_debug_assertion_profile_unresolved
 rust_call_fact_budget
 rust_framework_oracle_unresolved
+rust_pinned_shape_unresolved
 rust_implicit_call_unresolved
 rust_indirect_owner_call_unresolved
 rust_caller_loop_selector_unresolved
@@ -79,6 +81,7 @@ action.
 | `rust_macro_wrapped_test_call_unresolved` | A Rust test directly invokes a same-repo macro whose definition mentions the changed owner, but RIPR does not expand that macro. | Treat this as first-run evidence that RIPR saw the test-body macro call but could not cross it. It is not a clean result, reach claim, or repair packet. |
 | `rust_macro_wrapped_assertion_unresolved` | A Rust test reaches the changed owner, but the visible assertion-like custom macro is not classified as an oracle. | Treat this as first-run evidence that RIPR saw a candidate assertion macro but could not confirm its discriminator. It is not a clean result, oracle claim, or repair packet. |
 | `rust_value_propagation_unresolved` | A changed Rust `let` binding uses a bounded `find`/`rfind` or `len_utf8` operation normalized through `map_or`, but syntax-first analysis cannot carry that value into a same-owner equality predicate. | Treat this as a named `static_unknown` analyzer limitation. Do not add a duplicate discriminator test or infer coverage, repair readiness, or a runtime result. |
+| `rust_field_match_selector_unresolved` | A plain owner-parameter field selects a changed statement-free tail match. A directly calling test has a strong oracle, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved (RIPR-SPEC-0229). | The finding keeps its class; the typed limitation withholds repair-gap projection. Inspect the existing call and assertion before adding a test. It is not a coverage or same-invocation claim. |
 | `rust_subprocess_binary_reach_unresolved` | An integration test invokes a Cargo-built binary, but ripr does not yet map that executable back to the changed owner. | Treat this as a named `no_static_path` limitation. Inspect the subprocess test and binary target manually; do not infer reach, receipt validity, coverage, or repair readiness. |
 | `wrapper_error_binding_unresolved` | A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and RIPR cannot establish that the boxed conversion preserves that variant. | Keep the seam below `exposed`; verify the variant through the wrapper directly. This names the unresolved conversion binding, not a coverage or repair claim. |
 | `python_transitive_reach_unresolved` | A Python test constructs or calls into the owner's class, and a bounded same-class method path may lead toward the changed method. | Treat this as a named `no_static_path` limitation. Inspect the candidate class/method path before adding or delegating repair work. It is not a related-test or coverage claim. A helper that only a dunder of its own class reaches through `self.` (`Cache.getsizeof` via `__setitem__`) reads `static_unknown` with `dynamic_dispatch` instead, but only when a test references the class through an import and uses that dunder's protocol syntax somewhere in its body (`cache[key] = value`, `len(cache)`, `with cache:`). The syntax is not tied to an instance of the class; that is accepted because the limit only withdraws a confident claim. Constructor and finalizer dunders (`__init__`, `__new__`, `__post_init__`, `__init_subclass__`, `__del__`) never start this reach, so a test that merely constructs the class stays `no_static_path` (#13776). |

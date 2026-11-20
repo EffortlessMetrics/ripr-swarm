@@ -692,3 +692,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (43)
+
+Reason:
+RIPR-SPEC-0122: the repair-start note names the spots tied on the changed line instead of claiming none ties (#15157)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/human.txt`

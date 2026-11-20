@@ -380,7 +380,7 @@ changes `self.count += 2` to `self.count += 1`.
 6. `self.state = State::Done` (changed from `State::Idle`), test
    `c.finish(); assert_eq!(c.state, State::Done)`: `exposed`; a test
    asserting only `State::Idle` on another field: not `exposed`.
-7. `fn set(p: &mut u32, v: u32) { *p = v; }` (changed from `v + 1`), test
+7. [abstain] `fn set(p: &mut u32, v: u32) { *p = v; }` (changed from `v + 1`), test
    `set(&mut x, 5); assert_eq!(x, 5)`: `static_unknown`,
    `rust_mut_reference_alias_unresolved`.
 8. `self.items.push(x)` with argument changed, test
@@ -784,8 +784,9 @@ changes `self.count += 2` to `self.count += 1`.
   the test, the receiver is used only as `<binding>.<declared field>` or
   such a getter call in that assertion, no other method or `&mut` use of it
   comes between the call and the read, no assertion macro is rebound, and
-  the owner's name is mentioned nowhere else. Other assertion shapes on the
-  receiver (`assert!(c.m == 7)`) are not placed and keep abstaining (`assigned_field_gap_is_placed` and
+  the owner's name is mentioned nowhere else. A test with any assertion on the
+  receiver that this scan does not place (a method on a sibling, a chained
+  projection, a float or range literal beside the binding) keeps abstaining (`assigned_field_gap_is_placed` and
   `sibling_field_read` in `classify/activation.rs`). Such a read holds no
   weak read of the field to strengthen, so it starts no repair, like a test
   with no assertion. Writes through `*p`, a

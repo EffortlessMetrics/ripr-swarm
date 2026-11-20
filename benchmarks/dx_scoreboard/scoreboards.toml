@@ -659,16 +659,17 @@ source = "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 # The bar sits on the avoidable rate below (RIPR-SPEC-0219, #12766). This
-# total also counts abstentions a spec's `Reject` example asks for (0.0128 of
-# the corpus when the split landed), so its target is the avoidable bar plus
-# that share; it stays here so the total remains visible and ratcheted.
+# total also counts abstentions a spec example asks for (39/862 = 0.0452 of
+# the corpus once `[abstain]`-marked examples counted; 0.0128 when the split
+# landed), so its target is the avoidable bar plus that share, rounded down;
+# it stays here so the total remains visible and ratcheted.
 [[metric]]
 id = "trust.verdict_corpus_abstention"
 board = "trust"
 title = "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
 unit = "ratio"
 direction = "lower_is_better"
-target = 0.21
+target = 0.24
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
@@ -676,8 +677,9 @@ source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 # Abstentions analyzer work can remove: a row whose tests catch the change,
-# whose case cites only spec `Reject` examples that pin the outcome as
-# unresolved, and which accepts `limited` abstains because its spec asks it
+# whose case cites only spec examples that require an abstention (an
+# `[abstain]` marker, or a `Reject` example that pins the outcome as
+# unresolved), and which accepts `limited` abstains because its spec asks it
 # to, so it is left out of this numerator (RIPR-SPEC-0219).
 [[metric]]
 id = "trust.verdict_corpus_avoidable_abstention"
