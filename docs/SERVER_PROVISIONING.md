@@ -52,6 +52,14 @@ install receipt and its byte-integrity evidence. It does not attest producer
 provenance or use a private/experimental capability as the standard-LSP
 baseline.
 
+## Proxies
+
+The managed download uses `http.proxy`, then `HTTPS_PROXY`/`https_proxy`,
+honoring `NO_PROXY`/`no_proxy` (#15317). It tunnels with an HTTP `CONNECT` to
+an `http://` proxy (optional basic auth in the URL, redacted from all output)
+and verifies TLS to the real host through the tunnel. Other proxy schemes
+fail closed with the `ripr.server.path` / PATH workaround.
+
 ## Downloaded Server Cache
 
 Downloaded servers are stored under the VS Code global storage directory:
