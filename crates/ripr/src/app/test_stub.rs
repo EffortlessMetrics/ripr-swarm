@@ -671,28 +671,44 @@ pub(crate) fn stub_selector_args(
     seam: &analysis::seams::RepoSeam,
     family: &str,
 ) -> String {
+    match stub_selector(root, seam, family) {
+        TestStubSelector::SeamId(id) => format!("--seam-id {}", shell_arg(&id)),
+        TestStubSelector::At { file, line, kind } => {
+            let at = shell_arg(&format!("{file}:{line}"));
+            match kind {
+                Some(kind) => format!("--at {at} --kind {kind}"),
+                None => format!("--at {at}"),
+            }
+        }
+    }
+}
+
+/// The selector [`stub_selector_args`] prints. The ambiguity probe runs the
+/// same resolver, with the same loaded configuration, that `agent stub` runs;
+/// a configuration that cannot be loaded falls back to the defaults, and a
+/// probe that finds no seams keeps the location form.
+pub(crate) fn stub_selector(
+    root: Option<&Path>,
+    seam: &analysis::seams::RepoSeam,
+    family: &str,
+) -> TestStubSelector {
     let file = analysis::stable_path_text(seam.file());
     let line = seam.display_line();
     let ambiguous = root.is_some_and(|root| {
+        let config = crate::config::load_for_root(root).unwrap_or_default();
         matches!(
-            resolve_at_location(
-                root,
-                &RiprConfig::default(),
-                &file,
-                line,
-                Some(family),
-                &mut None,
-            ),
+            resolve_at_location(root, &config, &file, line, Some(family), &mut None),
             Err(TestStubError::Ambiguous { .. })
         )
     });
     if ambiguous {
-        format!("--seam-id {}", shell_arg(seam.id().as_str()))
+        TestStubSelector::SeamId(seam.id().as_str().to_string())
     } else {
-        format!(
-            "--at {} --kind {family}",
-            shell_arg(&format!("{file}:{line}"))
-        )
+        TestStubSelector::At {
+            file,
+            line,
+            kind: Some(family.to_string()),
+        }
     }
 }
 
@@ -2241,7 +2257,32 @@ mod tests {
             stub_selector_args(Some(&root), solo, "return_value"),
             format!("--at src/lib.rs:{line} --kind return_value")
         );
-        // The hint is a command that works: the id it names resolves.
+        // The selectors the hints print are runnable: each resolves through
+        // the real stub resolver, and the ambiguous one targets retries.
+        let resolve = |seam: &analysis::seams::RepoSeam, family: &str| {
+            resolve_test_stub(&root, &config, &stub_selector(Some(&root), seam, family))
+                .map_err(|_| "the printed selector must resolve".to_string())
+        };
+        let by_id = resolve(retries, "field_construction")?;
+        assert_eq!(by_id.seam_id, retries.id().as_str());
+        let by_at = resolve(solo, "return_value")?;
+        assert_eq!(by_at.seam_id, solo.id().as_str());
+        // Control: the location form for the ambiguous line really refuses.
+        let refused = resolve_test_stub(
+            &root,
+            &config,
+            &TestStubSelector::At {
+                file: "src/lib.rs".to_string(),
+                line: retries.display_line(),
+                kind: Some("field_construction".to_string()),
+            },
+        );
+        assert!(matches!(refused, Err(TestStubError::Ambiguous { .. })));
+        // Err fallback: no readable root keeps the location form.
+        assert!(matches!(
+            stub_selector(None, retries, "field_construction"),
+            TestStubSelector::At { .. }
+        ));
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
     }
 
