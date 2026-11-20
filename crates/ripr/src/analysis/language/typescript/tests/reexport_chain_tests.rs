@@ -106,6 +106,21 @@ fn explicit_default_barrel_follows_a_locally_renamed_default() -> Result<(), Str
 }
 
 #[test]
+fn explicit_default_barrel_is_shadowed_by_a_local_class() -> Result<(), String> {
+    let files = [
+        ("src/owner.ts", DEFAULT_OWNER),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    let source = "import invoke from '../src/index.js';\ntest('constructs', () => { class invoke {}\nexpect(new invoke()).toBeInstanceOf(invoke); });";
+    let related = related_through_barrel(&files, "src/owner.ts", "original", source)?;
+    assert!(
+        related.is_empty(),
+        "the constructor belongs to the local class: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn explicit_default_barrel_preserves_direct_and_named_calls() -> Result<(), String> {
     let files = [
         ("src/owner.ts", DEFAULT_OWNER),

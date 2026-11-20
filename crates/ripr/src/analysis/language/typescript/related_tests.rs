@@ -2319,7 +2319,8 @@ pub(crate) fn owner_call_relation(
         // reaches the shadow, not the re-exported owner.
         if local_identifier_declared_in_test_body(&test.body_text, local)
             || (imported_name == "default"
-                && local_destructured_in_test_body(&test.body_text, local))
+                && (local_destructured_in_test_body(&test.body_text, local)
+                    || body_declares_class_named(&test.body_text, local)))
         {
             return false;
         }
