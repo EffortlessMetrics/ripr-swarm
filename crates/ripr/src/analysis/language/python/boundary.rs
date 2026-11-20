@@ -2472,6 +2472,21 @@ pub(super) fn unresolved_loop_list_boundary(
                 // then compares the rest exactly as the `xs[0]` forms do.
                 initial.trim() == format!("{right} = None")
                     && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else if unspaced(initial).starts_with(&format!("{right}=float(")) {
+                // `best = float("-inf")` (`"inf"` for a minimum) takes the first
+                // finite element under either operator, then compares the rest
+                // exactly as the `xs[0]` forms do.
+                let infinity = if new_op.starts_with('>') {
+                    "-inf"
+                } else {
+                    "inf"
+                };
+                [
+                    format!("{right}=float(\"{infinity}\")"),
+                    format!("{right}=float('{infinity}')"),
+                ]
+                .contains(&unspaced(initial))
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
             } else {
                 initial.trim() == format!("{right} = {}[0]", parameter.name)
                     // `for x in xs:` also visits `xs[0]` first; comparing it
