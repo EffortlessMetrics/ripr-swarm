@@ -362,14 +362,24 @@ fn files_in_skipped_unit_test_targets(
                     || !context.roots.iter().any(|root| root == member))
                     && scan.may_mount(member, &chain))
         });
-        if !ancestry_may_run {
+        if !ancestry_may_run && !scan.may_forward_module_outside(&chain) {
             skipped.insert(file.clone());
         }
     }
     skipped
 }
 
-/// True when `source` may mount a module through a file the scan cannot
+pub(super) fn may_build_mount_operands(source: &str) -> bool {
+    !matches!(mount_operand_doubt(source), MountOperandDoubt::None)
+}
+
+enum MountOperandDoubt {
+    None,
+    ForwardedModule,
+    Unbound,
+}
+
+/// Whether `source` may mount a module through a file the scan cannot
 /// name or read, judged on Rust tokens so comments, whitespace and string
 /// contents cannot hide or fake a mount (#14962 review):
 ///
@@ -387,7 +397,7 @@ fn files_in_skipped_unit_test_targets(
 ///   that does not name a `.rs` file (`#[path = "m.txt"]`);
 /// - `mod $name` anywhere or a literal `mod` inside a macro invocation's
 ///   token tree, where the macro may forward it into a declaration.
-pub(super) fn may_build_mount_operands(source: &str) -> bool {
+fn mount_operand_doubt(source: &str) -> MountOperandDoubt {
     let tokens = mount_tokens(source);
     let ident = |at: usize, name: &str| matches!(tokens.get(at), Some(MountToken::Ident(word)) if word == name);
     let punct = |at: usize, mark: char| matches!(tokens.get(at), Some(MountToken::Punct(found)) if *found == mark);
@@ -400,6 +410,7 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
             if text.ends_with(".rs") && !text.contains('\\'))
     };
     let mut invocation_depth = 0usize;
+    let mut doubt = MountOperandDoubt::None;
     for at in 0..tokens.len() {
         match tokens[at] {
             MountToken::Punct('(' | '[' | '{')
@@ -417,13 +428,13 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
         }
         if ident(at, "macro_rules") && punct(at + 1, '!') {
             if macro_body_may_mount(&tokens, at + 2, true) {
-                return true;
+                return MountOperandDoubt::Unbound;
             }
         } else if ident(at, "macro")
             && matches!(tokens.get(at + 1), Some(MountToken::Ident(_)))
             && macro_body_may_mount(&tokens, at + 2, false)
         {
-            return true;
+            return MountOperandDoubt::Unbound;
         }
         if ident(at, "include")
             && (!is_metavariable(at) || punct(at + 1, '!'))
@@ -431,7 +442,7 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
                 && (punct(at + 2, '(') || punct(at + 2, '{') || punct(at + 2, '['))
                 && names_rust_source(at + 3))
         {
-            return true;
+            return MountOperandDoubt::Unbound;
         }
         if ident(at, "path")
             && punct(at + 1, '=')
@@ -441,15 +452,18 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
                     && matches!(tokens.get(at + 2), Some(MountToken::Str(_)))
                     && !names_rust_source(at + 2)))
         {
-            return true;
+            return MountOperandDoubt::Unbound;
         }
-        if ident(at, "mod")
-            && (punct(at + 1, '$') || (invocation_depth > 0 && !is_metavariable(at)))
-        {
-            return true;
+        if ident(at, "mod") {
+            if punct(at + 1, '$') {
+                return MountOperandDoubt::Unbound;
+            }
+            if invocation_depth > 0 && !is_metavariable(at) {
+                doubt = MountOperandDoubt::ForwardedModule;
+            }
         }
     }
-    false
+    doubt
 }
 
 /// True when the macro definition whose name or body starts at `from` holds
@@ -686,6 +700,7 @@ struct WorkspaceMountScan {
     /// Workspace-relative path (when the file sits under the root), its
     /// lowercased text, and the module names it declares.
     sources: Vec<(Option<PathBuf>, String, BTreeSet<String>)>,
+    forwarding_sources: Vec<Option<PathBuf>>,
 }
 
 impl WorkspaceMountScan {
@@ -780,10 +795,9 @@ impl WorkspaceMountScan {
             }
         }
         let mut lowered = Vec::with_capacity(sources.len());
+        let mut forwarding_sources = Vec::new();
         for (path, text, manifest) in sources {
-            if stray_files::spells_a_path_with_escapes(&text)
-                || (!manifest && may_build_mount_operands(&text))
-            {
+            if stray_files::spells_a_path_with_escapes(&text) {
                 return None;
             }
             if manifest {
@@ -792,11 +806,28 @@ impl WorkspaceMountScan {
                 // target's `src_path`: `crate_root_may_run` asks it.
                 continue;
             }
+            match mount_operand_doubt(&text) {
+                MountOperandDoubt::Unbound => return None,
+                MountOperandDoubt::ForwardedModule => forwarding_sources.push(path.clone()),
+                MountOperandDoubt::None => {}
+            }
             let mut declared = BTreeSet::new();
             stray_files::collect_declared_modules(&text, &mut declared);
             lowered.push((path, text.to_ascii_lowercase(), declared));
         }
-        Some(Self { sources: lowered })
+        Some(Self {
+            sources: lowered,
+            forwarding_sources,
+        })
+    }
+
+    /// An invocation in a skipped ancestor cannot itself bring that ancestor
+    /// into a running target. Outside the chain the macro may change the name
+    /// or shape of the declaration, so keep the possible route.
+    fn may_forward_module_outside(&self, chain: &BTreeSet<&Path>) -> bool {
+        self.forwarding_sources
+            .iter()
+            .any(|path| path.as_deref().is_none_or(|path| !chain.contains(path)))
     }
 
     /// True when a source outside `chain` (the file and its own skipped

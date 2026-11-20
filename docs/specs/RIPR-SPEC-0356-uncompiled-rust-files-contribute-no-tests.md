@@ -155,9 +155,12 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    `include!("gen.inc")`, and an alias such as `use std::include as inc;`
    whose `inc!` no rule could follow); a
    `path` attribute whose value is a metavariable or a non-`.rs` string
-   (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
-   `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
-   is no doubt; when a source spells a mount operand with escapes (an
+   (`#[path = "m.txt"]`); or `mod $name` anywhere. A literal `mod` inside a
+   macro invocation can be forwarded or renamed. It keeps uncertainty when
+   it comes from outside the skipped ancestry, since an invocation inside
+   that ancestry cannot bring its own ancestor into another target. Plain
+   metavariable names such as `$mod` and `$include` alone add no doubt. The
+   file also keeps its tests when a source spells a mount operand with escapes (an
    `include!` operand or `path` value holding a backslash names no `.rs`
    file the scan can match, however the tokens are spaced); when any file of
    the holder's ancestry other than its skipped roots is mounted from
