@@ -30,6 +30,77 @@ use ra_ap_syntax::{AstNode, ast};
 
 mod bound_result;
 
+/// A whole returned comparison with a sibling gate needs an observed call on
+/// which the old and new Boolean results differ. Read both results from the
+/// same asserted operands so another call cannot lend its input or oracle.
+pub(in crate::analysis) fn unpaired_return_gate(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    tests: &[&TestSummary],
+    index: &RustIndex,
+    admitted: impl Fn(&TestSummary, &OracleFact) -> bool,
+) -> Option<String> {
+    use super::owner_pin::short_circuit::ShortCircuitTail;
+    if probe.family != ProbeFamily::ReturnValue
+        || !(probe.expression.contains("&&") || probe.expression.contains("||"))
+    {
+        return None;
+    }
+    let after = ShortCircuitTail::parse(&owner.body, &probe.expression)?;
+    let before = after.with_chain(probe.before.as_deref()?)?;
+    let change = after.comparison_gate(&before)?;
+    let paired = tests.iter().any(|test| {
+        test.assertions.iter().any(|assertion| {
+            if !(test.start_line..=test.end_line).contains(&assertion.line)
+                || !admitted(test, assertion)
+                || !super::call_identity::boundary_owner_calls_resolve(
+                    index,
+                    owner,
+                    test,
+                    &assertion.text,
+                    assertion.line,
+                )
+            {
+                return false;
+            }
+            let bare = assertion_comparison_operands(&assertion.text).is_none();
+            asserted_result_operands(test, &assertion.text, owner)
+                .iter()
+                .any(|operand| {
+                    let bound = super::owner_pin::let_bound_owner_call(
+                        test,
+                        assertion,
+                        operand,
+                        "",
+                        &owner.name,
+                        true,
+                        bare,
+                    );
+                    let (call, line) = match bound {
+                        Some(call) => {
+                            // The initializer is a borrowed slice of this test's body.
+                            let offset = call.as_ptr() as usize - test.body.as_ptr() as usize;
+                            let line = test.start_line
+                                + test.body[..offset]
+                                    .bytes()
+                                    .filter(|ch| *ch == b'\n')
+                                    .count();
+                            (call, line)
+                        }
+                        None => (operand.as_str(), assertion.line),
+                    };
+                    super::owner_pin::is_whole_free_owner_call(call, &owner.name)
+                        && super::call_identity::boundary_owner_calls_resolve(
+                            index, owner, test, call, line,
+                        )
+                        && call_arguments(call, &owner.name)
+                            .is_some_and(|args| change.witnessed_by(test, &args, line, &owner.name))
+                })
+        })
+    });
+    (!paired).then(|| format!("Propagation unknown: no observed call establishes a changed return through the Boolean gate `{}`", change.gate_name))
+}
+
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
 pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairing_missing";
@@ -650,7 +721,28 @@ fn whole_owner_call_operands(
     assertion_text: &str,
     owner: &FunctionSummary,
 ) -> Vec<Vec<String>> {
-    let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+    asserted_result_operands(test, assertion_text, owner)
+        .iter()
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            let lists = owner_call_argument_lists(operand, &owner.name);
+            let [(_, arguments)] = lists.as_slice() else {
+                return None;
+            };
+            (operand.starts_with(&format!("{}(", owner.name))
+                && delimited_contents_at(operand, owner.name.len())
+                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            .then(|| arguments.clone())
+        })
+        .collect()
+}
+
+fn asserted_result_operands(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &FunctionSummary,
+) -> Vec<String> {
+    match assertion_comparison_operands(assertion_text) {
         // An expected side that reaches the owner again compares the owner
         // with itself (`assert_eq!(pos(&[0]), pos(&[0]))`): nothing pairs.
         Some(compared) => {
@@ -680,21 +772,7 @@ fn whole_owner_call_operands(
                     .to_string(),
             ]
         }
-    };
-    operands
-        .iter()
-        .filter_map(|operand| {
-            let operand = operand.trim();
-            let lists = owner_call_argument_lists(operand, &owner.name);
-            let [(_, arguments)] = lists.as_slice() else {
-                return None;
-            };
-            (operand.starts_with(&format!("{}(", owner.name))
-                && delimited_contents_at(operand, owner.name.len())
-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
-            .then(|| arguments.clone())
-        })
-        .collect()
+    }
 }
 
 /// Whether an activation value (`input == 10`, or a conjunction such as

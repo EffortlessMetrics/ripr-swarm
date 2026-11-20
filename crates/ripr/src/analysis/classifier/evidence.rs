@@ -1960,6 +1960,26 @@ impl ClassifiedProbeEvidence {
         } else {
             discriminate
         };
+        let propagate = if matches!(propagate.state, StageState::Yes | StageState::Weak)
+            && let Some(reason) = context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::unpaired_return_gate(
+                    context.probe,
+                    owner,
+                    &test_summaries,
+                    context.index,
+                    |test, assertion| {
+                        assertion_admitted(test, assertion)
+                            && (crate::analysis::classify::assertion_is_discriminating(assertion)
+                                || owner_pin_admits(test, assertion))
+                            && !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                    },
+                )
+            }) {
+            StageEvidence::new(StageState::Unknown, Confidence::Low, reason)
+        } else {
+            propagate
+        };
         // The missing-field fact is the authority on whether an assertion
         // observes the constructed field. A token that merely coincides with
         // the field value (`Box` in `downcast_ref::<Box<dyn E>>()`) must not
