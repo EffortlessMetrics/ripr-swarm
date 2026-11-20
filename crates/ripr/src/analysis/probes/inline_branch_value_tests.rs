@@ -188,13 +188,41 @@ fn a_shrunk_condition_before_a_returned_if_keeps_its_predicate() -> Result<(), S
 
 #[test]
 fn a_whitespace_only_branch_edit_is_no_value_edit() -> Result<(), String> {
+    // Both a respacing at the value's edge and one inside the value expression
+    // (which the syntax tree alone would attribute to the value) are no-ops.
+    for after in [
+        "    if price > 100 { price + 1} else { 0 }\n",
+        "    if price > 100 { price +1 } else { 0 }\n",
+    ] {
+        let rows = rows(
+            &owner("    if price > 100 { price + 1 } else { 0 }\n"),
+            &owner(after),
+        )?;
+        assert!(
+            rows.iter()
+                .all(|(family, _, _)| *family != ProbeFamily::ReturnValue),
+            "{after:?}: {rows:?}"
+        );
+        assert!(keeps_predicate(&rows, "price > 100"), "{after:?}: {rows:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_space_removed_inside_a_returned_string_literal_is_a_value_edit() -> Result<(), String> {
+    let label = |body: &str| format!("pub fn label(ok: bool) -> &'static str {{\n{body}}}\n");
     let rows = rows(
-        &owner("    if price > 100 { 10 } else { 0 }\n"),
-        &owner("    if price > 100 { 10} else { 0 }\n"),
+        &label("    if ok { \"a b\" } else { \"\" }\n"),
+        &label("    if ok { \"ab\" } else { \"\" }\n"),
     )?;
     assert!(
         rows.iter()
-            .all(|(family, _, _)| *family != ProbeFamily::ReturnValue),
+            .any(|(family, _, _)| *family == ProbeFamily::ReturnValue),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .all(|(family, _, _)| *family != ProbeFamily::Predicate),
         "{rows:?}"
     );
     Ok(())
