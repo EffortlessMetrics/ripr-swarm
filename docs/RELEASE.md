@@ -478,10 +478,13 @@ check that the kept stage is that commit
 stage again rather than uploading the rehearsed `.crate`, so a stage left by
 an earlier rehearsal would publish that earlier commit. `--allow-dirty` is
 required because the strip modifies the checked-out `ripr` sources. The
-rehearsal verifies, after staging and again after packaging, that the stage
-differs from `HEAD` only by the marker and by `.rs` files under
-`crates/ripr/src` that are exactly their `HEAD` content with inline test
-modules stripped, and fails otherwise.
+rehearsal verifies, after staging, after packaging, and again after retaining
+the stage, that the stage differs from `HEAD` only by the marker and by `.rs`
+files under `crates/ripr/src` that are exactly their `HEAD` content with
+inline test modules stripped, and fails otherwise. The receipt records a
+digest of that exact stripped path/content set, so a stripped file restored
+byte-for-byte to `HEAD` — which Git stops reporting as modified — is refused
+rather than accepted with its inline tests back.
 
 1. Publish `ripr-contract` first:
 
@@ -505,16 +508,25 @@ A transient index delay is not a product failure, but an unavailable or
 mismatched `ripr-contract` dependency is not permission to publish `ripr`
 around the edge.
 
-3. Publish `ripr` against that exact `=<version>` dependency:
+3. Prove the bytes about to be uploaded are the rehearsed ones, then publish
+   `ripr` against that exact `=<version>` dependency. `cargo publish` repacks
+   the stage, so the pre-upload check packages `ripr` again in registry mode
+   from the retained stage and refuses unless the fresh archive's SHA-256
+   equals the receipt's `ripr_sha256`:
 
 ```bash
+cargo xtask publish-precheck
 cargo publish --allow-dirty -p ripr
 ```
 
-4. Verify `ripr` from public bytes in a clean environment without path or
-vendor substitution (`cargo install ripr --version <version> --locked --root
-target/ripr/install-smoke-cratesio --force`, then run `ripr --version` as shown
-in [Post-Publish](#post-publish)).
+4. Read back the public `ripr` checksum and compare it to the receipt's
+   `ripr_sha256`; a mismatch means the uploaded bytes are not the qualified
+   ones, so stop and follow partial-publication recovery. Then verify `ripr`
+   from public bytes in a clean environment without path or vendor
+   substitution (`cargo install ripr --version <version> --locked --root
+   target/ripr/install-smoke-cratesio --force`, then run `ripr --version` as shown
+   in [Post-Publish](#post-publish)). The clean install is separate evidence:
+   it proves the published crate builds, not that its bytes match the receipt.
 
 ### Partial-publication recovery
 

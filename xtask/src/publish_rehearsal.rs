@@ -66,11 +66,13 @@ pub(crate) fn run() -> Result<(), String> {
     // pre-publish gate, so writing it before `keep_stage` would leave a
     // current success receipt beside a stage that was never retained.
     let result = rehearse(&scratch, &version).and_then(|receipt| {
+        let identity = receipt.stage_identity();
         finish_rehearsal(
             &scratch,
             Path::new(PUBLISH_STAGE_DIR),
             Path::new(PUBLISH_RECEIPT),
             &receipt,
+            |kept| crate::publish_stage::verify_stage_matches(kept, &identity),
         )
     });
     if result.is_ok() {
@@ -85,16 +87,20 @@ pub(crate) fn run() -> Result<(), String> {
 /// publish to run from.
 pub(crate) const PUBLISH_STAGE_DIR: &str = "target/publish-stage";
 
-/// Retain the stage, then write the receipt. The order is the contract: a
-/// receipt must never exist for a stage that was not retained, because
-/// `docs/RELEASE.md` reads it as the pre-publish gate.
+/// Retain the stage, prove it is still the strip the receipt records, then
+/// write the receipt. The order is the contract: a receipt must never exist
+/// for a stage that was not retained or that no longer matches the strip the
+/// archives were built from, because `docs/RELEASE.md` reads it as the
+/// pre-publish gate.
 fn finish_rehearsal(
     scratch: &Path,
     kept: &Path,
     receipt_path: &Path,
     receipt: &PublishReceipt,
+    verify_kept: impl Fn(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
     keep_stage_at(scratch, kept)?;
+    verify_kept(kept)?;
     write_publish_receipt(receipt_path, receipt)?;
     println!(
         "publish rehearsal ok: ripr-contract {} ({}) dry-run passed; packaged ripr {} ({}) packaged against vendored ripr-contract and checks against the packaged crate; stage kept at {}; receipt={}",
@@ -171,8 +177,10 @@ fn vendored_ripr_crate_with_report(
     }
     let (contract_crate, ripr_crate) = packaged?;
     // The packaged bytes are only as trustworthy as the stage they came from;
-    // prove it is still HEAD plus the strip before anyone consumes them.
-    crate::publish_stage::verify_stage(&stage)?;
+    // prove it is still HEAD plus the exact strip the report recorded before
+    // anyone consumes them. A count alone would accept a stage whose stripped
+    // file was restored to HEAD, because Git stops reporting that path.
+    crate::publish_stage::verify_stage_matches(&stage, &report.identity())?;
     Ok((contract_crate, ripr_crate, report))
 }
 
@@ -323,6 +331,79 @@ fn write_publish_receipt(path: &Path, receipt: &PublishReceipt) -> Result<(), St
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
+fn read_publish_receipt(path: &Path) -> Result<PublishReceipt, String> {
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    serde_json::from_str(&text).map_err(|e| format!("cannot parse {}: {e}", path.display()))
+}
+
+/// Fail-closed pre-upload check for the product archive.
+///
+/// `cargo publish` repacks the stage, so the bytes it uploads are not the
+/// rehearsed `.crate`. This packages `ripr` again from the kept stage in
+/// registry mode (no vendor replacement, so `ripr-contract = "=x.y.z"`
+/// resolves from crates.io, which is true only after the contract publish)
+/// and refuses unless the fresh archive's digest equals the receipt's
+/// `ripr_sha256`. Run it after the contract readback and immediately before
+/// `cargo publish -p ripr`; the public readback afterwards confirms the
+/// uploaded bytes are the checked ones.
+pub(crate) fn precheck() -> Result<(), String> {
+    let receipt = read_publish_receipt(Path::new(PUBLISH_RECEIPT))?;
+    if receipt.verification != RehearsalVerification::PackagedCheckPassed {
+        return Err(format!(
+            "receipt verification is {:?}, not packaged-check-passed",
+            receipt.verification
+        ));
+    }
+    let stage = Path::new(PUBLISH_STAGE_DIR);
+    if !stage.is_dir() {
+        return Err(format!(
+            "no retained publish stage at {}; run `cargo xtask publish-dry-run` first",
+            stage.display()
+        ));
+    }
+    // The stage must still be the strip the archives were built from, not a
+    // self-consistent one whose stripped file was restored to HEAD.
+    crate::publish_stage::verify_stage_matches(stage, &receipt.stage_identity())?;
+    let target = std::env::current_dir()
+        .map_err(|e| format!("cannot read the current directory: {e}"))?
+        .join("target")
+        .join("publish-precheck");
+    if target.exists() {
+        fs::remove_dir_all(&target)
+            .map_err(|e| format!("cannot clear {}: {e}", target.display()))?;
+    }
+    let target_arg = target.to_string_lossy().into_owned();
+    run_cargo(
+        &["package", "-p", "ripr", "--allow-dirty"],
+        &[("CARGO_TARGET_DIR", target_arg.as_str())],
+        None,
+        stage,
+    )?;
+    let fresh = pick_crate_file(&target.join("package"), "ripr", &receipt.version)?;
+    let fresh_sha = sha256_hex(&fresh)?;
+    require_rehearsed_product(&receipt, &fresh_sha)?;
+    println!(
+        "publish precheck ok: {} matches the rehearsed ripr_sha256 {}; publish from {} with `cargo publish --allow-dirty -p ripr`",
+        fresh.display(),
+        receipt.ripr_sha256,
+        stage.display()
+    );
+    Ok(())
+}
+
+/// The pre-upload predicate: the bytes about to be uploaded must be the ones
+/// the rehearsal qualified. A mismatch is a stop, not a warning.
+fn require_rehearsed_product(receipt: &PublishReceipt, fresh_sha256: &str) -> Result<(), String> {
+    if fresh_sha256 != receipt.ripr_sha256 {
+        return Err(format!(
+            "fresh registry-mode package has sha256 {fresh_sha256}, the receipt records {}; refusing to publish bytes the rehearsal did not qualify",
+            receipt.ripr_sha256
+        ));
+    }
+    Ok(())
+}
+
 /// Where the rehearsal leaves its evidence. `docs/RELEASE.md` reads this path.
 const PUBLISH_RECEIPT: &str = "target/package/publish-receipt.json";
 
@@ -340,7 +421,7 @@ fn clear_publish_receipt_at(path: &Path) -> Result<(), String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PublishReceipt {
     pub(crate) version: String,
     pub(crate) source_commit: String,
@@ -352,6 +433,11 @@ pub(crate) struct PublishReceipt {
     pub(crate) stage_stripped_files: usize,
     pub(crate) stage_stripped_modules: usize,
     pub(crate) stage_stripped_bytes: usize,
+    /// Fingerprint of the exact stripped path/content set. The counts alone
+    /// cannot tell a stage whose stripped file was restored to `HEAD` from a
+    /// clean one, so the pre-upload check compares this too.
+    #[serde(default)]
+    pub(crate) stage_strip_digest: String,
     pub(crate) contract_filename: String,
     pub(crate) contract_sha256: String,
     pub(crate) ripr_filename: String,
@@ -364,7 +450,7 @@ pub(crate) struct PublishReceipt {
 
 /// The verification a receipt attests. Serialized as a stable token so a
 /// release script can require it rather than infer success from the file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum RehearsalVerification {
     /// The packaged `ripr` generated a lockfile and compiled against the
@@ -409,12 +495,23 @@ impl PublishReceipt {
             stage_stripped_files: stage.stripped_files,
             stage_stripped_modules: stage.stripped_modules,
             stage_stripped_bytes: stage.stripped_bytes,
+            stage_strip_digest: stage.strip_digest.clone(),
             contract_filename: file_name(contract_crate)?,
             contract_sha256: contract_sha256.to_string(),
             ripr_filename: file_name(ripr_crate)?,
             ripr_sha256: ripr_sha256.to_string(),
             verification: RehearsalVerification::PackagedCheckPassed,
         })
+    }
+
+    /// The strip identity the retained stage must still reproduce.
+    pub(crate) fn stage_identity(&self) -> crate::publish_stage::StripIdentity {
+        crate::publish_stage::StripIdentity {
+            files: self.stage_stripped_files,
+            modules: self.stage_stripped_modules,
+            bytes: self.stage_stripped_bytes,
+            digest: self.stage_strip_digest.clone(),
+        }
     }
 }
 
@@ -777,6 +874,7 @@ mod tests {
             stage_stripped_files: 3,
             stage_stripped_modules: 7,
             stage_stripped_bytes: 1024,
+            stage_strip_digest: "d".repeat(64),
             contract_filename: "ripr-contract-0.11.0.crate".to_string(),
             contract_sha256: "c".to_string(),
             ripr_filename: "ripr-0.11.0.crate".to_string(),
@@ -881,7 +979,14 @@ mod tests {
         let kept = dir.join("publish-stage");
         fs::write(&kept, b"not a directory").map_err(|e| e.to_string())?;
 
-        let outcome = finish_rehearsal(&scratch, &kept, &receipt_path, &sample_receipt());
+        let outcome =
+            finish_rehearsal(
+                &scratch,
+                &kept,
+                &receipt_path,
+                &sample_receipt(),
+                |_| Ok(()),
+            );
         assert!(
             outcome.is_err(),
             "a failed stage retention must fail the rehearsal"
@@ -889,6 +994,68 @@ mod tests {
         assert!(
             !receipt_path.exists(),
             "a failed retention must leave no current receipt for the gate to trust"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn a_kept_stage_that_lost_its_strip_leaves_no_receipt() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-retain-strip-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("scratch/stage/src")).map_err(|e| e.to_string())?;
+        fs::write(dir.join("scratch/stage/src/lib.rs"), b"// staged").map_err(|e| e.to_string())?;
+        let kept = dir.join("publish-stage");
+        let receipt_path = dir.join("publish-receipt.json");
+
+        // The stage is retained, but it no longer reproduces the recorded
+        // strip (a stripped file was restored to HEAD). The receipt must not
+        // be written, or the gate would trust a stage the archives did not
+        // come from.
+        let outcome = finish_rehearsal(
+            &dir.join("scratch"),
+            &kept,
+            &receipt_path,
+            &sample_receipt(),
+            |_| Err("publish stage strips 1 file(s) but the rehearsal stripped 3".to_string()),
+        );
+        assert!(
+            outcome.is_err(),
+            "a kept stage that lost its strip must fail the rehearsal"
+        );
+        assert!(
+            !receipt_path.exists(),
+            "a stage that no longer matches the recorded strip must leave no receipt"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn the_pre_upload_check_refuses_bytes_the_rehearsal_did_not_qualify() {
+        let receipt = sample_receipt();
+        assert_eq!(require_rehearsed_product(&receipt, "r"), Ok(()));
+        let refused = require_rehearsed_product(&receipt, "not-r");
+        assert!(
+            matches!(refused, Err(ref e) if e.contains("refusing to publish bytes the rehearsal did not qualify")),
+            "a fresh package that differs from the receipt must be refused: {refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_receipt_round_trips_through_the_pre_upload_reader() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-receipt-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("publish-receipt.json");
+        let receipt = sample_receipt();
+        write_publish_receipt(&path, &receipt)?;
+        let read = read_publish_receipt(&path)?;
+        assert_eq!(read, receipt);
+        assert_eq!(
+            read.stage_identity(),
+            receipt.stage_identity(),
+            "the pre-upload check must recover the recorded strip identity from the receipt"
         );
         let _ = fs::remove_dir_all(&dir);
         Ok(())
@@ -908,6 +1075,7 @@ mod tests {
             &kept,
             &receipt_path,
             &sample_receipt(),
+            |_| Ok(()),
         )?;
 
         assert!(
@@ -1108,7 +1276,11 @@ mod tests {
             // Commands must appear as instruction lines, not merely as a
             // substring of prose: a required command inside a "do not run"
             // sentence would otherwise satisfy the check.
-            for required in ["cargo xtask publish-dry-run", "cargo search ripr-contract"] {
+            for required in [
+                "cargo xtask publish-dry-run",
+                "cargo xtask publish-precheck",
+                "cargo search ripr-contract",
+            ] {
                 assert!(
                     release_doc
                         .lines()
