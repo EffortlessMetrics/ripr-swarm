@@ -212,9 +212,8 @@ fn a_render_with_an_unrelated_exact_assertion_is_not_exposed() -> Result<(), Str
         "the render must reach the owner for this case to test strength: {finding}"
     );
     let class = finding.get("classification").and_then(|v| v.as_str());
-    assert_ne!(
-        class,
-        Some("exposed"),
+    assert!(
+        matches!(class, Some(class) if class != "exposed"),
         "an assertion unrelated to the render is not a discriminator: {finding}"
     );
     Ok(())
