@@ -7264,6 +7264,134 @@ entries below are the complete record.
 - TypeScript preview: a function written on one line (`function f(a, t) { if (a > t) { return 1 } return 0 }`) is read by its first statement, so a changed `>` to `>=` names the `a == t` boundary instead of reporting that the preview adapter "does not recognise the shape" of the line (#11487). When the call input still cannot be bound to the parameter, the finding now says that specific reason.
 - `ripr lsp --stdio` now bounds a `didChange` notification: more than 1,024 content changes, a retained buffer past 16 MiB, or ranged edits whose position lookups would scan more than 256 MiB are refused through the existing invalid-incremental-change path (buffer untouched, document quarantined until a full replacement) instead of stalling the handler. Repo `Cargo.toml` and `rust-toolchain` probes during config discovery also use the bounded reader (#11508).
 - `ripr check` now credits a predicate that compares against a local whose live initializer spells the boundary literal (`val >= surrogate_start` after `let surrogate_start = 0xd800u32;`) instead of leaving infection unknown, and the first-run walk no longer reads the old `exposed/weak` legend prose as an `exposed` verdict under a `Static exposure: unknown` label (#11519).
+- Output: normalize improved front-panel class (#3206).
+- `ripr first-pr`: honor Python packet eligibility (#3208).
+- Output: admit bounded Python oracle gaps (#3210).
+- Output: tie preview analyzed to completion (#3253).
+- Review: reconcile source-currentness receipts (#3293).
+- Rust checks: preserve inline cfg(test) helper-to-production evidence after source-role classification (#3286, #3304).
+- `ripr cache`: invalidate pre-source-role file facts and classified seam evidence (#3287, #3305).
+- Output: honest propagation_unknown human wording (#3317 review follow-up) (#3397).
+- Analysis: preserve lexical alias scope across nested tests (#3403).
+- Output: require verified current receipt movement (#3409).
+- Gate output: name seam location, fix sketch, and inspection command at failure time (#1440, #3418).
+- retain static seam locations when review guidance fails (#3425).
+- Gate output: surface inline repair route on blocking failures (#3433).
+- Python checks: suppress multiline docstring interior probes (#1289, #3443).
+- Specs: remove wall-clock validity from spec format (#3455, #3461).
+- Analysis: stop direct-import aliases crossing a module boundary (#3413, #3483).
+- Analysis: preserve lexical alias ancestry across nested test modules (#3413, #3487).
+- Analysis: repair included-fragment owner attribution (#3498).
+- TypeScript checks: recognize more test layout conventions (#3505).
+- Provider: bind Git-tree digests to snapshot identity (#3309, #3509).
+- Analysis: apply rustfmt to safe Rust evidence projection (#3517).
+- GitHub output: batch RIPR review comments (#3518).
+- Perl checks: preserve static-limit taxonomy (#3520).
+- Swarm: establish producer-owned live currentness (#3526).
+- Analysis: recognize test conjunct order in cfg(all) (#3537).
+- Analysis: preserve candidate blob bytes on Windows (#3548).
+- Analysis: isolate module import aliases by scope (#3550).
+- CLI: enforce the review-comments deadline on the gap-ledger route (#3572).
+- Analysis: resolve repo-seam grip associations across platform path separators (#3598).
+- Analysis / Python checks: bind discriminator narration to final verdict (#3670, #3671).
+- Analysis: preserve physical source directory anchors (#3708).
+- Ripr: exclude inline cfg(test) module lines from production probes (#3718, #3721).
+- Ripr: preserve string delimiters in classifier maskers (#3717, #3724).
+- Ripr: positional let-shadow defeat for wrapper seam callee calls (#3714, #3728).
+- `ripr cache`: omit host paths from cache write errors (#3845, #3849).
+- `ripr check`: disclose uncommitted edits on default-base runs and name --worktree (#3892).
+- Agent mode: build agent status next commands from the workspace root (#3897).
+- `ripr init`: correct the gate comments in the generated CI workflow (#3918).
+- `ripr first-pr` / LSP / Loop: anchor funnel redirect targets at resolved --root (#3872, #3938).
+- TypeScript checks: stop repair packets borrowing an assertion that cannot see the change (#3942).
+- `ripr doctor`: only require the Rust toolchain when Rust is in scope (#3943).
+- Python checks: link src-layout tests to their owner module (#3944).
+- Rust checks: an uncalled owner cannot be exposed through same-file tests (#3947).
+- TypeScript checks: emit the canonical ripr receipt write command in preview packets (#3949).
+- `ripr doctor`: disclose a rustc below ripr's build minimum instead of failing on it (#3950, #3951).
+- Perl checks: stop advising Perl setups that cannot work (#3954).
+- `ripr check`: record the loader-resolved base in the JSON envelope (#3940, #3958).
+- CLI: state the real base default in check and diff help (#3885, #3961).
+- Outcome: derive the head disclosure from the artifacts (#3964, #3965).
+- Review: stop anchoring unchanged seams onto unrelated changed lines (#3968).
+- Output: give the packet index one Start here block that names its files (#3971, #3973).
+- Output: say "1 TypeScript file", one period, and a Why line that matches the evidence (#3978).
+- Python checks: relate a test to an owner only when the test references it (#3980).
+- Pr-summary: stop reporting "Limitations: none" for an artifact that was never read (#3979, #3981).
+- Classify: count a boundary literal as infection only when it feeds the owner (#3983).
+- Classify: resolve named-constant boundaries so a boundary test can close them (#3984).
+- Classify: propagate a returned tail comparison to its return value (#3985).
+- Output: keep PowerShell pasted snapshots byte-exact for verify (#3966, #3992).
+- App: default CheckInput base to None so consumers resolve the repo default (#3952, #4002).
+- `ripr check`: gate no-scope disclosure on analyzed files, name compared base (#4012, #4020).
+- Classify: count shadowed receipt bindings before crediting the fed identity (#4043).
+- `ripr mcp`: negative-path coverage, response-cap request id, #3927 root-marker handling (#4050).
+- Agent mode: single JSON document contract for repair --phase after stdout (#4052).
+- Agent mode / Honesty: status required flags and assurance currentness vocabulary (#4053).
+- `ripr repair`: summarize the before phase on a terminal and refuse before writing (#4057).
+- Output: name python_diff_first on empty Python repo-exposure (#4058).
+- TypeScript checks: make tsconfig alias precedence deterministic (#4064).
+- Output: report-packet index gate/front-panel status mapping fails closed (#4070).
+- Agent mode: workflow manifest and review summary report required flags honestly (#4071).
+- CLI: distinct exit code 3 for blocking decisions and typed refusals (#4072).
+- Agent mode: versioned envelope for repair --phase after stdout (#4073).
+- LSP: root-bound collectContext paths, capped report reads, typed malformed-source signal (#4075).
+- Schemas: gate-decision causal fields, xtask pr-evidence shim parity, review-comments gap-ledger envelope (#4077).
+- Ledger: stop printing unmeasured gap counts as zero (#4080).
+- Output: route GitHub annotation escaping through shared wire authority (#4065, #4084).
+- Analysis: scope TypeScript mock-path collection to the credited relation set (#4091).
+- Analysis: stop false Exposed promotion from synthesized tokens and unrelated receivers in TypeScript classifier (#4092).
+- Analysis: disclose TypeScript repo-mode stub and dedupe colliding probe ids (#4093).
+- Analysis: handle TypeScript ESM/CJS extensions (.mts/.cts/.mjs/.cjs) (#4094).
+- Analysis: require sink observation for TypeScript ReturnValue/FieldConstruction exposure promotion (#4095).
+- Analysis: tighten TypeScript runner and alias-gap evidence (#4096).
+- Output: TypeScript polish — verify-command quoting, path normalization, honest parse reasons, doc drift (#4097).
+- Analysis: cap TypeScript file reads and bound workspace discovery (#4098).
+- Analysis: disclose TypeScript unreadable files and partial test extraction (#4099).
+- Output: fail TS repair packet closed when the observed input misses the discriminator (#4105, #4107).
+- Analysis: guard TypeScript oxc parses with a nesting budget and large-stack worker (#4101, #4111).
+- Python checks: refuse files past the expression-nesting parse budget (#4109, #4112).
+- Output: slash-normalize JSON evidence_path related tests (#4106, #4113).
+- Rust checks: keep tuple enum variants out of call-deletion probes (#3740, #4115).
+- Output / Analysis: TypeScript small-fixes batch — schema docs, tsconfig hardening, report exit codes (#4122).
+- Analysis: bound Python diff-mode walk and disclose unrendered repo evidence (#4124).
+- Rust checks: keep attributed tuple structs and where-tails off call probes (#4134).
+- TypeScript checks: replace silent owner-shape skips with typed disclosures, restore missed relations, name real alias causes (#4104, #4106) (#4138).
+- TypeScript checks: share module identity in static-limit reference gate (#4142, #4163).
+- VS Code extension: reject unsupported document sync options (#4148, #4173).
+- Schema: validate eligible gap-ledger review cards (#3913, #4175).
+- UX: make default-base guidance usable without origin/main (#3886, #4190).
+- `ripr cache`: derive clear and report layers from producer inventory (#3928, #4192).
+- Diff output: re-home the side-prefix identity controls and prove mnemonicPrefix (#4205, #4209).
+- Analysis: witness TypeScript predicate boundaries through resolved inputs (#4104 E) (#4213).
+- Grip: name the equality boundary for strict predicates (#4214, #4221).
+- VS Code extension: accept root-anchored agent-loop redirects (#4220, #4222).
+- TypeScript checks: fail the repair packet closed on an unresolved named-constant boundary (#4215, #4223).
+- VS Code extension: require copied agent-loop commands to equal the server rendering (#4225, #4236).
+- Rust checks: seed diff probes for changed xtask automation files (#4243).
+- LSP: refuse $, parentheses and NUL in gap command payloads (#4254).
+- Base: resolve an omitted --base for diff, first-pr and pr-evidence (#3952, #3886) (#4260).
+- Rust checks: seed changed build.rs and keep xtask findings in the editor (#4262).
+- VS Code extension: keep first-PR and gap-queue redirects inside the workspace (#4265, #4272).
+- Grip / `ripr check`: read decimal boundaries whole; grip closes a folded left local (#4270, #4271) (#4283).
+- First-action: name the missing receipt in the fail-closed report (#4299).
+- First-action: persist verify and name the analysis outcome before the receipt (#4304, #4306).
+- LSP: publish the oversized-diff workspace warning (#4325, #4335).
+- VS Code extension: guide failed refreshes to editor recovery (#4327, #4346).
+- TypeScript checks: share import identity in cross-package limitation (#4312, #4347).
+- Analysis: open TypeScript bounded reads no-follow and nonblocking (#4356, #4371).
+- VS Code extension: copy agent commands bound to the selected root (#4396, #4398).
+- CLI: compose PR summaries from the selected root (#4387, #4408).
+- Agent mode: require effective Cargo build output ignore before repair (#4409).
+- `ripr init`: read whole dedupe keys back from existing inline comments (#4455).
+- `ripr doctor`: Perl walks no longer follow directory symlinks (symlink-loop hang) (#4457).
+- Agent mode: typed refusals exit 3 on standalone verify; pre-verify after-phase refusals print a refusal document (#4331, #4458).
+- Output: render untrusted Markdown code spans with a CommonMark-safe fence (#4462).
+- `ripr check`: repo-scoped formats reject an unresolvable --base or missing --diff (#4463).
+- Output: bound inline comment body fields and skip over-ceiling bodies (#4446, #4467).
+- Analysis: whole-word searches step by char, not byte (non-ASCII identifier panic) (#4479).
+- LSP: advertise didSave so conforming clients send save notifications (#4482).
+- Python checks: bound operator and elif nesting so deep files degrade instead of overflowing the stack (#4494).
 - The nightly `first-run-main` gate records the honest first-run state: all three pinned crates end `static_unknown` (the earlier 3 of 3 `exposed` was the pre-#10886 human legend read as a verdict; semver and bytesize abstain per RIPR-SPEC-0158 example 12; fastrand stays `static_unknown` because its owner is reached without a placeable call, `rust_indirect_owner_call_unresolved`), and the `check` first view for an owner reached without a placeable call no longer prints the generic "Why unknown" line beside the Analyzer limit that already names the reason, so the fastrand-2.3.0 first view is back within the 60-line read budget (#11519).
 - A TypeScript Jest or Vitest `toBe`, `toEqual` or `toStrictEqual` whose expected value is a top-level asymmetric matcher (`expect.any(String)`, `expect.anything()`, `expect.stringMatching(..)`, `expect.objectContaining(..)`), or whose asserted subject is a derived property of the changed value (`typeof f(x)`, a spread-free array literal's `.length`), now reads `relational_check` / weak instead of `exact_value` / strong, so those tests report `weakly_exposed` rather than `exposed` (#11522).
 - A panic while the seam-evidence pass primes its shared workspace tables is now
