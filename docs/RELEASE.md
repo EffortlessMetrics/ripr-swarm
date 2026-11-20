@@ -193,7 +193,7 @@ cargo xtask publish-dry-run   # packages from the publish stage; see Crate tarba
 `ripr` depends on `ripr-contract = "=<version>"` (ADR 0027), so a bare
 `cargo publish -p ripr --dry-run` fails pre-publish until `ripr-contract` exists
 on crates.io. `cargo xtask publish-dry-run` is the canonical lockstep rehearsal
-(`cargo publish -p ripr-contract --dry-run`, vendored `ripr` packaging, and
+(`cargo publish -p ripr-contract --dry-run`, native two-package Cargo rehearsal, and
 unlocked check against the packaged `ripr-contract`).
 
 For the #1609-qualified path, the existing corpus also accepts the complete
@@ -284,8 +284,21 @@ crate measured 10,285,280 bytes on 2026-11-15 and 10,838,401 bytes on
 remaining source is inline `#[cfg(test)] mod tests { .. }` blocks and every new
 test adds to them (#14198).
 
-So `ripr` is packaged from a **publish stage**, never straight from the
-checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
+The publish stage below is a **temporary uploadability bridge** (#14198): it
+gets the source package under the upload limit, and it does not separate
+development tests from what customers download. It strips only inline modules
+marked exactly `#[cfg(test)]` under `crates/ripr/src`. Other test cfgs (for
+example `#[cfg(all(test, not(windows)))]`), test-only items outside such
+modules, out-of-line test support not matched by the `include` exclusions, the
+`ripr-contract` tests and the packaged CLI help harness all stay in the source
+packages. Native executables already omit test code, because they come from an
+ordinary non-test `cargo build`. The intended layout puts tests in owner-local
+test files that Cargo's package rules exclude, for both crates, enforced by
+package-content checks. Once that lands, the strip has nothing left to remove,
+and the stage can be retired.
+
+Until then, `ripr` is packaged from a **publish stage**, never straight from
+the checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
 clone of the workspace checked out at `HEAD` (the workspace members, the root
 files and `.cargo/`; uncommitted edits are not staged) and, in
 `crates/ripr/src` only, removes every inline module whose attributes include
@@ -311,12 +324,16 @@ identity check; any other dirty record stays dirty
 (`crates/ripr/src/build_commit_record.rs`).
 
 The #1609-qualified producer (`release-negative-corpus` with the
-`--candidate-*` group, `candidate_harness/archive.rs`) does not use the stage
-yet: it packages `ripr` straight from the admitted source and requires every
-packaged entry to equal its committed blob, so it cannot qualify the published
-representation. It also cannot package the real `ripr` before `ripr-contract`
-is on crates.io. #15204 owns moving it onto the stage with an explicit
-committed-blob-or-exact-strip rule.
+`--candidate-*` group, `candidate_harness/archive.rs`) packages from a publish
+stage of the admitted commit too (#15204), with `ripr` and its path
+dependencies (`ripr-contract`) in one multi-package `cargo package`. Its archive
+inventory accepts an ordinary entry only when it is the committed blob or, under
+`crates/ripr/src`, exactly the inline-test strip of that blob; it accepts a dirty
+Cargo VCS record only together with the marker naming the admitted commit and at
+least one stripped entry. The qualified `cargo install --offline` of the
+extracted crate still needs `ripr-contract` from a registry, so the real
+candidate cannot be installed by this producer before `ripr-contract` is
+published.
 
 From the stage the crate measured 7,384,939 bytes on 2026-11-19 (3,100,821
 bytes, about 29.6%, under the limit; 728 inline test modules, 19,361,471
