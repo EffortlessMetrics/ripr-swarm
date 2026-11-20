@@ -1343,8 +1343,21 @@ fn remembered_answer(
     answer
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only counts of the full readings behind the per-thread memos on
+    /// this thread, so a test can assert repeated seams do not re-read
+    /// (#15189): `(inline arm scans, body mutation scans)`.
+    static FLOW_SCANS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 /// The uncached reading behind [`inline_arms_all_agree`].
 fn scan_inline_arms_all_agree(line: &str) -> bool {
+    #[cfg(test)]
+    FLOW_SCANS.with(|cell| {
+        let (arms, bodies) = cell.get();
+        cell.set((arms + 1, bodies));
+    });
     let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
     if masked.len() != line.len() {
         return false;
@@ -1427,6 +1440,11 @@ fn body_may_mutate_locals(body: &str) -> bool {
 
 /// The uncached reading behind [`body_may_mutate_locals`].
 fn scan_body_may_mutate_locals(body: &str) -> bool {
+    #[cfg(test)]
+    FLOW_SCANS.with(|cell| {
+        let (arms, bodies) = cell.get();
+        cell.set((arms, bodies + 1));
+    });
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     masked.contains("&mut") || masked.contains("let mut ") || masked.contains("ref mut ")
 }
@@ -2319,6 +2337,59 @@ mod tests {
         }
         if !inline_arms_all_agree(&lines[0]) || inline_arms_all_agree(&lines[1]) {
             return Err("an all-agreeing chain and a differing chain read the same".to_string());
+        }
+        Ok(())
+    }
+
+    /// #15189: every seam of one long `else if` line asks the arm reading
+    /// through the memo, so the full scan runs once, not once per seam.
+    #[test]
+    fn one_long_line_is_scanned_for_inline_arms_once_across_its_seams() -> Result<(), String> {
+        let mut line = String::from("if a == 0 { 0 }");
+        for arm in 1..64 {
+            line.push_str(&format!(" else if a == {arm} {{ {arm} }}"));
+        }
+        line.push_str(" else { a }");
+        if line.len() < 1024 {
+            return Err(format!(
+                "line is {} bytes, below the memo floor",
+                line.len()
+            ));
+        }
+        FLOW_SCANS.with(|cell| cell.set((0, 0)));
+        for seam in 0..64 {
+            if inline_arms_all_agree(&line) {
+                return Err(format!("seam {seam}: differing arms read as agreeing"));
+            }
+        }
+        let (arm_scans, _) = FLOW_SCANS.with(std::cell::Cell::get);
+        if arm_scans != 1 {
+            return Err(format!(
+                "64 seams ran {arm_scans} full arm scans, expected 1"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #15189: every predicate probe of one long body asks the mutation
+    /// reading through the memo, so the full scan runs once per body.
+    #[test]
+    fn one_long_body_is_scanned_for_local_mutation_once_across_its_probes() -> Result<(), String> {
+        let filler = "    if a == 3 { 3 } else { 4 };\n".repeat(64);
+        let body = format!("{{\n{filler}    let mut z = 1;\n}}");
+        FLOW_SCANS.with(|cell| cell.set((0, 0)));
+        for probe in 0..1900 {
+            if !body_may_mutate_locals(&body) {
+                return Err(format!(
+                    "probe {probe}: `let mut` body read as not mutating"
+                ));
+            }
+        }
+        let (_, body_scans) = FLOW_SCANS.with(std::cell::Cell::get);
+        if body_scans != 1 {
+            return Err(format!(
+                "1,900 probes ran {body_scans} full body scans, expected 1"
+            ));
         }
         Ok(())
     }
