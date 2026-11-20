@@ -65,6 +65,9 @@ mod diff_selection;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/discarded_matches.rs"]
 mod discarded_matches;
+// The fixtures assert the Rust + Python enablement tip, which only names
+// adapters compiled into this build.
+#[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/doctor_subdirectory_root.rs"]
 mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
