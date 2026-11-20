@@ -3,6 +3,8 @@
 // a stat rather than a read, and does not toast on success (#15318).
 //
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprClientController, RiprClientRuntime, riprReportsDir } from '../../src/client';
@@ -21,12 +23,14 @@ interface Recording {
 
 function controllerWith(
   existing: string[],
-  statError?: Error
+  statError?: Error,
+  realFsRoot?: string
 ): { controller: RiprClientController; rec: Recording } {
+  const root = realFsRoot ?? ROOT;
   const rec: Recording = { infoMessages: [], existsCalls: [], readCalls: [], opened: [], warnings: [] };
   const runtime = {
     getConfig: () => ({ enabled: true }) as unknown as RiprConfig,
-    workspaceRootState: () => ({ kind: 'singleRoot', root: ROOT, roots: [ROOT] }),
+    workspaceRootState: () => ({ kind: 'singleRoot', root, roots: [root] }),
     workspaceFolders: () => [],
     readFile: async (p: string) => {
       rec.readCalls.push(p);
@@ -52,14 +56,18 @@ function controllerWith(
       return undefined;
     },
     showErrorMessage: async () => undefined
-  } as unknown as RiprClientRuntime;
+  } as unknown as RiprClientRuntime & { fileExists?: unknown };
+  if (realFsRoot !== undefined) {
+    // Exercise the production stat probe instead of the injected one.
+    delete runtime.fileExists;
+  }
   const output = { appendLine: () => undefined, show: () => undefined } as unknown as vscode.LogOutputChannel;
   const context = {
     workspaceState: { get: () => undefined, update: () => Promise.resolve() }
   } as unknown as vscode.ExtensionContext;
   const controller = new RiprClientController(context, output, runtime);
   // The root is normally bound at start; bind it directly so no server starts.
-  (controller as unknown as { workspaceRoot: string }).workspaceRoot = ROOT;
+  (controller as unknown as { workspaceRoot: string }).workspaceRoot = root;
   return { controller, rec };
 }
 
@@ -118,5 +126,27 @@ suite('ripr.openReport (#15318)', () => {
     assert.deepStrictEqual(rec.infoMessages, [], 'a stat error is not a missing report');
     assert.strictEqual(rec.warnings.length, 1);
     assert.ok(rec.warnings[0].includes(riprReportsDir(ROOT)), rec.warnings[0]);
+  });
+
+  test('the production probe skips a directory named like the report and reports a missing one', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-open-report-'));
+    try {
+      const reports = riprReportsDir(root);
+      fs.mkdirSync(path.join(reports, 'pr-evidence-summary.md'), { recursive: true });
+      const empty = controllerWith([], undefined, root);
+      await empty.controller.openReport();
+      assert.deepStrictEqual(empty.rec.opened, [], 'a directory is not a report');
+      assert.strictEqual(empty.rec.infoMessages.length, 1, empty.rec.infoMessages.join(' | '));
+      assert.ok(empty.rec.infoMessages[0].includes(reports), empty.rec.infoMessages[0]);
+
+      const startHere = path.join(reports, 'start-here.md');
+      fs.writeFileSync(startHere, '# start here\n');
+      const present = controllerWith([], undefined, root);
+      await present.controller.openReport();
+      assert.deepStrictEqual(present.rec.opened, [startHere]);
+      assert.deepStrictEqual(present.rec.readCalls, [], 'existence is a stat, not a full read');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
