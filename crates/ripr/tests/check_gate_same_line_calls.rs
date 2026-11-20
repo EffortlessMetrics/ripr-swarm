@@ -206,3 +206,23 @@ fn same_line_calls_off_the_boundary_keep_the_gap_in_both_views() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn same_line_boundary_assertion_in_an_unexecuted_branch_keeps_the_gate_gap() -> Result<(), String> {
+    let line = "assert_eq!(ok(12), true); if false { assert_eq!(ok(11), false); }";
+    let fixture = changed_repo("branch", line)?;
+    // Premise: the fixture's only test line holds both owner calls.
+    let test_text = std::fs::read_to_string(fixture.0.join("tests/t.rs"))
+        .map_err(|error| format!("read tests/t.rs: {error}"))?;
+    if !test_text.lines().any(|text| text.contains(line)) {
+        return Err(format!("fixture lost its same-line shape: {test_text}"));
+    }
+    let gate = gate_decision(&fixture.0)?;
+    let decisions = decision_classes(&gate)?;
+    if !decisions.iter().any(|class| class == "weakly_gripped") {
+        return Err(format!(
+            "an assertion that never runs must not close the boundary in the gate, got {decisions:?}: {gate}"
+        ));
+    }
+    Ok(())
+}

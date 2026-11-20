@@ -1721,13 +1721,14 @@ fn given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_re
         .iter()
         .find(|test| test.name == "b")
         .ok_or_else(|| "rival fixture lost test `b`".to_string())?;
-    let call_line = test
+    let (call_line, call_text) = test
         .body_calls()
         .find(|call| call.name == "ok")
-        .map(|call| call.line)
+        .map(|call| (call.line, call.text.to_string()))
         .ok_or_else(|| "rival fixture lost its owner call".to_string())?;
-    let rows =
-        crate::analysis::classify::observed_owner_call_rows_on_line(test, call_line, owner, &index);
+    let rows = crate::analysis::classify::observed_owner_call_rows_on_line(
+        test, call_line, &call_text, owner, &index,
+    );
     if !rows
         .iter()
         .any(|row| row.len() == 1 && row.first().map(|value| value.trim()) == Some("11"))
@@ -1735,6 +1736,80 @@ fn given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_re
         return Err(format!(
             "the rival line's observed rows should list `other::ok(11)`, so the guard is what refuses it: {rows:?}"
         ));
+    }
+    given_same_line_boundary_call_the_seam_cannot_trust_then_boundary_stays_missing()
+}
+
+/// #14487 review (PR #15517): three same-line shapes whose second boundary
+/// call must not reach the seam. Each fixture's premise is asserted (its
+/// owner-call line holds the shape) before the seam's verdict is read.
+fn given_same_line_boundary_call_the_seam_cannot_trust_then_boundary_stays_missing()
+-> Result<(), String> {
+    // (label, test file source, text the owner-call line must hold)
+    let cases = [
+        (
+            "unexecuted branch",
+            "#[test]\nfn b() { assert_eq!(ok(12), true); if false { assert_eq!(ok(11), false); } }\n",
+            "if false { assert_eq!(ok(11), false); }",
+        ),
+        (
+            "uncalled closure",
+            "#[test]\nfn b() { assert_eq!(ok(12), true); let _f = || assert_eq!(ok(11), false); }\n",
+            "|| assert_eq!(ok(11), false)",
+        ),
+        (
+            "multi-line rival assertion",
+            "mod other { pub fn ok(_: u32) -> bool { false } }\n#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(ok(13), true); assert_eq!(\n    other::ok(\n        11), false);\n}\n",
+            "assert_eq!(ok(13), true); assert_eq!(",
+        ),
+        (
+            "field argument reassigned on the line",
+            "struct Case { n: u32 }\n#[test]\nfn b() { let mut case = Case { n: 11 }; assert_eq!(ok(12), true); case.n = 13; assert_eq!(ok(case.n), true); }\n",
+            "assert_eq!(ok(case.n), true)",
+        ),
+    ];
+    for (label, tests_src, premise) in cases {
+        let index = index_from_files(&[
+            (
+                PathBuf::from("src/lib.rs"),
+                "pub fn ok(n: u32) -> bool { n > 11 }\n",
+            ),
+            (PathBuf::from("tests/t.rs"), tests_src),
+        ])?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "b")
+            .ok_or_else(|| format!("{label}: fixture lost test `b`"))?;
+        if !test
+            .body_calls()
+            .any(|call| call.name == "ok" && call.text.contains(premise))
+        {
+            return Err(format!(
+                "{label}: no owner-call line holds the intended shape `{premise}`"
+            ));
+        }
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| format!("{label}: expected a predicate seam for `n > 11`"))?;
+        let evidence = evidence_for_seam(predicate, &index);
+        if evidence.related_tests.is_empty() {
+            return Err(format!("{label}: fixture should relate test `b`"));
+        }
+        let missing: Vec<&str> = evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect();
+        let class = classify_seam(predicate, &evidence);
+        if missing != ["11 (equality boundary)"] || class == SeamGripClass::StronglyGripped {
+            return Err(format!(
+                "{label}: must keep `11 (equality boundary)` missing, got {} {missing:?}",
+                class.as_str()
+            ));
+        }
     }
     Ok(())
 }

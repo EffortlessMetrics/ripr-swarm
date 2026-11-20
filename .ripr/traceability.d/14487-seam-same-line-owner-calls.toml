@@ -7,4 +7,5 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_reads_it",
   "crates/ripr/tests/check_gate_same_line_calls.rs::same_line_boundary_call_reads_exposed_through_check_and_the_gate",
   "crates/ripr/tests/check_gate_same_line_calls.rs::same_line_calls_off_the_boundary_keep_the_gap_in_both_views",
+  "crates/ripr/tests/check_gate_same_line_calls.rs::same_line_boundary_assertion_in_an_unexecuted_branch_keeps_the_gate_gap",
 ]

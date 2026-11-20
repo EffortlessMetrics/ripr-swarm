@@ -3682,9 +3682,16 @@ fn owner_call_rows_for_seam(
     let same_row = |left: &[String], right: &[String]| {
         left.len() == right.len() && left.iter().zip(right).all(|(l, r)| l.trim() == r.trim())
     };
+    if !line_admits_extra_owner_rows(&call.text) {
+        return Some(rows);
+    }
+    // Only plain literal arguments: a field, local or expression argument
+    // would be resolved at the line, not at this call's position, and could
+    // borrow a value the line assigns between the calls.
     let observed: Vec<Vec<String>> =
-        observed_owner_call_rows_on_line(test, call.line, owner_fn, context.index)
+        observed_owner_call_rows_on_line(test, call.line, &call.text, owner_fn, context.index)
             .into_iter()
+            .filter(|row| !row.is_empty() && row.iter().all(|arg| is_plain_literal_pattern(arg)))
             .filter(|row| !rows.iter().any(|kept| same_row(kept, row)))
             .collect();
     if observed.is_empty()
@@ -3698,6 +3705,36 @@ fn owner_call_rows_for_seam(
         }
     }
     Some(rows)
+}
+
+/// Whether a captured test line is straight-line code, so every assertion on
+/// it runs whenever the line runs. Any branch, loop, closure, early exit or
+/// `?` on the line could leave a later assertion unexecuted (`if false {
+/// assert_eq!(ok(11), false); }`, `let f = || assert_eq!(ok(11), false);`),
+/// so such a line keeps the first-call reading (#14487).
+fn line_admits_extra_owner_rows(line: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(line);
+    if masked.contains(['|', '?']) || masked.contains("=>") {
+        return false;
+    }
+    !masked
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|word| {
+            matches!(
+                word,
+                "if" | "else"
+                    | "match"
+                    | "loop"
+                    | "while"
+                    | "for"
+                    | "return"
+                    | "break"
+                    | "continue"
+                    | "async"
+                    | "move"
+                    | "macro_rules"
+            )
+        })
 }
 
 fn field_assignment_value_unresolved_for_test(

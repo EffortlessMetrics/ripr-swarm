@@ -891,9 +891,14 @@ fn assertion_observes_boundary_owner_call(
 /// weak or relational assertion (`assert!(ok(11))`, which the probe admits
 /// only through its owner-return pin) does not add a row, so this reading is
 /// never looser than the probe's pairing.
+///
+/// The assertion's whole text must sit on `line_text`, the call's captured
+/// physical line: a multi-line assertion's continuation lines hold calls the
+/// caller's line-scoped identity guard never read.
 pub(in crate::analysis) fn observed_owner_call_rows_on_line(
     test: &TestSummary,
     line: usize,
+    line_text: &str,
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> Vec<Vec<String>> {
@@ -902,7 +907,14 @@ pub(in crate::analysis) fn observed_owner_call_rows_on_line(
     }
     test.assertions
         .iter()
-        .filter(|assertion| assertion.line == line && assertion_is_discriminating(assertion))
+        .filter(|assertion| {
+            let text = assertion.text.trim();
+            assertion.line == line
+                && assertion_is_discriminating(assertion)
+                && !text.is_empty()
+                && !text.contains('\n')
+                && line_text.contains(text)
+        })
         .flat_map(|assertion| {
             let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
                 .unwrap_or_else(|| assertion.text.clone());
