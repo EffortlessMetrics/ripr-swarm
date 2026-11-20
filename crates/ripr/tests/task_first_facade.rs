@@ -1640,7 +1640,6 @@ fn member_directory_root_resolution_failure_keeps_the_json_refusal_envelope() ->
     Ok(())
 }
 
-#[cfg(unix)]
 fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut files = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
@@ -3642,6 +3641,93 @@ fn pilot_and_brief_withhold_the_should_panic_limitation() -> Result<(), String> 
             );
         }
     }
+    Ok(())
+}
+
+#[path = "common/printed_words.rs"]
+mod printed_words;
+
+#[test]
+fn unchanged_continue_restarts_only_the_selected_seam_and_preserves_the_attempt()
+-> Result<(), String> {
+    let fixture = Fixture::two_seam("unchanged continue")?;
+    let root = &fixture.root;
+    let lib = root.join("src/lib.rs");
+    let changed = std::fs::read_to_string(&lib).map_err(|e| e.to_string())?;
+    assert_eq!(changed.matches(">=").count(), 2);
+    std::fs::write(&lib, changed.replace(">=", ">")).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "baseline before both boundary changes")?;
+    std::fs::write(&lib, changed).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "include equality at both boundaries")?;
+
+    let start = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", "."])?;
+    assert_exit(&start, 0, "start selected seam");
+    let old_id = attempt_id_from_before(&start)?;
+    let tests = root.join("tests/pricing.rs");
+    let original = std::fs::read_to_string(&tests).map_err(|e| e.to_string())?;
+    let weak = FIXTURE_BOUNDARY_TEST.replace(
+        "assert_eq!(discounted_total(100, 100), 90)",
+        "assert!(discounted_total(100, 100) > 0)",
+    );
+    std::fs::write(&tests, format!("{original}{weak}")).map_err(|e| e.to_string())?;
+    let first = run_ripr(root, &["continue", "--root", "."])?;
+    assert_exit(&first, 0, "finish weak edit");
+    let text = stdout_text(&first);
+    assert!(
+        text.contains("weak -> weak") && text.contains("unchanged"),
+        "{text}"
+    );
+    let retained = root.join("target/ripr/repair-attempts").join(&old_id);
+    let old_files = tree_snapshot(&retained)?;
+    assert!(!old_files.is_empty());
+    let next = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Restart: "))
+        .ok_or_else(|| format!("missing restart command for the terminal attempt:\n{text}"))?;
+    assert!(
+        text.contains("stash")
+            && text.contains("tests/pricing.rs")
+            && !text.contains("rerun agent verify"),
+        "{text}"
+    );
+    let words = printed_words::printed_words(next)?;
+    let (program, args) = words.split_first().ok_or("empty restart command")?;
+    assert_eq!(program, "ripr");
+
+    run_git(root, &["stash", "push", "--", "tests/pricing.rs"])?;
+    let restart = run_ripr(
+        root.parent().ok_or("fixture has no parent")?,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )?;
+    assert_exit(
+        &restart,
+        0,
+        "follow printed restart from outside the repository",
+    );
+    let new_id = attempt_id_from_before(&restart)?;
+    assert_ne!(new_id, old_id);
+    assert_eq!(read_manifest(root, &new_id)?["seam_id"], FIXTURE_SEAM);
+    run_git(root, &["stash", "apply"])?;
+    assert_eq!(
+        std::fs::read_to_string(&tests).map_err(|e| e.to_string())?,
+        format!("{original}{weak}")
+    );
+    std::fs::write(&tests, format!("{original}{FIXTURE_BOUNDARY_TEST}"))
+        .map_err(|e| e.to_string())?;
+    let strong = run_ripr(root, &["continue", "--attempt", &new_id, "--root", "."])?;
+    assert_exit(&strong, 0, "finish strengthened test");
+    let improved = stdout_text(&strong);
+    assert!(
+        improved.contains("weak -> exposed") && !improved.contains("Restart: "),
+        "{improved}"
+    );
+    assert_eq!(
+        tree_snapshot(&retained)?,
+        old_files,
+        "the completed attempt must remain byte-identical"
+    );
     Ok(())
 }
 
