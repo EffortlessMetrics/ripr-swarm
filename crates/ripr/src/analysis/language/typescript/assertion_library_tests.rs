@@ -323,6 +323,51 @@ it('totals', () => {
     assert_eq!(assertions[0].oracle_strength, OracleStrength::Strong);
 }
 
+/// Collection shape and equality observe different facts about the same receiver.
+#[test]
+fn chai_collection_observers_preserve_receiver_and_cardinality() {
+    let assertions = only_assertions(
+        "test/emitter.spec.ts",
+        r#"
+import { expect } from 'chai'
+it('reads the receivers', () => {
+  expect(inst.values()).to.be.empty
+  expect(other.values()).to.have.lengthOf(2)
+  expect(inst.values()).to.deep.equal(['a', 'b'])
+  expect(inst.values()).to.be.empty()
+})
+"#,
+    );
+    assert_eq!(assertions.len(), 3, "{assertions:?}");
+    assert_oracle(
+        &assertions[0],
+        OracleKind::RelationalCheck,
+        OracleStrength::Weak,
+        "expect(...).to.be.empty",
+    );
+    assert_eq!(assertions[0].observed_expression.as_deref(), Some("inst.values()"));
+    assert_eq!(assertions[0].expected_value_or_variant, None);
+    assert_oracle(
+        &assertions[1],
+        OracleKind::RelationalCheck,
+        OracleStrength::Weak,
+        "expect(...).to.have.lengthOf(...)",
+    );
+    assert_eq!(assertions[1].observed_expression.as_deref(), Some("other.values()"));
+    assert_eq!(assertions[1].expected_value_or_variant.as_deref(), Some("2"));
+    assert_oracle(
+        &assertions[2],
+        OracleKind::ExactValue,
+        OracleStrength::Strong,
+        "expect(...).to.deep.equal(...)",
+    );
+    let other_library = only_assertions(
+        "test/helper.spec.ts",
+        "import { expect } from './helper';\nit('checks', () => { expect(items()).to.be.empty; });",
+    );
+    assert!(other_library.is_empty(), "{other_library:?}");
+}
+
 /// `var expect = require('chai').expect` — the member-of-require form the
 /// import extractor does not record.
 #[test]
