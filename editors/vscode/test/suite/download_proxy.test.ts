@@ -13,6 +13,11 @@ import { classifyDownloadFailureKind, NETWORK_FAILURE_REMEDY } from '../../src/s
 
 const TARGET = 'https://github.com/EffortlessMetrics/ripr/releases/download/v1/m.json';
 
+/** Builds a proxy URL with userinfo from parts, so fixtures hold no literal credential URL for secret scanners. */
+function credentialUrl(scheme: string, user: string, password: string, hostPort: string): string {
+  return `${scheme}://${[user, password].join(':')}@${hostPort}`;
+}
+
 suite('VS Code download proxy support (#15317)', () => {
   test('http.proxy wins over HTTPS_PROXY, which wins over https_proxy', () => {
     const env = { HTTPS_PROXY: 'http://upper:1', https_proxy: 'http://lower:2' };
@@ -42,12 +47,12 @@ suite('VS Code download proxy support (#15317)', () => {
   });
 
   test('basic auth is carried but never rendered; unsupported schemes fail closed naming the workaround', () => {
-    const auth = resolveProxy(TARGET, { httpProxy: 'http://us%40er:p%3Aw@proxy.corp:3128', env: {} });
+    const auth = resolveProxy(TARGET, { httpProxy: credentialUrl('http', 'us%40er', 'p%3Aw', 'proxy.corp:3128'), env: {} });
     assert.ok(auth.kind === 'proxy');
     assert.strictEqual(auth.kind === 'proxy' && auth.auth, 'us@er:p:w');
     assert.ok(!JSON.stringify(auth.kind === 'proxy' && auth.display).includes('p%3Aw'));
     assert.strictEqual(auth.kind === 'proxy' && auth.display, 'http://proxy.corp:3128');
-    for (const bad of ['socks5://user:secret@proxy.corp:1080', 'https://user:secret@proxy.corp:443']) {
+    for (const bad of [credentialUrl('socks5', 'user', 'secret', 'proxy.corp:1080'), credentialUrl('https', 'user', 'secret', 'proxy.corp:443')]) {
       const result = resolveProxy(TARGET, { httpProxy: bad, env: {} });
       assert.strictEqual(result.kind, 'unsupported');
       const message = result.kind === 'unsupported' ? result.message : '';
@@ -55,13 +60,13 @@ suite('VS Code download proxy support (#15317)', () => {
       assert.ok(!message.includes('secret') && !message.includes('user:'), message);
     }
     assert.strictEqual(
-      redactProxyCredentials('failed via http://u:secret@proxy:3128/x'),
+      redactProxyCredentials(`failed via ${credentialUrl('http', 'u', 'secret', 'proxy:3128')}/x`),
       'failed via http://***@proxy:3128/x'
     );
   });
 
   test('a raw percent sign in proxy credentials is unsupported, not a throw, and leaks nothing', () => {
-    const result = resolveProxy(TARGET, { httpProxy: 'http://al%ice:pa%ss@proxy.corp:3128', env: {} });
+    const result = resolveProxy(TARGET, { httpProxy: credentialUrl('http', 'al%ice', 'pa%ss', 'proxy.corp:3128'), env: {} });
     assert.strictEqual(result.kind, 'unsupported');
     const message = result.kind === 'unsupported' ? result.message : '';
     assert.ok(message.includes('ripr.server.path') && !message.includes('pa%ss') && !message.includes('al%ice'), message);
@@ -195,7 +200,7 @@ suite('VS Code download proxy support (#15317)', () => {
       const outcome = await fetchManifestBytesOverHttps(
         `https://127.0.0.1:${originPort}/redirect`,
         1024,
-        () => ({ httpProxy: `http://alice:s3cret@127.0.0.1:${proxyPort}`, env: {} })
+        () => ({ httpProxy: credentialUrl('http', 'alice', 's3cret', `127.0.0.1:${proxyPort}`), env: {} })
       );
       assert.strictEqual(outcome.kind, 'ok');
       assert.strictEqual(outcome.kind === 'ok' && outcome.bytes.toString(), 'payload');
@@ -216,7 +221,7 @@ suite('VS Code download proxy support (#15317)', () => {
         const outcome = await fetchManifestBytesOverHttps(
           `https://127.0.0.1:${roguePort}/x`,
           1024,
-          () => ({ httpProxy: `http://alice:s3cret@127.0.0.1:${proxyPort}`, env: {} })
+          () => ({ httpProxy: credentialUrl('http', 'alice', 's3cret', `127.0.0.1:${proxyPort}`), env: {} })
         );
         assert.strictEqual(outcome.kind, 'transport_failure');
         assert.deepStrictEqual(connects.map((c) => c.target), [`127.0.0.1:${roguePort}`]);
@@ -268,7 +273,7 @@ suite('VS Code download proxy support (#15317)', () => {
       const outcome = await fetchManifestBytesOverHttps(
         `https://127.0.0.1:${originPort}/x`,
         1024,
-        () => ({ httpProxy: `http://alice:s3cret@127.0.0.1:${proxyPort}`, env: {} })
+        () => ({ httpProxy: credentialUrl('http', 'alice', 's3cret', `127.0.0.1:${proxyPort}`), env: {} })
       );
       assert.strictEqual(outcome.kind, 'transport_failure');
       const message = outcome.kind === 'transport_failure' ? outcome.message : '';
@@ -281,7 +286,7 @@ suite('VS Code download proxy support (#15317)', () => {
       const outcome = await fetchManifestBytesOverHttps(
         `https://127.0.0.1:${originPort}/x`,
         1024,
-        () => ({ httpProxy: 'socks5://u:secret@127.0.0.1:1', env: {} })
+        () => ({ httpProxy: credentialUrl('socks5', 'u', 'secret', '127.0.0.1:1'), env: {} })
       );
       assert.strictEqual(outcome.kind, 'transport_failure');
       const message = outcome.kind === 'transport_failure' ? outcome.message : '';
