@@ -116,6 +116,14 @@ fn validate_suppressions_manifest(
     let relative = config.suppressions().path();
     let display = config.suppressions().display_path();
     let manifest = root.join(relative);
+    if crate::config::config_entry_present(&manifest) && !manifest.exists() {
+        // A dangling link is an entry the loader would read as an empty
+        // manifest without a word, at the default path too.
+        return Err(format!(
+            "[suppressions] path `{display}` is a link that names no file under {}; fix or remove the link, then re-run `ripr config validate`",
+            human_path(root),
+        ));
+    }
     if !manifest.exists() {
         if config.suppressions().is_default() {
             return Ok(None);
@@ -135,7 +143,7 @@ fn validate_suppressions_manifest(
             if entries.len() == 1 { "y" } else { "ies" }
         )))),
         Err(violations) => Err(format!(
-            "{display} validation failed:\n{}",
+            "{display} validation failed:\n{}\nfix the lines above, then re-run `ripr config validate`",
             violations.join("\n")
         )),
     }

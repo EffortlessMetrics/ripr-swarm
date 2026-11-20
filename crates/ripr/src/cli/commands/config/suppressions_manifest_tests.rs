@@ -108,7 +108,8 @@ fn a_malformed_configured_manifest_fails_with_its_own_path() -> Result<(), Strin
         .err()
         .ok_or("a malformed configured manifest must fail")?;
     if !(error.starts_with("policy/s.toml validation failed:\n")
-        && error.contains("policy/s.toml:7 duplicate `[[suppressions]]` field `owner`"))
+        && error.contains("policy/s.toml:7 duplicate `[[suppressions]]` field `owner`")
+        && error.ends_with("\nfix the lines above, then re-run `ripr config validate`"))
     {
         return Err(format!("unexpected error: {error}"));
     }
@@ -180,4 +181,23 @@ fn a_control_byte_in_the_manifest_path_is_escaped_on_success() -> Result<(), Str
         return Err(format!("raw control byte or unescaped path: {output:?}"));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_default_manifest_link_fails() -> Result<(), String> {
+    let root = workspace("dangling-default")?;
+    std::os::unix::fs::symlink(
+        root.join(".ripr/missing.toml"),
+        root.join(".ripr/suppressions.toml"),
+    )
+    .map_err(|error| error.to_string())?;
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    match result {
+        Err(error) if error.contains("`.ripr/suppressions.toml` is a link that names no file") => {
+            Ok(())
+        }
+        other => Err(format!("dangling default link was not refused: {other:?}")),
+    }
 }

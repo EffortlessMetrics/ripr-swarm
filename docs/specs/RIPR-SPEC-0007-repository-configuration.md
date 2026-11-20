@@ -56,6 +56,13 @@ The configuration layer should:
   `ripr doctor`;
 - provide `ripr config validate [--root PATH]` for isolated ancestor-aware TOML
   validation without workspace tool probes;
+- have `ripr config validate` check the suppressions manifest the config
+  selects (#15308): a configured `[suppressions] path` that names no file, or
+  a manifest path that is a dangling link, fails; a present manifest at the
+  default or configured path is parsed with the same parser `check` uses and
+  its violations fail validation; an absent default
+  `.ripr/suppressions.toml` stays silent; a valid manifest is named on its
+  own line with its entry count;
 - keep output schemas stable unless a later scoped PR explicitly adds config
   metadata.
 
