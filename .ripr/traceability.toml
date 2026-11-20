@@ -11114,6 +11114,9 @@ tests = [
   "crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_runs_quietly_and_sees_the_staged_change",
   "crates/ripr/tests/pre_commit_hook_manifest.rs::push_hook_entry_runs_quietly_and_sees_the_committed_change",
   "crates/ripr/tests/pre_commit_hook_manifest.rs::without_quiet_the_same_entry_writes_progress_lines",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_analyzes_the_first_commit_instead_of_refusing_an_unborn_head",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::unborn_head_keeps_other_bases_refused",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::oversized_first_commit_refusal_names_the_hook_bypass_and_scoping",
 ]
 fixtures = []
 code = [
