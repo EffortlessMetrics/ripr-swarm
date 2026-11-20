@@ -4,7 +4,7 @@
 //! `PerlGapState::Actionable`. The example tests in `tests.rs` knock out one
 //! field at a time; these properties perturb every enumerated input of the
 //! packet row the mapper selects and of the caller's context at once, starting
-//! from the committed actionable fixture.
+//! from the exporter fixture with a concrete return discriminator.
 //!
 //! The refusal conditions reachable from these perturbations (32, one per
 //! `note` in `refusals`), taken from the mapper, the related-evidence filter
@@ -700,8 +700,8 @@ fn copy_field(draw: &mut Draw, from: &Draw, field: usize) {
         38 => draw.extra.owner_kind_unknown = from.extra.owner_kind_unknown,
         39 => draw.extra.packet_path = from.extra.packet_path,
         40 => draw.extra.empty_provenance = from.extra.empty_provenance,
-        42 => draw.extra.missing_discriminator = from.extra.missing_discriminator,
         41 => draw.extra.relation_for_other_owner = from.extra.relation_for_other_owner,
+        42 => draw.extra.missing_discriminator = from.extra.missing_discriminator,
         _ => {}
     }
 }
@@ -1318,6 +1318,13 @@ fn actionable_after(
 #[test]
 fn perl_actionability_proptest_fixture_is_actionable() -> Result<(), String> {
     let context = super::tests::complete_perl_actionability_context();
+    // The honesty corpus captures this exact packet on the public advisory surface.
+    // Exercise its private strict mapper before perturbing either producer channel.
+    let original = consume(RETURN_PACKET)?;
+    assert_eq!(
+        original.strict_actionability_for_change(CHANGE_ID, &context),
+        Err(PerlActionabilityBlocker::MissingConcreteDiscriminator)
+    );
     for (field, digest, expected) in [
         (Some("net amount"), "sha256:return", Some("net amount")),
         (None, "discriminator:net amount", Some("net amount")),
@@ -1359,7 +1366,7 @@ fn perl_actionability_proptest_fixture_is_actionable() -> Result<(), String> {
     Ok(())
 }
 
-/// The fixture's own values as a `Draw`: actionable, no refusal condition.
+/// The supporting draw includes a concrete return discriminator.
 fn fixture_draw() -> Draw {
     Draw {
         packet_status: PacketStatus::Complete,
