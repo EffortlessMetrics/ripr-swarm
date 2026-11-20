@@ -435,6 +435,19 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                 merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
                 continue;
             }
+            // #14858: `f().retries.other` names the changed field but reads a
+            // child of it the change does not move, so it cannot witness the
+            // change either. A read of a moved child keeps the credit.
+            if ts_value_observed_reads_unchanged_child(
+                observed,
+                changed_fields,
+                &owner_names,
+                owner_is_method,
+                &namespace_receivers,
+            ) {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
             // #14857: when the edit moves TWO OR MORE values of the returned
             // literal, `changed_field` is `None` and the guard above is
             // skipped. A read of a field the change never touched still cannot
@@ -819,6 +832,58 @@ fn ts_value_observed_reads_sibling_field(
         owner_is_method,
         namespace_receivers,
     ) {
+        return false;
+    }
+    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14858: whether `observed` reads, directly off the owner call, a child of a
+/// changed field that the change does not move: `f().retries.other` while the
+/// edit turns `retries: 3` into `retries: { n: 5 }`.
+///
+/// Only the exact shape `<owner call>.<changed key>.<child>` counts, and only
+/// when the changed field's new value is an object literal whose moved
+/// children are known. The moved child (`f().retries.n`), the whole field
+/// (`f().retries`), deeper paths and compound bases keep the existing credit.
+fn ts_value_observed_reads_unchanged_child(
+    observed: &str,
+    changed: &[TypeScriptChangedField],
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident(text: &str) -> bool {
+        text.chars()
+            .next()
+            .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+            && text
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+    }
+    let normalized = ts_normalize_bracket_field_reads(observed.trim());
+    let masked = ts_mask_literals_and_comments(&normalized);
+    let Some((path, child)) = masked.rsplit_once('.') else {
+        return false;
+    };
+    let child = child.trim();
+    let Some((base, key)) = path.rsplit_once('.') else {
+        return false;
+    };
+    let key = key.trim();
+    if !is_ident(child) || !is_ident(key) {
+        return false;
+    }
+    let Some(field) = changed.iter().find(|field| field.key == key) else {
+        return false;
+    };
+    let Some(moved) = field.changed_children() else {
+        return false;
+    };
+    if moved.iter().any(|name| name == child) {
+        return false;
+    }
+    let base = base.trim().trim_end_matches('?').trim_end();
+    if base.is_empty() || !ts_chain_is_plain_projection(base) {
         return false;
     }
     ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)

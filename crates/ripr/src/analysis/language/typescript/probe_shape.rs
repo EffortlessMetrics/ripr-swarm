@@ -1641,6 +1641,41 @@ pub(crate) struct TypeScriptChangedField {
     pub(crate) key: String,
     /// The new value's source text.
     pub(crate) value: String,
+    /// The old value's source text.
+    pub(crate) old_value: String,
+}
+
+impl TypeScriptChangedField {
+    /// #14858: the child keys of this field's value that the change moves, when
+    /// the new value is an object literal of simple `key: value` members.
+    /// `None` when the new value is not such a literal, so the caller cannot
+    /// say which children moved and keeps the existing credit.
+    ///
+    /// A child moved when its value differs from the old literal's same key, or
+    /// the old value was not an object literal (every new child is then new).
+    /// A key the old literal had and the new one dropped is moved too.
+    pub(crate) fn changed_children(&self) -> Option<Vec<String>> {
+        let members = |value: &str| returned_object_fields(&format!("return {value}"));
+        let new = members(self.value.as_str())?;
+        let Some(old) = members(self.old_value.as_str()) else {
+            return Some(new.into_iter().map(|(key, _)| key).collect());
+        };
+        let mut moved: Vec<String> = new
+            .iter()
+            .filter(|(key, value)| {
+                old.iter()
+                    .find(|(old_key, _)| old_key == key)
+                    .is_none_or(|(_, old_value)| old_value != value)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        moved.extend(
+            old.iter()
+                .filter(|(key, _)| !new.iter().any(|(new_key, _)| new_key == key))
+                .map(|(key, _)| key.clone()),
+        );
+        Some(moved)
+    }
 }
 
 /// Every field of `return { a: 1, b: 2 }` whose value changed against the old
@@ -1671,6 +1706,7 @@ pub(crate) fn ts_changed_object_fields(
             changed.push(TypeScriptChangedField {
                 key: new_key,
                 value: new_value,
+                old_value,
             });
         }
     }

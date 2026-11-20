@@ -1,0 +1,17 @@
+# Registers the unchanged-child and alias sibling-field proofs (#14858, #14856) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::alias_local_sibling_field_read_downgrades",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::alias_local_changed_field_read_stays_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::alias_local_bracket_sibling_field_read_downgrades",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::unchanged_child_of_changed_field_downgrades",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::changed_child_of_changed_field_stays_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::alias_child_reads_split_changed_from_unchanged",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::object_to_object_change_splits_children_by_value",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::non_object_changed_value_child_read_keeps_credit",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_value_observed_reads_unchanged_child",
+  "crates/ripr/src/analysis/language/typescript/probe_shape.rs::TypeScriptChangedField::changed_children",
+]
