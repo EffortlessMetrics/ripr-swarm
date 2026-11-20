@@ -2444,6 +2444,21 @@ pub(crate) fn ripr_swarm_attempt_ledger_report(
     ) = ripr_swarm_read_optional_json(&args.actionable_gap_outcomes_path);
     let (prior_ledger_state, prior_ledger_limitation, prior_ledger) =
         ripr_swarm_read_optional_json(&args.prior_ledger_path);
+    if let Some(prior) = &prior_ledger {
+        validate_retained_attempt_history(prior).map_err(|reason| {
+            format!(
+                "attempt history unavailable at {}: {reason}",
+                args.prior_ledger_path.display()
+            )
+        })?;
+    } else if prior_ledger_state == "malformed" {
+        return Err(format!(
+            "attempt history unavailable: {}",
+            prior_ledger_limitation
+                .as_deref()
+                .unwrap_or("malformed prior ledger")
+        ));
+    }
     let (real_repair_attempts_state, real_repair_attempts_limitation, real_repair_attempts) =
         ripr_swarm_read_optional_json(&args.real_repair_attempts_path);
     let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
@@ -3045,6 +3060,43 @@ pub(crate) fn ripr_swarm_attempt_ledger_ordered_import_timestamp(
     format!("{generated_at}#{index:06}")
 }
 
+// A readable JSON file can still be missing previously registered attempts.
+// Check the prior report before stale queue placeholders are intentionally filtered.
+fn validate_retained_attempt_history(ledger: &Value) -> Result<(), String> {
+    let attempts = ledger
+        .get("attempts")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "prior ledger has no attempts array".to_string())?;
+    if attempts
+        .iter()
+        .any(|row| audit_non_empty_string(row, &["canonical_gap_id"]).is_none())
+    {
+        return Err("prior history contains an attempt without a canonical gap ID".to_string());
+    }
+    let ids: BTreeSet<_> = attempts
+        .iter()
+        .filter_map(|row| row["attempt_id"].as_str())
+        .collect();
+    for row in audit_array(ledger, &["latest_attempts"]) {
+        if let Some(id) = row["attempt_id"].as_str()
+            && !ids.contains(id)
+        {
+            return Err(format!("registered attempt {id} is missing from history"));
+        }
+    }
+    for summary in ["summary", "attempt_history_summary"] {
+        if let Some(expected) = ledger[summary]["attempts_total"].as_u64()
+            && expected != attempts.len() as u64
+        {
+            return Err(format!(
+                "{summary} registers {expected} attempts, but history contains {}",
+                attempts.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn ripr_swarm_attempt_ledger_prior_entries_from_value(
     ledger: &Value,
     plan_packets: &BTreeMap<String, Value>,
@@ -3275,8 +3327,23 @@ pub(crate) fn ripr_swarm_attempt_ledger_attempt_instance(
 pub(crate) fn ripr_swarm_attempt_ledger_dedupe_attempts(
     attempts: Vec<RiprSwarmAttemptLedgerEntry>,
 ) -> Vec<RiprSwarmAttemptLedgerEntry> {
-    let mut by_id = BTreeMap::new();
-    for attempt in attempts {
+    use sha2::{Digest, Sha256};
+
+    let mut by_id = BTreeMap::<String, RiprSwarmAttemptLedgerEntry>::new();
+    for mut attempt in attempts {
+        if let Some(previous) = by_id.get(&attempt.attempt_id)
+            && let (Some(old_path), Some(path)) = (&previous.receipt_path, &attempt.receipt_path)
+            && old_path != path
+            && let Some((_, suffix)) = attempt.attempt_id.rsplit_once(':')
+            && suffix == audit_slug(&format!("receipt_path:{path}"))
+        {
+            // Legacy receipt-path IDs fold case and punctuation. Keep the registered
+            // ID and give the distinct incoming receipt a stable replay identity.
+            let digest = Sha256::digest(path.as_bytes());
+            attempt
+                .attempt_id
+                .push_str(&format!(":receipt-sha256:{digest:x}"));
+        }
         by_id.insert(attempt.attempt_id.clone(), attempt);
     }
     by_id.into_values().collect()
