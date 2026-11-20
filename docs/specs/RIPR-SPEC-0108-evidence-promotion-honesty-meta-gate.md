@@ -165,6 +165,12 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      the corpus naming the report, the version it is held at and a reason. A
      pin that disagrees with the report, is not older than the current version, or names
      no capture fails (#12293).
+     The capture's `analysis_inputs.analyzer_version` must name a full build
+     commit. For a clean producer, that commit's `CACHE_SCHEMA_VERSION` must
+     match the recorded generation, even for pinned captures. A dirty producer
+     requires a valid pin. A missing stamp or unavailable clean producer source
+     fails as missing evidence (#15533). If the producer commit is outside the
+     local history, fetch the exact commit before rerunning the gate.
      Every committed full capture (a report carrying the producer's `artifact`
      block or `source_subject.corpus`) must carry an `artifact.content_sha256`
      that matches its own bytes under `raw_json_placeholder_v1` (#12602). A

@@ -10,8 +10,13 @@
 //! a reason. A pin is checked against the report too: it must match the
 //! report's recorded version and must be older than the current one, so a pin
 //! cannot silently outlive the need for it.
+//! A clean capture must also agree with its producing commit. A dirty capture
+//! needs a pin because its commit does not identify its exact sources (#15533).
 
-use super::{EVIDENCE_PROMOTION_HONESTY_CORPUS, read_evidence_promotion_corpus};
+use super::{
+    EVIDENCE_PROMOTION_HONESTY_CORPUS, is_exact_git_commit, read_evidence_promotion_corpus,
+};
+use crate::run::capture_process_output;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -59,6 +64,43 @@ pub(super) fn recorded_version(report: &Value) -> Option<&str> {
     report
         .pointer("/source_subject/corpus/cache_schema_version")
         .and_then(Value::as_str)
+}
+
+fn producer_commit(report: &Value) -> Option<(&str, bool)> {
+    let stamp = report
+        .pointer("/analysis_inputs/analyzer_version")?
+        .as_str()?;
+    let (version, build) = stamp.split_once('+')?;
+    if version.is_empty() {
+        return None;
+    }
+    // The build identity precedes the source digest and language features.
+    let build = build.split('+').next()?;
+    let dirty_commit = build.strip_suffix("-dirty");
+    let commit = dirty_commit.unwrap_or(build);
+    is_exact_git_commit(commit).then_some((commit, dirty_commit.is_some()))
+}
+
+fn producer_generation(commit: &str) -> Result<String, String> {
+    let cat_file = |kind: &str, object: String| {
+        let bytes = capture_process_output(
+            "git",
+            &[
+                "--no-replace-objects".into(),
+                "cat-file".into(),
+                kind.into(),
+                object,
+            ],
+            &[("GIT_NO_LAZY_FETCH", "1")],
+        )
+        .map_err(|error| error.message)?;
+        String::from_utf8(bytes).map_err(|error| error.to_string())
+    };
+    if cat_file("-t", commit.into())?.trim() != "commit" {
+        return Err(format!("Git object `{commit}` is not a commit"));
+    }
+    let source = cat_file("blob", format!("{commit}:{SEAM_CACHE_SOURCE}"))?;
+    current_cache_schema_version(&source)
 }
 
 /// Whether a capture's per-stage `evidence_path` summaries are judged. Only a
@@ -119,8 +161,10 @@ fn check_reports(
     current: &str,
     pins: &BTreeMap<String, (String, String)>,
     violations: &mut Vec<String>,
+    mut read_producer_generation: impl FnMut(&str) -> Result<String, String>,
 ) {
     let mut used = Vec::new();
+    let mut producer_generations = BTreeMap::new();
     for (path, report) in reports {
         if report.pointer("/source_subject/corpus").is_none() {
             continue;
@@ -131,23 +175,55 @@ fn check_reports(
             ));
             continue;
         };
-        match pins.get(path) {
+        let pin = pins.get(path);
+        match pin {
             Some((pinned, _)) => {
                 used.push(path.as_str());
                 if pinned != recorded {
                     violations.push(format!(
                         "{path}: pinned at cache schema `{pinned}` but the report records `{recorded}`; update the pin to the intended generation (#12293)"
                     ));
+                    continue;
                 } else if !is_older(pinned, current) {
                     violations.push(format!(
                         "{path}: pinned at cache schema `{pinned}` but a pin is only for a generation older than the current `{current}`; remove the pin or recapture the report (#12293)"
                     ));
+                    continue;
                 }
             }
-            None if recorded != current => violations.push(format!(
-                "{path}: records cache schema `{recorded}` but the analyzer is at `{current}`. Recapture it with `ripr check --mode draft --format repo-exposure-json --root <subject>` (never by hand), or, if an older generation is intended, pin it in `report_cache_schema_pins` with a reason (#12293)"
-            )),
+            None if recorded != current => {
+                violations.push(format!(
+                    "{path}: records cache schema `{recorded}` but the analyzer is at `{current}`. Recapture it with `ripr check --mode draft --format repo-exposure-json --root <subject>` (never by hand), or, if an older generation is intended, pin it in `report_cache_schema_pins` with a reason (#12293)"
+                ));
+                continue;
+            }
             None => {}
+        }
+        let Some((commit, dirty)) = producer_commit(report) else {
+            violations.push(format!(
+                "{path}: missing producer evidence: `analysis_inputs.analyzer_version` must identify a full build commit (#15533)"
+            ));
+            continue;
+        };
+        if dirty {
+            if pin.is_none() {
+                violations.push(format!(
+                    "{path}: dirty producer `{commit}` needs a `report_cache_schema_pins` entry. Recapture current reports with a clean build (#15533)"
+                ));
+            }
+            continue;
+        }
+        match producer_generations
+            .entry(commit)
+            .or_insert_with(|| read_producer_generation(commit))
+        {
+            Ok(produced) if produced.as_str() != recorded => violations.push(format!(
+                "{path}: records cache schema `{recorded}` but clean producer `{commit}` declares `{produced}`; recapture with the intended build (#15533)"
+            )),
+            Err(error) => violations.push(format!(
+                "{path}: missing cache-schema evidence for clean producer `{commit}`: {error}. Make its source commit available locally and rerun the gate (#15533)"
+            )),
+            Ok(_) => {}
         }
     }
     for path in pins.keys() {
@@ -200,7 +276,7 @@ pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result
         return Ok(());
     }
     let current = current_generation()?;
-    check_reports(&reports, &current, &pins, violations);
+    check_reports(&reports, &current, &pins, violations, producer_generation);
     Ok(())
 }
 
@@ -209,8 +285,21 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const CURRENT_COMMIT: &str = "1111111111111111111111111111111111111111";
+    const OLDER_COMMIT: &str = "2222222222222222222222222222222222222222";
+    const MISSING_COMMIT: &str = "3333333333333333333333333333333333333333";
+
     fn capture(version: &str) -> Value {
-        json!({"source_subject": {"corpus": {"cache_schema_version": version}}})
+        capture_at(version, CURRENT_COMMIT)
+    }
+
+    fn capture_at(version: &str, build: &str) -> Value {
+        json!({
+            "source_subject": {"corpus": {"cache_schema_version": version}},
+            "analysis_inputs": {
+                "analyzer_version": format!("0.11.0+{build}+languages:rust=1,typescript=1,python=1,perl=0"),
+            },
+        })
     }
 
     fn run(reports: &[(&str, Value)], pins: &[(&str, &str, &str)]) -> Vec<String> {
@@ -228,7 +317,17 @@ mod tests {
             })
             .collect();
         let mut violations = Vec::new();
-        check_reports(&reports, "1.146", &pins, &mut violations);
+        check_reports(
+            &reports,
+            "1.146",
+            &pins,
+            &mut violations,
+            |commit| match commit {
+                CURRENT_COMMIT => Ok("1.146".into()),
+                OLDER_COMMIT => Ok("1.74".into()),
+                _ => Err("commit unavailable".into()),
+            },
+        );
         violations
     }
 
@@ -248,10 +347,65 @@ mod tests {
 
     #[test]
     fn a_pinned_older_generation_passes_only_while_the_pin_matches() {
-        let reports = [("r.json", capture("1.74"))];
+        let reports = [("r.json", capture_at("1.74", OLDER_COMMIT))];
         assert!(run(&reports, &[("r.json", "1.74", "historical capture")]).is_empty());
         let found = run(&reports, &[("r.json", "1.75", "historical capture")]);
         assert!(found[0].contains("pinned at cache schema `1.75`"));
+    }
+
+    #[test]
+    fn a_current_report_from_an_older_producer_fails() {
+        let reports = [("r.json", capture_at("1.146", OLDER_COMMIT))];
+        let found = run(&reports, &[]);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].contains(&format!(
+            "records cache schema `1.146` but clean producer `{OLDER_COMMIT}` declares `1.74`"
+        )));
+    }
+
+    #[test]
+    fn a_matching_pin_cannot_override_a_clean_producer() {
+        let found = run(
+            &[("r.json", capture("1.74"))],
+            &[("r.json", "1.74", "historical capture")],
+        );
+        assert_eq!(found.len(), 1);
+        assert!(found[0].contains(&format!(
+            "records cache schema `1.74` but clean producer `{CURRENT_COMMIT}` declares `1.146`"
+        )));
+    }
+
+    #[test]
+    fn a_dirty_producer_needs_a_valid_pin() {
+        let build = format!("{OLDER_COMMIT}-dirty+src:00000000000000aa");
+        let found = run(&[("r.json", capture_at("1.146", &build))], &[]);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].contains("needs a `report_cache_schema_pins` entry"));
+        assert!(
+            run(
+                &[("r.json", capture_at("1.1", &build))],
+                &[("r.json", "1.1", "historical capture")],
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_unidentified_or_unavailable_producer_fails_closed() {
+        let unidentified = json!({"source_subject": {"corpus": {"cache_schema_version": "1.146"}}});
+        let found = run(
+            &[
+                ("unstamped.json", unidentified),
+                ("unknown.json", capture_at("1.146", "unknown")),
+                ("unavailable.json", capture_at("1.146", MISSING_COMMIT)),
+            ],
+            &[],
+        );
+        assert_eq!(found.len(), 3);
+        assert!(found[0].contains("unstamped.json: missing producer evidence"));
+        assert!(found[1].contains("unknown.json: missing producer evidence"));
+        assert!(found[2].contains("unavailable.json: missing cache-schema evidence"));
+        assert!(found[2].contains(MISSING_COMMIT));
     }
 
     #[test]

@@ -456,7 +456,31 @@ jobs:
 
       - name: Evidence promotion honesty
         id: promotion_honesty
-        run: cargo xtask check-evidence-promotion-honesty
+        run: |
+          set -euo pipefail
+          # A squash can leave the exact capture producer outside all branches.
+          shopt -s nullglob
+          reports=(fixtures/evidence-promotion-honesty-corpus/reports/*.json)
+          if (( ${#reports[@]} )); then
+            commits="$(jq -rs '
+              [ .[] | objects
+                | select(try (.source_subject.corpus.cache_schema_version | type == "string"))
+                | try .analysis_inputs.analyzer_version
+                | strings | split("+")[1] | strings
+                | select(test("^[0-9a-fA-F]{40}$"))
+              ] | unique[]
+            ' "${reports[@]}")"
+            missing=()
+            while IFS= read -r commit; do
+              if [[ -n "$commit" ]] && ! GIT_NO_LAZY_FETCH=1 git --no-replace-objects cat-file -e "$commit^{commit}" 2>/dev/null; then
+                missing+=("$commit")
+              fi
+            done <<< "$commits"
+            if (( ${#missing[@]} )) && ! git fetch --no-tags --no-write-fetch-head origin "${missing[@]}"; then
+              echo "::warning::Unable to fetch all capture producer commits. The honesty gate will report missing evidence by capture."
+            fi
+          fi
+          cargo xtask check-evidence-promotion-honesty
 
       # Lint optional-feature code as well as type-checking it (#13152).
       # Keep the default-feature workspace pass below: cfg(not(feature = ...))
