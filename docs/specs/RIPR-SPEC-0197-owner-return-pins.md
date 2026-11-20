@@ -774,7 +774,14 @@ wrong credits.
      trait's method), except a pure `(**self).name(..)` / `(*self).name(..)`
      forward. A definition the parser did not index (a `macro_rules!` body)
      counts when its `fn name` text is visible. A definition in a
-     lexical-fallback file always counts.
+     lexical-fallback file always counts. For a method call, a definition
+     in an `impl` of a different declared named type does not count
+     (#15276): `impl Shape for Line` cannot take a call on a receiver typed
+     as the owner's `impl Shape for Square`. Both self types must be plain
+     non-generic names of a declared `struct`/`enum`/`union` that no
+     workspace `type` alias, `as` rename, or same-file `impl<..>` generic
+     parameter also binds; same-named types in different modules still
+     compete, as do trait default bodies.
    - An associated call `T::name(..)` (#6617) names only an associated
      function (no `self`) of an inherent `impl T` block, for a
      `return_value` (or bool-tail `predicate`) probe; a whole-value field
