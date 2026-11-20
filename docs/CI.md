@@ -1532,8 +1532,12 @@ when the `result` job starts, after every implementation job (up to 120
 minutes), so before calling a head dark the watchdog also lists
 `routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
-head would cancel the real run, so the watchdog never recommends it. This uses
-`actions: read` only. Mergeability is read once per head and never retried
+head would cancel the real run, so the watchdog never recommends it. The
+commit check listing can omit checks once the head exceeds 1,000 suites.
+If it misses the Result and the newest exact request completed, the watchdog
+reads one page from that request's own suite. A matching Result counts as
+covered. An unreadable or ambiguous run or suite read defers the head to the
+next sweep (#15577). Mergeability is read once per head and never retried
 in-sweep (#14636): `mergeable_state` is not resolved for heads in the merge
 queue, which read `unknown` on repeated polls, and the former in-sweep retry
 spent 10 s of sleep per queued head, which alone exceeded the job cap once most

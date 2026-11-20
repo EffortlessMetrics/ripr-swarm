@@ -23,7 +23,7 @@ args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"
 done
-serve() { if [ -f "$1" ]; then jq -r "$expr" < "$1"; else jq -r "$expr" <<< "$2"; fi; }
+serve() { if [ -f "$1" ]; then jq -r "${expr:-.}" < "$1"; else jq -r "${expr:-.}" <<< "$2"; fi; }
 all="$*"
 case "$all" in
   *"/pulls?state=open"*)
@@ -39,18 +39,23 @@ case "$all" in
     else
       touch "$FAKE_DIR/pull.$n.seen"; serve "$FAKE_DIR/pull.$n.json" '{}'
     fi ;;
+  *"/check-suites/277/check-runs?"*)
+    if [ -f "$FAKE_DIR/suite.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/suite.json" '{"total_count":0,"check_runs":[]}' ;;
+  *"/check-suites/"*) echo "Unexpected suite: $all" >&2; exit 1 ;;
   *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
     if [ -f "$FAKE_DIR/checks.$sha.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
   *"/workflows/routed-rust.yml/runs"*)
     # A `.later.json` fixture answers every look after the first (delayed run visibility).
+    sha="${all#*head_sha=}"; sha="${sha%%&*}"
     if [ -f "$FAKE_DIR/runs.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ -f "$FAKE_DIR/runs.later.fail" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
       echo "HTTP 502" >&2; exit 1
     elif [ -f "$FAKE_DIR/runs.later.json" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
-      serve "$FAKE_DIR/runs.later.json" '{"workflow_runs":[]}'
+      serve "$FAKE_DIR/runs.later.json" '{"total_count":0,"workflow_runs":[]}'
     else
-      touch "$FAKE_DIR/runs.seen"; serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}'
+      touch "$FAKE_DIR/runs.seen"; serve "$FAKE_DIR/runs.$sha.json" '{"total_count":0,"workflow_runs":[]}'
     fi ;;
   *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
     if [ -f "$FAKE_DIR/statuses.$sha.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
@@ -72,6 +77,8 @@ struct Pr {
     covered: bool,
     in_flight: bool,
     completed_run: bool,
+    suite: Option<&'static str>,
+    runs_response: Option<&'static str>,
     fresh: bool,
     late_run: Option<&'static str>,
     late_fail: bool,
@@ -101,6 +108,8 @@ impl Pr {
             covered: false,
             in_flight: false,
             completed_run: false,
+            suite: None,
+            runs_response: None,
             fresh: false,
             late_run: None,
             late_fail: false,
@@ -117,6 +126,15 @@ impl Pr {
     }
     fn sha(&self) -> String {
         format!("{:040x}", self.head_of.unwrap_or(self.number))
+    }
+
+    fn runs(&self, status: &str) -> String {
+        let sha = self.sha();
+        // Include an older exact request and a newer label-metadata run. The watchdog
+        // must select suite 277 from the newest exact request regardless of list order.
+        format!(
+            r#"{{"total_count":3,"workflow_runs":[{{"run_number":1,"check_suite_id":111,"status":"completed","head_sha":"{sha}","display_title":"Merge-ready request {sha}"}},{{"run_number":3,"check_suite_id":333,"status":"completed","head_sha":"{sha}","display_title":"Label metadata 3"}},{{"run_number":2,"check_suite_id":277,"status":"{status}","head_sha":"{sha}","display_title":"Merge-ready request {sha}"}}]}}"#
+        )
     }
 }
 
@@ -256,31 +274,33 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             )
             .map_err(|e| e.to_string())?;
         }
-        if pr.in_flight {
+        if let Some(response) = pr.runs_response {
+            fs::write(dir.join(format!("runs.{}.json", pr.sha())), response)
+                .map_err(|e| e.to_string())?;
+        } else if pr.in_flight || pr.completed_run {
             fs::write(
-                dir.join("runs.json"),
-                r#"{"workflow_runs":[{"status":"in_progress","display_title":"Merge-ready request abc"}]}"#,
+                dir.join(format!("runs.{}.json", pr.sha())),
+                pr.runs(if pr.in_flight {
+                    "in_progress"
+                } else {
+                    "completed"
+                }),
             )
             .map_err(|e| e.to_string())?;
         }
-        if pr.completed_run {
-            fs::write(
-                dir.join("runs.json"),
-                r#"{"workflow_runs":[{"status":"completed","display_title":"Merge-ready request abc"}]}"#,
-            )
-            .map_err(|e| e.to_string())?;
+        if let Some(suite) = pr.suite {
+            if suite == "HTTP 502" {
+                fs::write(dir.join("suite.fail"), "").map_err(|e| e.to_string())?;
+            } else {
+                fs::write(dir.join("suite.json"), suite.replace("{head}", &pr.sha()))
+                    .map_err(|e| e.to_string())?;
+            }
         }
         if pr.late_fail {
             fs::write(dir.join("runs.later.fail"), "").map_err(|e| e.to_string())?;
         }
         if let Some(status) = pr.late_run {
-            fs::write(
-                dir.join("runs.later.json"),
-                format!(
-                    r#"{{"workflow_runs":[{{"status":"{status}","display_title":"Merge-ready request abc"}}]}}"#
-                ),
-            )
-            .map_err(|e| e.to_string())?;
+            fs::write(dir.join("runs.later.json"), pr.runs(status)).map_err(|e| e.to_string())?;
         }
         if let Some(later) = pr.later_state {
             fs::write(
@@ -793,6 +813,10 @@ fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_a
         "{}",
         outcome.log
     );
+    assert_eq!(
+        outcome.log.matches("/check-suites/277/check-runs?").count(),
+        2
+    );
 
     // Touched within the grace window: a label applied moments ago has not run yet.
     let fresh = Pr {
@@ -811,6 +835,89 @@ fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_a
     };
     let outcome = run(&[moved], "dark-moved")?;
     assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    Ok(())
+}
+
+#[test]
+fn a_result_visible_only_in_the_canonical_suite_suppresses_relabel_advice() -> Result<(), String> {
+    for late in [false, true] {
+        let pr = Pr {
+            state: "clean",
+            completed_run: !late,
+            late_run: late.then_some("completed"),
+            suite: Some(
+                r#"{"total_count":1,"check_runs":[{"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":277}}]}"#,
+            ),
+            ..Pr::dirty(270)
+        };
+        let outcome = run(&[pr], &format!("suite-covered-{late}"))?;
+        assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+        assert!(
+            outcome
+                .summary
+                .contains("covered (required check in routed suite)")
+        );
+        assert!(
+            outcome
+                .summary
+                .contains("dark merge-ready heads reported: 0")
+        );
+        assert!(!outcome.stdout.contains("title=Dark merge-ready PR head"));
+        assert_eq!(outcome.log.matches("/check-suites/").count(), 1);
+        assert!(outcome.log.contains("/check-suites/277/check-runs?"));
+    }
+    Ok(())
+}
+
+#[test]
+fn unreadable_or_incomplete_suite_evidence_defers_the_head_and_preserves_the_sweep()
+-> Result<(), String> {
+    for (case, suite) in [
+        ("unreadable", "HTTP 502"),
+        ("incomplete", r#"{"total_count":101,"check_runs":[]}"#),
+        (
+            "wrong-head",
+            r#"{"total_count":1,"check_runs":[{"name":"Ripr Rust Small Result","head_sha":"other","check_suite":{"id":277}}]}"#,
+        ),
+    ] {
+        let pr = Pr {
+            state: "clean",
+            completed_run: true,
+            suite: Some(suite),
+            ..Pr::dirty(271)
+        };
+        let outcome = run(&[pr, Pr::dirty(272)], case)?;
+        assert_eq!(
+            (outcome.comments, outcome.failures),
+            (1, 1),
+            "{}",
+            outcome.summary
+        );
+        assert!(outcome.summary.contains("Result suite verification"));
+        assert!(outcome.summary.contains("deferred to the next sweep"));
+        assert!(outcome.summary.contains("conflict reported"));
+        assert!(!outcome.log.contains("merge-ready-dark:"));
+        assert!(!outcome.stdout.contains("title=Dark merge-ready PR head"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_truncated_routed_run_inventory_cannot_prove_a_head_dark() -> Result<(), String> {
+    let pr = Pr {
+        state: "clean",
+        runs_response: Some(r#"{"total_count":1000,"workflow_runs":[]}"#),
+        ..Pr::dirty(273)
+    };
+    let outcome = run(&[pr], "truncated-runs")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    assert!(
+        outcome
+            .summary
+            .contains("dark merge-ready heads reported: 0")
+    );
+    assert!(outcome.summary.contains("deferred to the next sweep"));
+    assert!(!outcome.log.contains("/check-suites/"));
     Ok(())
 }
 
@@ -858,7 +965,11 @@ fn a_failed_lookup_before_the_notice_posts_nothing_and_is_reported() -> Result<(
     assert_eq!(outcome.comments, 0, "{}", outcome.summary);
     assert!(
         outcome.summary.contains("re-apply notice failed")
-            && outcome.summary.contains("re-apply notices: 0"),
+            && outcome.summary.contains("re-apply notices: 0")
+            && outcome
+                .summary
+                .contains("dark merge-ready heads reported: 0")
+            && !outcome.stdout.contains("title=Dark merge-ready PR head"),
         "{}",
         outcome.summary
     );

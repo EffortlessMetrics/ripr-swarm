@@ -30,6 +30,8 @@ name: PR Staleness Watchdog
 #   that SHA. Run existence alone is not the discriminator: an unrelated
 #   same-workflow run can post a non-required result name, so coverage is
 #   judged by the presence of the exact check branch protection requires.
+#   The commit listing covers only the newest 1,000 suites. On a miss, check
+#   the newest exact completed request's own suite and defer unreadable evidence (#15577).
 # - The required check run is created only when the `result` job starts, after
 #   every implementation job finishes (up to 120 minutes). A head with no
 #   required check but a queued or in-progress merge-ready
@@ -193,24 +195,67 @@ jobs:
             disposition="$disposition; stale conflict status retired"
           }
 
+          routed_result() {
+            local runs request suite
+            runs="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$1&per_page=100")" || return 1
+            request="$(jq -sre --arg head "$1" '
+              def positive_int: type == "number" and . > 0 and floor == .;
+              .[0].total_count as $total |
+              if length == 0 or ($total | type != "number" or . >= 1000) or
+                 any(.[]; .total_count != $total or (.workflow_runs | type != "array")) then
+                error("unreadable or capped routed run inventory")
+              else
+                [.[].workflow_runs[]] |
+                if length != $total or any(.[]; .head_sha != $head or (.display_title | type != "string")) then
+                  error("incomplete or mismatched routed run inventory")
+                else
+                  map(select(.display_title == ("Merge-ready request " + $head))) |
+                  if any(.[]; (.run_number | positive_int | not) or
+                       (.status | IN("completed", "queued", "in_progress", "requested", "waiting", "pending") | not)) or
+                     ([.[].run_number] | unique | length) != length then error("ambiguous routed request")
+                  elif length == 0 then "missing"
+                  else
+                    map(select(.status != "completed")) as $active |
+                    if ($active | length) > 0 then "active \($active | length)"
+                    else max_by(.run_number).check_suite_id |
+                      if positive_int then tostring else error("missing routed suite id") end
+                    end
+                  end
+                end
+              end' <<<"$runs")" || return 1
+            case "$request" in
+              missing|active\ *) echo "$request"; return ;;
+            esac
+            # Read one page of one suite. Only a complete inventory can establish absence.
+            suite="$(gh api "repos/$REPOSITORY/check-suites/$request/check-runs?per_page=100&filter=all")" || return 1
+            jq -er --arg name "$REQUIRED_CHECK" --arg head "$1" --argjson suite "$request" '
+              if (.check_runs | type != "array") or
+                 any(.check_runs[]; .head_sha != $head or .check_suite.id != $suite or (.name | type != "string")) then
+                error("unreadable or mismatched Result suite")
+              elif any(.check_runs[]; .name == $name) then "covered"
+              elif .total_count == (.check_runs | length) then "completed"
+              else error("incomplete Result suite")
+              end' <<<"$suite"
+          }
+
           # A head with no required check and no run in flight, and no conflict to blame,
           # was pushed after the label or lost its label event (#10136): say so once per
           # head, with the remedy, instead of only warning in the job log.
           notify_dark() {
+            local request cause
             marker="<!-- merge-ready-dark:$2 -->"
             # A failed lookup is not "no notice yet" or "no run": stop and let the next sweep retry.
             bodies="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body')" || return 1
             known="$(grep -cF -- "$marker" <<<"$bodies" || true)"
             [ "$known" = "0" ] || return 2
-            # The run may have become visible since the sweep's first look: an active request
-            # must be left alone (re-applying the label cancels it). A request that finished
-            # without the required check (admission refused, cancelled) is a different cause
-            # from a push after the label.
-            counts="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2&per_page=100" --jq '[.workflow_runs[] | select(.display_title | startswith("Merge-ready request "))] | "\([.[] | select(.status != "completed")] | length) \(length)"')" || return 1
-            read -r active ran < <(awk '{a+=$1; t+=$2} END{print a+0, t+0}' <<<"$counts")
-            [ "$active" = "0" ] || return 3
+            # A new run can start or finish between the first read and the notice.
+            request="$(routed_result "$2")" || return 5
+            case "$request" in
+              active\ *) return 3 ;;
+              covered) return 6 ;;
+            esac
             still_requested "$1" "$2" "$3" || return $?
-            if [ "$ran" = "0" ]; then
+            if [ "$request" = "missing" ]; then
               cause="no qualification run exists for head \`${2:0:8}\`: it was pushed after the label was applied, or the label event was dropped"
             else
               cause="the qualification run for head \`${2:0:8}\` finished without the required check (for example admission was refused; see its run)"
@@ -256,10 +301,12 @@ jobs:
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)$unreadable_note"
               else
-                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed") | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')" || { api_failed "$number" "$head_sha" "workflow-runs read" "$mergeable_state"; continue; }
-                if [ "$in_flight" != "0" ]; then
+                request="$(routed_result "$head_sha")" || { api_failed "$number" "$head_sha" "workflow-runs read or Result suite verification" "$mergeable_state"; continue; }
+                if [ "$request" = "covered" ]; then
+                  disposition="covered (required check in routed suite)$unreadable_note"
+                elif [[ "$request" == active\ * ]]; then
                   in_progress=$((in_progress + 1)); in_flight_counted=1
-                  disposition="in flight ($in_flight merge-ready run(s) not yet at result; do not re-apply the label)$unreadable_note"
+                  disposition="in flight (${request#active } merge-ready run(s) not yet at result; do not re-apply the label)$unreadable_note"
                 elif [ "$mergeable_state" = "dirty" ]; then
                   dark=$((dark + 1)); dark_counted=1
                   disposition="DARK (conflicted); merge main into \`$head_ref\`, re-apply merge-ready for qualification, then enqueue through the native queue route"
@@ -271,7 +318,6 @@ jobs:
                   dark=$((dark + 1)); dark_counted=1; [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
                   # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
                   disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)$unreadable_note"
-                  echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."
                 fi
               fi
               ours="$(ours_state "$head_sha")" || ours="unreadable"
@@ -315,8 +361,13 @@ jobs:
                   2) disposition="$disposition; re-apply notice already posted" ;;
                   3) dark=$((dark - 1)); in_progress=$((in_progress + 1)); disposition="in flight (a merge-ready run became visible; do not re-apply the label)$unreadable_note" ;;
                   4) dark=$((dark - 1)); disposition="skip: request withdrawn or moved before write" ;;
+                  5) dark=$((dark - 1)); api_failures=$((api_failures + 1)); disposition="re-apply notice failed: Result suite verification or workflow-runs read failed; deferred to the next sweep" ;;
+                  6) dark=$((dark - 1)); disposition="covered (required check in routed suite)$unreadable_note" ;;
                   *) disposition="$disposition; re-apply notice failed" ;;
                 esac
+              fi
+              if [[ "$disposition" == "DARK;"* ]]; then
+                echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check or active qualification; remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."
               fi
             fi
             echo "| #$number | \`${head_sha:0:8}\` | \`$mergeable_state\` | $disposition |" >> "$GITHUB_STEP_SUMMARY"
