@@ -3082,6 +3082,18 @@ pub(crate) fn render_artifact_router_case(
     }
     fs::create_dir_all(&render_root)
         .map_err(|err| format!("failed to create {}: {err}", normalize_path(&render_root)))?;
+    // The child runs inside the render root, and `pr-review front-panel`
+    // refuses a `--root` that is not a directory there (#15249). Its root is
+    // only a label in the report, so mirror the relative fixture root as an
+    // empty directory instead of rewriting the recorded argument.
+    if case.family == "pr-review-front-panel" {
+        if let Some(violation) = artifact_router_path_violation(case.family, case.root) {
+            return Err(violation);
+        }
+        let mirrored_root = render_root.join(case.root);
+        fs::create_dir_all(&mirrored_root)
+            .map_err(|err| format!("failed to create {}: {err}", normalize_path(&mirrored_root)))?;
+    }
 
     let mut args = case
         .subcommand
