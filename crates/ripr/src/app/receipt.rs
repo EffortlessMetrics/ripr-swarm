@@ -1194,7 +1194,13 @@ mod tests {
             match check(name, &receipt)? {
                 Ok((text, _)) => failures.push(format!("{name}: accepted: {text}")),
                 Err(err) => {
-                    let names_field = err.contains(&format!("`{field}` is {described}, expected"));
+                    let expected = match field {
+                        "schema_version" => RECEIPT_SCHEMA_VERSION,
+                        "tool" => "ripr",
+                        _ => "receipt",
+                    };
+                    let names_field =
+                        err.contains(&format!("`{field}` is {described}, expected {expected:?};"));
                     let next_step = err.contains("rewrite");
                     if !names_field || !next_step || err.contains(&"x".repeat(40)) {
                         failures.push(format!("{name}: unexpected error: {err}"));
