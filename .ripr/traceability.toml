@@ -244,6 +244,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::identical_line_pairing_never_hides_reorders_or_block_moves",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_manual_let_else_rewrite_pairs_its_diverging_statement",
   "crates/ripr/src/analysis/probes/diff.rs::tests::manual_let_else_pairing_is_fail_closed",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_reversed_let_else_pattern_never_pairs",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_neighbouring_functions_arm_never_pairs",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_scrutinee_with_an_equals_sign_still_pairs",
