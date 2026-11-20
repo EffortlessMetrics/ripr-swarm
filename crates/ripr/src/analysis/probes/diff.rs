@@ -1175,12 +1175,6 @@ fn replaced_literal_is_paired(
     })
 }
 
-/// True when a trimmed changed line is one literal and nothing else: a
-/// number (sign, digits, `_`, one fractional `.`, type suffix), `true`/`false`,
-/// or one quoted string/char (no raw or byte prefix), optionally followed by
-/// a single `,` or `;`. Anything with an operator, call, path or second
-/// token is not bare, so the removed-side probe stays (fail closed).
-#[cfg(test)]
 /// #14333: whether a trimmed changed line inside an unsafe boundary names an
 /// edit of its own. A `//` comment or a line of only closers and separators
 /// (`}`, `})`, `);`) does not, so its probe keeps the boundary label.
@@ -1191,6 +1185,12 @@ pub(super) fn names_an_edit(text: &str) -> bool {
             .any(|character| !character.is_whitespace() && !"{}()[];,".contains(character))
 }
 
+/// True when a trimmed changed line is one literal and nothing else: a
+/// number (sign, digits, `_`, one fractional `.`, type suffix), `true`/`false`,
+/// or one quoted string/char (no raw or byte prefix), optionally followed by
+/// a single `,` or `;`. Anything with an operator, call, path or second
+/// token is not bare, so the removed-side probe stays (fail closed).
+#[cfg(test)]
 fn is_bare_literal_line(text: &str) -> bool {
     bare_literal_body(text).is_some()
 }
