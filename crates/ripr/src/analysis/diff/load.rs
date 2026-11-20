@@ -1836,6 +1836,27 @@ pub fn base_is_checked_out_head_with_parent(
     base: &str,
     git_timeout: Option<Duration>,
 ) -> bool {
+    base_names_checked_out_head(root, base, git_timeout, true)
+}
+
+/// The same rule as [`base_is_checked_out_head_with_parent`] without the
+/// `HEAD~1` requirement: whether the empty range is the checked-out base
+/// branch compared with itself, so the human Start-here line can say "you are
+/// on the comparison base" for a root commit too (#15326).
+pub(crate) fn base_is_checked_out_head(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+) -> bool {
+    base_names_checked_out_head(root, base, git_timeout, false)
+}
+
+fn base_names_checked_out_head(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+    require_parent: bool,
+) -> bool {
     let git = |args: &[&str]| {
         crate::git::run_git_output_with_deadline(
             root,
@@ -1863,7 +1884,7 @@ pub fn base_is_checked_out_head_with_parent(
     // Both spellings below require the base to name HEAD's own commit: an
     // empty range by construction, not a branch that is merely behind.
     let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
-    if !same_commit || commit("HEAD~1").is_none() {
+    if !same_commit || (require_parent && commit("HEAD~1").is_none()) {
         return false;
     }
     if base == branch {
