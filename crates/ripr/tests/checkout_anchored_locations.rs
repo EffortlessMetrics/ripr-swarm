@@ -132,6 +132,12 @@ fn member_root_rust_findings_name_files_from_the_checkout_top_level()
         sarif_uris(&anchored)?,
         vec!["crates/app/src/lib.rs".to_string()]
     );
+
+    // A member the checkout ignores is not a checkout file: no prefix.
+    std::fs::write(top.join(".gitignore"), "crates/\n")?;
+    let ignored = check(&member, patch, &config)?;
+    assert_eq!(github_files(&ignored)?, vec!["src/lib.rs".to_string()]);
+    assert_eq!(sarif_uris(&ignored)?, vec!["src/lib.rs".to_string()]);
     Ok(())
 }
 

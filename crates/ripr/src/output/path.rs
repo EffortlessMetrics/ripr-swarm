@@ -102,7 +102,8 @@ impl CheckoutAnchor {
     }
 
     /// Ask Git where `root` sits under its work tree. Any failure (no work
-    /// tree, no Git, a root outside the discovered top level) yields
+    /// tree, no Git, a root outside the discovered top level, a root Git
+    /// ignores or whose ignore status it cannot answer) yields
     /// [`CheckoutAnchor::unknown`], never an invented prefix.
     pub(crate) fn discover(root: &Path) -> Self {
         let Ok(canonical_root) = std::fs::canonicalize(root) else {
@@ -114,10 +115,23 @@ impl CheckoutAnchor {
         ) else {
             return Self::unknown();
         };
-        match canonical_root.strip_prefix(&top_level) {
-            Ok(prefix) => Self::below_top_level(prefix.to_path_buf()),
-            Err(_) => Self::unknown(),
+        let Ok(prefix) = canonical_root.strip_prefix(&top_level) else {
+            return Self::unknown();
+        };
+        // A root Git ignores (a scratch fixture under `target/`, a vendored
+        // tree) is not part of the checkout those consumers resolve against,
+        // so prefixing it would name a file the checkout does not carry.
+        // Only Git's negative answer admits the prefix.
+        if !prefix.as_os_str().is_empty()
+            && crate::git::work_tree_path_ignored(
+                &top_level,
+                prefix,
+                std::time::Duration::from_secs(5),
+            ) != Some(false)
+        {
+            return Self::unknown();
         }
+        Self::below_top_level(prefix.to_path_buf())
     }
 
     /// `file` (a finding path) as a path relative to the checkout top level.
@@ -778,9 +792,17 @@ mod tests {
         let repo = top.join("repo");
         let repo_member = repo.join("crates").join("app");
         std::fs::create_dir_all(&repo_member).map_err(|err| format!("mkdir: {err}"))?;
+        // A root Git ignores (a scratch fixture under `target/`) is not part
+        // of the checkout: it keeps the root-relative spelling.
+        std::fs::write(repo.join(".gitignore"), "target/\n")
+            .map_err(|err| format!("write .gitignore: {err}"))?;
+        let ignored_member = repo.join("target").join("fx");
+        std::fs::create_dir_all(&ignored_member).map_err(|err| format!("mkdir: {err}"))?;
         let at_member = CheckoutAnchor::discover(&repo_member);
         let at_top = CheckoutAnchor::discover(&repo);
+        let at_ignored = CheckoutAnchor::discover(&ignored_member);
         let _ = std::fs::remove_dir_all(&top);
+        assert_eq!(at_ignored, CheckoutAnchor::unknown());
         assert_eq!(
             at_member,
             CheckoutAnchor::below_top_level(PathBuf::from("crates").join("app"))
