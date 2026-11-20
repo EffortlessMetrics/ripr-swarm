@@ -1,4 +1,4 @@
-use super::{replay_printed_ripr, run_command, run_git, unique_temp_workspace};
+use super::{git_init_root, replay_printed_ripr, run_command, run_git, unique_temp_workspace};
 use std::path::Path;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -17,6 +17,7 @@ fn init_refusal_retries_replay_the_selected_root() -> TestResult {
             std::fs::create_dir_all(root.join(".github/workflows"))?;
             std::fs::write(root.join("ripr.toml"), config)?;
             std::fs::write(root.join(".github/workflows/ripr.yml"), workflow)?;
+            git_init_root(root)?;
         }
         let absolute = selected.to_str().ok_or("fixture root must be UTF-8")?;
         for (cwd, root_args) in [
@@ -101,6 +102,7 @@ fn init_refusal_omits_retries_for_an_unrepresentable_root() -> TestResult {
             selected.join(".github/workflows/ripr.yml"),
             "name: Existing\n",
         )?;
+        git_init_root(&selected)?;
         for args in [vec!["init"], vec!["init", "--ci", "github"]] {
             let refused = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&selected), &args)?;
             assert_eq!(refused.status.code(), Some(2), "{refused:?}");
