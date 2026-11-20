@@ -1111,6 +1111,39 @@ test('Given CLI help or invalid arguments, native children never begin provision
     assert.deepEqual(f.read().sdks, {});
   });
 
+test('Given an updated stable release, Copilot bootstrap refreshes it and checkout startup selects the pin',
+  { skip: !NATIVE }, async t => {
+    const entrypoint = fs.readFileSync(path.join(SOURCE_ROOT, '.github/copilot-instructions.md'), 'utf8');
+    const commands = heading => {
+      const section = entrypoint.split('## ' + heading + '\n')[1]?.split('\n## ')[0];
+      const block = section?.match(/```bash\n([\s\S]+?)\n```/);
+      assert.ok(block, 'missing Bash recipe under ' + heading);
+      return block[1];
+    };
+    const f = makeFixture(t);
+    await f.run(['--rust-only']);
+    const nextStable = '1.100.0';
+    const checkoutPin = '1.98.2';
+    f.update(state => { state.remoteStable = nextStable; });
+    f.put('rust-toolchain.toml', '[toolchain]\nprofile = "minimal"\nchannel = "' + checkoutPin
+      + '"\ncomponents = ["rustfmt", "clippy"]\n');
+    fs.symlinkSync('/usr/bin/mkdir', path.join(f.bin, 'mkdir'));
+    const shell = body => cp.spawnSync('/bin/bash', ['--noprofile', '--norc', '-ec', body],
+      { cwd: f.root, env: f.env, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024 });
+
+    const bootstrap = shell(commands('Prepare a GitHub Actions environment'));
+    assert.equal(bootstrap.status, 0, bootstrap.stdout + bootstrap.stderr);
+    assert.equal(f.read().stableRefreshes, 2);
+    assertComponents(f.read(), [checkoutPin + '-' + HOST, nextStable + '-' + HOST]);
+    assert.deepEqual(f.read().aptActions, ['update', 'install']);
+    assert.equal(f.read().editorSmokes, 1);
+
+    const started = shell(commands('Start work on the checkout') + '\nprintf "%s\\n" "$RUSTUP_TOOLCHAIN"');
+    assert.equal(started.status, 0, started.stdout + started.stderr);
+    assert.equal(started.stdout.trim().split('\n').at(-1), checkoutPin + '-' + HOST);
+    assert.equal(f.read().stableRefreshes, 2);
+  });
+
 test('Given a CLI invocation from another directory, the checked-out pin and space-containing homes drive installation',
   { skip: !NATIVE }, t => {
     const f = makeFixture(t);
