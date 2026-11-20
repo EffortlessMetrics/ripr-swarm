@@ -38009,8 +38009,9 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
 }
 
 /// #8652: through the public `check` path, an unqualified base that only
-/// exists as a remote-tracking ref names that full ref, and the suggested
-/// ref then loads instead of failing again.
+/// exists as a remote-tracking ref names that ref (#15484: as `origin/topic`,
+/// since that short name resolves to it), and the suggested ref then loads
+/// instead of failing again.
 #[test]
 fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -38047,7 +38048,8 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--base refs/remotes/origin/topic"),
+        stderr.contains("The fetched branch is `origin/topic`")
+            && stderr.contains("--base origin/topic`"),
         "the public failure must name the resolvable tracking ref: {stderr}"
     );
     let suggested = run_ripr(&[
@@ -38055,7 +38057,7 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
         "--root",
         &root.display().to_string(),
         "--base",
-        "refs/remotes/origin/topic",
+        "origin/topic",
     ]);
     assert!(
         suggested.status.success(),
@@ -38111,7 +38113,7 @@ fn check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch()
                 && stderr.contains(&format!("Pass the range's start: `--base {start}`")),
             "{range}: the refusal must name the range and the base to pass: {stderr}"
         );
-        for wrong in ["git fetch", "Check the spelling", "the fetched branch"] {
+        for wrong in ["git fetch", "Check the spelling", "fetched branch"] {
             assert!(
                 !stderr.contains(wrong),
                 "{range}: a range must get no `{wrong}` advice: {stderr}"

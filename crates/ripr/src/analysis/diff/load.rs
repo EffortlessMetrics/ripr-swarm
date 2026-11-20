@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::core_error::CoreError;
 use crate::domain::LanguageId;
 
+mod base_advice;
 #[cfg(test)]
 mod contract_tests;
 
@@ -2207,6 +2208,11 @@ fn missing_ref_repair(
          then re-run"
             .to_string();
     }
+    // #15484: a commit id or a version tag is never brought in by a branch
+    // fetch, so it gets its own fetch before the shallow and branch arms.
+    if let Some(advice) = base_advice::non_branch_ref_repair(root, missing_ref, git_timeout) {
+        return advice;
+    }
     if is_shallow_repository(root, git_timeout) {
         // An ancestor offset of a present commit (`HEAD~5`) needs depth
         // only. A branch, or an offset of one that is absent
@@ -2401,13 +2407,19 @@ fn remote_tracking_advice(
         .collect();
     match found.as_slice() {
         [] => None,
-        [only] => Some(format!(
-            "the fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
-        )),
+        [only] => {
+            // #15484: quote the short `origin/topic` when it resolves to
+            // exactly this ref; a shadowing tag or branch keeps the full ref.
+            let only = base_advice::tracking_ref_spelling(root, only, git_timeout);
+            Some(format!(
+                "The fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
+            ))
+        }
         _ => Some(format!(
-            "the fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
+            "The fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
             found
                 .iter()
+                .map(|tracking| base_advice::tracking_ref_spelling(root, tracking, git_timeout))
                 .map(|tracking| format!("`{tracking}`"))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -5462,7 +5474,8 @@ mod tests {
     fn missing_ref_repair_names_the_remote_tracking_form_it_can_resolve() -> std::io::Result<()> {
         // #8652: a fetch creates `origin/topic`, never a local `topic`.
         // When that remote-tracking ref already resolves, the repair must
-        // name the followable `--base refs/remotes/origin/topic`, not
+        // name the followable `--base origin/topic` (#15484: the short
+        // spelling, since it resolves to exactly that ref), not
         // re-prescribe the fetch that already happened.
         let dir = unique_fixture_root("missing-ref-remote-tracking")?;
         ignore_remove_dir_all(&dir);
@@ -5475,13 +5488,13 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/topic"),
+            repair.starts_with("The fetched branch is `origin/topic`")
+                && repair.contains("--base origin/topic`"),
             "the repair must name the resolvable remote-tracking ref, got: {repair}"
         );
         let head_repair = missing_ref_repair(&dir, "topic", "--head", None);
         assert!(
-            head_repair.contains("--head refs/remotes/origin/topic")
-                && !head_repair.contains("--base"),
+            head_repair.contains("--head origin/topic`") && !head_repair.contains("--base"),
             "the head repair must name its own flag, got: {head_repair}"
         );
 
@@ -5530,16 +5543,16 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/upstream/topic"),
+            repair.contains("--base upstream/topic`"),
             "the repair must name the one existing tracking ref, got: {repair}"
         );
 
         run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("refs/remotes/origin/topic")
-                && repair.contains("refs/remotes/upstream/topic")
-                && !repair.contains("pass `--base refs/remotes/origin/topic`"),
+            repair.contains("`origin/topic`")
+                && repair.contains("`upstream/topic`")
+                && !repair.contains("pass `--base origin/topic`"),
             "several tracking refs must all be named, none picked, got: {repair}"
         );
 
@@ -5563,7 +5576,7 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "feature/topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/feature/topic"),
+            repair.contains("--base origin/feature/topic`"),
             "a slashed branch must probe remote-tracking forms, got: {repair}"
         );
 

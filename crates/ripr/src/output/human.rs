@@ -1212,10 +1212,15 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
     // RIPR-PROP-0019 decision 6: raising the explicit overrides is the only
     // continuation route; the budget has no off switch (zero is rejected).
     // The widen wording is shared with JSON, LSP and the analysis outcome.
+    // #15484: when no raise can select the whole diff, the raise alone adds
+    // one file per run; name the route that completes.
+    let narrow = scope
+        .narrow_diff_route()
+        .map_or(String::new(), |route| format!(" {route}."));
     out.push_str(&format!(
-        "  To widen the analyzed partition, {}. Overrides above the analysis-cost limit are \
-         clamped, the budget cannot be switched off, and named partition continuation is not \
-         available.\n  partition_identity: {}\n\n",
+        "  To widen the analyzed partition, {}.{narrow} Overrides above the analysis-cost limit \
+         are clamped, the budget cannot be switched off, and named partition continuation is \
+         not available.\n  partition_identity: {}\n\n",
         scope.widen_instruction(),
         scope.partition_identity,
     ));
