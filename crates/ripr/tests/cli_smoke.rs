@@ -15195,6 +15195,56 @@ fn doctor_verifies_mcp_json_in_human_and_json_without_changing_exit() -> Result<
         "pass"
     );
 
+    // An unreachable stdio command is a PATH problem only for a local
+    // registration. A valid sibling may still need the same executable.
+    for (servers, expects_warning) in [
+        (
+            serde_json::json!({"ripr":{"type":"http","command":"ripr","args":["mcp","--stdio"]}}),
+            false,
+        ),
+        (
+            serde_json::json!({"ripr":{"url":"https://example.invalid","command":"ripr","args":["mcp","--stdio"]}}),
+            false,
+        ),
+        (
+            serde_json::json!({"ripr":{"type":"http","command":"ripr","args":["mcp","--stdio"]},
+                           "other":{"type":"stdio","command":"ripr","args":["mcp","--stdio"]}}),
+            true,
+        ),
+    ] {
+        let document = serde_json::json!({"mcpServers": servers});
+        std::fs::write(workspace.join(".mcp.json"), document.to_string())
+            .map_err(|err| format!("write .mcp.json: {err}"))?;
+        let report = json_of(&run_ripr_with_env(&args, &[("PATH", empty_path)]))?;
+        assert_eq!(
+            named_check(&report, "mcp_config").ok_or("missing config")?["status"],
+            "advisory"
+        );
+        assert!(named_check(&report, "mcp_stdio_executable").is_none());
+        let warnings = report["binary"]["warnings"]
+            .as_array()
+            .ok_or("missing binary warnings")?;
+        let path_advisory = "not on this shell's PATH";
+        assert_eq!(
+            warnings
+                .iter()
+                .any(|warning| warning.as_str().is_some_and(|s| s.contains(path_advisory))),
+            expects_warning,
+            "{document}: {warnings:?}"
+        );
+        let human = run_ripr_with_env(&["doctor", "--root", &root], &[("PATH", empty_path)]);
+        let text = String::from_utf8_lossy(&human.stdout);
+        assert!(
+            text.contains("specifies a URL or a transport other than stdio"),
+            "{text}"
+        );
+        assert_eq!(
+            text.contains(path_advisory),
+            expects_warning,
+            "{document}: {text}"
+        );
+    }
+
     // A different server only: ~ line, advisory check, same exit status.
     std::fs::write(
         workspace.join(".mcp.json"),

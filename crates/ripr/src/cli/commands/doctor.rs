@@ -3746,11 +3746,7 @@ fn mcp_config_problem(text: &str) -> Result<(), (String, &'static str)> {
         args.len() == 2 && args[0].as_str() == Some("mcp") && args[1].as_str() == Some("--stdio")
     });
     if command == Some("ripr") && exact {
-        if entry.get("url").is_some()
-            || entry
-                .get("type")
-                .is_some_and(|kind| kind.as_str() != Some("stdio"))
-        {
+        if !output::doctor_binary::mcp_entry_uses_stdio(entry) {
             return Err((
                 "`ripr` server entry specifies a URL or a transport other than stdio".to_string(),
                 MCP_REPAIR_FORCE,

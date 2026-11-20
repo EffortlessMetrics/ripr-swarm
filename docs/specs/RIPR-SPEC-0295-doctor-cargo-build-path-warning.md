@@ -74,7 +74,9 @@ the warning.
   `.vscode/mcp.json`, `.cursor/mcp.json`) launches it with the bare
   `"command": "ripr"` (or `ripr.exe`) in a server definition (`mcpServers` for
   `.mcp.json` and Cursor, `servers` for VS Code), doctor adds one advisory warning to `binary.warnings`
-  and prints it as a `~` line on the default screen (verbose keeps it, and
+  for a local command (no URL and an omitted or `stdio` transport). Each server
+  definition is evaluated separately, so a remote entry beside a by-name stdio
+  entry still leaves that file dependent on PATH. Doctor prints the warning as a `~` line on the default screen (verbose keeps it, and
   repeats it in the binary section). With `ripr` on PATH, no such config, a path-qualified
   command, or malformed JSON, it stays quiet. The exit status is unchanged.
 

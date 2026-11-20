@@ -137,16 +137,26 @@ fn ripr_config_dependents(root: &Path) -> Vec<String> {
         .collect()
 }
 
+/// A local MCP command can use stdio when the transport is omitted or explicit
+/// stdio. A URL describes a remote endpoint, even beside a command field.
+pub(crate) fn mcp_entry_uses_stdio(entry: &serde_json::Value) -> bool {
+    entry.get("url").is_none()
+        && entry
+            .get("type")
+            .is_none_or(|kind| kind.as_str() == Some("stdio"))
+}
+
 fn launches_ripr_by_name(document: &serde_json::Value, servers_key: &str) -> bool {
     document
         .get(servers_key)
         .and_then(serde_json::Value::as_object)
         .is_some_and(|servers| {
             servers.values().any(|server| {
-                server
-                    .get("command")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|command| matches!(command, "ripr" | "ripr.exe"))
+                mcp_entry_uses_stdio(server)
+                    && server
+                        .get("command")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|command| matches!(command, "ripr" | "ripr.exe"))
             })
         })
 }
