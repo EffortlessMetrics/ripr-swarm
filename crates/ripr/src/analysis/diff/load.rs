@@ -2230,9 +2230,12 @@ fn missing_ref_repair(
          then re-run"
             .to_string();
     }
-    // A full or abbreviated commit id is never a branch: a fetch creates no
-    // `origin/<sha>`, so branch-shaped advice cannot restore it. Name the
-    // commit fetch instead (and the history it needs in a shallow clone).
+    // A full commit id is never a branch: a fetch creates no `origin/<sha>`,
+    // so branch-shaped advice cannot restore it. Name the commit fetch
+    // instead (and the history it needs in a shallow clone). Only a full id:
+    // `git fetch` cannot request an abbreviated one, and a short hex word
+    // (`deadbeef`, `cafe123`) is as likely a branch, so those keep the
+    // branch advice below.
     if looks_like_commit_id(missing_ref)
         && let Some(remote) = commit_fetch_remote(root, git_timeout)
     {
@@ -2334,21 +2337,35 @@ fn missing_ref_repair(
     }
 }
 
-/// Whether `name` is spelled like a commit id: 7 to 64 hex digits (an
-/// abbreviated id up to a SHA-256 object id).
+/// Whether `name` is spelled like a full commit id: 40 (SHA-1) or 64
+/// (SHA-256) hex digits, the only forms `git fetch <remote> <id>` accepts.
 fn looks_like_commit_id(name: &str) -> bool {
-    (7..=64).contains(&name.len()) && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+    matches!(name.len(), 40 | 64) && name.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// Whether `name` is spelled like a release tag (`v1`, `v2.0.1`): a `v`
-/// followed by a digit, and no slash or other branch-path shape.
+/// Whether `name` is spelled like a dotted release tag (`v2.0`, `v1.2.3`,
+/// `v1.2.3-rc.1`): `v`, at least two dot-separated numeric parts, and an
+/// optional `-`/`+` suffix. A bare `v2` or `v2-feature` stays branch-shaped,
+/// because branches are named that way too.
 fn looks_like_release_tag(name: &str) -> bool {
-    let mut bytes = name.bytes();
-    bytes.next() == Some(b'v')
-        && bytes.next().is_some_and(|byte| byte.is_ascii_digit())
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    let Some(rest) = name.strip_prefix('v') else {
+        return false;
+    };
+    let (version, suffix) = match rest.find(['-', '+']) {
+        Some(at) => (&rest[..at], Some(&rest[at + 1..])),
+        None => (rest, None),
+    };
+    let parts = version.split('.').collect::<Vec<_>>();
+    parts.len() >= 2
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && suffix.is_none_or(|suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        })
 }
 
 /// The remote a commit fetch names: `origin` when configured or when the
@@ -5672,9 +5689,23 @@ mod tests {
             !repair.contains("fetched branch") && !repair.contains("origin/0123"),
             "a commit id is never a branch, got: {repair}"
         );
-        // A short id still names its commit fetch; a hex-less name does not.
-        let short = missing_ref_repair(&dir, "0123abc", "--base", None);
-        assert!(short.contains("`git fetch origin 0123abc`"), "{short}");
+        // `git fetch` cannot request an abbreviated id, and a short hex word
+        // may be a branch: those keep the branch advice.
+        for short in ["0123abc", "deadbeef", "1234567"] {
+            let repair = missing_ref_repair(&dir, short, "--base", None);
+            assert!(
+                !repair.contains("Fetch the commit")
+                    && repair.contains(&format!("fetched branch is named `origin/{short}`")),
+                "{short} keeps branch advice, got: {repair}"
+            );
+        }
+        // A fetched hex-named branch gets the tracking advice, not a commit fetch.
+        run_git_checked(
+            &dir,
+            &["update-ref", "refs/remotes/origin/deadbeef", "HEAD"],
+        )?;
+        let tracked = missing_ref_repair(&dir, "deadbeef", "--base", None);
+        assert!(tracked.contains("--base origin/deadbeef`"), "{tracked}");
         let branch = missing_ref_repair(&dir, "feature-x", "--base", None);
         assert!(
             branch.contains("fetched branch is named `origin/feature-x`"),
@@ -5697,14 +5728,22 @@ mod tests {
             &dir,
             &["remote", "add", "origin", "https://example.test/fork.git"],
         )?;
-        for tag in ["v9.9.9", "v2"] {
+        for tag in ["v9.9.9", "v2.0", "v1.2.3-rc.1"] {
             let repair = missing_ref_repair(&dir, tag, "--base", None);
             assert!(
                 repair.contains("`git fetch --tags origin`") && !repair.contains("fetched branch"),
                 "{tag} needs the tag fetch, got: {repair}"
             );
         }
-        for branch in ["velocity", "v", "version-2"] {
+        for branch in [
+            "velocity",
+            "v",
+            "version-2",
+            "v2",
+            "v2-feature",
+            "v3_beta",
+            "v1.x",
+        ] {
             let repair = missing_ref_repair(&dir, branch, "--base", None);
             assert!(
                 !repair.contains("--tags") && repair.contains("fetched branch"),
