@@ -178,7 +178,11 @@ pub(crate) fn create_output_dir(path: &Path, relocate_flag: &str) -> Result<(), 
 }
 
 fn create_output_dir_error(path: &Path, err: &io::Error, relocate_flag: &str) -> String {
-    let message = format!("create {} failed: {err}", path.display());
+    let message = format!(
+        "create {} failed: {}",
+        path.display(),
+        crate::bounded_input::read_failure_detail(err)
+    );
     // The flag names a directory; a file in the way is a wrong flag value,
     // not an OS mystery, so say so instead of `File exists (os error 17)`
     // (#14313).
@@ -194,7 +198,7 @@ fn create_output_dir_error(path: &Path, err: &io::Error, relocate_flag: &str) ->
             crate::output::path::human_path(path)
         );
     }
-    if is_unwritable_output_dir(err) {
+    if is_unwritable_output_dir(err) || err.kind() == io::ErrorKind::NotFound {
         format!("{message}; write elsewhere with {relocate_flag} PATH")
     } else {
         message
@@ -610,11 +614,13 @@ mod output_dir_tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_erofs_keeps_the_os_error_and_names_pilot_out() {
+    fn linux_erofs_names_the_cause_in_plain_words_and_names_pilot_out() {
         let err = io::Error::from_raw_os_error(30);
         assert_eq!(err.kind(), io::ErrorKind::ReadOnlyFilesystem);
         let message = create_output_dir_error(Path::new("target/ripr/pilot"), &err, "--out");
-        assert!(message.contains("(os error 30)"), "{message}");
+        // #15255: the cause stays, the raw errno suffix does not.
+        assert!(message.contains("Read-only file system"), "{message}");
+        assert!(!message.contains("os error"), "{message}");
         assert!(message.contains(PILOT_HINT), "{message}");
     }
 

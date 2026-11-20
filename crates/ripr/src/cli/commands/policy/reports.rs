@@ -4,7 +4,7 @@ use std::path::Path;
 
 use super::super::{
     maybe_append_jsonl, policy_readiness_generated_at, read_optional_manifest_for_report,
-    read_optional_text_for_report, write_text_file,
+    read_optional_text_for_report, read_optional_text_with_errno_for_report, write_text_file,
 };
 use super::parse::{
     parse_policy_history_options, parse_policy_operations_options,
@@ -165,35 +165,34 @@ pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
         policy_readiness_json: options
             .policy_readiness
             .as_ref()
-            .map(|path| read_optional_text_for_report("policy readiness", path)),
+            .map(|path| read_optional_text_with_errno_for_report("policy readiness", path)),
         waiver_aging_json: options
             .waiver_aging
             .as_ref()
-            .map(|path| read_optional_text_for_report("waiver aging", path)),
+            .map(|path| read_optional_text_with_errno_for_report("waiver aging", path)),
         suppression_health_json: options
             .suppression_health
             .as_ref()
-            .map(|path| read_optional_text_for_report("suppression health", path)),
+            .map(|path| read_optional_text_with_errno_for_report("suppression health", path)),
         baseline_delta_json: options
             .baseline_delta
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline debt delta", path)),
+            .map(|path| read_optional_text_with_errno_for_report("baseline debt delta", path)),
         gate_decision_json: options
             .gate_decision
             .as_ref()
-            .map(|path| read_optional_text_for_report("gate decision", path)),
-        recommendation_calibration_json: options
-            .recommendation_calibration
-            .as_ref()
-            .map(|path| read_optional_text_for_report("recommendation calibration", path)),
+            .map(|path| read_optional_text_with_errno_for_report("gate decision", path)),
+        recommendation_calibration_json: options.recommendation_calibration.as_ref().map(|path| {
+            read_optional_text_with_errno_for_report("recommendation calibration", path)
+        }),
         mutation_calibration_json: options
             .mutation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("mutation calibration", path)),
+            .map(|path| read_optional_text_with_errno_for_report("mutation calibration", path)),
         preview_boundary_json: options
             .preview_boundary
             .as_ref()
-            .map(|path| read_optional_text_for_report("preview boundary", path)),
+            .map(|path| read_optional_text_with_errno_for_report("preview boundary", path)),
     };
     let report = output::policy_operations::build_policy_operations_report(input);
     let rendered_json = output::policy_operations::render_policy_operations_json(&report)?;
@@ -222,11 +221,14 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
             .map(|path| output::policy_history::display_path(path)),
         commit: options.commit,
         pr_number: options.pr_number,
-        current_json: read_optional_text_for_report("policy operations", &options.current),
+        current_json: read_optional_text_with_errno_for_report(
+            "policy operations",
+            &options.current,
+        ),
         history_jsonl: options
             .history
             .as_ref()
-            .map(|path| read_optional_text_for_report("policy history", path)),
+            .map(|path| read_optional_text_with_errno_for_report("policy history", path)),
     };
     let report = output::policy_history::build_policy_history_report(input);
     let rendered_json = output::policy_history::render_policy_history_json(&report)?;
@@ -266,11 +268,14 @@ pub(crate) fn policy_promotion(args: &[String]) -> Result<(), String> {
             .history
             .as_ref()
             .map(|path| output::policy_promotion::display_path(path)),
-        operations_json: read_optional_text_for_report("policy operations", &options.operations),
+        operations_json: read_optional_text_with_errno_for_report(
+            "policy operations",
+            &options.operations,
+        ),
         history_json: options
             .history
             .as_ref()
-            .map(|path| read_optional_text_for_report("policy history", path)),
+            .map(|path| read_optional_text_with_errno_for_report("policy history", path)),
     };
     let report = output::policy_promotion::build_policy_promotion_report(input);
     let rendered_json = output::policy_promotion::render_policy_promotion_json(&report)?;
@@ -299,10 +304,9 @@ pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
             .evidence
             .as_ref()
             .map(|path| output::policy_preview_promotion::display_path(path)),
-        evidence_json: options
-            .evidence
-            .as_ref()
-            .map(|path| read_optional_text_for_report("preview promotion evidence", path)),
+        evidence_json: options.evidence.as_ref().map(|path| {
+            read_optional_text_with_errno_for_report("preview promotion evidence", path)
+        }),
     };
     let report = output::policy_preview_promotion::build_preview_promotion_report(input);
     let rendered_json = output::policy_preview_promotion::render_preview_promotion_json(&report)?;
@@ -336,11 +340,10 @@ pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
         ledger_json: options
             .ledger
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR evidence ledger", path)),
-        history_json: options
-            .history
-            .as_ref()
-            .map(|path| read_optional_text_for_report("PR evidence ledger history", path)),
+            .map(|path| read_optional_text_with_errno_for_report("PR evidence ledger", path)),
+        history_json: options.history.as_ref().map(|path| {
+            read_optional_text_with_errno_for_report("PR evidence ledger history", path)
+        }),
     };
     let report = output::waiver_aging::build_waiver_aging_report(input);
     let rendered_json = output::waiver_aging::render_waiver_aging_json(&report)?;

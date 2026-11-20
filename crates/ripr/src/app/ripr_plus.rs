@@ -386,7 +386,7 @@ fn ripr_plus_receipt_from_options(options: &RiprPlusOptions, head: &str) -> Resu
 /// RIPR+ basis.
 fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String> {
     let text = crate::bounded_input::read_to_string(gap_ledger)
-        .map_err(|err| format!("failed to read gap ledger {}: {err}; check the file is readable or pass another with `--gap-ledger`", gap_ledger.display()))?;
+        .map_err(|err| format!("failed to read gap ledger {}: {}; check the file is readable or pass another with `--gap-ledger`", gap_ledger.display(), crate::bounded_input::read_failure_detail(&err)))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: RiprConfig::default().suppressions().display_path(),
         ..output::badge::BadgePolicy::default()

@@ -677,7 +677,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
 
 fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
+        .map_err(|err| {
+        format!(
+            "repo exposure input is not valid JSON ({err}); pass a file written by `ripr check --format repo-exposure-json`"
+        )
+    })?;
     let seams = value
         .get("seams")
         .and_then(Value::as_array)

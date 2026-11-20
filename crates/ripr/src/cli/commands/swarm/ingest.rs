@@ -410,10 +410,7 @@ mod tests {
         let Err(message) = run(options(&root, Path::new("bad.json"))) else {
             return Err("malformed JSON must fail".to_string());
         };
-        assert!(
-            message.starts_with("failed to parse swarm ingest result JSON: "),
-            "{message}"
-        );
+        assert!(message.contains(" is not valid JSON ("), "{message}");
         let _ = std::fs::remove_dir_all(&parent);
         Ok(())
     }

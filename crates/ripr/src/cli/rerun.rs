@@ -2003,9 +2003,9 @@ fn normalize_changed_test(root: &Path, changed_test: &Path) -> Result<PathBuf, S
         return changed_test
             .strip_prefix(root)
             .map(PathBuf::from)
-            .map_err(|err| {
+            .map_err(|_prefix_error| {
                 format!(
-                    "rerun changed test {} is outside root {}: {err}",
+                    "rerun changed test {} is outside root {}; pass a test path under that root, or change `--root`",
                     crate::output::path::human_path(changed_test),
                     crate::output::path::human_path(root)
                 )
@@ -4525,7 +4525,7 @@ mod tests {
         assert!(
             limitation
                 .message
-                .starts_with("failed to parse explicit before JSON: "),
+                .starts_with("--before file is not valid JSON ("),
             "unexpected message: {}",
             limitation.message
         );

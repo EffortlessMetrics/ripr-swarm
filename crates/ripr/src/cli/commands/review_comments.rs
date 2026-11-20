@@ -300,13 +300,17 @@ fn load_review_comments_analysis_outcome(
     };
     let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: read failed: {error}",
-            path.display()
+            "review-comments --check-output {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &error,
+                "pass the file written by `ripr check --json`"
+            )
         )
     })?;
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
+            "review-comments --check-output {} is not valid JSON ({error}); pass the file written by `ripr check --json`",
             path.display()
         )
     })?;
@@ -459,13 +463,17 @@ fn load_check_output_suppressed_findings(
 ) -> Result<Vec<output::review_comments::CheckOutputSuppressedFinding>, String> {
     let text = crate::bounded_input::read_to_string(path).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: read failed: {error}",
-            path.display()
+            "review-comments --check-output {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &error,
+                "pass the file written by `ripr check --json`"
+            )
         )
     })?;
     let document: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
+            "review-comments --check-output {} is not valid JSON ({error}); pass the file written by `ripr check --json`",
             path.display()
         )
     })?;
@@ -599,8 +607,12 @@ fn review_comments_with_admission(
                 &receipt_path,
                 "configuration",
                 format!(
-                    "review-comments --gap-ledger {} is invalid: read failed: {err}",
-                    output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+                    "review-comments --gap-ledger {} {}",
+                    output::pr_inline_comment_publish_plan::display_path(gap_ledger),
+                    crate::bounded_input::unreadable_input_phrase(
+                        &err,
+                        "pass the file written by `ripr reports gap-ledger`"
+                    )
                 ),
             )
         })?;
@@ -2893,7 +2905,8 @@ mod tests {
             Err(err) => err,
         };
         assert!(read_err.contains("review-comments --gap-ledger"));
-        assert!(read_err.contains("read failed"));
+        assert!(read_err.contains("does not exist"), "{read_err}");
+        assert!(!read_err.contains("os error"), "{read_err}");
 
         // Pin the read-failure receipt before the next run overwrites it.
         let receipt_path = out.with_file_name("run-receipt.json");

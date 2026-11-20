@@ -216,7 +216,7 @@ pub(crate) fn build_gate_decision_report(
             let resolved = resolve_root_path(&input.root, path);
             let display = display_path(path);
             let ledger_result = consumed
-                .read_toml_text_and_record(&resolved, &display)
+                .read_toml_text_and_record(&resolved, &display, "--exception-policy")
                 .and_then(|(text, digest)| {
                     consumed.exception_policy = Some(digest);
                     exception_policy::load_exception_ledger_from_text(&text, &display)
@@ -242,7 +242,7 @@ pub(crate) fn build_gate_decision_report(
             let resolved = resolve_root_path(&input.root, path);
             let display = display_path(path);
             let ledger_result = consumed
-                .read_toml_text_and_record(&resolved, &display)
+                .read_toml_text_and_record(&resolved, &display, "--acknowledgements")
                 .and_then(|(text, digest)| {
                     consumed.acknowledgements = Some(digest);
                     structured_acknowledgements::load_structured_acknowledgements_from_text(

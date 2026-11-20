@@ -197,8 +197,9 @@ fn check_annotations(
     }
     let actual = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
-            "missing or unreadable {}: {err}; run `ripr annotations` to write it",
-            options.out
+            "missing or unreadable {}: {}; run `ripr annotations` to write it",
+            options.out,
+            crate::bounded_input::read_failure_detail(&err)
         )
     })?;
     if actual == generated.text {

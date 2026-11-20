@@ -247,9 +247,14 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
     let json_path = repo.join(PR_EVIDENCE_JSON);
     let markdown_path = repo.join(PR_EVIDENCE_MD);
     let text = fs::read_to_string(&json_path)
-        .map_err(|err| format!("missing or unreadable {PR_EVIDENCE_JSON}: {err}"))?;
+        .map_err(|err| {
+        format!(
+            "missing or unreadable {PR_EVIDENCE_JSON}: {}; run `ripr pr-evidence --base REV` to write it",
+            crate::bounded_input::read_failure_detail(&err)
+        )
+    })?;
     let packet: Value = serde_json::from_str(&text)
-        .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
+        .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON ({err}); run `ripr pr-evidence --base REV` to rewrite it"))?;
     if let Some(error) = reject_pr_evidence_error_packet(&packet) {
         return Err(error);
     }

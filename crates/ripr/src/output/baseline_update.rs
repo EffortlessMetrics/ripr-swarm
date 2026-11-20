@@ -422,11 +422,11 @@ fn parse_json(
     expected_kind: &str,
 ) -> Result<Value, String> {
     let value = serde_json::from_str::<Value>(json_text)
-        .map_err(|err| format!("parse {label} {path} failed: {err}"))?;
+        .map_err(|err| format!("parse {label} {path} failed: {err}; regenerate the input with the command that wrote it, then rerun"))?;
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("{label} {path} missing schema_version"))?;
+        .ok_or_else(|| format!("{label} {path} missing schema_version; regenerate the input with the command that wrote it, then rerun"))?;
     if schema_version != SCHEMA_VERSION {
         return Err(format!(
             "{label} {path} has unsupported schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`"

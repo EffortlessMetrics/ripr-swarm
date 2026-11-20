@@ -88,6 +88,9 @@ mod init_ci_guidance;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/init_followups.rs"]
 mod init_followups;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/input_file_errors.rs"]
+mod input_file_errors;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
@@ -3983,7 +3986,7 @@ fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(),
 
     let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
     assert!(
-        decision.contains("failed to read exception policy"),
+        decision.contains("failed to read --exception-policy"),
         "decision: {decision}"
     );
     Ok(())

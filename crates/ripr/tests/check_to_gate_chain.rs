@@ -366,7 +366,7 @@ fn malformed_or_incomplete_check_output_is_refused() -> Result<(), String> {
         &fixture.0,
         "target/ripr/pr/malformed-check.json",
         "target/ripr/review/malformed-comments.json",
-        "JSON parse failed",
+        "is not valid JSON",
     )?;
 
     check["analysis_outcome"] = Value::Null;
@@ -421,9 +421,9 @@ fn assert_check_output_refused(
             diagnose("review-comments fail-closed", &output)
         ));
     }
-    if !stderr.contains("review-comments --check-output") || !stderr.contains("invalid") {
+    if !stderr.contains("review-comments --check-output") {
         return Err(format!(
-            "fail-closed stderr lost the --check-output invalid diagnostic: {stderr}"
+            "fail-closed stderr lost the --check-output diagnostic: {stderr}"
         ));
     }
     if !stderr.contains(expected_needle) {

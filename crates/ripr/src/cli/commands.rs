@@ -905,7 +905,24 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     let report = output::mutation_calibration::mutation_calibration_report_from_json(
         &repo_exposure_json,
         &mutants_json,
-    )?;
+    )
+    .map_err(|err| {
+        name_calibration_input_error(
+            err,
+            &[
+                (
+                    "repo exposure input is not valid JSON",
+                    "--repo-exposure-json",
+                    &options.repo_exposure_json,
+                ),
+                (
+                    "cargo-mutants input is not valid JSON",
+                    "--mutants-json",
+                    &options.mutants_json,
+                ),
+            ],
+        )
+    })?;
     // The report owns the input-head projection and its qualification on every surface.
     eprintln!("{}", report.head_provenance_disclosure());
     let rendered = match options.format {
@@ -1076,6 +1093,21 @@ fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
                 .to_string()
         }
     }
+}
+
+/// Name the flag and file on a parse error raised by the pure report builder,
+/// which only sees JSON text. `inputs` maps the builder's stable message prefix
+/// to the flag and path that supplied that text.
+fn name_calibration_input_error(err: String, inputs: &[(&str, &str, &Path)]) -> String {
+    for (prefix, flag, path) in inputs {
+        if let Some(rest) = err.strip_prefix(prefix) {
+            return format!(
+                "calibrate cargo-mutants {flag} {} is not valid JSON{rest}",
+                output::outcome::display_path(path)
+            );
+        }
+    }
+    err
 }
 
 /// `flag` names the command and flag (`outcome --before`) so a directory
@@ -1991,6 +2023,16 @@ fn policy_readiness_generated_at() -> Result<String, String> {
 }
 
 pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
+    read_report_input_plain(label, path)
+}
+
+/// Raw-errno variant for the policy history, operations and promotion reports,
+/// which still classify a missing input by the host's errno text
+/// (`policy_history.rs`, `policy_operations.rs`, `policy_promotion.rs`).
+pub(super) fn read_optional_text_with_errno_for_report(
+    label: &str,
+    path: &Path,
+) -> Result<String, String> {
     crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
@@ -1999,9 +2041,8 @@ pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<
     })
 }
 
-/// Like `read_optional_text_for_report`, but a missing file reads `not found`
-/// (#9851 vocabulary) instead of the host's errno text. Kept separate because
-/// some policy reports still classify a missing input by that errno text.
+/// A missing file reads `not found` (#9851 vocabulary) instead of the host's
+/// errno text; other failures drop the `(os error N)` suffix.
 fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
     crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
