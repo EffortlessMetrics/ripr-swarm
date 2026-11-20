@@ -210,6 +210,9 @@ pub(crate) struct SnapshotListingCell(OnceLock<Arc<SnapshotListing>>);
 
 impl SnapshotListingCell {
     fn get(&self, root: &Path) -> &SnapshotListing {
+        // Record on every read, including an empty or already-warm listing.
+        // This is a conservative observation, not a sealed disk dependency.
+        super::probe_read_trace::universe(super::probe_read_trace::Universe::SnapshotListing);
         self.0
             .get_or_init(|| Arc::new(SnapshotListing::read(root)))
             .as_ref()
@@ -227,6 +230,9 @@ pub(crate) struct LocalSnapshotMacrosCell(OnceLock<Arc<BTreeSet<String>>>);
 
 impl LocalSnapshotMacrosCell {
     fn defines(&self, index: &RustIndex, name: &str) -> bool {
+        // A prior probe may have built this memo. Both positive and negative
+        // answers still depend on every indexed file, including on warm reads.
+        super::probe_read_trace::universe(super::probe_read_trace::Universe::Files);
         self.0
             .get_or_init(|| {
                 let mut names = BTreeSet::new();

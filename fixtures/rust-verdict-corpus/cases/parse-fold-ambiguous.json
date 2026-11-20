@@ -1,0 +1,47 @@
+{
+  "case_id": "parse-fold-ambiguous",
+  "subject_id": "authored-parse-fold",
+  "diff": "cases/parse-fold-ambiguous.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": "The test file declares `band_from` twice: a top-level identity parse and, in the test's own `mod shifted`, a shadowing one that adds 5. Reading the outer one would place the inputs 9 and 10 on the boundary; the test really passes 14 and 15.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "band <= 10",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: band 10 is low instead of high, but the shifted inputs are 14 and 15"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A parse fold that picks one `band_from` would credit this test: the top-level identity parse makes the inputs 9 and 10, which straddle the boundary. The call inside `mod shifted` resolves to the shadowing `band_from`, which adds 5, so the tests pass 14 and 15 and the edit survives. ripr must stay limited because the helper name has two declarations in the file (RIPR-SPEC-0158). 0 of 1 listed mutants fails cargo test.",
+  "labeling_observation": {
+    "ripr_commit": "8e1d63b9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#30"
+  ]
+}
