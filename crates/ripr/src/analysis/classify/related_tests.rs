@@ -1418,6 +1418,19 @@ fn find_related_tests_with_candidates<'a>(
                     )
                 })
             });
+        // A doctest compiles as a separate crate. Its file and the spelling
+        // of a free call cannot establish that it calls the library owner.
+        if calls_owner_by_name
+            && index.doctest_source(test).is_some()
+            && owner_fn.is_none_or(|owner| {
+                owner.item.container != crate::analysis::facts::FunctionContainer::Free
+                    || !super::call_identity::doctest_calls_free_owner(
+                        index, owner, test, pin_syntax,
+                    )
+            })
+        {
+            continue;
+        }
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct

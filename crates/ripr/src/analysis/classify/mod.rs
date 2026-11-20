@@ -31,6 +31,7 @@ mod field_reach;
 mod flow;
 mod framework_oracle;
 mod gap_admission;
+mod gated_doctest;
 mod helper_transfer;
 mod hop_polling;
 mod implicit_effect;
@@ -158,6 +159,7 @@ pub(in crate::analysis) use gap_admission::{
 pub(in crate::analysis) use gap_admission::{
     withhold_read_limited_workspace_gap, withhold_truncated_discovery_gap,
 };
+pub(in crate::analysis) use gated_doctest::withhold_gated_doctest_gap;
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,

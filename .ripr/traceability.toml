@@ -19505,6 +19505,7 @@ tests = [
   "crates/ripr/src/analysis/facts/doctests/tests.rs::a_spaced_doc_attribute_before_the_run_is_a_shared_document",
   "crates/ripr/tests/doctest_owner_pins.rs::a_doc_example_exact_pin_through_the_crate_name_exposes_the_return",
   "crates/ripr/tests/doctest_owner_pins.rs::a_doc_example_bare_call_imported_from_the_crate_exposes_the_return",
+  "crates/ripr/tests/doctest_owner_pins.rs::an_unresolved_call_in_a_doc_example_does_not_reach_the_owner",
   "crates/ripr/tests/doctest_owner_pins.rs::a_doc_example_rustdoc_does_not_run_pins_nothing",
   "crates/ripr/tests/doctest_owner_pins.rs::crate_self_and_super_in_a_doc_example_name_the_example_not_the_library",
   "crates/ripr/tests/doctest_owner_pins.rs::a_bare_call_the_example_does_not_import_pins_nothing",
@@ -19522,6 +19523,8 @@ code = [
   "crates/ripr/src/analysis/facts/member_crates.rs",
   "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/facts/mod.rs",
+  "crates/ripr/src/analysis/classify/call_identity.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
 ]
 outputs = [
