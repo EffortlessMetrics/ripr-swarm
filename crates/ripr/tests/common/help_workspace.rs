@@ -28,12 +28,27 @@ static NEXT_WORKSPACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 pub(super) fn in_help_workspace(
     test: impl FnOnce(&std::path::Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    in_help_workspace_under(&std::env::temp_dir(), test)
+}
+
+/// Later repair phases inspect repository state before resolving an attempt.
+/// Keep Git metadata in the owned parent so the no-write check on the working
+/// directory continues to permit only the original invalid configuration.
+pub(super) fn in_help_checkout(
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    super::in_git_root("repair", |repo| in_help_workspace_under(repo, test))
+}
+
+fn in_help_workspace_under(
+    parent: &std::path::Path,
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let parent = std::env::temp_dir();
-    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let sequence = NEXT_WORKSPACE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let root = parent.join(format!(
         "ripr-group-help-{}-{nonce}-{sequence}",
