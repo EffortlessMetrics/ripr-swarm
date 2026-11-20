@@ -155,6 +155,9 @@ pub(super) fn binding_is_mut(masked_body: &str, receiver: &str) -> bool {
 ///   crate::Shape`, `impl dyn Shape { .. }`, `impl<T> X for Box<T>`);
 /// - a `type` item mentions `Box` or `dyn` (`type DynShape = dyn Shape;`
 ///   then `impl Iterator for DynShape`);
+/// - an `impl` self type or a `type` alias's value names `trait_name` itself,
+///   which before edition 2021 is the trait object (`impl Iterator for
+///   Shape`, `impl Shape { .. }`);
 /// - `dyn <path>::trait_name` or `dyn trait_name` is spelled anywhere except
 ///   as a `: Box<dyn trait_name>` annotation (a macro argument such as
 ///   `exact!(dyn Shape)`, an `as` cast, a generic argument).
@@ -176,7 +179,29 @@ fn workspace_may_extend_dyn_or_box(trait_name: &str, index: &RustIndex) -> bool 
                     mentions(&rest[..rest.find(ends).unwrap_or(rest.len())])
                 })
         };
-        item_mentions("impl", &['{', ';'])
+        // Before edition 2021 a bare trait name in type position is the
+        // trait object: `impl Iterator for Shape` and `type S = Shape;`
+        // extend `dyn Shape` without spelling `dyn`.
+        let bare_object = whole_word_offsets(&masked, "impl")
+            .into_iter()
+            .any(|offset| {
+                let rest = &masked[offset + "impl".len()..];
+                let header = &rest[..rest.find(['{', ';']).unwrap_or(rest.len())];
+                let self_type = whole_word_offsets(header, "for")
+                    .last()
+                    .map_or(header, |&at| &header[at + "for".len()..]);
+                !whole_word_offsets(self_type, trait_name).is_empty()
+            })
+            || whole_word_offsets(&masked, "type")
+                .into_iter()
+                .any(|offset| {
+                    let rest = &masked[offset + "type".len()..];
+                    let item = &rest[..rest.find([';', '{']).unwrap_or(rest.len())];
+                    item.split_once('=')
+                        .is_some_and(|(_, value)| !whole_word_offsets(value, trait_name).is_empty())
+                });
+        bare_object
+            || item_mentions("impl", &['{', ';'])
             || item_mentions("type", &[';', '{'])
             || whole_word_offsets(&masked, "dyn")
                 .into_iter()
