@@ -56,9 +56,9 @@ mod fixture_receiver;
 mod helper_arguments;
 mod nominal_observer;
 pub(in crate::analysis) use boolean_projection::boolean_projection_matches_versions;
-pub(in crate::analysis) fn conditional_projection_assertion(assertion: &OracleFact) -> bool {
+pub(in crate::analysis) fn mapped_boolean_assertion(assertion: &OracleFact) -> bool {
     assertion_comparison_operands(&assertion.text)
-        .is_some_and(boolean_projection::has_conditional_operand)
+        .is_some_and(boolean_projection::has_mapped_operand)
 }
 pub(super) use nominal_observer::NominalObserverMemo;
 mod selected_error;
@@ -523,6 +523,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     iteration_closed: OnceLock<bool>,
     /// The same closed-field premise without the array iteration restriction.
     field_projection_workspace_closed: OnceLock<bool>,
+    /// Standard scalar conversion dispatch for the once-built index.
+    standard_from_available: OnceLock<bool>,
     /// A prelude constructor requires a parsed workspace with the implicit prelude.
     option_prelude_available: OnceLock<bool>,
     /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
@@ -4901,7 +4903,7 @@ pub(in crate::analysis) fn primitive_bool_projected_result_identity(
 ) -> bool {
     if !matches!(owner.item.container, FunctionContainer::Free)
         || !(test.start_line..=test.end_line).contains(&assertion.line)
-        || !is_plain_or_std_macro(&assertion.text, "assert_eq")
+        || !boolean_projection::comparison_macro(&assertion.text, "assert_eq")
     {
         return false;
     }
@@ -4915,7 +4917,7 @@ pub(in crate::analysis) fn primitive_bool_projected_result_identity(
             || compared
                 .iter()
                 .all(|side| side.trim_start().starts_with("Some("))
-            || boolean_projection::has_conditional_operand(compared))
+            || boolean_projection::has_mapped_operand(compared))
     {
         return crate::analysis::test_grip_evidence::baseline_owner(
             owner,

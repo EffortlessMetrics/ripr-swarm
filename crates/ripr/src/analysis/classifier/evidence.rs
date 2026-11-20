@@ -1940,7 +1940,7 @@ impl ClassifiedProbeEvidence {
                         && !import_defeats(test, &owner.name)
                         && !cross_package_defeats(test, &owner.name)
                         && test.assertions.iter().any(|assertion| {
-                            crate::analysis::classify::conditional_projection_assertion(assertion)
+                            crate::analysis::classify::mapped_boolean_assertion(assertion)
                                 && assertion_admitted(test, assertion)
                                 && projected_boolean(test, assertion)
                         })

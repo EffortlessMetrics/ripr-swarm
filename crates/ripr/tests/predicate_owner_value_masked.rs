@@ -511,3 +511,76 @@ fn a_branch_observer_cannot_borrow_another_tests_boundary() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn standard_scalar_encodings_compare_on_the_same_version() -> Result<(), String> {
+    for (body, expected) in [
+        (r#"assert_eq!(u8::from(over(10)), 1);"#, "exposed"),
+        (r#"assert_eq!(0, u8::from(over(10)));"#, "exposed"),
+        (r#"assert_eq!(u8::from(over(10)), 2);"#, "infection_unknown"),
+        (
+            r#"assert_eq!(u8::from(over(10)), 1); assert_eq!(over(10), false);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"struct Dummy; impl Dummy { fn from(_: bool) -> u8 { 1 } } assert_eq!(Dummy::from(over(10)), 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(format!("a, b ({})", over(10)), "a, b (true)");"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!("a, b (false)", format!("a, b ({})", over(10)));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(format!("a, b ({})", over(10)), "wrong");"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(format!("{}", over(10)), "true"); assert_ne!(format!("{}", over(10)), "true");"#,
+            "infection_unknown",
+        ),
+        (
+            r#"macro_rules! format { ($($t:tt)*) => { "true" } }; assert_eq!(format!("{}", over(10)), "true");"#,
+            "reachable_unrevealed",
+        ),
+        (
+            r#"assert_eq!(format!("{}", over(10)), "true"); assert_eq!(Some(over(10)), Some(false));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(u8::from(over(10)), 1); assert_eq!(format!("{}", over(10)), "true");"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(format!("{}", over(10)), "true"); assert!(over(10));"#,
+            "exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn private_encoding_names_do_not_replace_standard_scalar_observers() -> Result<(), String> {
+    let unrelated = "mod private { macro_rules! format { ($($t:tt)*) => { 0 } } struct Local(u32); impl From<u32> for Local { fn from(value: u32) -> Self { Self(value) } } }";
+    for body in [
+        r#"assert_eq!(format!("{}", over(10)), "true");"#,
+        "assert_eq!(u8::from(over(10)), 1);",
+    ] {
+        let finding = predicate_finding_with_root_items(body, unrelated)?;
+        if finding.get("classification").and_then(Value::as_str) != Some("exposed") {
+            return Err(format!(
+                "unrelated encoding suppressed the real observer: {body}"
+            ));
+        }
+    }
+    Ok(())
+}

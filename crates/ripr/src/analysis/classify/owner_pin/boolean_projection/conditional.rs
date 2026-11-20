@@ -2,7 +2,7 @@
 //! Carry both branch outcomes so even permanently false equalities can
 //! participate in the whole-test contradiction check.
 
-use super::{ComparedCall, OracleFact, OwnerPinSyntax, RustIndex, TestSummary};
+use super::{ComparedCall, OracleFact, OwnerPinSyntax, RustIndex, TestSummary, operand};
 use ra_ap_syntax::{
     AstNode,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs},
@@ -99,17 +99,6 @@ pub(super) fn comparison(
         when_false,
         when_true,
     })
-}
-
-fn operand(text: &str) -> Option<ast::Expr> {
-    let text = text.trim();
-    let expression = super::super::super::owner_value_sink::parse_expression(text)?;
-    (expression.syntax().text() == text
-        && !expression
-            .syntax()
-            .descendants()
-            .any(|node| ast::Attr::can_cast(node.kind())))
-    .then_some(expression)
 }
 
 fn literal_block(block: ast::BlockExpr) -> Option<Literal> {

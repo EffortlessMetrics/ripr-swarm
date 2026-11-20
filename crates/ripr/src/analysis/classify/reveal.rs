@@ -3024,7 +3024,7 @@ fn analyze_related_assertions(
                 && !cross_package_defeats_owner
                 && !match_context.owner_shadowed
                 && !test_is_should_panic(test)
-                && super::owner_pin::conditional_projection_assertion(assertion)
+                && super::owner_pin::mapped_boolean_assertion(assertion)
                 && (return_admission.primitive_bool_projected_result_identity)(test, assertion);
             let matched = matched
                 || projected_boolean_observer

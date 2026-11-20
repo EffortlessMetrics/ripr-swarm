@@ -12,7 +12,50 @@ use crate::analysis::test_grip_evidence::fold_boolean_owner_call;
 use ra_ap_syntax::{AstNode, ast};
 
 mod conditional;
-pub(in crate::analysis::classify) use conditional::has_conditional_operand;
+mod encoding;
+
+pub(super) fn has_mapped_operand(sides: [&str; 2]) -> bool {
+    conditional::has_conditional_operand(sides) || sides.into_iter().any(encoding::recognizes)
+}
+
+/// Admit the established single-macro assertion, or the bare outer assertion
+/// containing exactly one recognized standard value macro. The latter's
+/// binding and its two complete operands are verified by the value reader.
+pub(super) fn comparison_macro(text: &str, expected: &str) -> bool {
+    if is_plain_or_std_macro(text, expected) {
+        return true;
+    }
+    if !text.contains("format!") && !text.contains("vec!") {
+        return false;
+    }
+    let Some(ast::Expr::MacroExpr(expression)) = operand(text.trim().trim_end_matches(';')) else {
+        return false;
+    };
+    let Some(outer) = expression.macro_call() else {
+        return false;
+    };
+    if !outer
+        .path()
+        .is_some_and(|path| path.syntax().text() == expected)
+    {
+        return false;
+    }
+    let masked = super::mask_comments_and_strings(text);
+    let names = super::macro_invocations(&masked);
+    matches!(names.as_slice(), [(head, _), ("format" | "vec", _)] if *head == expected)
+        && encoding::macro_operands(&outer).is_some_and(|args| args.len() == 2)
+}
+
+fn operand(text: &str) -> Option<ast::Expr> {
+    let text = text.trim();
+    let expression = super::super::owner_value_sink::parse_expression(text)?;
+    (expression.syntax().text() == text
+        && !expression
+            .syntax()
+            .descendants()
+            .any(|node| ast::Attr::can_cast(node.kind())))
+    .then_some(expression)
+}
 
 struct ComparedCall {
     call: String,
@@ -46,14 +89,24 @@ pub(in crate::analysis) fn boolean_projection_matches_versions(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<(bool, bool)> {
-    let unequal = is_plain_or_std_macro(&assertion.text, "assert_ne");
+    let unequal = comparison_macro(&assertion.text, "assert_ne");
     if !matches!(owner.item.container, FunctionContainer::Free)
-        || !(is_plain_or_std_macro(&assertion.text, "assert_eq") || unequal)
+        || !(comparison_macro(&assertion.text, "assert_eq") || unequal)
     {
         return None;
     }
     let compared = assertion_comparison_operands(&assertion.text)?;
-    let cells = if has_conditional_operand(compared) {
+    let [left, right] = compared;
+    let cells = if encoding::recognizes(left) || encoding::recognizes(right) {
+        let (projection, expected) = if encoding::recognizes(left) {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        vec![encoding::comparison(
+            projection, expected, test, assertion, index, syntax,
+        )?]
+    } else if conditional::has_conditional_operand(compared) {
         vec![conditional::comparison(
             compared, test, assertion, index, syntax,
         )?]
