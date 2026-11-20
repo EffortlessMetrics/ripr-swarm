@@ -878,7 +878,8 @@ pub(crate) fn linked_target(checkout: &Path) -> Option<String> {
 /// the sample is `not_measured` with that reason. Read as `incomplete`, every
 /// new expected-partial row would fail the gate as a lost completion until a
 /// baseline recorded it incomplete too (#10809). A contradiction the pilot
-/// scan did find keeps the sample incomplete, so it still fails closed.
+/// scan did find, or a pilot document that was not scanned, keeps the sample
+/// incomplete, so it still fails closed.
 pub(crate) fn contradiction_outcome(
     contradictions: Option<(usize, Vec<String>)>,
     missing_sources: &[&str],
@@ -905,6 +906,13 @@ pub(crate) fn contradiction_outcome(
             } else {
                 format!("e.g. {}", examples.join("; "))
             },
+        ),
+        // A declared partial row never scans its warm document, so no count
+        // means the pilot document itself was not scanned: that is stopped
+        // short, not out of scope, and stays incomplete.
+        None if missing_sources.contains(&DECLARED_PARTIAL_WARM_JSON) => (
+            SampleOutcome::Incomplete(0.0),
+            format!("not scanned: {}", missing_sources.join(", ")),
         ),
         None => (
             SampleOutcome::NotMeasured,

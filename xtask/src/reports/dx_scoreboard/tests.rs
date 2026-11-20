@@ -5879,7 +5879,18 @@ fn a_declared_partial_contradiction_sample_is_out_of_scope_not_incomplete() -> R
         matches!(outcome, SampleOutcome::Incomplete(_)),
         "{outcome:?}"
     );
-    let (outcome, _) = contradiction_outcome(None, &[DECLARED_PARTIAL_WARM_JSON]);
+    // A declared partial row whose pilot document was not scanned has no
+    // count at all; that is stopped short, so it stays incomplete.
+    let (outcome, _) = contradiction_outcome(
+        None,
+        &["pilot repo-exposure.json", DECLARED_PARTIAL_WARM_JSON],
+    );
+    assert!(
+        matches!(outcome, SampleOutcome::Incomplete(_)),
+        "{outcome:?}"
+    );
+    // An undeclared row with nothing to scan keeps its earlier reading.
+    let (outcome, _) = contradiction_outcome(None, &["pilot repo-exposure.json"]);
     assert!(matches!(outcome, SampleOutcome::NotMeasured), "{outcome:?}");
 
     // The gate: a new repository whose sample is out of scope passes, while
