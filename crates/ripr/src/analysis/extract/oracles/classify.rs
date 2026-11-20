@@ -81,8 +81,7 @@ pub(crate) fn without_unfilled_expected(
     if !matches!(
         classification.strength,
         OracleStrength::Strong | OracleStrength::Medium | OracleStrength::Weak
-    ) || placeholders.is_empty()
-    {
+    ) {
         return classification;
     }
     // #14810 round 3: match against the assertion's semantic operands, not
@@ -107,8 +106,33 @@ pub(crate) fn assertion_reads_placeholder(
     assertion: &str,
     placeholders: &std::collections::BTreeSet<String>,
 ) -> bool {
-    let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| assertion.to_string());
-    let masked = mask_assertion_reads(&operand_text);
+    if placeholders.is_empty() && !super::placeholder_scope::mentions_placeholder(assertion) {
+        return false;
+    }
+    let Some(operand_text) = assertion_oracle_text(assertion) else {
+        // Unknown helpers retain their whole-expression read, including the
+        // receiver of a method such as `expected.assert_eq(actual)`.
+        return text_reads_placeholder(assertion, placeholders);
+    };
+    let introduces_scope = operand_text.contains('|')
+        || operand_text
+            .split(|ch: char| ch != '_' && !ch.is_alphanumeric())
+            .any(|word| matches!(word, "let" | "match" | "for"));
+    if introduces_scope
+        && let Some(open) = operand_text.find('(')
+        && let Some(operands) = super::arguments::delimited_contents_at(&operand_text, open)
+        && let Some(read) = super::placeholder_scope::scoped_operand_read(&operands, placeholders)
+    {
+        return read;
+    }
+    text_reads_placeholder(&operand_text, placeholders)
+}
+
+pub(super) fn text_reads_placeholder(
+    operand_text: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> bool {
+    let masked = mask_assertion_reads(operand_text);
     placeholders
         .iter()
         .any(|name| reads_local_name(&masked, name))

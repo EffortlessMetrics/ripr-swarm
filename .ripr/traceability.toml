@@ -18958,6 +18958,9 @@ id = "RIPR-SPEC-0231"
 name = "Rust oracle kind and strength admission"
 spec = "docs/specs/RIPR-SPEC-0231-rust-oracle-kind-admission.md"
 tests = [
+  "crates/ripr/src/analysis/syntax/ra.rs::tests::lexical_placeholder_reads_follow_the_assertion_scope",
+  "crates/ripr/src/analysis/syntax/ra.rs::tests::placeholder_operands_and_inline_helpers_resolve_at_the_read",
+  "crates/ripr/src/analysis/extract/oracles/placeholder_scope.rs::tests::associated_type_equals_in_a_spaced_generic_preserves_the_initializer",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::probe_relative_oracle_strength_never_promotes_an_inequality",
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
@@ -19002,6 +19005,7 @@ tests = [
   "crates/ripr/tests/returned_element_field_pin.rs::a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap",
 ]
 fixtures = [
+  "fixtures/rust_stub_unrelated_shadow_expected_value",
   "fixtures/inequality_assertion_not_exact",
   "fixtures/inequality_struct_assertion_not_exact",
   "fixtures/bool_compared_inequality_not_exact",
@@ -19014,6 +19018,7 @@ fixtures = [
   "fixtures/glob_import_pretty_assertions_drop_in",
 ]
 code = [
+  "crates/ripr/src/analysis/extract/oracles/placeholder_scope.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/extract/oracles/arguments.rs",
   "crates/ripr/src/analysis/extract/oracles/bool_operands.rs",

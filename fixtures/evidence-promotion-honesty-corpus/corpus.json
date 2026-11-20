@@ -20557,6 +20557,30 @@
       ]
     },
     {
+      "id": "rust_stub_unrelated_shadow_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_stub_unrelated_shadow_expected_value",
+      "vector": "an_unrelated_shadow_does_not_fill_a_stub_expected_value",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_stub_todo_guard_expected_value",
       "language": "rust",
       "tier": "pure",
