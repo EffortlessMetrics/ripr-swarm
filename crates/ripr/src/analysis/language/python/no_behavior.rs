@@ -700,21 +700,81 @@ pub(super) fn multi_line_def_header_span(
         trimmed.starts_with("def ") || trimmed.starts_with("async def ")
     })?;
     let mut depth: i32 = 0;
+    let mut triple: Option<char> = None;
     for (index, text) in std::iter::once((def_index, def_text)).chain(lines.take(255)) {
-        let code = text.split_once('#').map_or(text, |(code, _)| code);
-        for ch in code.chars() {
-            match ch {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth -= 1,
-                _ => {}
-            }
+        let (last, open_quote) = header_line_code_scan(text, &mut depth, &mut triple);
+        // A one-quote string left open at the end of a line (a `\`
+        // continuation or a shape not understood) gives no span.
+        if open_quote {
+            return None;
         }
-        if depth <= 0 {
-            return (index > def_index && code.trim_end().ends_with(':'))
-                .then_some((def_index + 1, index + 1));
+        if depth <= 0 && triple.is_none() {
+            return (index > def_index && last == Some(':')).then_some((def_index + 1, index + 1));
         }
     }
     None
+}
+
+/// Scans one header line's code for [`multi_line_def_header_span`]: brackets
+/// inside string literals and text after a `#` comment do not count (#15292),
+/// since a credit-affecting caller must never read a span into the body.
+/// Updates `depth` and the open triple-quote state carried across lines and
+/// returns the last non-whitespace code character and whether a one-quote
+/// string is still open at the end of the line.
+fn header_line_code_scan(
+    text: &str,
+    depth: &mut i32,
+    triple: &mut Option<char>,
+) -> (Option<char>, bool) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut last = None;
+    let mut quote: Option<char> = None;
+    let mut index = 0;
+    while let Some(&ch) = chars.get(index) {
+        let is_triple =
+            |q: char| chars.get(index + 1) == Some(&q) && chars.get(index + 2) == Some(&q);
+        if let Some(open) = *triple {
+            if ch == '\\' {
+                index += 2;
+            } else if ch == open && is_triple(open) {
+                *triple = None;
+                last = Some(open);
+                index += 3;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(open) = quote {
+            if ch == '\\' {
+                index += 2;
+                continue;
+            }
+            if ch == open {
+                quote = None;
+                last = Some(open);
+            }
+            index += 1;
+            continue;
+        }
+        match ch {
+            '\'' | '"' if is_triple(ch) => {
+                *triple = Some(ch);
+                index += 3;
+                continue;
+            }
+            '\'' | '"' => quote = Some(ch),
+            '#' => break,
+            '(' | '[' | '{' => *depth += 1,
+            ')' | ']' | '}' => *depth -= 1,
+            _ => {}
+        }
+        if !ch.is_whitespace() {
+            last = Some(ch);
+        }
+        index += 1;
+    }
+    (last, quote.is_some())
 }
 
 /// Whether `line` is a complete one-line `def` header with no default values:

@@ -1508,8 +1508,10 @@ mod tests {
         let single = "def quote(total=5):\n    return total > 1\n";
         let owner = quote_owner(single)?;
         assert!(!name_rebound_in_owner(single, &owner, "total"));
-        // An escaped quote and a decorator on the header keep the header end.
-        let quoted = "@cached\nasync def quote(\n    sep: str = \"\\\"\",\n    total: int = 0,\n) -> dict[str, int]:\n    return total > 1\n";
+        // Brackets, `#` and an escaped quote inside string defaults, a
+        // decorator and `async` keep the header end, and a body rebinding
+        // after such a header is still read.
+        let quoted = "@cached\nasync def quote(\n    sep: str = \"(#\\\"\",\n    total: int = 0,\n) -> dict[str, int]:\n    return total > 1\n";
         let owner = quote_owner(quoted)?;
         assert!(!name_rebound_in_owner(quoted, &owner, "sep"));
         assert!(!name_rebound_in_owner(quoted, &owner, "total"));
