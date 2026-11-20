@@ -570,6 +570,12 @@ This spec does not require:
 
 ## Acceptance Examples
 
+When two selected seams propose creating the same test function in the same
+file, the brief gives them distinct names. Reordering those seams preserves
+each name, including when their source lines match. Each suggested Cargo
+command uses the corresponding name as a substring filter. A filter can also
+select other tests whose names contain it (#14717).
+
 ### Diff-scoped brief ranks touched seam first
 
 ```text

@@ -13,6 +13,7 @@ use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_
 use crate::config::{RiprConfig, config_fingerprint};
 use crate::output::agent_seam_packets;
 use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = "0.2";
@@ -53,7 +54,8 @@ pub(crate) fn render_agent_brief_json(
         "top_seams": selection
             .top_seams
             .iter()
-            .map(|entry| top_seam_json(entry, config, causal_projection.as_ref()))
+            .zip(brief_recommendations(&selection.top_seams))
+            .map(|(entry, recommendation)| top_seam_json(entry, recommendation, config, causal_projection.as_ref()))
             .collect::<Vec<_>>(),
         "next": {
             "inspect_packet": prepare_workflow_command(
@@ -123,8 +125,60 @@ fn working_set_json(working_set: &AgentBriefResolvedWorkingSet) -> Value {
     })
 }
 
+/// Allocate sibling proposals together so following the brief produces a
+/// compilable test module even when several seams share an owner and kind.
+fn brief_recommendations(
+    seams: &[AgentBriefSelectedSeam<'_>],
+) -> Vec<agent_seam_packets::RecommendedTest> {
+    let mut recommendations: Vec<_> = seams
+        .iter()
+        .map(|selected| agent_seam_packets::recommended_test_for(selected.seam))
+        .collect();
+    let mut groups = BTreeMap::<(String, String), Vec<usize>>::new();
+    let mut reserved = BTreeMap::<String, BTreeSet<String>>::new();
+    for (index, (selected, rec)) in seams.iter().zip(&recommendations).enumerate() {
+        if rec.name == "not_applicable" {
+            continue;
+        }
+        groups
+            .entry((rec.file.clone(), rec.name.clone()))
+            .or_default()
+            .push(index);
+        reserved
+            .entry(rec.file.clone())
+            .or_default()
+            .insert(rec.name.clone());
+        for test in &selected.seam.evidence.related_tests {
+            reserved
+                .entry(display_path(&test.file))
+                .or_default()
+                .insert(test.test_name.clone());
+        }
+    }
+    for ((file, base), mut indices) in groups {
+        if indices.len() < 2 {
+            continue;
+        }
+        indices.sort_by_key(|&i| seams[i].seam.seam.id().as_str());
+        let taken = reserved.entry(file).or_default();
+        for i in indices {
+            let line = seams[i].seam.seam.display_line();
+            let stem = format!("{base}_line_{line}");
+            let mut name = stem.clone();
+            let mut suffix = 2;
+            while !taken.insert(name.clone()) {
+                name = format!("{stem}_{suffix}");
+                suffix += 1;
+            }
+            recommendations[i].name = name;
+        }
+    }
+    recommendations
+}
+
 fn top_seam_json(
     selected: &AgentBriefSelectedSeam<'_>,
+    recommended: agent_seam_packets::RecommendedTest,
     config: &RiprConfig,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Value {
@@ -132,7 +186,6 @@ fn top_seam_json(
     let seam = &entry.seam;
     let evidence = &entry.evidence;
     let missing = agent_seam_packets::missing_discriminator_records_for(entry);
-    let recommended = agent_seam_packets::recommended_test_for(entry);
     let nearest = agent_seam_packets::nearest_strong_test_to_imitate(seam.kind(), evidence);
     let candidate_values = agent_seam_packets::candidate_values_for(entry, &missing);
     let assertion_shape = agent_seam_packets::assertion_shape_for_entry(entry);
@@ -265,12 +318,16 @@ mod tests {
     }
 
     fn classified() -> ClassifiedSeam {
+        classified_at(880, 88)
+    }
+
+    fn classified_at(offset: usize, line: usize) -> ClassifiedSeam {
         let seam = RepoSeam::new(
             "src/pricing.rs",
             "pricing::discounted_total",
             SeamKind::PredicateBoundary,
-            880,
-            88,
+            offset,
+            line,
             "amount >= discount_threshold",
             RequiredDiscriminator::BoundaryValue {
                 description: "amount >= discount_threshold".to_string(),
@@ -331,6 +388,35 @@ mod tests {
         std::fs::create_dir_all(&root)
             .map_err(|err| format!("create temp root {}: {err}", root.display()))?;
         Ok(root)
+    }
+
+    #[test]
+    fn sibling_recommendations_are_distinct_and_stable_on_the_same_line() {
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let seams = [classified_at(880, 88), classified_at(890, 88)];
+        let mut selection = select_agent_brief_seams(
+            &seams,
+            &working_set,
+            3,
+            AgentBriefPolicy::from_config(&RiprConfig::default()),
+        );
+        let names = |selection: &AgentBriefSelection<'_>| {
+            brief_recommendations(&selection.top_seams)
+                .into_iter()
+                .map(|rec| rec.name)
+                .collect::<Vec<_>>()
+        };
+        let original = names(&selection);
+        assert_eq!(original.len(), 2);
+        assert_ne!(original[0], original[1]);
+        selection.top_seams.reverse();
+        assert_eq!(
+            names(&selection),
+            [original[1].clone(), original[0].clone()]
+        );
     }
 
     #[test]
