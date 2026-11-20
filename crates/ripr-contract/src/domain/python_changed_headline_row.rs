@@ -12,12 +12,17 @@ pub const RELATED_TEST_CHANGED_IN_DIFF_PREFIX: &str = "related_test_changed_in_d
 /// contributing rows by their recorded miss, path and strength. A Python diff
 /// stamp only breaks ties at the resulting rank (#14027).
 pub fn python_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    if let Some(observer) = finding.headline_observer() {
-        return Some(observer);
-    }
+    let observers = finding.headline_observers();
+    let eligible = |row: &RelatedTest| {
+        finding.headline_candidate(row)
+            && (observers.is_empty()
+                || observers
+                    .iter()
+                    .any(|observer| std::ptr::eq(*observer, row)))
+    };
     let first = finding
         .oracle_related_tests()
-        .filter(|row| finding.headline_candidate(row))
+        .filter(|row| eligible(row))
         .min_by_key(|row| Reverse(row.headline_rank()))?;
     if !matches!(finding.language, Some(LanguageId::Python)) {
         return Some(first);
@@ -40,7 +45,7 @@ pub fn python_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
         .iter()
         .find(|test| {
             let file = test.file.to_string_lossy().replace('\\', "/");
-            finding.headline_candidate(test)
+            eligible(test)
                 && test.headline_rank() == rank
                 && changed
                     .iter()

@@ -192,7 +192,7 @@ fn python_headline_uses_the_credited_count_call() -> Result<(), String> {
         "seq.py",
         "def count(seq):\n    return sum(2 for _ in seq)\n",
     )?;
-    scratch.write("change.diff", "diff --git a/seq.py b/seq.py\n--- a/seq.py\n+++ b/seq.py\n@@ -2 +2 @@\n-    return sum(1 for _ in seq)\n+    return sum(2 for _ in seq)\n")?;
+    scratch.write("change.diff", "diff --git a/seq.py b/seq.py\n--- a/seq.py\n+++ b/seq.py\n@@ -2 +2 @@\n-    return sum(1 for _ in seq)\n+    return sum(2 for _ in seq)\ndiff --git a/sandbox/tests/test_core.py b/sandbox/tests/test_core.py\n--- a/sandbox/tests/test_core.py\n+++ b/sandbox/tests/test_core.py\n@@ -4 +4 @@\n-    assert next(count(1)) == 1\n+    assert next(count()) == 0\n")?;
     scratch.write(
         "sandbox/tests/test_core.py",
         "from itertools import count\n\ndef test_unzip():\n    assert next(count()) == 0\n",

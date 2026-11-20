@@ -99,25 +99,25 @@ impl Finding {
     }
 
     /// An explicit observer must resolve to one retained test at its start line.
-    pub(super) fn headline_observer(&self) -> Option<&RelatedTest> {
-        let mut references = self
-            .evidence
+    pub(super) fn headline_observers(&self) -> Vec<&RelatedTest> {
+        self.evidence
             .iter()
-            .filter(|line| line.starts_with("related_test_observer: "));
-        let reference = references.next()?;
-        if references.next().is_some() {
-            return None;
-        }
-        let mut rows = self
-            .related_tests
-            .iter()
-            .filter(|test| test.headline_observer_evidence() == *reference);
-        let row = rows.next()?;
-        (rows.next().is_none()
-            && row.is_contributing()
-            && row.miss.is_none()
-            && row.headline_has_path(self))
-        .then_some(row)
+            .filter_map(|entry| {
+                let (file, line) = entry
+                    .strip_prefix("related_test_observer: ")?
+                    .rsplit_once(':')?;
+                let line = line.parse::<usize>().ok()?;
+                let mut rows = self.related_tests.iter().filter(|row| {
+                    row.line == line && row.file.to_string_lossy().replace('\\', "/") == file
+                });
+                let row = rows.next()?;
+                (rows.next().is_none()
+                    && row.is_contributing()
+                    && row.miss.is_none()
+                    && row.headline_has_path(self))
+                .then_some(row)
+            })
+            .collect()
     }
 
     /// Representative related test for diff displays. The packet can still

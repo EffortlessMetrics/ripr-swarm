@@ -58,7 +58,7 @@ fn strongest_family_relevant_related_test<'a>(
 /// Diff headlines need a discriminating row. Repair cards may instead use a
 /// family-relevant test as the place to add a missing assertion (#5505).
 pub(super) fn typescript_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    if let Some(row) = finding.headline_observer() {
+    if let Some(row) = finding.headline_observers().first().copied() {
         return Some(row);
     }
     let family = &finding.probe.family;
