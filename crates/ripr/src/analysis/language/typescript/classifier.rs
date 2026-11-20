@@ -3872,6 +3872,7 @@ fn nullish_argument_reaches_read_argument(
         ReadPosition::Index(read) => idx == read,
         ReadPosition::Bounded(arity) => idx < arity,
         ReadPosition::Any => true,
+        ReadPosition::Unknown => false,
     };
     arguments
         .iter()
@@ -3893,13 +3894,42 @@ fn resolve_owner_module_boundary_constants(
     workspace_root: Option<&Path>,
 ) -> (String, String) {
     let resolve = |operand: &str| -> String {
-        if is_boundary_literal(operand) || !is_constant_shaped_operand(operand) {
+        if is_boundary_literal(operand) {
             return operand.to_string();
         }
-        ts_owner_module_constant_value(operand, owner, workspace_root)
+        if is_constant_shaped_operand(operand)
+            && let Some(value) = ts_owner_module_constant_value(operand, owner, workspace_root)
+        {
+            return value;
+        }
+        ts_owner_module_folded_constant_value(operand, owner, workspace_root)
             .unwrap_or_else(|| operand.to_string())
     };
     (resolve(left), resolve(right))
+}
+
+/// #15358: the value of a bare module `const` the owner's module derives from
+/// literal integer arithmetic (`const m = 1000 * 60; const h = m * 60;`),
+/// read through the AST rules of [`super::boundary_input`]: exactly one
+/// top-level immutable binding, every other occurrence a plain read, no
+/// `eval`/`with`, and every step a non-negative safe integer. An owner
+/// parameter of that name, any other shape and any read failure keep the
+/// operand unresolved.
+fn ts_owner_module_folded_constant_value(
+    name: &str,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<String> {
+    if !is_bare_identifier(name) || owner.params.iter().any(|param| param == name) {
+        return None;
+    }
+    let root = workspace_root?;
+    let source = String::from_utf8(
+        crate::analysis::committed_source::read_source_bytes(root, &owner.file).ok()??,
+    )
+    .ok()?;
+    super::boundary_input::ts_module_folded_integer_constant(&owner.file, &source, name)
+        .map(|value| value.to_string())
 }
 
 /// #4104-E3: replace a bare constant-shaped owner-call argument with the
@@ -5680,6 +5710,9 @@ enum ReadPosition {
     Bounded(usize),
     /// No resolvable parameter facts — every position is plausible.
     Any,
+    /// The operand is a derived local that is not an identity alias of one
+    /// parameter (#15358): no argument position is known to feed it.
+    Unknown,
 }
 
 fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosition {
@@ -5687,10 +5720,221 @@ fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosit
     if let Some(idx) = owner.params.iter().position(|name| name == segment) {
         return ReadPosition::Index(idx);
     }
+    // #15358: a bare derived local feeds from a parameter only when it is an
+    // identity alias of exactly one (`const a = p;`, `const a = Math.abs(p);`).
+    // Any other initializer (`Math.abs(p) / 2`, `-p`, `p + other`) can move
+    // the value away from the argument, so no position is credited.
+    // A bare name the owner's signature binds (a destructured or rest
+    // parameter binding) keeps the legacy position reading; any other bare
+    // name (a body local in any declaration form, a module or captured name)
+    // is credited only as an identity alias. An owner with no recorded text
+    // keeps the legacy reading.
+    if is_bare_identifier(operand.trim())
+        && owner.source_text.is_some()
+        && !bound_in_signature(operand.trim(), owner)
+    {
+        return match identity_alias_parameter(operand.trim(), owner) {
+            Some(idx) => ReadPosition::Index(idx),
+            None => ReadPosition::Unknown,
+        };
+    }
     match owner.arity {
         Some(arity) => ReadPosition::Bounded(arity),
         None => ReadPosition::Any,
     }
+}
+
+/// The index of the owner parameter `name` is an identity alias of: a single
+/// `const name = p;` or `const name = Math.abs(p);` (the argument is credited
+/// only for a non-negative literal, which `Math.abs` leaves unchanged) in the
+/// owner's own text, where `name` is bound nowhere else and the parameter is
+/// never written.
+fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize> {
+    let source = owner.source_text.as_deref()?;
+    let mut initializer: Option<&str> = None;
+    for line in source.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("const ")
+            && let Some(after) = rest.trim_start().strip_prefix(name)
+            && let Some(init) = declaration_initializer(after)
+            && !after.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        {
+            if initializer.is_some() {
+                return None;
+            }
+            // The statement must end on this line: an initializer without a
+            // `;` may continue onto the next line (`ms\n / 2`).
+            initializer = Some(init.split_once(';').map(|(expr, _)| expr.trim())?);
+        }
+    }
+    let initializer = initializer?;
+    let abs_argument = initializer
+        .strip_prefix("Math.abs(")
+        .and_then(|rest| rest.strip_suffix(')'));
+    // `Math` must be the builtin: any bare `Math` binding or parameter in
+    // the owner (`const Math = scale;`) refuses the `Math.abs` reading.
+    if abs_argument.is_some() && identifier_occurrences(source, "Math").next().is_some() {
+        return None;
+    }
+    let parameter = abs_argument.unwrap_or(initializer).trim();
+    let idx = owner.params.iter().position(|param| param == parameter)?;
+    // Every occurrence of the alias name must be the one declaration or a
+    // read, and the parameter must not be written.
+    let declarations = identifier_occurrences(source, name)
+        .filter(|(_, after)| declaration_initializer(after).is_some())
+        .count();
+    let parameter_written = identifier_occurrences(source, parameter).any(|(before, after)| {
+        let after = after.trim_start();
+        let assign = after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+        let compound = [
+            "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=",
+            "||=", "??=", "++", "--",
+            // A comment between the name and its operator hides the write
+            // (`ms /* c */ = ms / 2`), so any comment there refuses.
+            "/*", "//",
+        ]
+        .iter()
+        .any(|op| after.starts_with(op));
+        let prefixed = before.trim_end().ends_with("++") || before.trim_end().ends_with("--");
+        // The signature's own `p = default` is an assignment-looking token
+        // before the body opens; a default never rewrites the argument.
+        let in_signature = before.rfind('{').is_none() && before.contains('(');
+        // A loop or catch binding (`for (p of xs)`, `for (p in o)`,
+        // `catch (p)`) or a redeclaration rebinds the name too.
+        let head = before.trim_end();
+        let rebound = after.starts_with("of ")
+            || after.starts_with("in ")
+            || ["let", "var", "const", "catch (", "catch("]
+                .iter()
+                .any(|keyword| head.ends_with(keyword));
+        (assign && !in_signature)
+            || compound
+            || prefixed
+            || rebound
+            || (!in_signature && destructured(after))
+    });
+    // A nested function or arrow in the body may bind its own parameter of
+    // the same name, so the alias may read that one instead (fail closed).
+    let nested_function = source
+        .find('{')
+        .and_then(|open| source.get(open..))
+        .is_some_and(|body| {
+            body.contains("=>") || identifier_occurrences(body, "function").next().is_some()
+        });
+    (declarations == 1 && !parameter_written && !nested_function).then_some(idx)
+}
+
+/// `true` when `name` occurs in the owner's parameter list, so a bare operand
+/// of that name is a parameter binding (`{ name }`, `{ name = 0 }`,
+/// `...name`) rather than a body local (#15358 review).
+fn bound_in_signature(name: &str, owner: &TypeScriptOwner) -> bool {
+    let Some(source) = owner.source_text.as_deref() else {
+        return false;
+    };
+    let end = signature_end(source);
+    // A binding position only: after `{`, `,`, `(` or `...`, and before `}`,
+    // `,`, `)` or a default `=`. A property key or type member
+    // (`{ name: T }`), a rename target, a default expression (`= name`) or a
+    // comment does not bind the name.
+    source.get(..end).is_some_and(|signature| {
+        identifier_occurrences(signature, name).any(|(before, after)| {
+            let before = before.trim_end();
+            let after = after.trim_start();
+            let opens = before.ends_with('{')
+                || before.ends_with(',')
+                || before.ends_with('(')
+                || before.ends_with("...");
+            let closes = after.starts_with('}')
+                || after.starts_with(',')
+                || after.starts_with(')')
+                || (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"));
+            opens && closes
+        })
+    })
+}
+
+/// The byte offset where the owner's parameter list ends: the `)` matching
+/// the first `(`, or the first `=>` when that comes earlier (a paren-less
+/// arrow `x => ...`, or an arrow default that truncates the list, which only
+/// loses credit). 0 when neither is found, so nothing reads as a parameter.
+fn signature_end(source: &str) -> usize {
+    let arrow = source.find("=>");
+    let paren = source.find('(').and_then(|open| {
+        let mut depth = 0usize;
+        source
+            .char_indices()
+            .skip_while(|(at, _)| *at < open)
+            .find_map(|(at, ch)| match ch {
+                '(' => {
+                    depth += 1;
+                    None
+                }
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    (depth == 0).then_some(at + 1)
+                }
+                _ => None,
+            })
+    });
+    match (arrow, paren) {
+        (Some(arrow), Some(paren)) => arrow.min(paren),
+        (Some(at), None) | (None, Some(at)) => at,
+        (None, None) => 0,
+    }
+}
+
+/// The initializer of a declaration whose binding name was just consumed:
+/// `= init` or a typed `: <type> = init`. A type that holds `=>` (a function
+/// type) or an `==`/`=>` operator is refused.
+fn declaration_initializer(after: &str) -> Option<&str> {
+    let after = after.trim_start();
+    let rest = match after.strip_prefix(':') {
+        Some(typed) => {
+            let at = typed.find('=')?;
+            if typed[..at].contains(['(', ')', '{', '}', '<', '>']) {
+                return None;
+            }
+            &typed[at..]
+        }
+        None => after,
+    };
+    let init = rest.strip_prefix('=')?;
+    (!init.starts_with(['=', '>'])).then_some(init)
+}
+
+/// `true` when the text after an identifier closes a destructuring pattern
+/// that is then assigned (`({ ms } = o)`, `[ms] = arr`).
+fn destructured(after: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, ch) in after.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            '}' | ']' if depth == 0 => {
+                let rest = after[at + 1..].trim_start();
+                return rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>");
+            }
+            '}' | ']' | ')' if depth > 0 => depth -= 1,
+            ')' | ';' => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// `(text before, text after)` of each whole-word occurrence of `name`.
+fn identifier_occurrences<'t>(
+    text: &'t str,
+    name: &'t str,
+) -> impl Iterator<Item = (&'t str, &'t str)> + 't {
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = &text[..at];
+        let after = &text[at + name.len()..];
+        let boundary = |ch: Option<char>| {
+            !ch.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.')
+        };
+        (boundary(before.chars().next_back()) && boundary(after.chars().next()))
+            .then_some((before, after))
+    })
 }
 
 fn last_identifier_segment(operand: &str) -> &str {
@@ -5756,6 +6000,7 @@ fn boundary_literal_reaches_read_argument(
         ReadPosition::Index(read) => idx == read,
         ReadPosition::Bounded(arity) => idx < arity,
         ReadPosition::Any => true,
+        ReadPosition::Unknown => false,
     };
     arguments.iter().enumerate().any(|(idx, argument)| {
         readable(idx)
