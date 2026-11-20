@@ -1956,6 +1956,8 @@ impl FoldPlan {
 }
 
 mod branch_index;
+mod tuple_guard;
+pub(in crate::analysis) use tuple_guard::tuple_branch_reached;
 
 #[cfg(test)]
 mod fold_plan;

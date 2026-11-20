@@ -38,6 +38,7 @@ pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
     change_is_invisible_to_every_assertion, every_owner_call_separates, fold_owner_body_at,
     owner_change_visibility, range_change_visibility, return_seam_tail_reached_by_call,
+    tuple_branch_reached,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -5331,7 +5332,7 @@ fn discriminate_evidence(
             // strength here let a Strong oracle that misses the branch set
             // `best`, so the stage answered `Yes` while the record published
             // `Weak` — the disagreement this PR exists to remove.
-            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
+            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn, index);
             let graded = if branch_withheld
                 && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             {
@@ -5629,7 +5630,7 @@ fn oracle_discriminates_seam_in_test(
     // of the owner's result from a call that takes the other branch observes a
     // different value, so it is not strong grip for this seam. `None` (a shape
     // the fold cannot read) keeps today's credit.
-    if branch_gate_withholds(seam, oracle, test, owner) {
+    if branch_gate_withholds(seam, oracle, test, owner, index) {
         return false;
     }
     oracle_discriminates_seam(seam, oracle)
@@ -5659,6 +5660,7 @@ fn branch_gate_withholds(
     oracle: &OracleFact,
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
+    index: &RustIndex,
 ) -> bool {
     seam.kind() == SeamKind::ReturnValue
         && owner.is_some_and(|owner| {
@@ -5668,7 +5670,17 @@ fn branch_gate_withholds(
                 seam.display_line(),
                 &oracle.text,
                 test,
-            ) == Some(false)
+            )
+            .or_else(|| {
+                tuple_branch_reached(
+                    owner,
+                    seam.expression(),
+                    seam.display_line(),
+                    test,
+                    index,
+                    false,
+                )
+            }) == Some(false)
         })
 }
 
@@ -6660,7 +6672,7 @@ fn best_oracle(
         // return-value seam the branch gate refuses, or the record and the
         // discriminate stage disagree about the same assertion.
         let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
-            && branch_gate_withholds(seam, oracle, test, owner_fn)
+            && branch_gate_withholds(seam, oracle, test, owner_fn, index)
         {
             OracleStrength::Weak
         } else {

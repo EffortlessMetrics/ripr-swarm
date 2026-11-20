@@ -48,6 +48,7 @@ mod multi_caller_tests;
 #[cfg(test)]
 mod multi_site_tests;
 mod receiver_value;
+pub(in crate::analysis) use receiver_value::single_tuple_field_type;
 pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
 };

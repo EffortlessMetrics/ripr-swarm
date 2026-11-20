@@ -24357,6 +24357,41 @@ fn branch_local_return_value_seam_record_agrees_with_the_stage() -> Result<(), S
     Ok(())
 }
 
+#[test]
+fn tuple_field_guard_agrees_with_the_per_test_oracle_grade() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let missed =
+        include_str!("../../../../../fixtures/rust_tuple_guard_other_branch/input/src/lib.rs");
+    let taken = missed.replace(
+        "f(Money(2), Money(3)), Money(0)",
+        "f(Money(102), Money(3)), Money(105)",
+    );
+    for (source, expected) in [
+        (missed, OracleStrength::Weak),
+        (taken.as_str(), OracleStrength::Strong),
+    ] {
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::ReturnValue && seam.expression() == "Money(b.0 + a.0)"
+            })
+            .ok_or("missing edited return seam")?;
+        let evidence = evidence_for_seam(seam, &index);
+        let [record] = evidence.related_tests.as_slice() else {
+            return Err("expected the one assertion on the owner".into());
+        };
+        assert_eq!(record.test_name, "observes");
+        assert_eq!(record.oracle_strength, expected);
+        assert_eq!(
+            evidence.discriminate.state == StageState::Yes,
+            expected == OracleStrength::Strong
+        );
+    }
+    Ok(())
+}
+
 /// #14496: a value-transparent wrapper around the call is the sibling
 /// convention, so the gate reads through it. `block_on(owner(..))` from the
 /// else branch must not strongly grip the then-branch return.

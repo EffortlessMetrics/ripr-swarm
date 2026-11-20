@@ -673,6 +673,46 @@ impl ClassifiedProbeEvidence {
             }
             _ => infect,
         };
+        // #15770: every related call must skip this exact edit. Confirm that
+        // replacing the expression did not also move the guard.
+        let infect = if infect.state == StageState::Yes
+            && context.probe.family == ProbeFamily::ReturnValue
+            && context.workspace_complete
+            && !owner_has_other_callers
+            && !assertion_macros_rebound
+            && let Some(owner) = context.owner_fn
+            && let Some(old) = context.owner_sole_change.as_deref()
+            && !old.contains(['{', '}', ';'])
+            && context.probe.before.as_deref().map(str::trim) == Some(old.trim())
+            && context
+                .probe
+                .location
+                .line
+                .checked_sub(owner.start_line)
+                .and_then(|line| owner.body.lines().nth(line))
+                .map(str::trim)
+                == Some(context.probe.expression.trim())
+            && !context.related_tests.is_empty()
+            && context.related_tests.iter().all(|(test, reason)| {
+                *reason == RelationReason::DirectOwnerCall
+                    && crate::analysis::test_grip_evidence::tuple_branch_reached(
+                        owner,
+                        &context.probe.expression,
+                        context.probe.location.line,
+                        test,
+                        context.index,
+                        true,
+                    ) == Some(false)
+            }) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Every related test selects the other branch of the tuple-field guard",
+            )
+        } else {
+            infect
+        };
+
         // #10980: when the whole-test contradiction withheld EVERY credited
         // activation path that establishes reach (#7007), the stage
         // discloses the withholding instead of reading the withheld tests'

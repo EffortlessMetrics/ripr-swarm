@@ -163,7 +163,7 @@ pub(in crate::analysis) use helper_transfer::{
     chain_forwards_return_to_observed_hops, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, helper_only_reach,
     hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
-    returned_ledger_caller_is_observed, selected_inherent_calls,
+    returned_ledger_caller_is_observed, selected_inherent_calls, single_tuple_field_type,
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
