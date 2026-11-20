@@ -8783,8 +8783,8 @@ fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Resu
 }
 
 #[test]
-fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no() -> Result<(), String>
-{
+fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no()
+-> Result<(), String> {
     // #15339: the dynamic_dispatch limit says ripr "does not claim that no
     // test reaches the owner"; the reach stage must not claim it either.
     let owner_file = Path::new("src/cachetools/__init__.py");
@@ -8795,11 +8795,20 @@ fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no(
         "import cachetools\n\n\nclass TestFifo:\n    Cache = cachetools.FIFOCache\n\n    def test_insert(self):\n        cache = self.Cache(maxsize=2)\n        cache[1] = 1\n        assert cache[1] == 1\n",
     );
     assert_eq!(tests.len(), 1, "fixture must parse the test");
-    let finding = classify_change(owner_file, 3, "        self.data[key] = value", &owners, &tests)
-        .ok_or("dunder edit must produce a finding")?;
+    let finding = classify_change(
+        owner_file,
+        3,
+        "        self.data[key] = value",
+        &owners,
+        &tests,
+    )
+    .ok_or("dunder edit must produce a finding")?;
     assert_eq!(finding.class, ExposureClass::StaticUnknown);
     assert!(
-        finding.missing.iter().any(|l| l.contains("dynamic_dispatch")),
+        finding
+            .missing
+            .iter()
+            .any(|l| l.contains("dynamic_dispatch")),
         "limit must be present: {:?}",
         finding.missing
     );
