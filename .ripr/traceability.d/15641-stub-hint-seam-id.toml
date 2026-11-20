@@ -1,0 +1,20 @@
+# Repair and MCP stub hints name --seam-id when the --at line is ambiguous (#15641).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/app/test_stub.rs::tests::stub_hint_uses_the_seam_id_only_when_the_line_is_ambiguous",
+]
+code = [
+  "crates/ripr/src/app/test_stub.rs",
+  "crates/ripr/src/app/task_first.rs",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/repair.rs::tests::refusal_next_names_the_seam_id_when_the_line_is_ambiguous",
+]
+code = [
+  "crates/ripr/src/mcp/repair.rs",
+  "crates/ripr/src/mcp/gaps.rs",
+]
