@@ -48,6 +48,39 @@ adoption contract in
 [RIPR-SPEC-0009](specs/RIPR-SPEC-0009-defaults-first-adoption.md) defines the
 missing-config and generated-config behavior that must remain advisory.
 
+## Cargo build temporary directories
+
+For source builds of this repository, [`.cargo/config.toml`](../.cargo/config.toml)
+keeps `force = true` for `TEMP`, `TMP`, and `TMPDIR` so build children that
+honor those variables use the checkout's `target/` for scratch space. This
+keeps linker scratch off the system temp volume when the checkout is on a
+different volume.
+
+Cargo itself starts with the values supplied by its launcher. When Cargo loads
+the checkout's config, it supplies all three values as the absolute path to
+`<checkout>/target` to build processes such as rustc and build scripts. The
+linker inherits them from rustc, and programs launched by `cargo run` or
+`cargo test` also receive them. Shell exports still reach Cargo itself, but
+`force = true` replaces those values for these children. For example, the
+`target/tmp/check-pr` values that `cargo xtask check-pr` passes to its nested
+Cargo invocations reach those Cargo processes, whose build children receive
+`<checkout>/target` again.
+
+Cargo discovers this config when invoked from the checkout root or a
+subdirectory. A `--manifest-path` pointing into the checkout from an unrelated
+working directory does not load the checkout's config by itself.
+[Cargo resolves `relative = true` against the parent of `.cargo/`](https://doc.rust-lang.org/cargo/reference/config.html#env).
+`CARGO_TARGET_DIR` moves Cargo's build output, while these three paths still
+resolve to the checkout's `target/`. Create that directory before building with
+a separate output directory, especially in a fresh worktree.
+
+On Windows, if a deep checkout makes a linker temp path too long, clone or
+add a worktree in a short directory such as `ripr` directly under the root of
+a drive with enough space. From that checkout root, create `target` if needed
+and run Cargo there. This shortens the forced temp path while keeping scratch
+under the checkout. For the missing-directory failure, see the
+[workspace linker temp notes](agent-context/validation.md#workspace-linker-temp-redirect).
+
 ## Defaults-first operator profile
 
 The built-in missing-config profile and the `ripr init` generated profile are
