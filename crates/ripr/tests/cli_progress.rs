@@ -1991,7 +1991,7 @@ fn silent_catalog_argv(path: &str, root: &str) -> Option<Vec<String>> {
 
 /// #12103: every catalog command is classified, and each progress/`wrote`
 /// path stays silent under `RIPR_QUIET=1` without changing stdout, exit, or
-/// refusal prose.
+/// refusal prose. Each such leaf also accepts `--quiet` with the same effect.
 #[test]
 fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result<(), String> {
     let catalog = catalog_paths()?;
@@ -2082,6 +2082,46 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
         if strip_narration(&loud_err) != strip_narration(&quiet_err) {
             failures.push(format!(
                 "{path}: RIPR_QUIET changed refusal prose\nloud={loud_err}\nquiet={quiet_err}"
+            ));
+            continue;
+        }
+        // The flag twin: every command `RIPR_QUIET` silences also takes
+        // `--quiet` and means the same thing, so a harness that passes the
+        // flag instead of exporting the variable gets the same run. The bare
+        // `agent` family only prints its help.
+        if path == "agent" {
+            continue;
+        }
+        let mut flagged = args.clone();
+        flagged.push("--quiet".to_string());
+        let flag = run_catalog_command(&flagged, None)?;
+        let flag_err = stderr_text(&flag);
+        if flag.status.code() != quiet.status.code() {
+            failures.push(format!(
+                "{path}: --quiet exits {:?} but RIPR_QUIET=1 exits {:?}\nstderr={flag_err}",
+                flag.status.code(),
+                quiet.status.code()
+            ));
+            continue;
+        }
+        let leaked = narration_lines(&flag_err);
+        if !leaked.is_empty() {
+            failures.push(format!(
+                "{path}: --quiet still printed narration: {leaked:?}\nstderr={flag_err}"
+            ));
+            continue;
+        }
+        if path != "reports ci-packet" && flag.stdout != quiet.stdout {
+            failures.push(format!(
+                "{path}: --quiet and RIPR_QUIET=1 print different stdout\nflag={:?}\nenv={:?}",
+                String::from_utf8_lossy(&flag.stdout),
+                String::from_utf8_lossy(&quiet.stdout)
+            ));
+            continue;
+        }
+        if strip_narration(&flag_err) != strip_narration(&quiet_err) {
+            failures.push(format!(
+                "{path}: --quiet and RIPR_QUIET=1 print different stderr\nflag={flag_err}\nenv={quiet_err}"
             ));
         }
     }

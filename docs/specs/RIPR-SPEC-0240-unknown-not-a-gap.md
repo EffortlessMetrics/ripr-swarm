@@ -120,13 +120,15 @@ gate (`cfg(any())`) keep the gap.
 A plain `#[cfg(..)]` that is provably true under the test file's own package's
 default features is no refusal at all (#8780): a plain `cargo test` compiles
 the test, so its assertions are read like an ungated test's, whether the gate
-sits on the test, an enclosing inline module or the file. The feature set and
+sits on the test, an enclosing inline module, the file, or the `mod name;`
+declaration that mounts the test's file (#14116; the declaration's gate is
+read with the default features of the declaring file's own package). The feature set and
 the evaluator are the ones [RIPR-SPEC-0279](RIPR-SPEC-0279-rust-doc-examples-as-tests.md)
 uses for doc examples (`MemberCrates::default_test_features`,
 `test_gate_is_default_enabled`), with `test` as the build's own flag: a
 feature outside the default closure, a negation, a target or custom atom, a
-`cfg_attr`, an unreadable manifest and a gate on a `mod name;` declaration in
-another file resolve nothing and keep the readings above.
+`cfg_attr` and an unreadable manifest resolve nothing and keep the readings
+above.
 `cfg(false)` is read through the same shared evaluator, which does not yet
 evaluate the literal, so a test gated only by it is withheld rather than kept.
 Likewise `#[cfg_attr(test, ignore)]` and `#[cfg_attr(test, should_panic)]`
@@ -1273,7 +1275,12 @@ and repair still does not start.
   file, function or `all(test, ..)` gate on a feature in the default closure
   reads `exposed` like the ungated control, while a non-default feature, a
   negation, a gate with a second unresolved atom and a sibling package's
-  default do not. `default_feature_gate_tests` and
+  default do not. The same file pins the rule on a `mod name;` declaration
+  (#14116): a default-enabled declaration gate reads `exposed`, and a
+  non-default feature, a negation, a second unresolved atom and a
+  `cfg_attr` on the declaration do not. A root-qualified `std::assert_eq!`
+  under the same gate takes the targeted source-provenance route and reads
+  the same way. `default_feature_gate_tests` and
   `a_test_gate_resolves_with_test_as_the_build_flag` pin the scan and the
   evaluator.
 - `pinned_shape_limit.rs` pins each shape's withholding and the controls that
