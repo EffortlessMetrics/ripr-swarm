@@ -275,3 +275,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_pin_written_alias_not_a_pin (23)
+
+Reason:
+RIPR-SPEC-0001: #7807 a removed line read as static_unknown only for lack of context is not reported again when its block replacement's modeled probe carries the whole removed text as before
+
+Command:
+`cargo xtask goldens bless owner_pin_written_alias_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
