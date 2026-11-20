@@ -73,6 +73,41 @@ fn literal_table_rows_pinning_the_boundary_are_exposed() -> Result<(), String> {
 }
 
 #[test]
+fn each_generator_callbacks_contribute_no_assertions() {
+    let source = r#"import { test, expect } from "vitest";
+import { loyaltyTier } from "../src/tier";
+const rows = [[1000, "gold"]];
+test.each([[999, "silver"], [1000, "gold"]])("generator", function* (points, tier) {
+    expect(loyaltyTier(points)).toBe(tier);
+});
+test.each(rows)("fallback", function* (points, tier) {
+    expect(loyaltyTier(points)).toBe("gold");
+});
+test.each([[1000, "gold"]])("ordinary", function (points, tier) {
+    expect(loyaltyTier(points)).toBe(tier);
+});
+"#;
+    let tests = extract_tests(Path::new("tests/tier.test.ts"), source);
+    let registrations: Vec<_> = tests
+        .iter()
+        .map(|test| (test.local_name.as_str(), test.assertions.len()))
+        .collect();
+    assert_eq!(
+        registrations,
+        [("generator", 0), ("fallback", 0), ("ordinary", 1)]
+    );
+    assert_eq!(
+        observed_and_expected(source),
+        [(
+            Some("loyaltyTier(1000)".into()),
+            Some(r#""gold""#.into()),
+            false,
+            11
+        )]
+    );
+}
+
+#[test]
 fn literal_table_rows_missing_the_boundary_stay_a_gap() -> Result<(), String> {
     let source = table_test("  [500, \"silver\"],\n  [2000, \"gold\"],");
     assert_eq!(

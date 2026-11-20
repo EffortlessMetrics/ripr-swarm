@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::each_generator_callbacks_contribute_no_assertions",
+]
