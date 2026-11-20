@@ -9657,15 +9657,13 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             context.alias_map,
             context.workspace_root,
         );
-        let file_names: Vec<&str> = names
+        let body = test.body_text.as_str();
+        if ['\'', '"', '`']
             .iter()
-            .copied()
-            .chain(receivers.iter().map(String::as_str))
-            .collect();
-        if !test_file_names_owner_only_in_test_bodies(test, context.all_tests, &file_names, root) {
+            .any(|quote| body.contains(&format!("{quote}{}{quote}", owner.name)))
+        {
             return None;
         }
-        let body = test.body_text.as_str();
         let masked_body = ts_mask_literals_and_comments(body);
         let mut calls = 0usize;
         for name in names {
@@ -9699,43 +9697,86 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
         let line = line.trim_start();
         line.starts_with("export {") && line.contains("} from ") || line.starts_with("export *")
     };
+    // Every plain call in `text` (with the lines `blank` names emptied) must
+    // fill the position; any other reference refuses.
+    let calls_all_fill = |text: &str, blank: &dyn Fn(usize, &str) -> bool| {
+        let rest: String = text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| if blank(index + 1, line) { "" } else { line })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let masked = ts_mask_literals_and_comments(&rest);
+        word_occurrences(&masked, &owner.name) == 0
+            || (every_owner_reference_is_a_call(&masked, &owner.name, &[])
+                && owner_call_arguments(&rest, &owner.name, &[])
+                    .iter()
+                    .all(|arguments| fills(arguments)))
+    };
     for path in &scan.files {
         let relative = path.strip_prefix(root).unwrap_or(path);
-        if test_files.contains(&relative) {
-            continue;
-        }
         // Scanned paths are root-relative: read them under the root, not the
         // process's working directory.
         let Ok(text) = std::fs::read_to_string(root.join(relative)) else {
             return None;
         };
-        if relative == owner.file.as_path() {
-            // Blank the owner's own declaration and re-export lines.
-            let rest: String = text
-                .lines()
-                .enumerate()
-                .map(|(index, line)| {
-                    let number = index + 1;
-                    if (owner.start_line..=owner.end_line).contains(&number) || is_reexport(line) {
-                        ""
-                    } else {
-                        line
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let masked = ts_mask_literals_and_comments(&rest);
-            if word_occurrences(&masked, &owner.name) == 0 {
-                continue;
-            }
-            if !every_owner_reference_is_a_call(&masked, &owner.name, &[])
-                || !owner_call_arguments(&rest, &owner.name, &[])
+        if test_files.contains(&relative) {
+            // A sibling test, hook or helper in a related test file may call
+            // the owner without being a related candidate: every call in the
+            // file outside its import lines must fill the position.
+            // A loader, a computed key or an import alias names the owner
+            // where this text scan cannot follow it.
+            if text.contains("require(")
+                || text.contains("import(")
+                || ['\'', '"', '`']
                     .iter()
-                    .all(|arguments| fills(arguments))
+                    .any(|quote| text.contains(&format!("[{quote}{}{quote}]", owner.name)))
             {
                 return None;
             }
+            let import_line = |_: usize, line: &str| {
+                let line = line.trim_start();
+                line.starts_with("import ") || line.starts_with("} from ")
+            };
+            if text
+                .lines()
+                .any(|line| import_line(0, line) && line.contains(" as "))
+            {
+                return None;
+            }
+            if !calls_all_fill(&text, &import_line) {
+                return None;
+            }
             continue;
+        }
+        if relative == owner.file.as_path() {
+            // A default export is imported under any name, and an aliased
+            // re-export renames the owner: callers this scan cannot name.
+            if text.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with("export default") && word_occurrences(line, &owner.name) > 0
+                    || is_reexport(line) && line.contains(" as ")
+            }) {
+                return None;
+            }
+            // Blank only the declaration line, which names the owner once;
+            // a recursive call in the body must fill the position too.
+            let declaration = text.lines().nth(owner.start_line.saturating_sub(1))?;
+            if word_occurrences(&ts_mask_literals_and_comments(declaration), &owner.name) != 1 {
+                return None;
+            }
+            let start_line = owner.start_line;
+            let blank = |number: usize, line: &str| number == start_line || is_reexport(line);
+            if !calls_all_fill(&text, &blank) {
+                return None;
+            }
+            continue;
+        }
+        // A re-export that renames the owner hides its callers.
+        if text.lines().any(|line| {
+            is_reexport(line) && word_occurrences(line, &owner.name) > 0 && line.contains(" as ")
+        }) {
+            return None;
         }
         let named = text
             .lines()

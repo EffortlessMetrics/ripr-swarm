@@ -127,12 +127,19 @@ pub(crate) fn argument_is_definitely_defined(argument: &str) -> bool {
         return true;
     }
     if argument.starts_with("new ") {
-        return true;
+        return one_expression_is(argument, |expression| {
+            matches!(expression, Expression::NewExpression(_))
+        });
     }
     if (argument.starts_with("function") || argument.contains("=>"))
         && !argument.starts_with("function_")
     {
-        return arrow_or_function_literal(argument);
+        return one_expression_is(argument, |expression| {
+            matches!(
+                expression,
+                Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+            )
+        });
     }
     let unsigned = argument.strip_prefix('-').unwrap_or(argument);
     numeric_literal_value(unsigned).is_some_and(|text| text.parse::<f64>().is_ok())
@@ -155,8 +162,9 @@ fn balanced_span(masked: &str, open: char, close: char) -> Option<usize> {
     None
 }
 
-/// Whether the text parses as exactly one function or arrow expression.
-fn arrow_or_function_literal(argument: &str) -> bool {
+/// Whether the text parses as exactly one expression of the kind `accept`
+/// names (a `new` expression, a function or an arrow), with nothing after it.
+fn one_expression_is(argument: &str, accept: impl Fn(&Expression<'_>) -> bool) -> bool {
     let source = format!("({argument});");
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, &source, SourceType::ts()).parse();
@@ -166,10 +174,7 @@ fn arrow_or_function_literal(argument: &str) -> bool {
     let Statement::ExpressionStatement(statement) = &parsed.program.body[0] else {
         return false;
     };
-    matches!(
-        statement.expression.get_inner_expression(),
-        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
-    )
+    accept(statement.expression.get_inner_expression())
 }
 
 struct Param {

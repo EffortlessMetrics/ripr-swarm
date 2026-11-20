@@ -158,6 +158,77 @@ fn a_call_that_may_use_the_default_keeps_the_verdict() -> Result<(), String> {
     Ok(())
 }
 
+/// One scan case: its label, the owner source, and the extra files.
+type Case<'a> = (&'a str, &'a str, Vec<(&'a str, &'a str)>);
+
+/// Callers the scan cannot name or skip: a recursive call in the owner's
+/// own body, a sibling test without an assertion, an aliased re-export, a
+/// default export, and a computed-key reference each keep the verdict.
+#[test]
+fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
+    let filled = pick_test("pick('x', { level: 'B' })", "'xB'");
+    let recursive = PICK.replacen(
+        "  return name + opts.level;",
+        "  return name ? pick('') + opts.level : opts.level;",
+        1,
+    );
+    let sibling = format!("{filled}\nit('smoke', () => {{\n  pick('y');\n}});\n");
+    let default_export = format!("{PICK}export default pick;\n");
+    let computed = "import { it, expect } from 'vitest';\nimport * as m from '../src/def';\n\nit('picks', () => {\n  expect(m.pick('x', { level: 'B' })).toBe('xB');\n  m['pick']('y');\n});\n";
+    let cases: [Case<'_>; 5] = [
+        (
+            "default-recursive",
+            &recursive,
+            vec![("tests/def.test.ts", &filled)],
+        ),
+        (
+            "default-sibling-test",
+            PICK,
+            vec![("tests/def.test.ts", &sibling)],
+        ),
+        (
+            "default-aliased-reexport",
+            PICK,
+            vec![
+                ("tests/def.test.ts", &filled),
+                ("src/index.ts", "export { pick as choose } from './def';\n"),
+                (
+                    "src/use.ts",
+                    "import { choose } from './index';\nexport const run = () => choose('y');\n",
+                ),
+            ],
+        ),
+        (
+            "default-default-export",
+            &default_export,
+            vec![("tests/def.test.ts", &filled)],
+        ),
+        (
+            "default-computed-key",
+            PICK,
+            vec![("tests/def.test.ts", computed)],
+        ),
+    ];
+    for (label, source, files) in cases {
+        let finding = finding_at(label, source, 3, PICK_OLD, PICK_NEW, &files)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{label}: {:?}",
+            finding.missing
+        );
+        assert!(
+            !finding
+                .missing
+                .iter()
+                .any(|line| line.contains("only moves the default value")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn only_a_lone_default_value_edit_is_located() {
     let file = Path::new("src/def.ts");
@@ -220,8 +291,34 @@ fn only_arguments_that_cannot_be_undefined_fill_a_default() {
         "...rest",
         "a ?? b",
         "{ a: 1 }.b",
+        "new Foo().bar",
+        "new Foo().get()",
+        "new Foo() && undefined",
+        "new Foo() ? undefined : 1",
         "",
     ] {
         assert!(!argument_is_definitely_defined(argument), "{argument}");
     }
+}
+
+/// The common layout: the test sits in a `describe` titled with the owner's
+/// name, and that title is not a caller.
+#[test]
+fn a_describe_titled_with_the_owner_name_is_not_a_caller() -> Result<(), String> {
+    let test = "import { describe, it, expect } from 'vitest';\nimport { pick } from '../src/def';\n\ndescribe('pick', () => {\n  it('joins the level', () => {\n    expect(pick('x', { level: 'B' })).toBe('xB');\n  });\n});\n";
+    let finding = finding_at(
+        "default-describe",
+        PICK,
+        3,
+        PICK_OLD,
+        PICK_NEW,
+        &[("tests/def.test.ts", test)],
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
 }
