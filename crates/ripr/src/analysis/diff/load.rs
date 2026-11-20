@@ -1413,21 +1413,6 @@ pub(crate) fn doctor_base_history(
     )))
 }
 
-pub(crate) fn origin_head_unset(root: &Path, timeout: Option<Duration>) -> bool {
-    configured_remotes(root, timeout).is_some_and(|names| names.iter().any(|name| name == "origin"))
-        && crate::git::run_git_output_with_deadline(
-            root,
-            &[
-                "show-ref",
-                "--verify",
-                "--quiet",
-                "refs/remotes/origin/HEAD",
-            ],
-            timeout,
-        )
-        .is_ok_and(|output| output.status.code() == Some(1))
-}
-
 /// A quiet failed HEAD lookup is not enough to establish an unborn branch:
 /// loose-ref damage and inaccessible ref targets can also return silent exit 1.
 /// Git's recursive symbolic lookup distinguishes those without assuming a ref
@@ -1662,14 +1647,16 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
 /// origin --auto` creates it once the default branch's tracking ref exists,
 /// hence the `git fetch origin` before it. False when there is no `origin` or
 /// Git cannot answer, so the advice is only given where it can apply.
-fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
+pub(crate) fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
     let succeeds = |args: &[&str]| {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
             .map(|output| output.status.success())
     };
     succeeds(&["remote", "get-url", "origin"]) == Some(true)
-        && succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
+        && (succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
+            || git_ref_output(root, "refs/remotes/origin/HEAD", git_timeout)
+                .is_some_and(|output| rev_parse_answered_no(&output)))
 }
 
 /// Widens a single-branch clone so a fetch brings every branch of `origin`.
