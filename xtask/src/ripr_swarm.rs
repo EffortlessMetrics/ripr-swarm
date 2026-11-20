@@ -3099,7 +3099,7 @@ fn validate_retained_attempt_history(
         let row = history_by_id
             .get(id)
             .ok_or_else(|| format!("registered attempt {id} is missing from history"))?;
-        for field in ["canonical_gap_id", "receipt_path"] {
+        for field in ["canonical_gap_id", "receipt_path", "outcome"] {
             if let Some(value) = latest[field].as_str()
                 && row[field].as_str() != Some(value)
             {
@@ -3119,6 +3119,17 @@ fn validate_retained_attempt_history(
             ));
         }
     }
+    if let Some(expected) = ledger["attempt_history_summary"]["durable_attempts_total"].as_u64() {
+        let durable = attempts
+            .iter()
+            .filter(|row| row["outcome"] != "not_attempted")
+            .count();
+        if expected != durable as u64 {
+            return Err(format!(
+                "prior ledger registers {expected} durable attempts, but history contains {durable}"
+            ));
+        }
+    }
     for row in attempts {
         let Some(id) = row["attempt_id"].as_str() else {
             continue;
@@ -3132,13 +3143,14 @@ fn validate_retained_attempt_history(
             .ok()
             .map(|index| &refreshed[index]);
         if !retained.is_some_and(|entry| {
-            row["canonical_gap_id"] == entry.canonical_gap_id
+            entry.outcome != "not_attempted"
+                && row["canonical_gap_id"] == entry.canonical_gap_id
                 && row["receipt_path"]
                     .as_str()
                     .is_none_or(|path| entry.receipt_path.as_deref() == Some(path))
         }) {
             return Err(format!(
-                "refresh would replace registered attempt {id} with a different gap or receipt"
+                "refresh would replace registered attempt {id} or discard its completion evidence"
             ));
         }
     }
