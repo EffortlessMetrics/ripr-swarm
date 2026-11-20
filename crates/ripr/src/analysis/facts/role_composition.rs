@@ -385,7 +385,7 @@ fn files_in_skipped_unit_test_targets(
 /// - a `path` attribute whose value is a metavariable or a string literal
 ///   that does not name a `.rs` file (`#[path = "m.txt"]`);
 /// - `mod $name` anywhere.
-fn may_build_mount_operands(source: &str) -> bool {
+pub(super) fn may_build_mount_operands(source: &str) -> bool {
     let tokens = mount_tokens(source);
     let ident = |at: usize, name: &str| matches!(tokens.get(at), Some(MountToken::Ident(word)) if word == name);
     let punct = |at: usize, mark: char| matches!(tokens.get(at), Some(MountToken::Punct(found)) if *found == mark);
@@ -457,7 +457,11 @@ fn macro_body_may_mount(tokens: &[MountToken], from: usize, first_group_only: bo
                     })
                 };
                 let mounts = match word.as_str() {
-                    "mod" | "include" => true,
+                    // A metavariable named `$mod` is not a `mod` keyword.
+                    "mod" => !at.checked_sub(1).is_some_and(|previous| {
+                        matches!(tokens.get(previous), Some(MountToken::Punct('$')))
+                    }),
+                    "include" => true,
                     "path" => !in_path(at.checked_sub(1)) && !in_path(Some(at + 1)),
                     _ => false,
                 };
@@ -1958,6 +1962,7 @@ mod tests {
         }
         for plain in [
             "macro_rules! twice { ($e:expr) => { $e * 2 }; }",
+            "macro_rules! m { ($mod:ident) => { $mod::One }; }\nmod tests {}",
             "include!(\"gen.rs\");",
             "include!{\"gen.rs\"}",
             "include![\"gen.rs\"];",

@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #8999
+- #14768 (benchmark inputs that contain module-generating syntax)
 - #14962 (tests compiled only into a target `cargo test` skips: `[lib]
   test = false`, `[[bin]] test = false`, a bin's unmet default-feature
   `required-features`)
@@ -65,13 +66,15 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    its package's `src/lib.rs` or `src/main.rs` is indexed.
 3. No Rust source or `Cargo.toml` of the workspace mentions its file name as a
    substring anywhere (a `#[path]`, an `include!`, a `[[bench]]`/`[[test]]`/`[lib]`
-   `path`, a `build =`), no `path` attribute or key, or `include!` operand, contains a
-   backslash (escape, line continuation or separator), names compare
-   ASCII-case-insensitively, no source declares a `mod` of its stem, no source builds a `mod`
-   or `include!` operand from a macro metavariable (any `$` beside a
-   `mod`/`include` word, whatever comments or strings intervene) or passes a
-   computed `include!` operand, and the file is not a `mod.rs`.
-4. The workspace has no unresolved `include!`, and every lexical-fallback file
+   `path`, a `build =`). Names compare ASCII-case-insensitively. No source
+   declares a `mod` of its stem, and the file is not a `mod.rs`.
+4. The Rust mount-token scan finds no uncertain mount operand in another
+   indexed source, such as a macro-generated module or a computed `include!`.
+   A macro binding named `$mod` is an ordinary metavariable. An uncertain
+   operand inside the candidate still counts when judging other files.
+   Escaped mount operands in other sources and escaped manifest paths
+   also preserve uncertainty.
+5. The workspace has no unresolved `include!`, and every lexical-fallback file
    or unknown `#[path]` is itself unlinked: a file no root reaches never
    compiles its own declarations either.
 
@@ -79,6 +82,9 @@ The executable tests registered in such a file are withheld from the index, so
 they are neither related tests nor oracles, and a parser refusal of the file
 adds no lexical-fallback limitation. The file and its functions stay indexed,
 and an owner inside it still reads as outside the module tree.
+The workspace assertion macro-binding scan omits parser-refused files with
+this source-role verdict. A parser-refused reachable or unresolved file
+retains its assertion-binding uncertainty.
 
 Any doubt keeps the file as before: it stays indexed with its tests. The
 change only removes credit; it never adds a relation, raises a class or
@@ -206,6 +212,9 @@ running test; no named stop reason is added on this issue.
   `include!`, by a same-stem `mod`, below a macro that builds `mod` operands,
   or beside a lexical-fallback crate root keeps its tests; so does a package
   whose crate root is not indexed.
+- A benchmark input with module-generating syntax in its own text stays out
+  of related tests and assertion refusals. A declared `[[test]]`
+  target and a `#[path]` module keep the same unusual path as related evidence.
 - Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
   child module, and `[[bin]] test = false` unit tests do not credit a
   discriminator (nor, as before, a `[[test]] test = false` target), while
@@ -248,11 +257,6 @@ running test; no named stop reason is added on this issue.
 
 ## Known Limits
 
-- A parser-refused file still makes the workspace-wide macro-binding scan
-  ambiguous when it spells `assert_eq!`, so a finding can stay
-  `static_unknown` with `rust_assertion_context_unresolved` (fail closed,
-  disclosed); it does not become a related test or a limitation. A follow-up
-  can let the scan skip never-compiled files.
 - Only the `.rs` file name is matched, not its directory: another file of the
   same name that is referenced keeps every same-named file (more doubt).
 - Build scripts that write sources into the tree, `cargo script` files and
@@ -354,6 +358,7 @@ running test; no named stop reason is added on this issue.
 - `crates/ripr/src/analysis/facts/role_composition.rs`:
   `files_outside_module_tree`, `withhold_tests_outside_module_tree`,
   `files_in_skipped_unit_test_targets` (#14962).
+- `crates/ripr/src/analysis/classify/owner_pin.rs`: `scan_macro_sites` (#14768).
 - `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
   `ManifestInventory::crate_root_unit_tests_skipped` (#14962).
 

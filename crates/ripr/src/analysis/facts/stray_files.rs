@@ -14,7 +14,7 @@
 //! anywhere, a macro that builds `mod` or `include!` operands, an unreadable
 //! manifest, or a package whose crate root is not indexed.
 
-use super::model::RustIndex;
+use super::{model::RustIndex, role_composition::may_build_mount_operands};
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
@@ -66,12 +66,13 @@ pub(super) fn never_compiled(
         .collect();
     let mut referenced_names: BTreeSet<String> = BTreeSet::new();
     let mut declared_modules: BTreeSet<String> = BTreeSet::new();
-    for facts in index.files().values() {
+    let mut uncertain_source = None;
+    for (path, facts) in index.files().iter() {
         let source: &str = &facts.source;
-        if builds_module_operands(source) {
-            return out;
-        }
-        if spells_a_path_with_escapes(source) {
+        if (may_build_mount_operands(source) || spells_a_path_with_escapes(source))
+            && uncertain_source.replace(path).is_some()
+        {
+            // At least one source other than each candidate could mount it.
             return out;
         }
         collect_referenced_file_names(
@@ -112,6 +113,11 @@ pub(super) fn never_compiled(
     // A package's build script is a crate root whose name the manifest may
     // not repeat; its text is already among the indexed sources.
     for file in candidates {
+        // A candidate's own unresolved operand cannot be a route into it.
+        // An uncertain operand in any other source still keeps it.
+        if uncertain_source.is_some_and(|source| source != file) {
+            continue;
+        }
         let Some(name) = file.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
@@ -131,20 +137,6 @@ pub(super) fn never_compiled(
         }
     }
     out
-}
-
-/// True when a source may assemble a `mod` or `include!` operand the text
-/// cannot name: any `$` beside a `mod`/`include` word (macro metavariables,
-/// whatever comments, strings or whitespace sit between them), or an
-/// `include!` whose operand is not a plain string literal.
-fn builds_module_operands(source: &str) -> bool {
-    if source.contains('$') && (source.contains("mod") || source.contains("include")) {
-        return true;
-    }
-    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
-    compact
-        .match_indices("include!(")
-        .any(|(at, matched)| !compact[at + matched.len()..].starts_with('"'))
 }
 
 /// `source` with every block and line comment replaced by one space; block
@@ -347,7 +339,7 @@ mod tests {
             "m!{ ($n:ident) => { mod/*c*/$n; } }",
             "m!{ ($n:ident) => { include!\n($n); } }",
         ] {
-            assert!(builds_module_operands(source), "{source}");
+            assert!(may_build_mount_operands(source), "{source}");
         }
         for source in [
             "m!{ ($n:ident) => { mod /* /* */ */ $n; } }",
@@ -355,10 +347,10 @@ mod tests {
             "include!(concat!(\"hay\", \".rs\"));",
             "include!(env!(\"X\"));",
         ] {
-            assert!(builds_module_operands(source), "{source}");
+            assert!(may_build_mount_operands(source), "{source}");
         }
-        assert!(!builds_module_operands("mod plain;\n// mod\nfn f() {}"));
-        assert!(!builds_module_operands("include!(\"gen.rs\");"));
+        assert!(!may_build_mount_operands("mod plain;\n// mod\nfn f() {}"));
+        assert!(!may_build_mount_operands("include!(\"gen.rs\");"));
     }
 }
 

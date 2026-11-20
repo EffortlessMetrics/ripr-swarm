@@ -1,6 +1,6 @@
 //! A Rust file that no Cargo target compiles (a benchmark or corpus haystack
 //! such as `benchmarks/haystacks/code/rust-library.rs`) contributes no
-//! related test and no lexical-fallback limitation (#8999). The same file
+//! related test or parser-based assertion refusal (#8999, #14768). The same file
 //! compiled through a `#[path]` module is the positive control: its test is
 //! related and its parser refusal is disclosed. Each case reads the rendered
 //! finding classification, related test files and analysis outcome.
@@ -15,7 +15,9 @@ const HAY_SOURCE: &str =
     "use keyed::discount;\n#[test]\nfn corpus_case() {\n    assert_eq!(discount(10), 5);\n}\n";
 // The same text with a token the reference parser refuses, so it is indexed
 // lexically.
-const REFUSED_HAY_SOURCE: &str = "use keyed::discount;\n#[test]\nfn corpus_case() {\n    assert_eq!(discount(10), 5);\n}\nfn broken( {\n";
+const REFUSED_HAY_SOURCE: &str = "use keyed::discount;\n#[test]\nfn corpus_case() {\n    assert_eq!(discount(10), 5);\n}\nmacro_rules! declare { ($name:ident) => { mod $name; } }\nfn broken( {\n";
+// A metavariable name can spell a keyword without declaring a module.
+const ORDINARY_MACRO: &str = "macro_rules! value { ($mod:ident) => { $mod }; }\n";
 const TESTS: &str = "use keyed::discount;\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(10), 5);\n}\n";
 const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
@@ -61,6 +63,7 @@ struct Run {
     related_files: Vec<String>,
     outcome_kind: String,
     limitations: String,
+    human: String,
 }
 
 fn run(lib_extra: &str, manifest_extra: &str, haystack: Option<&str>) -> Result<Run, String> {
@@ -68,7 +71,7 @@ fn run(lib_extra: &str, manifest_extra: &str, haystack: Option<&str>) -> Result<
     scratch.write(
         "Cargo.toml",
         &format!(
-            "[package]\nname = \"keyed\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n{manifest_extra}"
+            "[package]\nname = \"keyed\"\nversion = \"0.0.0\"\nedition = \"2024\"\nexclude = [\"/benchmarks\"]\n\n[workspace]\n{manifest_extra}"
         ),
     )?;
     let lib = format!(
@@ -119,6 +122,7 @@ fn run(lib_extra: &str, manifest_extra: &str, haystack: Option<&str>) -> Result<
         related_files,
         outcome_kind: outcome["kind"].as_str().unwrap_or_default().to_string(),
         limitations: outcome["limitations"].to_string(),
+        human: render_check(&report, &OutputFormat::Human)?,
     })
 }
 
@@ -139,17 +143,18 @@ fn an_uncompiled_haystack_is_not_a_related_test() -> Result<(), String> {
 
 #[test]
 fn an_uncompiled_unparsed_haystack_is_not_a_lexical_limitation() -> Result<(), String> {
-    // The workspace-wide macro-binding scan still reads this unparsed file, so
-    // the class may stay `static_unknown`; the claim here is only that the file
-    // is neither related evidence nor a lexical-fallback disclosure.
-    let run = run("", "", Some(REFUSED_HAY_SOURCE))?;
+    let baseline = run(ORDINARY_MACRO, "", None)?;
+    let run = run(ORDINARY_MACRO, "", Some(REFUSED_HAY_SOURCE))?;
     assert_eq!(run.related_files, ["tests/api.rs"], "{}", run.limitations);
+    assert_eq!(run.classification, baseline.classification);
     assert_eq!(
         run.outcome_kind, "complete_with_findings",
         "{}",
         run.limitations
     );
     assert!(!run.limitations.contains(HAY), "{}", run.limitations);
+    assert!(!run.human.contains(HAY), "{}", run.human);
+    assert!(run.human.contains("discount_boundary"), "{}", run.human);
     Ok(())
 }
 
@@ -196,6 +201,21 @@ fn a_module_building_macro_keeps_the_file_whatever_its_spacing() -> Result<(), S
             "{builder:?}: {:?}",
             run.related_files
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_custom_test_target_and_path_module_keep_the_same_source() -> Result<(), String> {
+    let source =
+        format!("{HAY_SOURCE}macro_rules! declare {{ ($name:ident) => {{ mod $name; }} }}\n");
+    let manifest = format!("\n[[test]]\nname = \"hay\"\npath = \"{HAY}\"\n");
+    let module = format!(
+        "extern crate self as keyed;\n#[cfg(test)]\n#[path = \"../{HAY}\"]\nmod haystack;\n"
+    );
+    for (lib, manifest) in [("", manifest.as_str()), (module.as_str(), "")] {
+        let run = run(lib, manifest, Some(&source))?;
+        assert_eq!(run.related_files, [HAY, "tests/api.rs"]);
     }
     Ok(())
 }

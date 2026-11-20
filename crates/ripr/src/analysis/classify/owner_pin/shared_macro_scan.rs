@@ -23,7 +23,8 @@
 //! be taken (a poisoned lock).
 
 use super::{
-    MacroScanFile, ScannedMacroSites, TargetRoots, partition_macro_scan_files, scan_macro_sites,
+    MacroScanFile, ScannedMacroSites, TargetRoots, is_uncompiled_lexical_source,
+    partition_macro_scan_files, scan_macro_sites,
 };
 use crate::analysis::facts::SourceRoleProvenanceEdge;
 use crate::analysis::rust_index::RustIndex;
@@ -47,10 +48,11 @@ struct ScanKey {
     /// Fact storage identity and membership revision.
     storage: (usize, usize, u64),
     /// Per file in path order: path, source allocation, source length and the
-    /// stored macro candidates' allocation. Pointer identity of an immutable
+    /// stored macro candidates' allocation, plus the lexical-source exclusion
+    /// from composition. Pointer identity of an immutable
     /// `Arc<str>` is exact for "same text"; a different allocation with equal
     /// text only costs a recompute.
-    files: Vec<(PathBuf, usize, usize, Option<usize>)>,
+    files: Vec<(PathBuf, usize, usize, Option<usize>, bool)>,
     /// Crates whose glob imports the scan treats as workspace-owned.
     macro_scope_crates: BTreeSet<String>,
     /// The module edges that decide which declarations resolved.
@@ -82,6 +84,7 @@ impl ScanKey {
                         data.macro_candidates
                             .as_deref()
                             .map(|candidates| std::ptr::from_ref(candidates) as usize),
+                        is_uncompiled_lexical_source(facts),
                     )
                 })
                 .collect(),

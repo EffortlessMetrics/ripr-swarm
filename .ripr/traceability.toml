@@ -22162,6 +22162,7 @@ tests = [
   "crates/ripr/tests/outside_target_haystack.rs::an_uncompiled_unparsed_haystack_is_not_a_lexical_limitation",
   "crates/ripr/tests/outside_target_haystack.rs::the_same_file_compiled_through_a_path_module_is_related_and_disclosed",
   "crates/ripr/tests/outside_target_haystack.rs::a_bench_target_naming_the_file_keeps_it_compiled",
+  "crates/ripr/tests/outside_target_haystack.rs::a_custom_test_target_and_path_module_keep_the_same_source",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::stray_haystack_tests_are_not_related_test_evidence",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::stray_file_the_parser_refuses_is_still_outside_every_target",
   "crates/ripr/src/analysis/facts/stray_files.rs::index_tests::manifest_bench_path_keeps_the_file_a_target",
