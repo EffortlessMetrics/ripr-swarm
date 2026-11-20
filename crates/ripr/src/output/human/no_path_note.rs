@@ -124,6 +124,15 @@ mod tests {
     }
 
     #[test]
+    fn direct_owner_call_keeps_the_linked_count() {
+        let mut linked = row("calls_owner", None);
+        linked.relation_reason = Some(RelationReason::DirectOwnerCall);
+        let note = flat_note(&all_no_path(vec![no_path_finding(vec![linked])]));
+        assert!(note.contains(&format!("1 {LINKED}")), "{note}");
+        assert!(!note.contains(NO_CALL_PATH), "{note}");
+    }
+
+    #[test]
     fn a_packed_away_row_keeps_the_neutral_count() {
         let mut finding = no_path_finding(vec![row("near_a", Some(RelatedTestMiss::NoCallPath))]);
         finding.related_tests_matched_total = Some(3);
