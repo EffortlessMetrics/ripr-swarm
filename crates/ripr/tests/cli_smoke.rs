@@ -38730,6 +38730,11 @@ fn agent_start_accepts_an_absolute_out_directory_inside_a_dot_root() -> Result<(
         )?;
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         assert!(!stderr.contains("outside --root"), "{out}: {stderr}");
+        // The guard passed and the command reached the seam lookup.
+        assert!(
+            stderr.contains("seam_id any was not found"),
+            "{out}: {stderr}"
+        );
     }
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
@@ -38768,5 +38773,39 @@ fn agent_start_refuses_an_out_directory_through_a_symlink_outside_the_root()
     assert_ne!(output.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("outside --root"), "{stderr}");
     assert!(!created, "refused start wrote through the symlink");
+    Ok(())
+}
+
+/// #15258 review: a dangling symlink inside the root does not canonicalize,
+/// so the ancestor walk must refuse it instead of stepping past it.
+#[cfg(unix)]
+#[test]
+fn agent_start_refuses_an_out_directory_through_a_dangling_symlink() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("agent-start-out-dangling");
+    std::fs::create_dir_all(&root)?;
+    let missing = unique_temp_workspace("agent-start-out-dangling-target");
+    std::os::unix::fs::symlink(&missing, root.join("link"))?;
+    let root_text = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &[
+            "agent",
+            "start",
+            "--root",
+            root_text.as_str(),
+            "--seam-id",
+            "any",
+            "--out",
+            "link/x",
+        ],
+    )?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let created = missing.exists();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&missing);
+    assert_ne!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("outside --root"), "{stderr}");
+    assert!(!created, "refused start created the dangling target");
     Ok(())
 }

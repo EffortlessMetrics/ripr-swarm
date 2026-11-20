@@ -5819,8 +5819,12 @@ fn ensure_agent_start_out_contained(root: &Path, out_dir: &Path) -> Result<(), S
             Ok(canonical) => {
                 let mut probe = resolve_agent_start_out_dir(root, out_dir);
                 loop {
-                    if let Ok(real) = probe.canonicalize() {
-                        break !real.starts_with(&canonical);
+                    match probe.canonicalize() {
+                        Ok(real) => break !real.starts_with(&canonical),
+                        // A dangling symlink does not canonicalize; its
+                        // target is unknown, so treat it as outside.
+                        Err(_) if probe.symlink_metadata().is_ok() => break true,
+                        Err(_) => {}
                     }
                     if !probe.pop() {
                         break true;
