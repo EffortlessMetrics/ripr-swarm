@@ -1,5 +1,27 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.186 for one-hop blanket-impl reach (#6732)
+
+A test reaching a trait-impl owner only through a one-hop blanket impl now
+withholds the gap as unresolved reach, which bumps the analyzer cache schema to
+1.186. Move the portable unchanged-attempt snapshots to 1.186, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes, and recapture the 19 honesty reports whose
+header carried 1.184 (artifact, source_subject and analysis_inputs only). Weak
+grip, unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
+
+A macro-generated test that sits beside a rebound std macro name takes no
+invocation scopes, which bumps the analyzer cache schema to 1.184. Move the
+portable unchanged-attempt snapshots to 1.184, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.182 after module-const reach (#13592)
 
 A module-level `const` read only by a same-module function gains a reader

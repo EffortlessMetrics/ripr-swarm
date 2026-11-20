@@ -771,10 +771,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// typed `activation_boundary_input_unresolved` token and the evidence record
 /// no longer derives that category from the sentence (#14951), so a cached
 /// summary without the token would lose its category.
-/// `1.184`: a test reaching a trait-impl owner only through a one-hop blanket
+/// `1.184`: a macro-generated test takes no invocation scopes when its file or
+/// invocation scope rebinds an exempt std macro name (#12852).
+/// `1.186`: a test reaching a trait-impl owner only through a one-hop blanket
 /// impl (`impl<T: Render> ToText for T`) withholds the gap as unresolved reach
 /// instead of reporting it (#6732).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.186";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -998,8 +1000,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-/// `0.186`: same blanket-impl reach withholding as full `1.184` (#6732).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.188`: same blanket-impl reach withholding as full `1.186` (#6732).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.188";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1225,8 +1228,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-/// `0.186`: same blanket-impl reach withholding as full `1.184` (#6732).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.188`: same blanket-impl reach withholding as full `1.186` (#6732).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.188";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2512,6 +2516,22 @@ impl ModuleTreeScanEnvelope {
             Err("missing or mismatching semantic payload digest".to_owned())
         }
     }
+}
+
+/// Whether a non-empty `RIPR_CACHE_DIR` moves the cache off the default
+/// `target/ripr/cache` base for this process.
+pub(crate) fn cache_base_is_relocated() -> bool {
+    std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Repository-relative path of the module-tree scan bundle under the default
+/// cache base (no `RIPR_CACHE_DIR`). The repair edit cage treats this one
+/// fixed-name derived file as unbound attempt state (#15060).
+pub(crate) fn module_tree_scan_bundle_default_relative_path() -> String {
+    format!(
+        "target/ripr/cache/{}/{MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION}/scans.json",
+        CacheLayer::ModuleTreeScans.name()
+    )
 }
 
 /// Persists the module-graph walk's per-file scans between runs so a warm
@@ -5740,8 +5760,9 @@ mod tests {
         // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
         // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
         // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
-        // 1.183 -> 1.184: one-hop blanket-impl reach withholds the gap (#6732).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.184");
+        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
+        // 1.185 -> 1.186: one-hop blanket-impl reach withholds the gap (#6732).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.186");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5905,9 +5926,10 @@ mod tests {
         // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
         // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
         // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
-        // 0.185 -> 0.186: same blanket-impl reach withholding as full 1.184 (#6732).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
+        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
+        // 0.187 -> 0.188: same blanket-impl reach withholding as full 1.186 (#6732).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.188");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.188");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
