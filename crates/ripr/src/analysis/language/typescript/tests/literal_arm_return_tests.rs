@@ -114,8 +114,8 @@ fn a_generator_or_concise_arrow_owner_is_refused() {
         literal_arm_return(
             &owner(generator),
             12,
-            "    return 3;",
-            Some("    return 1;")
+            "    return 1;",
+            Some("    return 3;")
         ),
         None
     );
@@ -123,6 +123,27 @@ fn a_generator_or_concise_arrow_owner_is_refused() {
     assert_eq!(
         literal_arm_return(&owner(concise), 10, "return 3;", Some("return 1;")),
         None
+    );
+}
+
+#[test]
+fn an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return() {
+    // `export const dir =` is line 10; the arrow's own text starts on line 11,
+    // so the changed line must be offset from the text's origin, not from the
+    // declaration's first line.
+    let source = "(n: number): string => {\n  switch (n) {\n    case 1:\n      return 'uno';\n    case 2:\n      return 'two';\n    default:\n      return 'other';\n  }\n}";
+    let mut owner = owner(source);
+    owner.start_line = 10;
+    owner.end_line = 20;
+    let change = literal_arm_return(
+        &owner,
+        14,
+        "      return 'uno';",
+        Some("      return 'one';"),
+    );
+    assert!(
+        change.is_some(),
+        "the return on the arrow text's fourth line must be located"
     );
 }
 
@@ -215,7 +236,7 @@ fn an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm() -> Result<(), 
             finding
                 .missing
                 .iter()
-                .any(|line| line.contains("expects another arm's result (`'two'`)")),
+                .any(|line| line.contains("expect other arms' results (`'two'`)")),
             "{label}: {:?}",
             finding.missing
         );
@@ -346,6 +367,17 @@ fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), Stri
             "shared-gold-and-silver",
             "    expect(dir('gold')).toBe(7);\n    expect(dir('silver')).toBe(7);\n",
         ),
+        // A comma inside a block or line comment is not an argument slot: the
+        // argument list stays unreadable, so the shared-result exclusion does
+        // not apply and the verdict is kept.
+        (
+            "shared-comment-comma",
+            "    expect(dir('gold' /* , 'silver' */)).toBe(7);\n",
+        ),
+        (
+            "shared-line-comment-comma",
+            "    expect(dir('gold' // , 'silver'\n    )).toBe(7);\n",
+        ),
     ] {
         let finding = run(label, body)?;
         assert_eq!(
@@ -379,7 +411,7 @@ fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), Stri
             finding
                 .missing
                 .iter()
-                .any(|line| line.contains("expects another arm's result (") && line.contains("`7`")),
+                .any(|line| line.contains("expect other arms' results (") && line.contains("`7`")),
             "{label}: {:?}",
             finding.missing
         );
@@ -391,6 +423,29 @@ fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), Stri
         PRICE,
         8,
         "      return 0;",
+        "      return 7;",
+        &vitest("    expect(dir('gold')).toBe(7);\n"),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+/// A recursive owner can re-enter the changed arm with another input, so a
+/// call that leaves the arm closed does not prove the shared new result came
+/// from the unchanged arm: the verdict is kept.
+#[test]
+fn a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result() -> Result<(), String> {
+    const REENTRANT: &str = "export function dir(kind: string): number {\n  if (kind === 'again') {\n    dir('silver');\n  }\n  switch (kind) {\n    case 'gold':\n      return 7;\n    case 'silver':\n      return 5;\n    default:\n      return 0;\n  }\n}\n";
+    let finding = finding_at(
+        "shared-reentrant",
+        REENTRANT,
+        8,
+        "      return 5;",
         "      return 7;",
         &vitest("    expect(dir('gold')).toBe(7);\n"),
     )?;
@@ -440,7 +495,7 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
         unpinned
             .missing
             .iter()
-            .any(|line| line.contains("expects another arm's result")),
+            .any(|line| line.contains("expect other arms' results")),
         "it.each unpinned: {:?}",
         unpinned.missing
     );
@@ -456,7 +511,7 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
         !snapshot
             .missing
             .iter()
-            .any(|line| line.contains("expects another arm's result")),
+            .any(|line| line.contains("expect other arms' results")),
         "snapshot: {:?}",
         snapshot.missing
     );
@@ -481,14 +536,23 @@ fn an_unreadable_expected_side_keeps_the_verdict() -> Result<(), String> {
             DIR,
             4,
             "      return 'one';",
-            "      return 'uno';",
+            "      return 'once';",
             &vitest(body),
         )?;
+        // `'once'` is a different length from `'one'`, so the derived
+        // `.length` assertions separate the two versions and the change is
+        // detected; `'uno'` (also length 3) could not show that.
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
         assert!(
             !finding
                 .missing
                 .iter()
-                .any(|line| line.contains("expects another arm's result")),
+                .any(|line| line.contains("expect other arms' results")),
             "{label}: {:?}",
             finding.missing
         );

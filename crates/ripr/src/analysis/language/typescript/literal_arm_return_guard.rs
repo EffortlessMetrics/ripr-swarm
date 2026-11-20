@@ -68,7 +68,7 @@ pub(crate) fn literal_arm_return(
         return None;
     }
     let source = owner.source_text.as_deref()?;
-    let changed = line.checked_sub(owner.start_line)?;
+    let changed = line.checked_sub(owner.source_start_line())?;
     let returns = owner_returns(&owner.file, source)?;
     let mut changed_seen = false;
     let mut new_value_shared = false;
@@ -157,6 +157,12 @@ pub(crate) fn ts_literal_arm_witness(
     workspace_root: Option<&Path>,
 ) -> LiteralArmWitness {
     let mut expected_values: Vec<String> = Vec::new();
+    // A recursive or re-exported owner can be re-entered with another input,
+    // so a call that leaves the changed arm closed can still reach it through
+    // the owner's own recursion. The shared-new-result exemption needs the
+    // owner named once in its module, as `ts_unentered_guard` requires.
+    let owner_reentrant = workspace_root
+        .is_none_or(|root| !super::classifier::owner_module_names_owner_once(owner, root));
     for candidate in candidates.iter().filter(|c| c.relation.uses_oracle()) {
         if !matches!(
             candidate.relation,
@@ -189,7 +195,8 @@ pub(crate) fn ts_literal_arm_witness(
             // An exact scalar expectation of the new result on an owner call
             // is another arm's result only when another arm shares it and
             // the call provably leaves the changed arm closed.
-            let new_result_of_another_arm = expected_value.as_ref() == Some(&change.new_value)
+            let new_result_of_another_arm = !owner_reentrant
+                && expected_value.as_ref() == Some(&change.new_value)
                 && change.new_value_shared
                 && observed_arguments
                     .as_deref()
@@ -248,7 +255,7 @@ pub(crate) fn ts_literal_arm_unpinned_line(
     expected: &[String],
 ) -> String {
     format!(
-        "No exact assertion on `{owner_name}` expects `{}`, the result only the changed arm returned; every exact assertion on `{owner_name}` expects another arm's result ({}), so each passes on both versions.",
+        "No exact assertion on `{owner_name}` expects `{}`, the result only the changed arm returned; the exact assertions on `{owner_name}` expect other arms' results ({}).",
         change.old_text,
         expected
             .iter()
@@ -305,6 +312,7 @@ fn owner_returns(file: &Path, source: &str) -> Option<Vec<(usize, Option<ArmCons
             }
             let mut collector = ReturnCollector {
                 text,
+                newlines: text.match_indices('\n').map(|(offset, _)| offset).collect(),
                 depth: 0,
                 owners: 0,
                 refused: false,
@@ -335,6 +343,9 @@ fn owner_returns(file: &Path, source: &str) -> Option<Vec<(usize, Option<ArmCons
 /// those of a nested function or class method, whose returns are its own.
 struct ReturnCollector<'t> {
     text: &'t str,
+    /// Byte offsets of every `\n`, built once so locating a return's line is
+    /// a binary search instead of a rescan of the whole source per return.
+    newlines: Vec<usize>,
     depth: usize,
     owners: usize,
     refused: bool,
@@ -343,9 +354,8 @@ struct ReturnCollector<'t> {
 
 impl ReturnCollector<'_> {
     fn line_of(&self, offset: u32) -> usize {
-        self.text
-            .get(..offset as usize)
-            .map_or(0, |head| head.matches('\n').count())
+        self.newlines
+            .partition_point(|&newline| newline < offset as usize)
     }
 }
 
