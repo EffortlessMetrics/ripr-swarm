@@ -8,7 +8,7 @@
 
 use super::parse_clean_source_file;
 use super::ra::module_attributes_require_test;
-use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
+use crate::analysis::facts::cfg_predicates::{attribute_test_build_availability, rust_ident_name};
 use ra_ap_syntax::{
     AstNode, SyntaxKind, TextSize,
     ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
@@ -907,11 +907,12 @@ fn stub_parameter_projections_are_nameable(function: &ast::Fn) -> bool {
                     ast::AssocItem::Const(constant) => (constant.name(), constant.attrs()),
                     _ => return false,
                 };
-                declared.is_some_and(|declared| declared.text() == name)
-                    && attrs.all(|attr| {
-                        attribute_test_build_availability(&attr.syntax().text().to_string())
-                            == Some(true)
-                    })
+                declared.is_some_and(|declared| {
+                    rust_ident_name(&declared.text()) == rust_ident_name(name)
+                }) && attrs.all(|attr| {
+                    attribute_test_build_availability(&attr.syntax().text().to_string())
+                        == Some(true)
+                })
             })
     };
     types.all(|ty| {

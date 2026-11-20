@@ -1194,6 +1194,13 @@ fn trait_projection_requires_the_owning_impl_and_expected_value_precedes_the_cha
             false,
         ),
         ("type Buffer;", "type Buffer = u32;", "Self::Buffer", true),
+        ("type Buffer;", "type Buffer = u32;", "Self::r#Buffer", true),
+        (
+            "type r#Buffer;",
+            "type r#Buffer = u32;",
+            "Self::Buffer",
+            true,
+        ),
     ] {
         for condition in ["self == 0", "self != 0"] {
             let sealed_type = if can_name { "" } else { "type Buffer;" };
@@ -1215,7 +1222,13 @@ impl Number for u128 {{ {assignment}
             let result = rust_test_stub(&seam, None, &source, None);
             if can_name {
                 let stub = result.map_err(|e| e.reason().to_string())?;
-                assert!(stub.text.contains("let mut buf: <u128 as Number>::Buffer"));
+                assert!(
+                    stub.text
+                        .contains("let mut buf: <u128 as Number>::Buffer =")
+                        || stub
+                            .text
+                            .contains("let mut buf: <u128 as Number>::r#Buffer =")
+                );
                 assert!(stub.fill_ins.iter().any(|line| line == "ripr: write the value `score` should return for these inputs before the predicate change"));
             } else {
                 assert_eq!(result, Err(TestStubRefusal::ParameterUnsupported));
