@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::unparseable_typescript_edit_discloses_a_passive_parse_failure_marker",
+  "crates/ripr/src/lsp/tests.rs::only_the_typescript_parse_text_under_its_kind_gets_the_parse_failure_marker",
+]
+code = [
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/analysis_outcome.rs",
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
+]

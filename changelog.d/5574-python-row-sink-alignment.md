@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python related-test rows whose strong oracle observes a different sink no longer carry `miss: observation_unconfirmed` or the "ripr could not confirm" line in `check.json` and the human output. The miss stays empty until `assertion_not_observing` is emitted; sink alignment is now evaluated per row and the finding-wide alignment is derived from those rows, so exposure classes are unchanged (#5574, #5491).

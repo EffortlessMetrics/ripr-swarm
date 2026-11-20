@@ -59,6 +59,13 @@ receiver identity for the attribute sink. Fully closing that corner needs
 attribute-receiver identity (analogous to the method-owner receiver-binding work)
 and is out of scope here; it is a target for a later slice and red-team round 2.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_session.py:python_preview:a8af27c6 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from a bare attribute-name token match when the strong oracle

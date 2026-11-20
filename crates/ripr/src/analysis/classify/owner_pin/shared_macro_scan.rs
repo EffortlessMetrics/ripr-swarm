@@ -61,6 +61,9 @@ struct ScanKey {
     include_targets: usize,
     /// Whether target roots are disabled for the whole workspace.
     roots_disabled: bool,
+    /// #14116: the crate roots an unread include fragment left unplaced.
+    /// Read from disk, so the index alone does not determine it.
+    roots_tainted: BTreeSet<PathBuf>,
 }
 
 impl ScanKey {
@@ -88,6 +91,7 @@ impl ScanKey {
             include_parents: index.include_parents.len(),
             include_targets: index.include_targets.len(),
             roots_disabled: roots.disabled,
+            roots_tainted: roots.tainted.clone(),
         }
     }
 }
@@ -163,7 +167,13 @@ impl SharedMacroScans {
                 self.runs.fetch_add(1, Relaxed);
                 self.scanned_files.fetch_add(files.len(), Relaxed);
             }
-            Arc::new(scan_macro_sites(&files, index, roots, module_resolved))
+            Arc::new(scan_macro_sites(
+                &files,
+                index,
+                roots,
+                module_resolved,
+                false,
+            ))
         }))
     }
 

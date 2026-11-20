@@ -6,11 +6,16 @@ dir = "target/nextest"
 [profile.ci]
 retries = 0
 failure-output = "immediate-final"
-# #12092/#9272: a test that hangs printed nothing for 30 minutes and then the job
-# hit its cap (#11854, #12017). A SLOW row names it two minutes after it starts. A
-# hang that starts in the first 20 minutes of the 40-minute step also fails as a named
-# TIMEOUT; one that starts later is still named by its SLOW row but is ended by the
-# job cap. 20 minutes is a guess above the slowest legitimate test, not a measurement.
+# #12092/#9272/#14906: a test that hangs printed nothing for 30 minutes and then
+# the job hit its cap (#11854, #12017). A SLOW row names it two minutes after it
+# starts, and one that never finishes fails as a named TIMEOUT after 20 minutes
+# (period 120s x terminate-after 10). The window is measured, not guessed: on run
+# 43943282726 the slowest legitimate test was 210s
+# (xtask::ripr_public_guide_contract::doctor_exit_code_guide_distinguishes_analysis_and_source_build),
+# the longest shard build step was 774s and the longest test step 494s against the
+# 40-minute shard step. 1200s + 774s = 1974s and 1200s + 494s = 1694s both stay
+# under 2400s, so a hang is terminated and named before the step cap.
+# `nextest_hang_window_fits_the_shard_step_budget` pins that arithmetic.
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 # #9272: the sharded Windows advisory lane. A test that never finishes must show
@@ -23,6 +28,11 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# Retain the real SDK identities and opposing-pin observation for #13123.
+[[profile.ci.overrides]]
+filter = 'package(=xtask) & binary(=rust_activation) & test(=installed_rustup_activation_keeps_the_exact_fixture_compiler)'
+junit.store-success-output = true
 
 # #2695: Fast iteration path for local development.
 # Skip slow server-spawning tests with:

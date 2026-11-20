@@ -559,3 +559,48 @@ fn hook_registration_identity_keeps_registered_mocha_bodies() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// A class method owner whose class the suite imports through a barrel. The
+/// guard reads only plain owner calls, never a method receiver (#13592 B3
+/// follow-up): a barrel-rewritten class import reports its receiver relation
+/// as `re_export_chain_followed`, which must not let the hook abstain where
+/// the same suite importing the declaring module keeps its verdict.
+fn class_receiver_hook_finding(label: &str, import_source: &str) -> Result<Finding, String> {
+    const CLASS: &str = "export class Registry {\n  private names: string[] = [];\n  register(name: string): number {\n    this.names.push(name);\n    return this.names.length;\n  }\n}\n";
+    let source = format!(
+        "import {{ expect }} from \"chai\";\nimport {{ Registry }} from \"{import_source}\";\n\ndescribe(\"registry\", () => {{\n  before(() => {{\n    new Registry().register(\"  alpha \");\n  }});\n\n  it(\"counts a new registration\", () => {{\n    const registry = new Registry();\n    expect(registry.register(\"beta\")).to.equal(1);\n  }});\n}});\n"
+    );
+    assert!(hook_bodies(&source).iter().all(|hooks| hooks.len() == 1));
+    run_case(
+        label,
+        CLASS,
+        (
+            4,
+            "    this.names.push(name.trim());",
+            "    this.names.push(name);",
+        ),
+        &[
+            ("tests/registry.test.ts", &source),
+            ("src/index.ts", "export * from \"./registry\";\n"),
+        ],
+    )
+}
+
+#[test]
+fn a_barrel_class_receiver_in_the_hook_keeps_the_direct_verdict() -> Result<(), String> {
+    let direct = class_receiver_hook_finding("hook-receiver-direct", "../src/registry")?;
+    let barrel = class_receiver_hook_finding("hook-receiver-barrel", "../src")?;
+    assert_ne!(
+        direct.class,
+        ExposureClass::NoStaticPath,
+        "the direct import must relate: {:?}",
+        direct.missing
+    );
+    assert_eq!(
+        barrel.class, direct.class,
+        "barrel {:?} vs direct {:?}",
+        barrel.missing, direct.missing
+    );
+    assert_eq!(barrel.stop_reasons, direct.stop_reasons);
+    Ok(())
+}

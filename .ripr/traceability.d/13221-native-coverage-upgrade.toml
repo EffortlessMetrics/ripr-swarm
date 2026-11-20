@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0266"
+tests = [
+  "tools/repo-policy/tests/future_clippy.rs::behavior::documented_recipe_boundaries_refuse_ambiguous_or_stale_execution",
+  "tools/repo-policy/tests/future_clippy.rs::behavior::documented_recipe_requires_all_four_native_checks",
+  "tools/repo-policy/tests/future_clippy.rs::behavior::documented_recipe_evidence_refuses_zero_subjects_and_stale_runs",
+]

@@ -230,12 +230,12 @@ exact pin (a smoke call, a relational check) keeps its gap.
    pins a literal run.
 2. The same owner pinned only on an empty input (`&[]`, `0`) or on all-zero
    inputs with a zero total is a gap: the pin cannot separate the update.
-3. The same owner pinned exactly on a bound input (`let rolls = vec![..];
+3. [abstain] The same owner pinned exactly on a bound input (`let rolls = vec![..];
    total(&rolls)`) or against a computed expectation is `static_unknown`
    under `rust_pinned_shape_unresolved`, never a gap.
 4. The same owner reached by a smoke call or a relational check
    (`>= before`) is a gap.
-5. An accumulator whose term has an operator (`w * w`, which equals `w + w`
+5. [abstain] An accumulator whose term has an operator (`w * w`, which equals `w + w`
    at 2) or calls a function keeps its `static_unknown` verdict.
 6. The same owner pinned through a constant-row table loop is `exposed` when
    some row pairs a non-empty literal input with a nonzero integer, even
@@ -248,14 +248,14 @@ exact pin (a smoke call, a relational check) keeps its gap.
    * 2 }` pinned by `assert_eq!(block_on(sum_doubled(&[1, 2, 3])), 12)` is
    `exposed`: the callee folds the run to 12 and `+ 1`, overwriting, `|=`,
    `^=` and every other neighbour give a different value.
-8. The same owner pinned on a run the callee does not fold to the expected
+8. [abstain] The same owner pinned on a run the callee does not fold to the expected
    value, on one element, or on a run where two neighbours coincide, with a
    callee that has a statement body, a call, a cast, a different return type,
    generics, a `mut` parameter or a second definition, or a callee name that a
    parameter shadows, is `static_unknown` (`rust_pinned_shape_unresolved`; an
    `async` owner keeps its executor-helper limit), never `exposed` and never a
    gap. A smoke call of a call term is `static_unknown`, never a gap.
-9. A call term outside the list above (a method, a path, a second argument, a
+9. [abstain] A call term outside the list above (a method, a path, a second argument, a
    computed argument, a non-literal or hexadecimal operand, a second operator)
    keeps its `static_unknown` probe.
 

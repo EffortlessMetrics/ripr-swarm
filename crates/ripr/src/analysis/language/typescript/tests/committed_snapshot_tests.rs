@@ -2195,3 +2195,130 @@ fn root_spread_of_unread_base_and_computed_key_refuse_but_plain_configs_keep_cre
     }
     Ok(())
 }
+
+#[test]
+fn block_commented_snapshot_entry_does_not_promote() -> Result<(), String> {
+    let live = jest_snap(&[("price 1", "140")]);
+    assert_eq!(
+        strengths("snap-block-live", PRICE_TEST, &[(SNAP_PATH, &live)])?,
+        vec![OracleStrength::Strong]
+    );
+    let commented = format!("{JEST_HEADER}/*\n{}*/\n", entry("price 1", "140"));
+    assert_eq!(
+        strengths("snap-block-comment", PRICE_TEST, &[(SNAP_PATH, &commented)])?,
+        vec![OracleStrength::Medium]
+    );
+    Ok(())
+}
+
+#[test]
+fn snapshot_entries_ignore_non_code_and_keep_live_counters() -> Result<(), String> {
+    let live = entry("price 1", "140");
+    let fake_one = entry("price 1", "fake");
+    let fake_two = entry("price 2", "fake");
+    let cases = [
+        (
+            format!("{JEST_HEADER}/*\n{fake_one}*/\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}const value = \"start\\\nexports[`price 1`] = fake\\\nend\";\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}/*\n{fake_two}*/\n"),
+            OracleStrength::Strong,
+        ),
+        (
+            format!("{JEST_HEADER}exports[`other 1`] = `/* \\` \\${{x}} */`;\n{live}"),
+            OracleStrength::Strong,
+        ),
+        (
+            format!("{JEST_HEADER}{live}if (true) {{\n{fake_one}}}\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}if (true) {{\n{fake_two}}}\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}void (\n{fake_two});\n"),
+            OracleStrength::Medium,
+        ),
+        (format!("{JEST_HEADER}{live}{live}"), OracleStrength::Medium),
+        (
+            format!("{JEST_HEADER}{live}{fake_two}"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}/* unterminated"),
+            OracleStrength::Medium,
+        ),
+    ];
+    for (snap, expected) in cases {
+        assert_eq!(
+            strengths("snap-lexical", PRICE_TEST, &[(SNAP_PATH, &snap)])?,
+            vec![expected],
+            "{snap}"
+        );
+    }
+    let hinted = "test(\"price\", () => { expect(price(150)).toMatchSnapshot(\"cap\"); });\n";
+    let jest = jest_snap(&[("price: cap 1", "140")]);
+    assert_eq!(
+        strengths("snap-hint-live", hinted, &[(SNAP_PATH, &jest)])?,
+        vec![OracleStrength::Strong]
+    );
+    let vitest = format!("{VITEST_HEADER}{live}");
+    assert_eq!(
+        strengths(
+            "snap-vitest-live",
+            PRICE_TEST,
+            &[
+                (SNAP_PATH, &vitest),
+                ("vitest.config.ts", "export default { test: {} };")
+            ]
+        )?,
+        vec![OracleStrength::Strong]
+    );
+    Ok(())
+}
+
+#[test]
+fn adapter_snapshot_comment_does_not_expose_changed_owner() -> Result<(), String> {
+    fn classify(label: &str, snap: &str) -> Result<ExposureClass, String> {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join(".git/HEAD"), "x\n")?;
+        ts_write_file(
+            &root.join("src/price.ts"),
+            "export function price(n: number): number {\n  return n + 1;\n}\n",
+        )?;
+        ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+        ts_write_file(&root.join(SNAP_PATH), snap)?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/price.ts",
+                &[(2, "  return n + 1;")],
+            )],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        result?
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.location.line == 2)
+            .map(|finding| finding.class)
+            .ok_or_else(|| format!("{label}: missing changed-owner finding"))
+    }
+    let live = jest_snap(&[("price 1", "140")]);
+    let commented = format!("{JEST_HEADER}/*\n{}*/\n", entry("price 1", "140"));
+    assert_eq!(
+        classify("adapter-snap-live", &live)?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        classify("adapter-snap-comment", &commented)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}

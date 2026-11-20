@@ -112,6 +112,104 @@ suite('Agent attempt status adapter parity (#4643)', () => {
     assert.strictEqual(parseAttemptInventory(valid), undefined);
   });
 
+  test('baseline readings preserve omitted, null, and false as distinct from ambiguity (#13216)', async () => {
+    const valid = await loadFixture('status-awaiting_edit.json') as Record<string, unknown>;
+    const attempt = valid['attempt'] as Record<string, unknown>;
+    for (const fields of [{}, { baseline_ambiguous: null }, { baseline_ambiguous: false }]) {
+      const parsed = parseAgentAttemptStatus({ ...valid, attempt: { ...attempt, ...fields } });
+      assert.ok(parsed);
+      assert.strictEqual(parsed.baselineAmbiguous, 'baseline_ambiguous' in fields ? fields.baseline_ambiguous : null);
+      assert.strictEqual(parsed.baselineUnavailableReason, null);
+      assert.strictEqual(parsed.statusClass, 'awaiting_edit', 'the producer remains the class authority');
+      assert.ok(!presentAttemptStatus(parsed).summaryLines.some((line) => line.startsWith('baseline:')));
+    }
+    const proseOnly = parseAgentAttemptStatus({
+      ...valid,
+      limitations: ['the word ambiguous is not a typed baseline reading']
+    });
+    assert.ok(proseOnly);
+    assert.strictEqual(proseOnly.baselineAmbiguous, null, 'legacy prose must never become a boolean');
+  });
+
+  for (const baselineCase of [
+    { fixture: 'status-baseline_ambiguous.json', ambiguous: true, unavailableReason: null },
+    { fixture: 'status-baseline_unavailable.json', ambiguous: null, unavailableReason: 'repair attempt is missing edit_cage_baseline artifact' }
+  ]) {
+    test(`${baselineCase.fixture} discloses the typed limitation before its exact recovery (#13216)`, async () => {
+      const parsed = parseAgentAttemptStatus(await loadFixture(baselineCase.fixture));
+      assert.ok(parsed);
+      assert.strictEqual(parsed.state, 'awaiting_edit', 'operational history must remain intact');
+      assert.strictEqual(parsed.statusClass, 'limited');
+      assert.strictEqual(parsed.baselineAmbiguous, baselineCase.ambiguous);
+      assert.strictEqual(parsed.baselineUnavailableReason, baselineCase.unavailableReason);
+      const presentation = presentAttemptStatus(parsed);
+      assert.strictEqual(presentation.tone, 'warning');
+      const baselineIndex = presentation.summaryLines.findIndex((line) => line.startsWith('baseline:'));
+      const reasonIndex = presentation.summaryLines.findIndex((line) => line.includes(parsed.nextAction?.reason ?? 'missing reason'));
+      const commandIndex = presentation.summaryLines.findIndex((line) => line.startsWith('next: '));
+      assert.ok(baselineIndex >= 0, 'a compatibility limitation must not hide the baseline reading');
+      assert.ok(reasonIndex > baselineIndex, 'the typed baseline must precede the producer recovery reason');
+      assert.ok(commandIndex > reasonIndex, 'the recovery reason must survive alongside its command');
+      assert.strictEqual(presentation.summaryLines[commandIndex], `next: ${parsed.nextAction?.command}`);
+      assert.ok(!presentation.summaryLines.some((line) => line.includes('--phase after')));
+    });
+  }
+
+  test('a withheld baseline recovery never invents an action (#13216)', async () => {
+    const withheld = 'the shared repair gate withheld a fresh start because the gap has no admitted test target; add the focused test by hand';
+    for (const fixture of ['status-baseline_ambiguous.json', 'status-baseline_unavailable.json']) {
+      const valid = await loadFixture(fixture) as Record<string, unknown>;
+      const parsed = parseAgentAttemptStatus({
+        ...valid,
+        next_action: null,
+        claim_boundary: [...valid['claim_boundary'] as string[], withheld]
+      });
+      assert.ok(parsed);
+      const presentation = presentAttemptStatus(parsed);
+      assert.strictEqual(presentation.tone, 'warning');
+      const baselineIndex = presentation.summaryLines.findIndex((line) => line.startsWith('baseline:'));
+      const gateIndex = presentation.summaryLines.indexOf(`boundary: ${withheld}`);
+      assert.ok(baselineIndex >= 0);
+      assert.ok(gateIndex > baselineIndex, 'the retained gate reason must follow the baseline limitation');
+      assert.ok(!presentation.summaryLines.some((line) => line.startsWith('next: ') || line.startsWith('next step: ')));
+    }
+  });
+
+  test('malformed baseline fields refuse the whole selected or inventory document (#13216)', async () => {
+    const valid = await loadFixture('status-awaiting_edit.json') as Record<string, unknown>;
+    const attempt = valid['attempt'] as Record<string, unknown>;
+    const corruptions = [
+      ...[0, 1, 'false', [], {}].map((value) => ({ baseline_ambiguous: value })),
+      ...['', '  ', false, 1, [], {}].map((value) => ({ baseline_unavailable_reason: value }))
+    ];
+    for (const fields of corruptions) {
+      assert.strictEqual(parseAgentAttemptStatus({ ...valid, attempt: { ...attempt, ...fields } }), undefined);
+      assert.strictEqual(parseAttemptInventory({
+        schema_version: '0.1',
+        repair_attempts: [
+          { attempt_id: 'clean', state: 'awaiting_edit', disposition: 'resumable' },
+          { attempt_id: 'unreadable', state: 'awaiting_edit', ...fields }
+        ]
+      }), undefined, 'one malformed row must not disappear into a partial inventory');
+    }
+  });
+
+  test('inventory retains typed baseline readings without deriving readiness from them (#13216)', () => {
+    const rows = parseAttemptInventory({
+      schema_version: '0.1',
+      repair_attempts: [
+        { attempt_id: 'legacy', state: 'awaiting_edit', disposition: 'resumable' },
+        { attempt_id: 'clean', state: 'awaiting_edit', disposition: 'resumable', baseline_ambiguous: false, baseline_unavailable_reason: null },
+        { attempt_id: 'ambiguous', state: 'awaiting_edit', disposition: 'baseline_ambiguous', baseline_ambiguous: true, baseline_unavailable_reason: null },
+        { attempt_id: 'unavailable', state: 'awaiting_edit', disposition: 'baseline_unavailable', baseline_ambiguous: null, baseline_unavailable_reason: 'retained baseline cannot be decoded' }
+      ]
+    });
+    assert.ok(rows);
+    assert.deepStrictEqual(rows.map((row) => row.baselineAmbiguous), [null, false, true, null]);
+    assert.deepStrictEqual(rows.map((row) => row.baselineUnavailableReason), [null, null, null, 'retained baseline cannot be decoded']);
+    assert.deepStrictEqual(rows.map((row) => row.disposition), ['resumable', 'resumable', 'baseline_ambiguous', 'baseline_unavailable']);
+  });
+
   test('inventory fixture rows keep store order and reject foreign shapes', async () => {
     const rows = parseAttemptInventory(await loadFixture('inventory.json'));
     assert.ok(rows);
@@ -373,6 +471,93 @@ suite('Show Repair Attempt Status command (#4643)', () => {
     assert.strictEqual(h.bar.text, '$(edit) ripr: attempt awaiting edit');
     assert.ok(h.bar.tooltip.includes('awaiting_edit'));
     assert.ok(h.infoMessages.some((message) => message.includes('awaiting edit')));
+  });
+
+  for (const baselineCase of [
+    { fixture: 'status-baseline_ambiguous.json', disposition: 'baseline_ambiguous', marker: 'baseline: ambiguous' },
+    { fixture: 'status-baseline_unavailable.json', disposition: 'baseline_unavailable', marker: 'baseline: unavailable' }
+  ]) {
+    test(`a fresh controller preserves remembered ${baselineCase.disposition} guidance (#13216)`, async () => {
+      const clean = await loadFixture('status-awaiting_edit.json') as Record<string, unknown>;
+      const selected = await loadFixture(baselineCase.fixture) as Record<string, unknown>;
+      const attempt = selected['attempt'] as Record<string, unknown>;
+      const attemptId = attempt['attempt_id'] as string;
+      const inventory = {
+        schema_version: '0.1',
+        repair_attempts: [{ attempt_id: attemptId, state: 'awaiting_edit', disposition: 'resumable' }]
+      };
+      const previous = harness({ inventory, selected: clean });
+      await controllerFor(previous).showAttemptStatus(attemptId);
+      assert.strictEqual(previous.bar.text, '$(edit) ripr: attempt awaiting edit');
+
+      const h = harness({
+        inventory: {
+          ...inventory,
+          repair_attempts: [
+            { ...attempt, disposition: baselineCase.disposition, command: null },
+            { attempt_id: 'another-attempt', state: 'awaiting_edit', disposition: 'resumable' }
+          ]
+        },
+        selected,
+        remembered: Object.fromEntries(previous.memento)
+      });
+      await controllerFor(h).showAttemptStatus();
+
+      assert.strictEqual(h.quickPickCalls, 0, 'a limited attempt remains explicitly inspectable after restart');
+      assert.deepStrictEqual(h.runRiprCalls, [
+        ['agent', 'status', '--root', '/workspace', '--json'],
+        ['agent', 'status', '--root', '/workspace', '--attempt', attemptId, '--json']
+      ]);
+      assert.strictEqual(h.bar.text, '$(warning) ripr: attempt limited');
+      assert.ok(h.bar.tooltip.includes(baselineCase.marker));
+      const action = selected['next_action'] as Record<string, unknown>;
+      assert.ok(h.bar.tooltip.includes(action['reason'] as string), 'recovery reason must reach the real status bar');
+      assert.ok(h.bar.tooltip.includes(action['command'] as string));
+      assert.ok(h.bar.tooltip.indexOf(baselineCase.marker) < h.bar.tooltip.indexOf(action['command'] as string));
+      assert.ok(!h.bar.tooltip.includes('--phase after'));
+    });
+  }
+
+  test('Start or Continue never dispatches after for a baseline-limited inventory row (#13216)', async () => {
+    for (const disposition of ['baseline_ambiguous', 'baseline_unavailable', 'resumable']) {
+      const h = harness({
+        inventory: {
+          schema_version: '0.1',
+          repair_attempts: [{
+            attempt_id: 'selected-attempt',
+            state: 'awaiting_edit',
+            disposition,
+            command: 'ripr agent repair --attempt selected-attempt --phase after'
+          }]
+        },
+        selected: null
+      });
+      const controller = controllerFor(h);
+      let starts = 0;
+      const finished: string[] = [];
+      controller.startCurrentRepair = async () => { starts += 1; };
+      controller.finishSharedRepair = async (_command: string, _root: string, attemptId: string) => {
+        finished.push(attemptId);
+      };
+
+      await controller.startOrContinueRepair();
+
+      assert.deepStrictEqual(h.runRiprCalls, [['agent', 'status', '--root', '/workspace', '--json']]);
+      assert.deepStrictEqual(finished, disposition === 'resumable' ? ['selected-attempt'] : []);
+      assert.strictEqual(starts, disposition === 'resumable' ? 0 : 1);
+    }
+  });
+
+  test('a malformed selected baseline reading renders unavailable (#13216)', async () => {
+    const valid = await loadFixture('status-awaiting_edit.json') as Record<string, unknown>;
+    const attempt = valid['attempt'] as Record<string, unknown>;
+    const h = harness({
+      inventory: { schema_version: '0.1', repair_attempts: [{ attempt_id: attempt['attempt_id'], state: 'awaiting_edit' }] },
+      selected: { ...valid, attempt: { ...attempt, baseline_ambiguous: 'false' } }
+    });
+    await controllerFor(h).showAttemptStatus();
+    assert.strictEqual(h.bar.text, '$(warning) ripr: attempt status unavailable');
+    assert.ok(!h.bar.tooltip.includes('--phase after'));
   });
 
   test('several current attempts require an explicit pick and the pick is remembered per root', async () => {

@@ -104,7 +104,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:predicate:f16a58e4
   ripr context --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:predicate:f16a58e4
 
-
 Note: ripr found no static test path for any of the 3 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 3 changed expression(s), and 0 statically linked related
   test(s). This is not a coverage assessment. A test may already exercise these changes through

@@ -1,0 +1,14 @@
+{
+  "id": "perl_threshold_spaced_receiver",
+  "language": "perl",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl-threshold-spaced-receiver-expected-projection.json",
+  "vector": "spaced_method_on_another_receiver_cannot_supply_the_changed_owner_threshold",
+  "probe_family": "return_value",
+  "assertions": [
+    { "type": "must_not_report_clean" },
+    { "type": "expected_finding_count", "count": 1 },
+    { "type": "must_not_promote" },
+    { "type": "expected_class", "class": "static_unknown" }
+  ]
+}

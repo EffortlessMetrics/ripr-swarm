@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- `check-file-policy` now prepares the `xtask` and `ripr` test targets in separate cargo builds instead of one `-p ripr -p xtask` build. On windows-latest the combined build made Cargo recompile the `xtask` binary (about 95 s) each time it alternated with an `xtask`-only build; standalone, `policy_checker_facade_runs_current_repo_checks` fell from about 140 s to 47–55 s. Inside the sharded lane one such recompile (about 83 s) remains after nextest's workspace build, and the facade test measured 149–194 s there (#12245).

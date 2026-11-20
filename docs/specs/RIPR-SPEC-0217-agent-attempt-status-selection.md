@@ -105,6 +105,7 @@ receipt strength, and currentness as separate facts:
     applicability are reported separately and the retained result is never
     presented as current proof.
   - `limited` covers a receipt that does not show the gap closed, a
+    live attempt whose retained before baseline is ambiguous or unavailable, a
     finished attempt whose currentness cannot be read (including an
     unreadable or tampered delta baseline), and an awaiting
     attempt whose HEAD cannot be related to its prepared head.
@@ -118,6 +119,21 @@ receipt strength, and currentness as separate facts:
   HEAD and, for finished attempts, the worktree delta binding (not the
   trusted-head-surface or packet-binding checks `agent receipt` also runs),
   and reported separately from the class.
+- Retained-baseline readiness (#13216) comes from one bounded,
+  containment-checked, digest-bound read of `edit_cage_baseline` by the
+  attempt authority. Selected status and inventory expose nullable
+  `baseline_ambiguous` plus `baseline_unavailable_reason`; absent legacy
+  data, malformed bytes, and unreadable artifacts never default to false.
+  The actual operational state stays unchanged. Live blocked captures use
+  inventory dispositions `baseline_ambiguous`/`baseline_unavailable`, class
+  `limited`, and only the gate-admitted fresh before recovery. They never
+  offer the recorded after command, including the diverged-head alternative.
+  Ordinary repeat-repair/continue and durable MCP projections consume this
+  reading; explicit advanced after retains its own verdict authority.
+  Implicit continue enumerates the complete inventory for eligibility, then
+  reconstructs at most eight detailed blocked status reports. It retains the
+  full blocked total and names omitted records and exact inspection routes;
+  the reporting bound never hides an eligible continuation.
 - `next_action` is one exact next or recovery command: the after phase's
   retained command for `awaiting_edit`; a typed restart or head-recovery
   command for `stale`, `incomparable`, `failed`, `prepared`, gap-open
@@ -173,9 +189,15 @@ receipt strength, and currentness as separate facts:
   the default branch itself), the selection stays unscoped and the refusal
   says first that ripr could not tell which lines changed. `--base REF`, as on
   `ripr check`, names the base explicitly and wins over inference; it is
-  refused together with an item, which is never scoped. The note appears only
-  in a refusal (including the zero-seam one); a selection or start that is
-  shown does not repeat it. The MCP repair route builds its own diff-scoped
+  refused together with an item, which is never scoped. The note leads a
+  refusal (including the zero-seam one). An unscoped menu or single start
+  carries it too, saying the list is not narrowed to the change and naming the
+  `--base REF` rerun (#13701): in human output on stderr, in a `--json` menu
+  refusal's message, and in a `--json` start's `repair_start_scope` block
+  (`narrowed_to_change: false`, `note`, `base_command`), which a resumed
+  `--json` start repeats. A readable change that touches no Rust production
+  line gets its own note, since it cannot narrow the list either. A start
+  scoped by the diff carries no note. The MCP repair route builds its own diff-scoped
   inventory and does not call this selector, so it needs no `--base`.
 
 - A restart or fresh-start route is named only when the shared repair
@@ -314,8 +336,23 @@ store.
 - `crates/ripr/tests/repair_infer_base.rs::zero_seam_refusal_leads_with_the_unscoped_note`
 - `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_reaches_the_non_rust_guidance`
 - `crates/ripr/src/app/task_first.rs::unscoped_note_tests::an_explicit_base_is_named_when_its_diff_cannot_be_read`
+- `crates/ripr/tests/repair_infer_base.rs::an_unscoped_menu_says_it_is_not_narrowed_and_names_the_base_rerun`
+- `crates/ripr/tests/repair_infer_base.rs::an_unscoped_single_start_says_it_is_not_narrowed_and_names_the_base_rerun`
+- `crates/ripr/tests/repair_infer_base.rs::a_start_scoped_by_the_diff_carries_no_unscoped_note`
+- `crates/ripr/tests/repair_infer_base.rs::a_menu_for_a_change_with_no_production_code_says_it_is_not_narrowed`
+- `crates/ripr/tests/repair_infer_base.rs::a_start_for_a_change_with_no_production_code_says_it_is_not_narrowed`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::a_diff_with_no_rust_production_line_says_it_touches_none`
 
 ## Implementation Mapping
+
+- #13216 regression mapping: `repair_attempt::tests::retained_baseline_reader_refuses_bound_malformed_ambiguity`,
+  `agent_status::tests::ambiguous_baseline_recovery_obeys_the_repair_start_gate`,
+  `mcp::repair::freshness_tests::retained_baseline_readiness_is_shared_across_lifecycle_consumers`,
+  `retained_baseline_artifact_failures_never_offer_continuation`, and
+  `ambiguous_baseline_keeps_explicit_after_finish_authority`, plus
+  `blocked_baseline_reports_are_bounded_after_complete_selection` and
+  `baseline_block_preserves_an_existing_refusal_budget_and_history`; the process
+  control is `tests/task_first_facade.rs::retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse`.
 
 - `crates/ripr/src/app/agent_status.rs` — the one-attempt DTO, the
   status-class projection, next/recovery action selection, and the human

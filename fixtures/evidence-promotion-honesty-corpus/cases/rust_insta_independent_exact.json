@@ -1,0 +1,21 @@
+{
+  "id": "rust_insta_independent_exact",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-insta-independent-exact.json",
+  "vector": "unread_insta_configuration_cannot_manufacture_a_gap_with_exact_owner_and_preservation_controls",
+  "probe_family": "field_construction",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "must_promote"
+    }
+  ]
+}

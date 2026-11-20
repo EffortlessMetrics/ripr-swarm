@@ -592,8 +592,15 @@ fn mask_span(chars: &[char], out: &mut [char], from: usize, open: char, close: c
 /// receiver naming the owner's package; a variable or other receiver has an
 /// unknown package and establishes nothing. An unqualified call is accepted.
 fn qualifier_matches(chars: &[char], name_start: usize, package: Option<&str>) -> bool {
-    if name_start >= 2 && chars[name_start - 2] == '-' && chars[name_start - 1] == '>' {
-        let mut end = name_start - 2;
+    // Perl permits whitespace and comments between `->` and the method name.
+    // Comments are already blanked by the caller; keep the receiver attached
+    // instead of reading `Other-> name(...)` as an unqualified owner call.
+    let mut qualifier_end = name_start;
+    while qualifier_end > 0 && chars[qualifier_end - 1].is_whitespace() {
+        qualifier_end -= 1;
+    }
+    if qualifier_end >= 2 && chars[qualifier_end - 2] == '-' && chars[qualifier_end - 1] == '>' {
+        let mut end = qualifier_end - 2;
         while end > 0 && chars[end - 1].is_whitespace() {
             end -= 1;
         }

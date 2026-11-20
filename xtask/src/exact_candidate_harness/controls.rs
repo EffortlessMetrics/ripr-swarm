@@ -1,14 +1,24 @@
 //! Required execution-boundary controls (#4510). Stubs run through the same
 //! launch path as successor corpus rows.
 
+#[cfg(unix)]
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 use super::admission::snapshot_admitted_binary;
+#[cfg(unix)]
 use super::launch::{self, CHILD_PATH, ROOT_TOKEN};
-use super::model::{CandidateProofControl, HarnessExecutionState};
+use super::model::CandidateProofControl;
+#[cfg(unix)]
+use super::model::HarnessExecutionState;
+#[cfg(unix)]
 use super::process::{classify_observation, observe_process};
+#[cfg(unix)]
 use crate::blind_journey::sha256_hex;
 
 fn control(id: &str, expected: &str) -> CandidateProofControl {

@@ -58,6 +58,7 @@ fn repair_readiness_refusal_reasons_contain_no_internal_references() -> Result<(
             fix_site: None,
             ineligibility: Some(ineligibility),
             seam_detail: None,
+            proposed_new_test: None,
         };
         assert_agent_text_has_no_internal_issue_or_adr_references(readiness.reason())?;
     }

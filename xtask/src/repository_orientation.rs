@@ -13,7 +13,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::current_state::{CURRENT_STATE_SCHEMA_VERSION, produce_current_state};
+use crate::current_state::{
+    CURRENT_STATE_SCHEMA_VERSION, DEVELOPMENT_AUTHORITY, RELEASE_AUTHORITY, produce_current_state,
+    release_authority_issue,
+};
 use crate::issue_lifecycle_attempt::IssueLifecycleDispositionV1;
 use crate::work_portfolio::{
     WorkCandidateKindV1, WorkCandidateV1, WorkPortfolioSnapshotV1, compile_work_portfolio_corpus,
@@ -122,6 +125,20 @@ pub(crate) struct RepositoryOrientationReceiptV1 {
     pub claim_boundary: String,
 }
 
+/// The nine pinned scenarios of #2331. The set is exact: a duplicate,
+/// substituted or extra scenario must fail instead of passing a length check.
+const REQUIRED_SCENARIO_IDS: [&str; 9] = [
+    "open-issue-no-overlap",
+    "partially-landed-umbrella",
+    "closed-premise-historical-doc",
+    "historical-campaign-no-authority",
+    "source-release-owned-by-ripr",
+    "support-tier-backed-by-proof",
+    "support-tier-inconsistency-rejected",
+    "generated-inventory-stale",
+    "live-github-unavailable",
+];
+
 pub(crate) fn workspace_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -142,10 +159,30 @@ pub(crate) fn load_repository_orientation_corpus(
     if corpus.issue != 2331 {
         return Err("repository orientation corpus must anchor issue 2331".to_string());
     }
-    if corpus.scenarios.len() < 9 {
+    let mut seen = std::collections::BTreeSet::new();
+    for scenario in &corpus.scenarios {
+        if !seen.insert(scenario.id.as_str()) {
+            return Err(format!(
+                "repository orientation corpus repeats scenario id `{}`",
+                scenario.id
+            ));
+        }
+    }
+    for required in REQUIRED_SCENARIO_IDS {
+        if !seen.contains(required) {
+            return Err(format!(
+                "repository orientation corpus is missing required scenario `{required}`"
+            ));
+        }
+    }
+    if let Some(extra) = corpus
+        .scenarios
+        .iter()
+        .find(|scenario| !REQUIRED_SCENARIO_IDS.contains(&scenario.id.as_str()))
+    {
         return Err(format!(
-            "repository orientation corpus must carry at least nine scenarios, got {}",
-            corpus.scenarios.len()
+            "repository orientation corpus carries unexpected scenario `{}`; the pinned set is exact",
+            extra.id
         ));
     }
     Ok(corpus)
@@ -310,6 +347,13 @@ pub(crate) fn run_repository_orientation_scenario(
     if scenario.expected.requires_goals_machinery {
         return Err("orientation must never require deleted goal machinery".to_string());
     }
+    if let Some(issue) = scenario.source_release_issue
+        && Some(issue) != release_authority_issue()
+    {
+        return Err(format!(
+            "source release issue #{issue} conflicts with the release authority {RELEASE_AUTHORITY}"
+        ));
+    }
     let snapshot = compile_work_portfolio_corpus(&scenario.portfolio_corpus)?;
     let (inventory_identity, mut limitations) = inventory_identity(root, scenario.inventory)?;
     let (live_identity, live_limits) = live_github_identity(scenario.live_github);
@@ -318,14 +362,10 @@ pub(crate) fn run_repository_orientation_scenario(
     limitations.dedup();
 
     let mut authority_map = BTreeMap::from([
-        (
-            "development".to_string(),
-            scenario.expected.development_authority.clone(),
-        ),
-        (
-            "release".to_string(),
-            scenario.expected.release_authority.clone(),
-        ),
+        // Authorities come from the repository's own constants, never from
+        // the expectation they are later compared against (#13074).
+        ("development".to_string(), DEVELOPMENT_AUTHORITY.to_string()),
+        ("release".to_string(), RELEASE_AUTHORITY.to_string()),
         (
             "work_selection".to_string(),
             "GitHub issues, PRs, checks, reviews, retained slices".to_string(),
@@ -350,47 +390,35 @@ pub(crate) fn run_repository_orientation_scenario(
     }
 
     let (disposition, selected_issue, duplicate_overlap_checks, conflict_resources) =
-        if scenario.source_release_issue.is_some() {
+        if let Some(historical) = &scenario.historical_campaign_ref
+            && classify_historical_campaign(historical)
+        {
+            (
+                OrientationDispositionV1::HistoricalOnly,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
+        } else if limitations
+            .iter()
+            .any(|item| item == "live_state_unavailable")
+        {
+            (
+                OrientationDispositionV1::NoSafeWork,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
+        } else if let Some(issue) = scenario.issue_number {
+            let candidate = candidate_for_issue(&snapshot, issue)?;
+            disposition_for_candidate(scenario, candidate, &limitations)
+        } else if scenario.source_release_issue.is_some() {
             (
                 OrientationDispositionV1::SourceReleaseRoute,
                 scenario.source_release_issue,
                 Vec::new(),
                 Vec::new(),
             )
-        } else if let Some(historical) = &scenario.historical_campaign_ref {
-            if classify_historical_campaign(historical) {
-                (
-                    OrientationDispositionV1::HistoricalOnly,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                )
-            } else if let Some(issue) = scenario.issue_number {
-                let candidate = candidate_for_issue(&snapshot, issue)?;
-                disposition_for_candidate(scenario, candidate, &limitations)
-            } else {
-                (
-                    OrientationDispositionV1::NoSafeWork,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                )
-            }
-        } else if let Some(issue) = scenario.issue_number {
-            if limitations
-                .iter()
-                .any(|item| item == "live_state_unavailable")
-            {
-                (
-                    OrientationDispositionV1::NoSafeWork,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                )
-            } else {
-                let candidate = candidate_for_issue(&snapshot, issue)?;
-                disposition_for_candidate(scenario, candidate, &limitations)
-            }
         } else {
             (
                 OrientationDispositionV1::NoSafeWork,
@@ -730,30 +758,122 @@ mod tests {
         validate_receipt_against_expect(&receipt, &scenario.expected)
     }
 
+    fn release_scenario() -> Result<RepositoryOrientationScenarioV1, String> {
+        committed_corpus()?
+            .scenarios
+            .into_iter()
+            .find(|scenario| scenario.id == "source-release-owned-by-ripr")
+            .ok_or_else(|| "missing committed source-release scenario".to_string())
+    }
+
+    #[test]
+    fn repository_orientation_release_preserves_historical_refusal() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        scenario.historical_campaign_ref = Some("historical release-control campaign".to_string());
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        assert_eq!(
+            receipt.disposition,
+            OrientationDispositionV1::HistoricalOnly
+        );
+        assert_eq!(receipt.selected_issue, None);
+        assert!(
+            receipt
+                .limitations
+                .iter()
+                .any(|item| item == "stale_historical_item_refused")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_orientation_release_hint_requires_available_live_state() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        scenario.live_github = LiveGithubAvailabilityV1::Unavailable;
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        assert_eq!(receipt.disposition, OrientationDispositionV1::NoSafeWork);
+        assert_eq!(receipt.selected_issue, None);
+        assert_eq!(receipt.live_github_identity, None);
+        assert!(
+            receipt
+                .limitations
+                .iter()
+                .any(|item| item == "live_state_unavailable")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_orientation_release_hint_preserves_candidate_constraints() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        for (issue, disposition, selected_issue) in [
+            (9101, OrientationDispositionV1::DuplicateBlocked, None),
+            (9104, OrientationDispositionV1::NoSafeWork, None),
+            (9301, OrientationDispositionV1::NoSafeWork, None),
+            (
+                9109,
+                OrientationDispositionV1::PartialAcceptance,
+                Some(9109),
+            ),
+            (
+                9202,
+                OrientationDispositionV1::SourceReleaseRoute,
+                Some(1463),
+            ),
+        ] {
+            scenario.issue_number = Some(issue);
+            let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+            assert_eq!(receipt.disposition, disposition, "candidate #{issue}");
+            assert_eq!(receipt.selected_issue, selected_issue, "candidate #{issue}");
+            if issue == 9101 {
+                assert!(!receipt.duplicate_overlap_checks.is_empty());
+                assert!(
+                    receipt
+                        .conflict_resources
+                        .iter()
+                        .any(|resource| resource == "output-contract:rust-json")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repository_orientation_release_hint_preserves_inventory_limitations() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        // Inventory limits remain named limitations, as in the committed stale
+        // inventory scenario; they do not acquire a new routing veto here.
+        for (inventory, limitation) in [
+            (
+                GeneratedInventoryAvailabilityV1::Stale,
+                "generated_inventory_stale",
+            ),
+            (
+                GeneratedInventoryAvailabilityV1::Unavailable,
+                "generated_inventory_unavailable",
+            ),
+        ] {
+            scenario.inventory = inventory;
+            let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+            assert_eq!(
+                receipt.disposition,
+                OrientationDispositionV1::SourceReleaseRoute
+            );
+            assert_eq!(receipt.selected_issue, Some(1463));
+            assert!(receipt.limitations.iter().any(|item| item == limitation));
+        }
+        // The clean source-release-only case remains a positive control.
+        scenario.inventory = GeneratedInventoryAvailabilityV1::Available;
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        validate_receipt_against_expect(&receipt, &scenario.expected)
+    }
+
     /// Relative path and bytes (`None` when absent) for each input the run reads.
     type InputSnapshot = Vec<(String, Option<Vec<u8>>)>;
 
-    /// The orientation run reads exactly these repository inputs. Comparing
-    /// their contents, rather than whole-workspace `git status`, keeps the proof
-    /// independent of unrelated files that parallel test shards write.
+    /// Include ledger/fragments, registered files, support checker inputs and
+    /// directory membership now read through the current-state producer.
     fn orientation_input_snapshot(root: &Path) -> Result<InputSnapshot, String> {
-        [
-            "docs/ROADMAP.md",
-            "Cargo.toml",
-            "docs/status/SUPPORT_TIERS.md",
-        ]
-        .iter()
-        .map(|relative| {
-            let path = root.join(relative);
-            match fs::read(&path) {
-                Ok(bytes) => Ok(((*relative).to_string(), Some(bytes))),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    Ok(((*relative).to_string(), None))
-                }
-                Err(error) => Err(format!("read {}: {error}", path.display())),
-            }
-        })
-        .collect()
+        crate::current_state::current_state_input_snapshot(root)
     }
 
     #[test]
@@ -767,5 +887,119 @@ mod tests {
             return Err("orientation changed a repository input it reads".to_string());
         }
         Ok(())
+    }
+
+    fn committed_corpus_json() -> Result<serde_json::Value, String> {
+        let body = fs::read_to_string(
+            workspace_path(DEFAULT_REPOSITORY_ORIENTATION_CORPUS_DIR).join("corpus.json"),
+        )
+        .map_err(|error| format!("read committed orientation corpus: {error}"))?;
+        serde_json::from_str(&body).map_err(|error| format!("parse corpus json: {error}"))
+    }
+
+    fn load_mutated(
+        mutate: impl FnOnce(&mut Vec<serde_json::Value>),
+    ) -> Result<RepositoryOrientationCorpusV1, String> {
+        let mut value = committed_corpus_json()?;
+        let scenarios = value
+            .get_mut("scenarios")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| "corpus has no scenarios array".to_string())?;
+        mutate(scenarios);
+        load_repository_orientation_corpus(&value.to_string())
+    }
+
+    #[test]
+    fn repository_orientation_corpus_rejects_a_duplicated_scenario_id() {
+        let result = load_mutated(|scenarios| {
+            let first = scenarios[0]["id"].clone();
+            scenarios[1]["id"] = first;
+        });
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("repeats scenario id")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn repository_orientation_corpus_rejects_a_substituted_scenario() {
+        // Nine unique ids, but one is not in the pinned set.
+        let result = load_mutated(|scenarios| {
+            scenarios[8]["id"] = serde_json::json!("some-other-scenario");
+        });
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("missing required scenario")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn repository_orientation_corpus_rejects_an_extra_scenario() {
+        let result = load_mutated(|scenarios| {
+            let mut extra = scenarios[0].clone();
+            extra["id"] = serde_json::json!("a-tenth-scenario");
+            scenarios.push(extra);
+        });
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("unexpected scenario")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn repository_orientation_corpus_rejects_a_missing_scenario() {
+        let result = load_mutated(|scenarios| {
+            scenarios.pop();
+        });
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("missing required scenario")),
+            "{result:?}"
+        );
+    }
+
+    /// The receipt's authorities come from the repository's constants, so a
+    /// corpus whose expectation disagrees fails instead of echoing itself.
+    #[test]
+    fn repository_orientation_expected_authority_is_checked_not_copied() -> Result<(), String> {
+        let mut value = committed_corpus_json()?;
+        value["scenarios"][0]["expected"]["release_authority"] =
+            serde_json::json!("EffortlessMetrics/ripr#9999");
+        let corpus = load_repository_orientation_corpus(&value.to_string())?;
+        match run_repository_orientation_corpus(&workspace_path(""), &corpus) {
+            Err(error) if error.contains("release authority drift") => Ok(()),
+            other => Err(format!("expected release authority drift, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn repository_orientation_conflicting_source_release_issue_is_refused() -> Result<(), String> {
+        let mut value = committed_corpus_json()?;
+        let scenarios = value["scenarios"]
+            .as_array_mut()
+            .ok_or_else(|| "no scenarios".to_string())?;
+        let routed = scenarios
+            .iter_mut()
+            .find(|s| s["id"] == "source-release-owned-by-ripr")
+            .ok_or_else(|| "missing source-release scenario".to_string())?;
+        routed["source_release_issue"] = serde_json::json!(9999);
+        let corpus = load_repository_orientation_corpus(&value.to_string())?;
+        match run_repository_orientation_corpus(&workspace_path(""), &corpus) {
+            Err(error) if error.contains("conflicts with the release authority") => Ok(()),
+            other => Err(format!(
+                "expected a release-authority conflict, got {other:?}"
+            )),
+        }
     }
 }

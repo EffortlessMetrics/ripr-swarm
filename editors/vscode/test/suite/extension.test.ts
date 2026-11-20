@@ -464,7 +464,7 @@ suite('Extension Smoke', () => {
   });
 
   test('real server surfaces seam diagnostic, hover provider, and agent actions', async function (this: Mocha.Context) {
-    this.timeout(75000);
+    this.timeout(240000);
     skipUnlessTrustedTestHost(this);
     if (!process.env.RIPR_TEST_SERVER_PATH) {
       this.skip();
@@ -501,19 +501,32 @@ suite('Extension Smoke', () => {
       diagnostic.range.start.line,
       diagnostic.range.start.character + 1
     );
-    const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-      text.includes('**ripr** changed behavior') &&
-      text.includes('Tests only loosely check this') &&
-      text.includes('Weak / missing evidence:')
+    // The save and `ripr.refreshDiagnostics` each start saved-workspace
+    // analysis, and the retained seam diagnostic is already published while
+    // that analysis runs. The server labels retained evidence as not current
+    // and withholds repair actions until the analysis for the saved revision
+    // commits (#13680), so wait for current hover evidence before asking for
+    // actions (#13783). Reaching it also proves the save's revision converges.
+    const hoverText = await waitForHoverText(
+      uri,
+      hoverPosition,
+      (text) =>
+        text.includes('**ripr** changed behavior') &&
+        text.includes('Tests only loosely check this') &&
+        text.includes('Weak / missing evidence:') &&
+        !text.includes('ripr retained evidence is not current'),
+      60000
     );
     assert.ok(hoverText.includes('**ripr** changed behavior'), hoverText);
     assert.ok(hoverText.includes('Tests only loosely check this'), hoverText);
     assert.ok(hoverText.includes('Weak / missing evidence:'), hoverText);
+    assert.ok(!hoverText.includes('ripr retained evidence is not current'), hoverText);
 
-    const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
-      'vscode.executeCodeActionProvider',
+    const actions = await waitForCodeActions(
       uri,
-      diagnostic.range
+      diagnostic.range,
+      (action) => action.title === 'Inspect Test Gap - Copy Context' && commandForAction(action) !== undefined,
+      60000
     );
     const contextCommand = assertCommandAction(actions, 'Inspect Test Gap - Copy Context', 'ripr.copyContext');
     const packetCommand = assertCommandAction(
@@ -1425,144 +1438,192 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('startCurrentRepair runs shared agent repair before for a validated seam handoff', async function (this: Mocha.Context) {
-    skipUnlessTrustedTestHost(this);
-    const seamId = '67fc764ba37d77bd';
-    const attemptId = 'repair-attempt-0123456789abcdef01234567';
-    const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    assert.ok(selectedRoot, 'test workspace root must be open');
-    const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
-    const beforeStdout = JSON.stringify({
-      schema_version: '0.5',
-      packets: [
-        {
-          seam_id: seamId,
-          allowed_edit_surface: ['tests/pricing.rs'],
-          must_not_change: ['Do not edit production code.'],
-          missing_discriminators: [{ value: 'discount_threshold (equality boundary)' }],
-          nearest_strong_test_to_imitate: {
-            file: 'tests/pricing.rs',
-            line: 4,
-            name: 'below_threshold_has_no_discount',
+  for (const baselineAmbiguous of [false, true]) {
+    test(`startCurrentRepair ${baselineAmbiguous ? 'preserves ambiguous baseline recovery without opening a test (#13131)' : 'runs shared agent repair before for a validated seam handoff'}`, async function (this: Mocha.Context) {
+      skipUnlessTrustedTestHost(this);
+      const seamId = '67fc764ba37d77bd';
+      const attemptId = 'repair-attempt-0123456789abcdef01234567';
+      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      assert.ok(selectedRoot, 'test workspace root must be open');
+      const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
+      const beforeStdout = JSON.stringify({
+        schema_version: '0.5',
+        packets: [
+          {
+            seam_id: seamId,
+            allowed_edit_surface: ['tests/pricing.rs'],
+            must_not_change: ['Do not edit production code.'],
+            missing_discriminators: [{ value: 'discount_threshold (equality boundary)' }],
+            nearest_strong_test_to_imitate: {
+              file: 'tests/pricing.rs',
+              line: 4,
+              name: 'below_threshold_has_no_discount',
+            },
           },
+        ],
+        repair_attempt: {
+          attempt_id: attemptId,
+          manifest_path: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
+          next_command: `ripr agent repair --root ${rootArg} --attempt ${attemptId} --phase after`,
+          packet_path: 'target/ripr/workflow/agent-packet.json',
+          ...(baselineAmbiguous ? { baseline_ambiguous: true } : {}),
         },
-      ],
-      repair_attempt: {
-        attempt_id: attemptId,
-        manifest_path: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
-        next_command: `ripr agent repair --root ${rootArg} --attempt ${attemptId} --phase after`,
-      },
-    });
-    const statusStdout = JSON.stringify({
-      schema_version: '0.1',
-      tool: 'ripr',
-      kind: 'agent_attempt_status',
-      root: '.',
-      store: {
-        locator: 'target/ripr/repair-attempts',
-        location_class: 'default_repository',
-        currentness: 'present',
-      },
-      attempt: {
-        attempt_id: attemptId,
-        seam_id: seamId,
-        manifest: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
-        state: 'awaiting_edit',
-        status_class: 'awaiting_edit',
-        head_current: true,
-        currentness: 'current',
-        evidence_head: '1a2b3c4d5e6f7890abcdef1234567890abcdef12',
-        unreadable_reason: null,
-        receipt: null,
-        last_after_refusal: null,
-        diverged_recovery: null,
-      },
-      next_action: {
-        step: 'repair_attempt_after',
-        artifact: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
-        reason: 'awaiting edit',
-        command: `ripr agent repair --root ${rootArg} --attempt ${attemptId} --phase after`,
-      },
-      test_run: null,
-      claim_boundary: [],
-      limitations: [],
-      non_claims: [],
-    });
-    const context = createControllerTestContext({
-      runRiprHandler: (args) => {
-        if (args[0] === 'agent' && args[1] === 'status' && !args.includes('--attempt')) {
-          return JSON.stringify({ schema_version: '0.1', repair_attempts: [] });
-        }
-        if (args[0] === 'agent' && args[1] === 'repair') {
-          return beforeStdout;
-        }
-        if (args.includes('--attempt')) {
-          return statusStdout;
-        }
-        return '{}';
-      },
-    });
-    const relativePath = 'src/start-shared-repair.rs';
-    const uri = workspaceFileUri(relativePath);
-    const collection = vscode.languages.createDiagnosticCollection('ripr-start-shared-repair');
-    let provider: vscode.Disposable | undefined;
-    try {
-      await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
-      const document = await vscode.workspace.openTextDocument(uri);
-      const editor = await vscode.window.showTextDocument(document);
-      editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
-      const diagnostic = new vscode.Diagnostic(
-        new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
-        'near ripr gap',
-        vscode.DiagnosticSeverity.Warning
-      );
-      diagnostic.source = 'ripr';
-      diagnostic.code = 'ripr-gap-MissingBoundaryAssertion';
-      collection.set(uri, [diagnostic]);
+      });
+      const statusStdout = JSON.stringify({
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'agent_attempt_status',
+        root: '.',
+        store: {
+          locator: 'target/ripr/repair-attempts',
+          location_class: 'default_repository',
+          currentness: 'present',
+        },
+        attempt: {
+          attempt_id: attemptId,
+          seam_id: seamId,
+          manifest: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
+          state: 'awaiting_edit',
+          status_class: 'awaiting_edit',
+          head_current: true,
+          currentness: 'current',
+          evidence_head: '1a2b3c4d5e6f7890abcdef1234567890abcdef12',
+          unreadable_reason: null,
+          receipt: null,
+          last_after_refusal: null,
+          diverged_recovery: null,
+        },
+        next_action: {
+          step: 'repair_attempt_after',
+          artifact: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
+          reason: 'awaiting edit',
+          command: `ripr agent repair --root ${rootArg} --attempt ${attemptId} --phase after`,
+        },
+        test_run: null,
+        claim_boundary: [],
+        limitations: [],
+        non_claims: [],
+      });
+      const attemptStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+      let previousAttemptHidden = false;
+      const hideAttemptStatus = attemptStatus.hide.bind(attemptStatus);
+      attemptStatus.hide = () => {
+        previousAttemptHidden = true;
+        hideAttemptStatus();
+      };
+      const context = createControllerTestContext({
+        attemptStatusBar: attemptStatus,
+        runRiprHandler: (args) => {
+          if (args[0] === 'agent' && args[1] === 'status' && !args.includes('--attempt')) {
+            return JSON.stringify({ schema_version: '0.1', repair_attempts: [] });
+          }
+          if (args[0] === 'agent' && args[1] === 'repair') {
+            return beforeStdout;
+          }
+          if (args.includes('--attempt')) {
+            return statusStdout;
+          }
+          return '{}';
+        },
+      });
+      const relatedTarget = {
+        uri: workspaceFileUri('tests/pricing.rs').toString(),
+        line: 4,
+        test_name: 'below_threshold_has_no_discount',
+      };
+      const openedRelatedTests: unknown[] = [];
+      context.controller.openRelatedTest = async (target) => {
+        openedRelatedTests.push(target);
+      };
+      const relativePath = 'src/start-shared-repair.rs';
+      const uri = workspaceFileUri(relativePath);
+      const collection = vscode.languages.createDiagnosticCollection('ripr-start-shared-repair');
+      let provider: vscode.Disposable | undefined;
+      try {
+        await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+          'near ripr gap',
+          vscode.DiagnosticSeverity.Warning
+        );
+        diagnostic.source = 'ripr';
+        diagnostic.code = 'ripr-gap-MissingBoundaryAssertion';
+        collection.set(uri, [diagnostic]);
 
-      provider = vscode.languages.registerCodeActionsProvider(
-        { language: 'rust', scheme: 'file' },
-        {
-          provideCodeActions(_document, range) {
-            const repairCommand = `ripr agent repair --root ${rootArg} --seam-id ${seamId} --phase before`;
-            const action = new vscode.CodeAction('Start repair: copy repair command', vscode.CodeActionKind.QuickFix);
-            action.command = {
-              title: 'Start repair: copy repair command',
-              command: 'ripr.copyAgentRepairCommand',
-              arguments: [
-                agentLoopCommandTarget('agent_repair', repairCommand, 'target/ripr/repair-attempts', { seamId }),
-              ],
-            };
-            return [action];
-          },
+        provider = vscode.languages.registerCodeActionsProvider(
+          { language: 'rust', scheme: 'file' },
+          {
+            provideCodeActions(_document, range) {
+              const repairCommand = `ripr agent repair --root ${rootArg} --seam-id ${seamId} --phase before`;
+              const action = new vscode.CodeAction('Start repair: copy repair command', vscode.CodeActionKind.QuickFix);
+              action.command = {
+                title: 'Start repair: copy repair command',
+                command: 'ripr.copyAgentRepairCommand',
+                arguments: [
+                  agentLoopCommandTarget('agent_repair', repairCommand, 'target/ripr/repair-attempts', { seamId }),
+                ],
+              };
+              const relatedAction = new vscode.CodeAction('Open related test', vscode.CodeActionKind.QuickFix);
+              relatedAction.command = {
+                title: 'Open related test',
+                command: 'ripr.openRelatedTest',
+                arguments: [relatedTarget],
+              };
+              return [action, relatedAction];
+            },
+          }
+        );
+
+        await context.controller.start();
+        attemptStatus.text = '$(edit) ripr: attempt awaiting edit';
+        attemptStatus.show();
+        previousAttemptHidden = false;
+        await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Start repair: copy repair command');
+        await context.controller.startCurrentRepair();
+
+        assert.ok(
+          context.runRiprCalls.some(
+            (call) =>
+              call.args[0] === 'agent' &&
+              call.args[1] === 'repair' &&
+              call.args.includes('--json') &&
+              call.args.includes(seamId)
+          )
+        );
+        if (baselineAmbiguous) {
+          const output = context.outputLines.join('\n');
+          assert.match(output, /ambiguous/);
+          assert.match(output, /Incomparable/);
+          assert.ok(output.includes(`target/ripr/repair-attempts/${attemptId}/attempt.json`));
+          assert.ok(output.includes(`ripr agent repair --root ${rootArg} --seam-id ${seamId} --phase before`));
+          assert.doesNotMatch(output, /awaiting an external test edit|Next after the edit|--phase after/);
+          assert.ok(context.infoMessages.some((message) => message.includes('ambiguous')));
+          assert.ok(!context.infoMessages.some((message) => message.includes('awaiting an external test edit')));
+          assert.deepStrictEqual(openedRelatedTests, []);
+          assert.strictEqual(previousAttemptHidden, true, 'the previous attempt must not remain visible');
+          // Keep the recovery visible instead of replacing it with generic awaiting-edit status.
+          assert.ok(!context.runRiprCalls.some((call) => call.args.includes('--attempt')));
+        } else {
+          assert.ok(
+            context.infoMessages.some((message) => message.includes('awaiting an external test edit')),
+            context.infoMessages.join(' | ')
+          );
+          assert.deepStrictEqual(openedRelatedTests, [relatedTarget]);
+          assert.strictEqual(previousAttemptHidden, false);
         }
-      );
-
-      await context.controller.start();
-      await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Start repair: copy repair command');
-      await context.controller.startCurrentRepair();
-
-      assert.ok(
-        context.runRiprCalls.some(
-          (call) =>
-            call.args[0] === 'agent' &&
-            call.args[1] === 'repair' &&
-            call.args.includes('--json') &&
-            call.args.includes(seamId)
-        )
-      );
-      assert.ok(
-        context.infoMessages.some((message) => message.includes('awaiting an external test edit')),
-        context.infoMessages.join(' | ')
-      );
-    } finally {
-      provider?.dispose();
-      collection.dispose();
-      await context.dispose();
-      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-      await removeWorkspacePath(relativePath);
-    }
-  });
+      } finally {
+        provider?.dispose();
+        collection.dispose();
+        await context.dispose();
+        attemptStatus.dispose();
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await removeWorkspacePath(relativePath);
+      }
+    });
+  }
 
   test('startCurrentRepair fails closed when repair attempt inventory is unreadable', async function (this: Mocha.Context) {
     skipUnlessTrustedTestHost(this);
@@ -1635,6 +1696,109 @@ suite('Extension Smoke', () => {
       await removeWorkspacePath(relativePath);
     }
   });
+
+  for (const blocked of [true, false]) {
+    test(`startCurrentRepair ${blocked ? 'names the server reason for an inert seam start (#13636)' : 'falls back to the related test when the server names no blocker'}`, async function (this: Mocha.Context) {
+      skipUnlessTrustedTestHost(this);
+      const seamId = '67fc764ba37d77bd';
+      const commit = 'git -C /repo --literal-pathspecs commit -m "<message>" -- src/lib.rs';
+      const reason = `Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted. Commit command: ${commit}`;
+      const context = createControllerTestContext({
+        lspResult: blocked
+          ? [{
+            title: 'Start repair: copy repair command',
+            kind: 'quickfix.ripr.inspect',
+            disabled: { reason },
+            data: { action_name: 'copy_agent_repair_command', disabled_reason: 'uncommitted_production_change' },
+          }]
+          : [],
+      });
+      const relativePath = `src/start-blocked-repair-${blocked ? 'named' : 'unnamed'}.rs`;
+      const uri = workspaceFileUri(relativePath);
+      const collection = vscode.languages.createDiagnosticCollection('ripr-start-blocked-repair');
+      let provider: vscode.Disposable | undefined;
+      try {
+        await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+        // A seam diagnostic alone (no gap record): Start Current Repair must
+        // still reach the seam's start or its blocked reason.
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+          'weakly gripped seam',
+          vscode.DiagnosticSeverity.Information
+        );
+        diagnostic.source = 'ripr';
+        diagnostic.code = 'ripr-seam-weakly-gripped';
+        (diagnostic as vscode.Diagnostic & { data?: unknown }).data = { seam_id: seamId };
+        collection.set(uri, [diagnostic]);
+
+        // The editor-visible actions carry no enabled start, but a start
+        // candidate is still there (a real eligible seam keeps its
+        // related-test action); a copy-packet candidate makes its run
+        // observable on the clipboard.
+        provider = vscode.languages.registerCodeActionsProvider(
+          { language: 'rust', scheme: 'file' },
+          {
+            provideCodeActions() {
+              const action = new vscode.CodeAction('Agent handoff: copy packet command', vscode.CodeActionKind.QuickFix);
+              action.command = { title: 'Agent handoff: copy packet command', command: 'ripr.copyAgentPacketCommand', arguments: [] };
+              const fallback = new vscode.CodeAction('Copy repair instructions for an AI agent', vscode.CodeActionKind.QuickFix);
+              fallback.command = {
+                title: 'Copy repair instructions for an AI agent',
+                command: 'ripr.copyContext',
+                arguments: [{ label: 'first_repair_packet', packet: 'fallback repair packet' }],
+              };
+              return [action, fallback];
+            },
+          }
+        );
+
+        await context.controller.start();
+        await writeClipboardText('start-blocked-repair-sentinel');
+        await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Copy repair instructions for an AI agent');
+        await context.controller.startCurrentRepair();
+
+        const request = context.client.requests.find((entry) => entry.method === 'textDocument/codeAction');
+        assert.ok(request, `the controller must ask the server directly: ${JSON.stringify(context.client.requests)}`);
+        const sent = request.params as { textDocument: { uri: string }; context: { diagnostics: Array<{ code?: unknown; data?: unknown }> } };
+        assert.strictEqual(sent.textDocument.uri, uri.toString());
+        assert.ok(
+          sent.context.diagnostics.some((wire) => wire.code === 'ripr-seam-weakly-gripped' && (wire.data as { seam_id?: string } | undefined)?.seam_id === seamId),
+          JSON.stringify(sent.context.diagnostics)
+        );
+        assert.ok(!context.runRiprCalls.some((call) => call.args[0] === 'agent' && call.args[1] === 'repair'));
+        if (blocked) {
+          assert.ok(
+            context.infoMessages.some((message) => message === `ripr cannot start this repair yet. ${reason}`),
+            context.infoMessages.join(' | ')
+          );
+          assert.ok(!context.infoMessages.some((message) => message.includes('Refresh saved-workspace analysis')));
+          // The blocked start wins: the fallback candidate never ran.
+          assert.strictEqual(await vscode.env.clipboard.readText(), 'start-blocked-repair-sentinel');
+        } else {
+          // No server reason: the fallback candidate runs as before.
+          assert.strictEqual(
+            await waitForClipboardText((text) => text === 'fallback repair packet'),
+            'fallback repair packet'
+          );
+          assert.ok(
+            !context.infoMessages.some((message) =>
+              message.includes('cannot start this repair') || message.includes('Refresh saved-workspace analysis')
+            ),
+            context.infoMessages.join(' | ')
+          );
+        }
+      } finally {
+        provider?.dispose();
+        collection.dispose();
+        await context.dispose();
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await removeWorkspacePath(relativePath);
+      }
+    });
+  }
 
   test('copyRepairPacketAtCursor uses only the packet action for the containing diagnostic', async function (this: Mocha.Context) {
     skipUnlessTrustedTestHost(this);
@@ -1714,11 +1878,11 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Workspace root state: workspace_single_root'));
       assert.ok(String(context.status.tooltip).includes('Server command: ripr'));
       assert.ok(String(context.status.tooltip).includes('Extension state: extension_version_ok (0.8.0)'));
-      assert.ok(String(context.status.tooltip).includes('ripr server state: ripr_version_ok (ripr 0.8.0-test)'));
+      assert.ok(String(context.status.tooltip).includes('ripr server state: ripr_version_ok (ripr 0.8.0+test)'));
       assert.ok(String(context.status.tooltip).includes('Workspace trust state: workspace_trusted'));
       assert.ok(String(context.status.tooltip).includes('Config state: config_missing'));
       assert.ok(String(context.status.tooltip).includes('Artifact directory state: artifact_dir_missing'));
-      assert.ok(String(context.status.tooltip).includes('Server version: ripr 0.8.0-test'));
+      assert.ok(String(context.status.tooltip).includes('Server version: ripr 0.8.0+test'));
       assert.ok(String(context.status.tooltip).includes('Server started: yes'));
       assert.ok(String(context.status.tooltip).includes('Config: ripr.toml (missing'));
       assert.ok(String(context.status.tooltip).includes('Editor selectors: rust, typescript'));
@@ -2097,7 +2261,7 @@ suite('Extension Smoke', () => {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         failure: { kind: 'analysis_error', message: 'temporary timeout' }
       });
-      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Full Analysis to retry'));
       assert.ok(!String(context.status.tooltip).includes('Restart Server'));
 
       context.client.emitNotification('ripr/analysisStatus', {
@@ -2106,7 +2270,7 @@ suite('Extension Smoke', () => {
         failure: { kind: 'base_unresolvable', message: 'a reworded server diagnostic that names no ref' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
-      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
+      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Full Analysis'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -2131,7 +2295,7 @@ suite('Extension Smoke', () => {
         failure: { kind: 'deadline_exceeded', message: 'the base `origin/main` does not resolve to a commit' }
       });
       assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
-      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Full Analysis to retry'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -2141,9 +2305,9 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
       for (const [retryCommand, expectedCommand] of [
-        ['ripr.refresh', 'ripr: Refresh Diagnostics'],
-        ['ripr.refreshDiagnostics', 'ripr: Refresh Diagnostics'],
-        ['   ', 'ripr: Refresh Diagnostics'],
+        ['ripr.refresh', 'ripr: Refresh Full Analysis'],
+        ['ripr.refreshDiagnostics', 'ripr: Refresh Full Analysis'],
+        ['   ', 'ripr: Refresh Full Analysis'],
         ['server-owned recovery', 'server-owned recovery']
       ]) {
         context.client.emitNotification('ripr/analysisStatus', {
@@ -2278,7 +2442,7 @@ suite('Extension Smoke', () => {
         'ripr analysis completed with limited evidence.',
         'for example a git invocation timeout',
         'findings may be missing',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Run ripr: Refresh Full Analysis'
       ]);
 
       emitSucceededWithRunStatus('cache_limited');
@@ -2299,7 +2463,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed with incomplete input.',
         'The run input was incomplete',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Run ripr: Refresh Full Analysis'
       ]);
     } finally {
       await context.dispose();
@@ -2405,7 +2569,7 @@ suite('Extension Smoke', () => {
         tooltip.includes('Next safe action: Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
-      assert.ok(!tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics'), tooltip);
+      assert.ok(!tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis'), tooltip);
     } finally {
       await context.dispose();
     }
@@ -2493,7 +2657,7 @@ suite('Extension Smoke', () => {
       // No degraded component carries a recovery, and the deferred component's
       // recovery must not be promoted: the canned refresh step is the fallback.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to retry the analysis and restore the missing evidence.'),
         tooltip
       );
       assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
@@ -2533,7 +2697,7 @@ suite('Extension Smoke', () => {
       // The artifact recovery does not widen the diff partition, so the canned
       // budget remedy must survive composition with the component recovery.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Full Analysis. Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
     } finally {
@@ -2573,7 +2737,7 @@ suite('Extension Smoke', () => {
       // The canned tail prescribes a refresh after raising the budget; the
       // running sidecar still reads the old environment, so it must be gone.
       assert.ok(
-        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Diagnostics'),
+        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Full Analysis'),
         tooltip
       );
     } finally {
@@ -2602,7 +2766,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
       const tooltip = String(context.status.tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to retry the analysis and restore the missing evidence.'),
         tooltip
       );
       assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
@@ -2632,7 +2796,7 @@ suite('Extension Smoke', () => {
       assert.ok(tooltip.includes('ripr analysis completed; spot and gap evidence is deferred.'), tooltip);
       assert.ok(tooltip.includes('Interactive saves defer the spot inventory'), tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full spot inventory.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to compute the full spot inventory.'),
         tooltip
       );
     } finally {
@@ -2803,10 +2967,10 @@ suite('Extension Smoke', () => {
       assert.ok(statusOutput.includes('Artifact gap decision ledger: target/ripr/reports/gap-decision-ledger.json (found; found in current workspace'));
       assert.ok(statusOutput.includes('Artifact editor agent receipt: target/ripr/agent/agent-receipt.json (found; found in current workspace'));
       assert.ok(statusOutput.includes('First useful action: Add equality-boundary discriminator test'));
-      assert.ok(statusOutput.includes('ripr server state: ripr_version_ok (ripr 0.8.0-test)'));
+      assert.ok(statusOutput.includes('ripr server state: ripr_version_ok (ripr 0.8.0+test)'));
       assert.ok(statusOutput.includes('Config state: config_found'));
       assert.ok(statusOutput.includes('Artifact directory state: artifact_dir_present'));
-      assert.ok(statusOutput.includes('Server version: ripr 0.8.0-test'));
+      assert.ok(statusOutput.includes('Server version: ripr 0.8.0+test'));
     } finally {
       await context.dispose();
     }
@@ -3038,6 +3202,8 @@ suite('Extension Smoke', () => {
     };
     for (const verify of [
       'python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      '.venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
+      'venv/bin/python -m pytest tests/test_pricing.py::test_calculate_discount_smoke',
       'npx --no-install jest tests/discount.test.ts',
       'pnpm exec vitest run src/util.test.ts',
       'yarn ava tests/math.test.ts',
@@ -3058,6 +3224,11 @@ suite('Extension Smoke', () => {
       'npm test -- --watch tests/math.test.ts',
       'node --test /tmp/outside.test.js',
       'python -m pytest ..',
+      '.venv/bin/python -m pip install requests',
+      '.venv/bin/python -m pytest -p plugin tests/test_pricing.py',
+      '.venv/bin/python -m pytest ../outside/test_pricing.py',
+      '/opt/venv/bin/python -m pytest tests/test_pricing.py',
+      'venv/bin/python3 -m pytest tests/test_pricing.py',
       // Built at runtime so the local-context policy does not read the
       // fixture as a machine path.
       `npx --no-install jest ${'C'}:/outside/discount.test.ts`
@@ -3243,6 +3414,9 @@ suite('Extension Smoke', () => {
     };
     assert.notStrictEqual(await queueVerifyState('npx --no-install jest tests/discount.test.ts'), 'unsafeCommand');
     assert.notStrictEqual(await queueVerifyState('python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.notStrictEqual(await queueVerifyState('.venv/bin/python -m pytest tests/test_pricing.py::test_smoke'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pip install requests'), 'unsafeCommand');
+    assert.strictEqual(await queueVerifyState('.venv/bin/python -m pytest -p plugin tests/test_pricing.py'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx jest tests/discount.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('bunx vitest run src/util.test.ts'), 'unsafeCommand');
     assert.strictEqual(await queueVerifyState('npx --no-install jest ../outside/discount.test.ts'), 'unsafeCommand');
@@ -3821,7 +3995,7 @@ suite('Extension Smoke', () => {
       assertReportIncludes(diagnosis, [
         'ripr setup diagnosis:',
         'Server command: ripr',
-        'Server version: ripr 0.8.0-test',
+        'Server version: ripr 0.8.0+test',
         'Config: ripr.toml (found',
         'Enabled languages: rust',
         'ripr validated 1 actionable gap artifact.',
@@ -4022,11 +4196,11 @@ suite('Extension Smoke', () => {
       const report = context.outputLines.join('\n');
       assert.ok(report.includes('ripr setup diagnosis:'));
       assert.ok(report.includes('Status: ripr saved-workspace analysis is queued.'));
-      assert.ok(report.includes('ripr server state: ripr_version_ok (ripr 0.8.0-test)'));
+      assert.ok(report.includes('ripr server state: ripr_version_ok (ripr 0.8.0+test)'));
       assert.ok(report.includes('Workspace trust state: workspace_trusted'));
       assert.ok(report.includes('Config state: config_found'));
       assert.ok(report.includes('Artifact directory state: artifact_dir_present'));
-      assert.ok(report.includes('Server version: ripr 0.8.0-test'));
+      assert.ok(report.includes('Server version: ripr 0.8.0+test'));
       assert.ok(report.includes('Config: ripr.toml (found; found in current workspace'));
       assert.ok(report.includes('Artifact gap decision ledger: target/ripr/reports/gap-decision-ledger.json (found'));
       assert.ok(report.includes('First useful action: Add equality-boundary discriminator test'));
@@ -4076,8 +4250,8 @@ suite('Extension Smoke', () => {
       assertReportIncludes(report, [
         'Status: ripr saved-workspace analysis is queued.',
         'Server command: ripr',
-        'ripr server state: ripr_version_ok (ripr 0.8.0-test)',
-        'Server version: ripr 0.8.0-test',
+        'ripr server state: ripr_version_ok (ripr 0.8.0+test)',
+        'Server version: ripr 0.8.0+test',
         'Config: ripr.toml (missing',
         'Artifact first useful action report: target/ripr/reports/first-useful-action.json (missing',
         'Evidence freshness: pending refresh'
@@ -4580,14 +4754,14 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('main status bar visibility hides disabled and serverUnavailable and keeps noWorkspace', () => {
+  test('main status bar visibility hides disabled and keeps serverUnavailable and noWorkspace', () => {
     const expectedVisible: Record<RiprStatusKind, boolean> = {
       disabled: false,
       noWorkspace: true,
       workspaceUntrusted: true,
       workspaceAmbiguous: true,
       resolvingServer: true,
-      serverUnavailable: false,
+      serverUnavailable: true,
       serverFailed: true,
       circuitOpen: true,
       starting: true,
@@ -4698,6 +4872,24 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a stale unmanaged server warns once per session and still starts (#13638)', async () => {
+    const warning = 'ripr on PATH reports ripr 0.1.0, older than the expected ripr 0.10.0; some editor features may not work. Update it with cargo install ripr --locked, or set ripr.server.path to a current ripr.';
+    const context = createControllerTestContext({ serverVersionWarning: warning });
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.client.startCalls, 1, 'a stale server is still used, not refused');
+      assert.deepStrictEqual(context.warningMessages, [warning]);
+      await context.controller.restart();
+      assert.deepStrictEqual(
+        context.warningMessages,
+        [warning],
+        'a restart must not repeat the same stale-server warning'
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar reports unavailable server without hanging on modal UI', async () => {
     const context = createControllerTestContext({
       resolveFailure: {
@@ -4712,9 +4904,10 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('ripr: server missing'));
       assert.strictEqual(
         context.statusVisible(),
-        false,
-        'serverUnavailable must hide the main status-bar item'
+        true,
+        'serverUnavailable must keep the main status-bar item visible after the toast (#13638)'
       );
+      assert.strictEqual(context.status.command, 'ripr.showStatus');
       assert.ok(String(context.status.tooltip).includes('Missing configured ripr server path'));
       assert.ok(String(context.status.tooltip).includes('Workspace:'));
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
@@ -6064,6 +6257,25 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.showRouteQuality'));
   });
 
+  test('workspace cockpit commands honor controller removal quarantine (#13133)', async () => {
+    const context = createControllerTestContext({
+      lspResult: { kind: 'repair_packet', verify_command: 'ripr --root . verify' }
+    });
+    try {
+      await context.controller.start();
+      context.controller.quarantineRemovedWorkspaceRoot();
+
+      await context.controller.copyTopVerifyCommand();
+
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.strictEqual(context.infoMessages.at(-1),
+        'The ripr workspace session changed or is switching. Run the command again when the current workspace is ready.');
+    } finally {
+      await context.dispose();
+    }
+  });
+
   // Replaces the four no-client tests that previously asserted hung-server
   // wording (`not responding`) for showReceiptStatus, copyReceiptCommand,
   // openAttemptLedger, and showRouteQuality. Those assertions encoded #5099.
@@ -6253,6 +6465,7 @@ suite('Start or Continue Repair shell (#2928 / #4647)', () => {
 
 interface ControllerTestOptions {
   enabled?: boolean;
+  serverVersionWarning?: string;
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
@@ -6264,11 +6477,12 @@ interface ControllerTestOptions {
   runRiprHandler?: (args: string[]) => string | Promise<string>;
   afterPhaseResult?: string;
   statusAttemptResult?: string;
+  attemptStatusBar?: vscode.StatusBarItem;
   firstActionJson?: string | null;
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
   workspaceRootState?: RiprWorkspaceRootState;
-  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'http' | 'checksum' | 'manifest' | 'other' };
+  resolveFailure?: { message: string; detail: string; kind: 'missing_binary' | 'download' | 'network' | 'http' | 'checksum' | 'manifest' | 'other' };
   serverVersion?: string;
   workspaceTrusted?: boolean;
   beforeReadFile?: () => Promise<void>;
@@ -6726,9 +6940,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
       command: 'ripr',
       source: 'path',
       detail: 'test ripr on PATH',
-      binaryVersion: options.serverVersion ?? 'ripr 0.8.0-test',
+      binaryVersion: options.serverVersion ?? 'ripr 0.8.0+test',
       installationState: 'unmanaged',
-      compatibilityResult: compatibleLspEvidence
+      compatibilityResult: compatibleLspEvidence,
+      ...(options.serverVersionWarning ? { versionWarning: options.serverVersionWarning } : {})
     }),
     createLanguageClient: (_serverOptions, options, experimental) => {
       clientOptions = options;
@@ -6790,7 +7005,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
       return undefined;
     },
   };
-  const controller = new RiprClientController({} as vscode.ExtensionContext, output, runtime, status);
+  // The fixture's server reports `ripr 0.8.0+test`, so the context names the
+  // matching extension version instead of inheriting the shipped one (#14647).
+  const extensionContext = { extension: { packageJSON: { version: '0.8.0' } } } as unknown as vscode.ExtensionContext;
+  const controller = new RiprClientController(extensionContext, output, runtime, status, options.attemptStatusBar);
   return {
     client,
     controller,

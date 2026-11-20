@@ -1,0 +1,15 @@
+# JsonCompact is another presentation of the existing check refusal envelope,
+# not another schema, failure taxonomy or retry owner (#13103).
+# Registration records intended coverage; execution evidence belongs to the PR.
+[[extend]]
+id = "RIPR-SPEC-0241"
+tests = [
+  "crates/ripr/src/cli/commands/check_json_compact_tests.rs::json_compact_typed_refusal_keeps_identity_and_diagnostic_bytes",
+  "crates/ripr/src/cli/commands/check_json_compact_tests.rs::json_compact_scope_guards_keep_the_frozen_envelope",
+  "crates/ripr/src/cli/commands/check_json_compact_tests.rs::json_compact_timeout_replays_the_explicit_format_and_retains_unknown_facts",
+  "crates/ripr/src/cli/commands/check_json_compact_tests.rs::json_compact_stdin_timeout_never_offers_a_replay_of_consumed_input",
+  "crates/ripr/src/cli/commands/check_json_compact_tests.rs::json_compact_and_json_are_distinct_but_repeated_compact_selection_is_valid",
+  "crates/ripr/tests/json_compact_cli.rs::json_compact_cli_preserves_policy_and_invalid_budget_refusals",
+  "crates/ripr/tests/json_compact_cli.rs::json_compact_cli_preserves_structured_refusal_exit_and_recovery",
+  "crates/ripr/tests/json_compact_cli.rs::json_compact_cli_rejects_conflicting_selection_before_analysis",
+]

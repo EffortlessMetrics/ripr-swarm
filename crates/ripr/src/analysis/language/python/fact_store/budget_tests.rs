@@ -38,8 +38,7 @@ impl Fixture {
         let facts = extract_source_facts(path, SOURCE);
         assert!(!facts.owners.is_empty(), "exercise a real Python owner");
         let envelope = PythonFileFactEnvelope::new(&key, StoredFacts::from_facts(&facts));
-        let bytes =
-            seam_cache::encode_integrity_body_compact(&envelope, envelope.expected_digest()?)?;
+        let bytes = framed_entry_bytes(&envelope)?;
         assert!(!bytes.is_empty());
         Ok((key, facts, bytes))
     }

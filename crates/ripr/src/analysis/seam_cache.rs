@@ -138,6 +138,7 @@ pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathB
 
 /// A versioned entry directory under an already-resolved cache `base`,
 /// for producers that shard their entries by a schema-version component.
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
     base.join(layer.name()).join(version)
 }
@@ -173,6 +174,23 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
     dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
+}
+
+/// Entries and bytes under `base` that this build never reads (#7047):
+/// per-file fact entries written by other ripr builds or under older schema
+/// versions, across the Rust, TypeScript and Python fact stores this build
+/// knows. `ripr cache status` reports it; the next store prunes most of it.
+pub(crate) fn file_fact_reclaimable(base: &Path) -> Reclaimable {
+    #[cfg_attr(
+        not(any(feature = "lang-python", feature = "lang-typescript")),
+        expect(unused_mut, reason = "only preview-language stores add to the total")
+    )]
+    let mut total = RepoFileFactCache::at_base(base).reclaimable();
+    #[cfg(feature = "lang-typescript")]
+    total.add(TypeScriptFileFactStore::at_base(base).reclaimable());
+    #[cfg(feature = "lang-python")]
+    total.add(PythonFileFactStore::at_base(base).reclaimable());
+    total
 }
 
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
@@ -680,7 +698,82 @@ pub(crate) struct CachedSeamLimitInfo {
 /// statement through the same owner-pin decision as `ripr check` (#12394).
 /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
 /// the change is visible (#12841).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
+/// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
+/// helper assertion (#13219). Raw file facts are unchanged; helper credit is
+/// recomputed after loading them.
+/// `1.160`: same-named receiver and free calls no longer lend one another an
+/// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+/// `1.161`: owner-bound field snapshots carry the shared framework limit
+/// through full and compact evidence before recommendation admission (#13278).
+/// Panic markers also use the producer-owned discrimination prefix (#13291).
+/// `1.162`: computed local initializer operands do not become boundaries (#12981).
+/// `1.163`: an exact error-variant pin that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record, as the
+/// discriminate stage already grades it (#12836).
+/// `1.164`: a bare `assert_matches!` around a placed inherent owner call names
+/// the unread-macro limitation instead of an unnamed gap (#12829).
+/// `1.165`: a guarded `Result` match that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record (#12897).
+/// `1.166`: predicate-boundary facts carry the concrete drafted boundary
+/// assertion (agent-efficiency study tweak #4). Old classified entries would
+/// keep serving the placeholder template for warm workspaces.
+/// `1.167`: a manifest-verified drop-in assertion import around an inherent
+/// owner call names the unverifiable-macro limit when placement is
+/// unavailable (#12886).
+/// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
+/// written before the field cannot decode and inserted-guard facts name the
+/// guard domain instead of the equality boundary (#12414).
+/// `1.169`: the repo-wide audit withholds a plain `assert_eq!` whose literal the
+/// current owner provably does not return; cached grips decided before the
+/// withhold would keep crediting it (#13005).
+/// `1.170`: an `Err(..)` constructor is credited only when every call between it
+/// and its assertion macro is on the positive allowlist; wrapper and receiver
+/// reads are refused (#12474).
+/// `1.171`: a workspace assertion macro defined in another file that forwards
+/// its operands to a std assertion names the macro-wrapped limit instead of an
+/// unnamed gap, with nothing credited (#12886).
+/// `1.172`: a receiver rebound by a multiline Python target withholds
+/// protocol-entry credit (#9992).
+/// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
+/// `.await` on an async owner (#5040). Old entries would keep those assertions
+/// refused as async tests.
+/// `1.174`: the repo-seam proximity gate reads a local's initializer, so an
+/// assertion on a local bound to another function pins that function (#12264).
+/// `1.175`: an equality whose compared error is replaced by an adapter such as
+/// `map_err` classifies as a weak relational check, not an exact value; cached
+/// grips decided before the refusal would keep crediting it (#12610).
+/// `1.176`: a claims `assert_ok_eq!` / `assert_some_eq!` pins a whole-value
+/// field of the struct the owner returns, and a whole-value field pin whose
+/// field value neither owner version computes no longer credits (#12394,
+/// #12864).
+/// `1.177`: same multiline receiver binding refusal as `1.172` (#9992) — the
+/// Python rule rejudges seams the `1.176` transition did not touch.
+/// `1.178`: per-byte slice-counter boundary credit and repeat-array
+/// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
+/// (#5346, #12641) — cached boundary verdicts from before the widening are not
+/// reused.
+/// `1.180`: a constructed field or return spelled with a logical-or (`a || b`)
+/// is no longer read as an opaque closure, so its direct propagation witness
+/// can complete (#14326).
+/// `1.181`: an exact assertion that pins only the success payload (`.unwrap()`,
+/// `Ok(..)`, `Some(..)`) is no longer an oracle on a failure-arm (`Err` /
+/// `None`) seam it cannot reach (#12757).
+/// `1.182`: a module-level `const` read only by a same-module function gains a
+/// reader entry, so cached verdicts for such a value would stay
+/// `no_static_path` (#13592).
+/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
+/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
+/// in `files_content_hash`, so adding or removing it changes the key, and the
+/// key's analyzer build identity already keeps entries written by a build
+/// without the field from this one. A bump would only rewrite
+/// `source_subject.corpus.cache_schema_version` in every repo artifact.
+/// `1.183`: the unresolved boundary-input activation summary leads with the
+/// typed `activation_boundary_input_unresolved` token and the evidence record
+/// no longer derives that category from the sentence (#14951), so a cached
+/// summary without the token would lose its category.
+/// `1.184`: a macro-generated test takes no invocation scopes when its file or
+/// invocation scope rebinds an exempt std macro name (#12852).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -880,7 +973,32 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1082,7 +1200,32 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1293,7 +1436,18 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// facts for reach (#9478); `1.55` facts lack them.
 /// `1.57`: `FileFacts` carry parsed `verus_guard_facts` (#10747); `1.56`
 /// warm entries deserialize with an empty guard vector.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.57";
+/// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
+/// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
+/// `1.59`: file-fact keys carry the normalized path spelling (#13887); `1.58`
+/// entries may name the same file under another spelling.
+/// `1.60`: each branch value of an owner's tail `if`/`else` is probed as
+/// `return_value` (#14385); `1.59` facts lack those probe shapes.
+/// `1.61`: entries are framed as `<digest>\n<compact body>` and verified over
+/// the stored body bytes (#9216); `1.60` entries embed the digest in the body
+/// and need a re-serialization of every entry to verify, so they are not read.
+/// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
+/// `fn`) are not stored (#13703); `1.61` entries still carry them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.62";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1309,11 +1463,22 @@ pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_STORE_LIMIT_ENV: &str =
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV: &str =
     "RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES";
+/// Load ceiling for the single module-tree scan bundle (`scans.json`). The
+/// bundle holds one small edge list per distinct source text, so a file
+/// above this is corrupt, legacy, or hostile. Not a process-RSS guarantee.
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV: &str = "RIPR_MODULE_TREE_SCAN_CACHE_BYTES";
 pub(crate) const CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
+mod build_retention;
+pub(crate) use build_retention::Reclaimable;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+pub(crate) use build_retention::{
+    BuildRetention, analyzer_version_from_entry_prefix, integer_schema_rank,
+};
 mod export;
 pub(crate) mod path_dependencies;
 mod scoped_inventory;
@@ -1558,6 +1723,14 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
     Ok(parsed)
 }
 
+pub(crate) fn module_tree_scan_cache_max_bytes() -> Result<usize, String> {
+    seam_cache_store_limit_from_env(
+        std::env::var(MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV),
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV,
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES,
+    )
+}
+
 pub(crate) fn classified_seam_cache_encoded_shard_ceiling_bytes() -> Result<usize, String> {
     classified_seam_cache_encoded_shard_ceiling_from_env(std::env::var(
         CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV,
@@ -1599,6 +1772,55 @@ pub(crate) struct RepoSeamCacheKey {
 
 const CARGO_INPUT_IDENTITY_UNAVAILABLE: &str = "cargo_configuration_identity_unavailable";
 
+/// Canonical spelling of a file-fact cache identity (#13887). Callers reach
+/// the same file through native separators (discovery), forward slashes
+/// (git/LSP), `./` prefixes, and on Windows through case variants and the
+/// `\\?\` verbatim prefix; each spelling used to mint its own cache entry.
+/// Mirrors the TypeScript fact store's `normalized_path`: forward slashes,
+/// no leading `./`, no verbatim prefix, and case folding only where the
+/// filesystem is case-insensitive.
+fn normalize_file_fact_path(path: &Path) -> String {
+    // Only Windows treats `\` as a separator (and folds case); on Unix a
+    // backslash is an ordinary filename character, so rewriting it would
+    // merge distinct files into one identity.
+    #[cfg(windows)]
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    #[cfg(not(windows))]
+    let mut normalized = path.to_string_lossy().into_owned();
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
+            normalized = format!("//{stripped}");
+        } else if let Some(stripped) = normalized.strip_prefix("//?/") {
+            normalized = stripped.to_string();
+        }
+        normalized = normalized.to_lowercase();
+    }
+    normalized
+}
+
+/// Identity of `path` as stored in a file-fact key. Non-UTF-8 paths keep
+/// their verbatim spelling: the lossy form could merge two distinct files.
+fn file_fact_identity_path(path: &Path) -> PathBuf {
+    if path.to_str().is_some() {
+        PathBuf::from(normalize_file_fact_path(path))
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Whether two spellings name the same file-fact identity.
+fn file_fact_paths_equal(left: &Path, right: &Path) -> bool {
+    if left.to_str().is_some() && right.to_str().is_some() {
+        normalize_file_fact_path(left) == normalize_file_fact_path(right)
+    } else {
+        left == right
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RepoFileFactCacheKey {
     schema_version: String,
@@ -1612,7 +1834,7 @@ impl RepoFileFactCacheKey {
         Self {
             schema_version: FILE_FACT_CACHE_SCHEMA_VERSION.to_string(),
             analyzer_version: crate::build_identity::cache_identity().to_string(),
-            file_path: file_path.to_path_buf(),
+            file_path: file_fact_identity_path(file_path),
             content_hash: hash_bytes(content),
         }
     }
@@ -1638,11 +1860,11 @@ impl RepoFileFactCacheKey {
     }
 
     fn filename(&self) -> String {
-        let file_path = self.file_path.to_string_lossy();
+        let file_path = normalize_file_fact_path(&self.file_path);
         let parts = [
             self.schema_version.as_str(),
             self.analyzer_version.as_str(),
-            file_path.as_ref(),
+            file_path.as_str(),
             self.content_hash.as_str(),
         ];
         let mut buf = String::new();
@@ -1713,6 +1935,18 @@ pub(crate) enum CacheLoad<T> {
     Hit(T),
     Miss,
     CorruptIgnored { reason: String },
+}
+
+/// Bounded read of a classified-seam cache file (single entry, shard, or
+/// manifest). The store never publishes a file above the encoded shard
+/// ceiling, so a larger file on disk is corrupt, legacy, or hostile: the
+/// bounded read fails instead of allocating it whole, and callers degrade
+/// to `CorruptIgnored` rebuild. An unparseable ceiling env falls back to
+/// the default ceiling rather than failing the load.
+fn read_classified_cache_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let ceiling = classified_seam_cache_encoded_shard_ceiling_bytes()
+        .unwrap_or(CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+    crate::bounded_input::read_with_limit(path, ceiling as u64)
 }
 
 /// Names the entry file in a corrupt-load reason so a burst of
@@ -1879,6 +2113,18 @@ impl WorkspaceKeyContext<'_> {
             "{workspace_manifests_hash}:rust-snapshot-files:{}",
             super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
         ));
+        // #15040 (also before the Cargo identity): a workspace member outside
+        // the root is read by classification (its crate name and the trait
+        // names it declares) but is never walked by discovery, so the corpus
+        // content hash does not see it. Fold what is read into the key. A
+        // workspace with every member below the root keeps its key.
+        let workspace_manifests_hash =
+            match super::classify::out_of_root_member_identity(self.workspace_root) {
+                Some(identity) => hash_str(&format!(
+                    "{workspace_manifests_hash}:out-of-root-members:{identity}"
+                )),
+                None => workspace_manifests_hash,
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -2267,6 +2513,22 @@ impl ModuleTreeScanEnvelope {
     }
 }
 
+/// Whether a non-empty `RIPR_CACHE_DIR` moves the cache off the default
+/// `target/ripr/cache` base for this process.
+pub(crate) fn cache_base_is_relocated() -> bool {
+    std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Repository-relative path of the module-tree scan bundle under the default
+/// cache base (no `RIPR_CACHE_DIR`). The repair edit cage treats this one
+/// fixed-name derived file as unbound attempt state (#15060).
+pub(crate) fn module_tree_scan_bundle_default_relative_path() -> String {
+    format!(
+        "target/ripr/cache/{}/{MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION}/scans.json",
+        CacheLayer::ModuleTreeScans.name()
+    )
+}
+
 /// Persists the module-graph walk's per-file scans between runs so a warm
 /// check skips the parse that produced them. Layout:
 ///
@@ -2330,7 +2592,13 @@ impl RepoModuleTreeScanCache {
         {
             return BTreeMap::new();
         }
-        let Ok(bytes) = std::fs::read(self.entry_path()) else {
+        // Bounded read: a bundle above the ceiling is never allocated
+        // whole; it degrades to a cold rebuild like any unusable bundle.
+        // An unparseable ceiling env falls back to the default ceiling.
+        let ceiling =
+            module_tree_scan_cache_max_bytes().unwrap_or(MODULE_TREE_SCAN_CACHE_MAX_BYTES);
+        let Ok(bytes) = crate::bounded_input::read_with_limit(self.entry_path(), ceiling as u64)
+        else {
             return BTreeMap::new();
         };
         let Ok(envelope) = serde_json::from_slice::<ModuleTreeScanEnvelope>(&bytes) else {
@@ -2361,7 +2629,7 @@ impl RepoModuleTreeScanCache {
             analyzer_version: crate::build_identity::cache_identity().to_string(),
             scans: scans.clone(),
         };
-        let bytes = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+        let bytes = encode_integrity_body_compact(&envelope, envelope.expected_digest()?)?;
         crate::atomic_file::write_cache(&self.entry_path(), &bytes, "module tree scan cache")
     }
 }
@@ -2553,7 +2821,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let path = self.entry_path(key);
-        let bytes = match std::fs::read(&path) {
+        let bytes = match read_classified_cache_file(&path) {
             Ok(b) => b,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2671,7 +2939,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let manifest_path = self.sharded_manifest_path(key);
-        let bytes = match std::fs::read(&manifest_path) {
+        let bytes = match read_classified_cache_file(&manifest_path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2751,7 +3019,7 @@ impl RepoSeamFactCache {
                     Ok(path) => path,
                     Err(reason) => return CacheLoad::CorruptIgnored { reason },
                 };
-            let bytes = match std::fs::read(&shard_path) {
+            let bytes = match read_classified_cache_file(&shard_path) {
                 Ok(bytes) => bytes,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     return CacheLoad::CorruptIgnored {
@@ -2766,7 +3034,7 @@ impl RepoSeamFactCache {
             };
             let envelope = match codec::decode_shard(&bytes) {
                 Ok(envelope) => envelope,
-                Err(reason) => return CacheLoad::CorruptIgnored { reason },
+                Err(reason) => return corrupt_entry(&shard_path, reason),
             };
             if !envelope.matches_key(key) {
                 return CacheLoad::CorruptIgnored {
@@ -2966,6 +3234,26 @@ impl FileFactCacheStats {
         }
     }
 
+    /// Merge another stats snapshot into this one, preserving the bounded
+    /// `store_failures` row cap across concatenation (#4975).
+    pub(crate) fn merge_from(&mut self, source: &Self) {
+        self.hits += source.hits;
+        self.misses += source.misses;
+        self.corrupt_ignored += source.corrupt_ignored;
+        self.stores += source.stores;
+        self.store_errors += source.store_errors;
+        for failure in source.store_failures.iter().cloned() {
+            if self.store_failures.len() < MAX_STORE_FAILURE_ROWS {
+                self.store_failures.push(failure);
+            } else {
+                self.store_failures_dropped += 1;
+            }
+        }
+        self.store_failures_dropped += source.store_failures_dropped;
+        self.invalidated_files
+            .extend(source.invalidated_files.iter().cloned());
+    }
+
     pub(crate) fn status_label(&self) -> String {
         format!(
             "hits_{}_misses_{}_corrupt_{}_store_errors_{}",
@@ -3005,12 +3293,20 @@ impl FileFactCacheStats {
         }
         Some(message)
     }
-}
 
-/// Layer directories whose stale schema siblings were already pruned this
-/// process (#7047). Mirrors the once-per-directory latch in
-/// `atomic_file::sweep_stale_temp_files_once`.
-static FILE_FACT_STALE_SCHEMA_PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+    /// Whether this run performed observable file-fact cache work (#4975). The
+    /// explicit [`Self::zero_work`] state and a stats object that never
+    /// touched the cache both return `false`, so verbose consumers stay silent
+    /// instead of printing misleading all-zero passes.
+    pub(crate) fn did_work(&self) -> bool {
+        self.hits > 0
+            || self.misses > 0
+            || self.corrupt_ignored > 0
+            || self.stores > 0
+            || self.store_errors > 0
+            || !self.invalidated_files.is_empty()
+    }
+}
 
 pub(crate) struct RepoFileFactCache {
     /// Entry directory: `{cache_base}/repo-file-facts/{schema_version}`.
@@ -3213,6 +3509,26 @@ fn indexed_paths_all_under_cache_layers(toplevel: &Path, base_relative: &Path) -
     indexed
 }
 
+/// Rebind every serialized fact that names its containing file to the
+/// requested path spelling. Owner resolution also reads the file prefix in a
+/// function's `SymbolId`, so preserve only the symbol-local suffix. Source
+/// declaration targets are not containing-file identities and stay untouched.
+fn rebind_file_fact_identity(mut facts: FileFacts, path: &Path) -> FileFacts {
+    let old_id_prefix = format!("{}::", crate::analysis::stable_path_text(&facts.path));
+    let new_id_prefix = format!("{}::", crate::analysis::stable_path_text(path));
+    for function in &mut facts.functions {
+        if let Some(suffix) = function.id.0.strip_prefix(&old_id_prefix) {
+            function.id = crate::domain::SymbolId(format!("{new_id_prefix}{suffix}"));
+        }
+        function.file = path.to_path_buf();
+    }
+    for test in &mut facts.tests {
+        test.file = path.to_path_buf();
+    }
+    facts.path = path.to_path_buf();
+    facts
+}
+
 impl RepoFileFactCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         let dir = cache_layer_dir(workspace_root, CacheLayer::FileFacts)
@@ -3281,6 +3597,17 @@ impl RepoFileFactCache {
     }
 
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
+        self.load_file_facts_for_path(key, key.file_path())
+    }
+
+    /// Load a key hit with the same path spelling a cold parse for
+    /// `requested_path` would produce. The normalized key remains the cache
+    /// identity; the requested spelling must resolve to that key or miss.
+    pub(crate) fn load_file_facts_for_path(
+        &self,
+        key: &RepoFileFactCacheKey,
+        requested_path: &Path,
+    ) -> CacheLoad<FileFacts> {
         // An unusable base fails every lookup the same way, but on Windows
         // that failure is indistinguishable from `NotFound` (#4918). The
         // positive base probe classifies the whole layer as corrupt-ignored
@@ -3290,6 +3617,9 @@ impl RepoFileFactCache {
             return CacheLoad::CorruptIgnored {
                 reason: reason.to_owned(),
             };
+        }
+        if !file_fact_paths_equal(requested_path, key.file_path()) {
+            return CacheLoad::Miss;
         }
         let path = self.entry_path(key);
         let bytes = match std::fs::read(&path) {
@@ -3309,12 +3639,18 @@ impl RepoFileFactCache {
             }
         };
         match codec::decode_file_facts(&bytes) {
-            Ok(envelope) => {
+            Ok(DecodedFileFacts {
+                envelope,
+                digest_matches,
+            }) => {
                 if envelope.matches_key(key) {
-                    if let Err(reason) = envelope.validate_integrity() {
-                        return corrupt_entry(&path, reason);
+                    if !digest_matches {
+                        return corrupt_entry(&path, FILE_FACT_DIGEST_MISMATCH);
                     }
-                    CacheLoad::Hit(envelope.file_facts)
+                    CacheLoad::Hit(rebind_file_fact_identity(
+                        envelope.file_facts,
+                        requested_path,
+                    ))
                 } else {
                     CacheLoad::Miss
                 }
@@ -3354,7 +3690,10 @@ impl RepoFileFactCache {
             if header.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                 && header.analyzer_version == identity
             {
-                candidates.entry(header.file_path).or_default().push(path);
+                candidates
+                    .entry(file_fact_identity_path(&header.file_path))
+                    .or_default()
+                    .push(path);
             }
         }
         KnownFilePaths { candidates }
@@ -3386,7 +3725,10 @@ impl RepoFileFactCache {
                 }
             };
             match codec::decode_file_facts(&bytes) {
-                Ok(envelope) => {
+                Ok(DecodedFileFacts {
+                    envelope,
+                    digest_matches,
+                }) => {
                     if envelope.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION {
                         problems.push(format!(
                             "{}: schema {} (expected {})",
@@ -3396,9 +3738,9 @@ impl RepoFileFactCache {
                         ));
                     } else if envelope.analyzer_version != identity {
                         problems.push(format!("{}: analyzer identity mismatch", path.display()));
-                    } else if let Err(reason) = envelope.validate_integrity() {
+                    } else if !digest_matches {
                         problems.push(format!(
-                            "{}: integrity check failed: {reason}",
+                            "{}: integrity check failed: {FILE_FACT_DIGEST_MISMATCH}",
                             path.display()
                         ));
                     }
@@ -3452,83 +3794,68 @@ impl RepoFileFactCache {
         self.dir.join(key.filename())
     }
 
-    /// Once per run and cache layer directory, after a successful store,
-    /// best-effort remove sibling schema directories this build can never
-    /// serve (#7047). A process-wide latch avoids a new struct field.
-    fn prune_stale_schema_siblings_once(&self) {
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return;
-        };
-        if !cache_path_contained_in_base(&self.base, &layer_dir) {
-            return;
-        }
-        let first_visit = {
-            let mut pruned = match FILE_FACT_STALE_SCHEMA_PRUNED.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            pruned.insert(layer_dir.clone())
-        };
-        if first_visit {
-            self.prune_stale_schema_siblings(&layer_dir);
-        }
-    }
-
-    fn prune_stale_schema_siblings(&self, layer_dir: &Path) {
-        let Ok(layer_meta) = std::fs::symlink_metadata(layer_dir) else {
-            return;
-        };
-        if layer_meta.file_type().is_symlink() || !layer_meta.is_dir() {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(layer_dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            if name == FILE_FACT_CACHE_SCHEMA_VERSION || !parses_as_file_fact_schema_version(name) {
-                continue;
-            }
-            let path = layer_dir.join(name);
-            if !cache_path_contained_in_base(&self.base, &path) {
-                continue;
-            }
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                continue;
-            }
-            let _ = std::fs::remove_dir_all(&path);
-        }
-    }
-
-    /// Production layout `{base}/repo-file-facts/{current-version}` only.
-    /// Test `at_dir` roots write entries directly in `dir` and must not prune.
-    fn file_fact_schema_layer_dir(&self) -> Option<PathBuf> {
+    /// The shared build-retention policy (#7047) over this cache's
+    /// production layout `{base}/repo-file-facts/{current-version}`. Skips
+    /// `act` for test `at_dir` roots, which write entries directly in `dir`
+    /// and must never prune.
+    fn with_retention(&self, act: impl FnOnce(&build_retention::BuildRetention<'_>)) {
         let layer_dir = self.base.join(CacheLayer::FileFacts.name());
-        let expected = layer_dir.join(FILE_FACT_CACHE_SCHEMA_VERSION);
-        (self.dir == expected).then_some(layer_dir)
+        if self.dir != layer_dir.join(FILE_FACT_CACHE_SCHEMA_VERSION) {
+            return;
+        }
+        let read_build = rust_file_fact_entry_build;
+        act(&build_retention::BuildRetention::new(
+            &self.base,
+            layer_dir,
+            FILE_FACT_CACHE_SCHEMA_VERSION,
+            file_fact_schema_rank,
+            &read_build,
+        ));
+    }
+
+    /// Once per run and cache layer directory, after a successful store,
+    /// best-effort remove sibling schema directories and other builds'
+    /// entries this build can never serve (#7047).
+    fn prune_stale_schema_siblings_once(&self) {
+        self.with_retention(|retention| retention.prune_once());
+    }
+
+    /// Records that this build served a hit, so the prune sees an editor
+    /// server that only hits as in use. Called by the fact build when it
+    /// serves a hit, not by `load_file_facts` itself, so read-only consumers
+    /// (cache export validation) never write.
+    pub(crate) fn note_build_use(&self) {
+        if self.unusable_base_reason().is_some() {
+            return;
+        }
+        self.with_retention(|retention| retention.note_use());
+    }
+
+    /// Entries and bytes in this layer that this build never reads.
+    pub(crate) fn reclaimable(&self) -> build_retention::Reclaimable {
+        let mut total = build_retention::Reclaimable::default();
+        self.with_retention(|retention| total = retention.reclaimable());
+        total
     }
 }
 
-/// File-fact schema directories are `{major}.{minor}` decimal generations.
-fn parses_as_file_fact_schema_version(name: &str) -> bool {
-    let mut parts = name.split('.');
-    let Some(major) = parts.next() else {
-        return false;
+/// The analyzer identity of a current-schema Rust file-fact entry.
+fn rust_file_fact_entry_build(path: &Path) -> Option<String> {
+    read_file_fact_header(path)
+        .filter(|header| header.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION)
+        .map(|header| header.analyzer_version)
+}
+
+/// Order of a file-fact schema directory, a `{major}.{minor}` decimal
+/// generation; `None` for any other name.
+fn file_fact_schema_rank(name: &str) -> Option<(u64, u64)> {
+    let (major, minor) = name.split_once('.')?;
+    let decimal = |part: &str| {
+        (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<u64>().ok())
+            .flatten()
     };
-    let Some(minor) = parts.next() else {
-        return false;
-    };
-    parts.next().is_none()
-        && !major.is_empty()
-        && !minor.is_empty()
-        && major.bytes().all(|byte| byte.is_ascii_digit())
-        && minor.bytes().all(|byte| byte.is_ascii_digit())
+    Some((decimal(major)?, decimal(minor)?))
 }
 
 /// Lexical containment under the cache base: no `.` / `..`, and a nonempty
@@ -3630,7 +3957,10 @@ struct CacheEnvelope {
     workspace_manifests_hash: String,
     lockfile_hash: String,
     toolchain_hash: String,
-    #[serde(with = "related_test_table")]
+    #[serde(
+        serialize_with = "related_test_table::serialize",
+        deserialize_with = "related_test_table::deserialize_classified"
+    )]
     classified_seams: Vec<ClassifiedSeam>,
     /// `None` means this is a complete run (all seams were analyzed).
     /// `Some(...)` means the run was capped; the renderer uses this to
@@ -3695,6 +4025,7 @@ impl<'a> FileFactCacheEnvelopeRef<'a> {
         }
     }
 
+    #[cfg(test)]
     fn expected_digest(&self) -> Result<String, String> {
         semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
@@ -3725,10 +4056,21 @@ fn read_file_fact_header(path: &Path) -> Option<FileFactCacheHeader> {
         .take(FILE_FACT_HEADER_PREFIX_BYTES)
         .read_to_end(&mut prefix)
         .ok()?;
-    if let Some(header) = header_from_prefix(&prefix) {
+    if let Some(header) = header_from_prefix(split_framed_header(&prefix)) {
         return Some(header);
     }
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    serde_json::from_slice(split_framed_header(&std::fs::read(path).ok()?)).ok()
+}
+
+/// The body after a framed entry's digest line, without verifying it: the
+/// inventory reads identity only, and every admission verifies the digest.
+fn split_framed_header(bytes: &[u8]) -> &[u8] {
+    if bytes.starts_with(b"sha256:")
+        && let Some(sep) = bytes.iter().position(|byte| *byte == b'\n')
+    {
+        return &bytes[sep + 1..];
+    }
+    bytes
 }
 
 /// Parses keys from the start of the envelope object until the three header
@@ -3787,14 +4129,16 @@ impl KnownFilePaths {
     /// full-decode inventory applied to every entry.
     pub(crate) fn contains(&self, file: &Path) -> bool {
         let identity = crate::build_identity::cache_identity();
-        self.candidates.get(file).is_some_and(|entries| {
+        let identity_path = file_fact_identity_path(file);
+        self.candidates.get(&identity_path).is_some_and(|entries| {
             entries.iter().any(|entry| {
                 std::fs::read(entry).ok().is_some_and(|bytes| {
-                    codec::decode_file_facts(&bytes).is_ok_and(|envelope| {
+                    codec::decode_file_facts(&bytes).is_ok_and(|decoded| {
+                        let envelope = &decoded.envelope;
                         envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                             && envelope.analyzer_version == identity
-                            && envelope.file_path == file
-                            && envelope.validate_integrity().is_ok()
+                            && file_fact_paths_equal(&envelope.file_path, file)
+                            && decoded.digest_matches
                     })
                 })
             })
@@ -3828,7 +4172,7 @@ impl FileFactCacheEnvelope {
     fn matches_key(&self, key: &RepoFileFactCacheKey) -> bool {
         self.file_fact_cache_schema_version == key.schema_version
             && self.analyzer_version == key.analyzer_version
-            && self.file_path == key.file_path
+            && file_fact_paths_equal(&self.file_path, &key.file_path)
             && self.content_hash == key.content_hash
     }
 }
@@ -3972,7 +4316,10 @@ struct ShardedCacheEnvelope {
     toolchain_hash: String,
     shard_index: usize,
     shard_count: usize,
-    #[serde(with = "related_test_table")]
+    #[serde(
+        serialize_with = "related_test_table::serialize",
+        deserialize_with = "related_test_table::deserialize_classified"
+    )]
     classified_seams: Vec<ClassifiedSeam>,
 }
 
@@ -4201,6 +4548,21 @@ pub(crate) fn semantic_body_digest<T: serde::Serialize>(
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
+/// Digest of an already-serialized body. Byte-identical to
+/// [`semantic_body_digest`] of the value that produced `bytes` when `bytes`
+/// is that value's compact serialization, so a reader can verify integrity
+/// over the stored bytes it already read instead of re-serializing the
+/// decoded body on every warm read.
+pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update([0]);
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4211,9 +4573,10 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
-/// [`encode_integrity_body`] without pretty-printing, for envelopes large
+/// Compact integrity-body encoder without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
-/// fact store, #10914). Decoding and the digest are unchanged.
+/// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
+/// are unchanged.
 pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4246,17 +4609,52 @@ impl CacheEnvelope {
 impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
+    /// A framed entry is verified over its stored bytes instead; only an
+    /// entry without the digest header pays this re-serialization.
     fn expected_digest(&self) -> Result<String, String> {
         semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
-    fn validate_integrity(&self) -> Result<(), String> {
-        let expected = self.expected_digest()?;
-        if self.payload_digest.as_deref() == Some(expected.as_str()) {
-            Ok(())
-        } else {
-            Err("missing or mismatching semantic payload digest".to_owned())
-        }
-    }
+}
+
+/// A decoded Rust file-fact entry and whether its framed digest matched.
+struct DecodedFileFacts {
+    envelope: FileFactCacheEnvelope,
+    digest_matches: bool,
+}
+
+/// Why a decoded entry whose identity matched is not served.
+const FILE_FACT_DIGEST_MISMATCH: &str = "missing or mismatching semantic payload digest";
+
+/// Framed on-disk entry: `<digest>\n<compact body>`, where the digest is the
+/// semantic digest of exactly the body bytes that follow (byte-identical to
+/// [`semantic_body_digest`] of the envelope, because the body is its compact
+/// serialization). Compact JSON holds no raw newline, so the first `\n`
+/// always ends the header.
+fn framed_file_fact_entry(body: &[u8]) -> Vec<u8> {
+    let digest = semantic_digest_for_bytes(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, body);
+    let mut bytes = Vec::with_capacity(digest.len() + 1 + body.len());
+    bytes.extend_from_slice(digest.as_bytes());
+    bytes.push(b'\n');
+    bytes.extend_from_slice(body);
+    bytes
+}
+
+/// Splits a framed entry into (digest matches, body); `None` for bytes
+/// without a digest header.
+fn split_framed_file_fact_entry(bytes: &[u8]) -> Option<(bool, &[u8])> {
+    let (header, body) = bytes
+        .strip_prefix(b"sha256:".as_slice())
+        .and_then(|_| bytes.iter().position(|byte| *byte == b'\n'))
+        .map(|sep| (&bytes[..sep], &bytes[sep + 1..]))?;
+    #[cfg(test)]
+    INTEGRITY_WORK.with(|work| {
+        let (hashes, bodies, envelopes) = work.get();
+        work.set((hashes.saturating_add(1), bodies, envelopes));
+    });
+    Some((
+        header == semantic_digest_for_bytes(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, body).as_bytes(),
+        body,
+    ))
 }
 
 impl ShardedCacheManifest {
@@ -4353,7 +4751,7 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_counts(envelope: &CountCacheEnvelope) -> Result<Vec<u8>, String> {
-        serde_json::to_vec_pretty(envelope).map_err(|err| format!("encode counts failed: {err}"))
+        serde_json::to_vec(envelope).map_err(|err| format!("encode counts failed: {err}"))
     }
 
     #[cfg(test)]
@@ -4363,23 +4761,54 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        let body = serde_json::to_vec(envelope)
+            .map_err(|err| format!("encode file facts failed: {err}"))?;
+        Ok(super::framed_file_fact_entry(&body))
     }
 
     pub(super) fn encode_file_facts_ref(
         envelope: &FileFactCacheEnvelopeRef<'_>,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::note_integrity_envelope();
+        let body = serde_json::to_vec(envelope)
+            .map_err(|err| format!("encode file facts failed: {err}"))?;
+        let bytes = super::framed_file_fact_entry(&body);
+        super::record_integrity_vec_len(bytes.len());
+        Ok(bytes)
     }
 
-    pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<FileFactCacheEnvelope, String> {
-        serde_json::from_slice(bytes).map_err(|err| format!("decode file facts failed: {err}"))
+    /// Decodes an entry and reports whether its framed digest matches the
+    /// stored body bytes. The digest is checked over the bytes already read,
+    /// never by re-serializing the decoded envelope (#9216). Callers judge the
+    /// decoded identity first and the digest second, so an entry of another
+    /// generation stays a miss whatever its digest.
+    pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<super::DecodedFileFacts, String> {
+        let decode = |body: &[u8]| -> Result<FileFactCacheEnvelope, String> {
+            serde_json::from_slice(body).map_err(|err| format!("decode file facts failed: {err}"))
+        };
+        if let Some((digest_matches, body)) = super::split_framed_file_fact_entry(bytes) {
+            return Ok(super::DecodedFileFacts {
+                envelope: decode(body)?,
+                digest_matches,
+            });
+        }
+        // An entry without the digest header (hand-written, or the embedded
+        // digest form) keeps the re-serializing check, which only such an
+        // entry ever pays.
+        let envelope = decode(bytes)?;
+        let digest_matches = envelope
+            .expected_digest()
+            .is_ok_and(|expected| envelope.payload_digest.as_deref() == Some(expected.as_str()));
+        Ok(super::DecodedFileFacts {
+            envelope,
+            digest_matches,
+        })
     }
 
     pub(super) fn encode_corpus_fingerprint(
         envelope: &CorpusFingerprintEnvelope,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn decode_corpus_fingerprint(
@@ -4773,6 +5202,140 @@ mod tests {
     }
 
     #[test]
+    fn file_fact_key_unifies_path_spellings_of_one_file() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // #13887: one file must keep one cache identity across the path
+        // spellings different callers produce (native separator, forward
+        // slash, `./` prefix; on Windows also case and verbatim prefix).
+        let scratch = integrity_scratch("key-path-spelling")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let source = "#[path = \"other.rs\"]\nmod other;\npub fn f(x: u32) -> u32 { x + 1 }\n#[test]\nfn changes_f() { assert_eq!(f(1), 2); }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("./src/lib.rs"), source)?;
+        let assert_requested_identity = |loaded: &FileFacts, path: &Path| {
+            assert_eq!(loaded.path, path);
+            assert_eq!(loaded.tests.len(), 1);
+            for function in &loaded.functions {
+                assert_eq!(function.file, path);
+                assert_eq!(
+                    function.id.0,
+                    format!(
+                        "{}::{}",
+                        crate::analysis::stable_path_text(path),
+                        function.name
+                    )
+                );
+            }
+            for test in &loaded.tests {
+                assert_eq!(test.file, path);
+            }
+            assert_eq!(loaded.module_declarations, facts.module_declarations);
+        };
+        let stored = RepoFileFactCacheKey::new(Path::new("./src/lib.rs"), source.as_bytes());
+        cache.store_file_facts(&stored, &facts)?;
+        for spelling in ["src/lib.rs", "./src/lib.rs"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            match cache.load_file_facts_for_path(&key, Path::new(spelling)) {
+                // A hit serves all file-local identities under the caller's
+                // requested spelling, not the stored producer's spelling.
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new(spelling));
+                }
+                other => {
+                    return Err(format!("spelling {spelling} must hit: {other:?}"));
+                }
+            }
+            assert!(
+                cache.known_file_paths().contains(Path::new(spelling)),
+                "known paths must recognize spelling {spelling}"
+            );
+        }
+        // On Windows the native separator spelling is the same file; on Unix
+        // a backslash is an ordinary filename character and stays distinct.
+        #[cfg(windows)]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows separator spelling must hit the stored entry"
+            );
+            // Facts summarized under the backslash spelling are served under
+            // the canonical identity path.
+            let backslash_facts =
+                RaRustSyntaxAdapter.summarize_file(Path::new(r"src\other.rs"), source)?;
+            let backslash_key =
+                RepoFileFactCacheKey::new(Path::new(r"src\other.rs"), source.as_bytes());
+            cache.store_file_facts(&backslash_key, &backslash_facts)?;
+            let canonical = RepoFileFactCacheKey::new(Path::new("src/other.rs"), source.as_bytes());
+            match cache.load_file_facts_for_path(&canonical, Path::new("src/other.rs")) {
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new("src/other.rs"));
+                }
+                other => return Err(format!("canonical spelling must hit: {other:?}")),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Miss),
+                "unix backslash spelling is a distinct file and must miss"
+            );
+        }
+        // Windows filesystems are case-insensitive and canonicalized forms
+        // carry a verbatim prefix; both spellings name the same file.
+        #[cfg(windows)]
+        for spelling in [r"Src\Lib.rs", "SRC/LIB.RS"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows spelling {spelling} must hit the stored entry"
+            );
+        }
+        #[cfg(windows)]
+        {
+            // Built from components so the test carries no absolute machine
+            // path literal (check-local-context).
+            let abs_path = PathBuf::from(format!("{}:/", 'C'))
+                .join("repo")
+                .join("src")
+                .join("lib.rs");
+            let abs = RepoFileFactCacheKey::new(&abs_path, source.as_bytes());
+            cache.store_file_facts(&abs, &facts)?;
+            let verbatim_path = PathBuf::from(format!(r"\\?\{}", abs_path.display()));
+            let verbatim = RepoFileFactCacheKey::new(&verbatim_path, source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&verbatim), CacheLoad::Hit(_)),
+                "verbatim spelling must hit the plain absolute entry"
+            );
+        }
+        // Distinct files and distinct content keep distinct identities.
+        #[cfg(not(windows))]
+        {
+            let case_variant =
+                RepoFileFactCacheKey::new(Path::new("Src/Lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&case_variant), CacheLoad::Miss),
+                "case-sensitive filesystems keep case-distinct files apart"
+            );
+        }
+        let other_path = RepoFileFactCacheKey::new(Path::new("src/another.rs"), source.as_bytes());
+        assert!(matches!(
+            cache.load_file_facts(&other_path),
+            CacheLoad::Miss
+        ));
+        assert!(matches!(
+            cache.load_file_facts_for_path(&stored, Path::new("src/another.rs")),
+            CacheLoad::Miss
+        ));
+        let other_content = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn f() {}\n");
+        assert!(matches!(
+            cache.load_file_facts(&other_content),
+            CacheLoad::Miss
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn producer_directories_match_the_maintenance_inventory() -> Result<(), String> {
         let root = Path::new("/workspace");
         let base = cache_base_dir(root);
@@ -4977,7 +5540,11 @@ mod tests {
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.57");
+        // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
+        // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
+        // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
+        // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.62");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5164,7 +5731,33 @@ mod tests {
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.158");
+        // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
+        // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+        // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+        // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
+        // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
+        // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
+        // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
+        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
+        // boundary assertion (agent-efficiency study tweak #4).
+        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
+        // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
+        // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
+        // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
+        // 1.171 -> 1.172: multiline Python receiver rebindings withhold protocol-entry credit (#9992).
+        // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
+        // 1.173 -> 1.174: local-bound proximity pin (#12264).
+        // 1.174 -> 1.175: adapter-replaced error-read refusal (#12610).
+        // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
+        // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
+        // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
+        // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
+        // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
+        // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
+        // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
+        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.184");
+        // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5304,8 +5897,33 @@ mod tests {
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
+        // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+        // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+        // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+        // 0.163 -> 0.164: same computed-local rule as full 1.162 (#12981).
+        // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
+        // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
+        // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
+        // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
+        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
+        // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
+        // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
+        // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
+        // 0.173 -> 0.174: same multiline receiver binding refusal as full 1.172 (#9992).
+        // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
+        // 0.175 -> 0.176: same local-bound proximity pin as full 1.174 (#12264).
+        // 0.176 -> 0.177: same adapter-replaced refusal as full 1.175 (#12610).
+        // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
+        // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
+        // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
+        // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
+        // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
+        // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
+        // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
+        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
+        // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
     #[test]
@@ -5346,6 +5964,129 @@ mod tests {
     }
 
     #[test]
+    fn file_fact_store_compacts_bytes_without_changing_legacy_admission() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let scratch = integrity_scratch("compact-file-facts")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let samples = [
+            ("src/empty.rs", ""),
+            (
+                "src/unicode.rs",
+                "pub fn café() -> &'static str { \"line\\n\\\"quoted\\\"\" }\n#[test] fn check() { assert_eq!(café(), \"line\\n\\\"quoted\\\"\"); }\n",
+            ),
+            (
+                "src/macros.rs",
+                include_str!("classify/macro_item_names.rs"),
+            ),
+        ];
+        let mut stored_bytes = 0;
+        let mut legacy_bytes = 0;
+        for (file, source) in samples {
+            let file = Path::new(file);
+            let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+            if !source.is_empty() {
+                assert!(
+                    !facts.functions.is_empty(),
+                    "fixture must contain functions"
+                );
+                assert!(!facts.tests.is_empty(), "fixture must contain tests");
+            }
+            let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+            let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
+            let legacy = serde_json::to_vec_pretty(&ChecksummedBody {
+                body: &envelope,
+                payload_digest: envelope.expected_digest()?,
+            })
+            .map_err(|err| err.to_string())?;
+            cache.store_file_facts(&key, &facts)?;
+            let entry = cache.entry_path(&key);
+            let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
+            // The stored entry frames its digest ahead of the body (#9216);
+            // folded back in, it equals the legacy embedded-digest entry.
+            let (digest_line, stored_body) = stored
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|sep| (&stored[..sep], &stored[sep + 1..]))
+                .ok_or("stored entry must carry a digest line")?;
+            assert_eq!(digest_line, envelope.expected_digest()?.as_bytes());
+            let mut stored_value: serde_json::Value =
+                serde_json::from_slice(stored_body).map_err(|err| err.to_string())?;
+            let legacy_value: serde_json::Value =
+                serde_json::from_slice(&legacy).map_err(|err| err.to_string())?;
+            stored_value
+                .as_object_mut()
+                .ok_or("envelope must be object")?
+                .insert(
+                    "payload_digest".to_owned(),
+                    serde_json::json!(envelope.expected_digest()?),
+                );
+            assert_eq!(
+                stored_value, legacy_value,
+                "all fields and digest stay equal"
+            );
+            for bytes in [&stored, &legacy] {
+                std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+                match cache.load_file_facts(&key) {
+                    CacheLoad::Hit(loaded) => assert_eq!(loaded, facts),
+                    other => return Err(format!("old/new encoding failed admission: {other:?}")),
+                }
+                assert!(cache.known_file_paths().contains(file));
+                let header = read_file_fact_header(&entry).ok_or("missing header")?;
+                assert_eq!(header.file_path, file);
+                assert_eq!(header.analyzer_version, key.analyzer_version);
+            }
+            // Corruption must still be rejected after reformatting. Do not
+            // recompute the digest when changing a served fact.
+            let mut corrupt = stored_value;
+            corrupt["file_facts"]["source"] = serde_json::json!("tampered");
+            std::fs::write(
+                &entry,
+                serde_json::to_vec(&corrupt).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            assert!(matches!(
+                cache.load_file_facts(&key),
+                CacheLoad::CorruptIgnored { .. }
+            ));
+            println!(
+                "file-fact-storage {file:?}: source={} legacy={} stored={}",
+                source.len(),
+                legacy.len(),
+                stored.len()
+            );
+            let mut timings = Vec::new();
+            for compact in [false, true] {
+                let start = std::time::Instant::now();
+                for _ in 0..10 {
+                    let digest = envelope.expected_digest()?;
+                    let bytes = if compact {
+                        encode_integrity_body_compact(&envelope, digest)?
+                    } else {
+                        serde_json::to_vec_pretty(&ChecksummedBody {
+                            body: &envelope,
+                            payload_digest: digest,
+                        })
+                        .map_err(|err| err.to_string())?
+                    };
+                    std::hint::black_box(bytes);
+                }
+                timings.push(start.elapsed().as_micros());
+            }
+            println!(
+                "file-fact-encode {file:?}: rounds=10 pretty_us={} compact_us={} (debug profile; includes digest; excludes parse/IO)",
+                timings[0], timings[1]
+            );
+            stored_bytes += stored.len();
+            legacy_bytes += legacy.len();
+        }
+        assert!(
+            stored_bytes < legacy_bytes,
+            "production store must remove formatting bytes: stored={stored_bytes}, legacy={legacy_bytes}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn store_file_facts_writes_the_owned_envelope_bytes() -> Result<(), String> {
         use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         // The store path borrows the key and facts instead of cloning them
@@ -5363,6 +6104,34 @@ mod tests {
         let on_disk = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
         assert_eq!(on_disk, codec::encode_file_facts(&owned)?);
         Ok(())
+    }
+
+    /// Rewrites a stored entry's JSON body. `reframe` stamps a fresh digest
+    /// over the new body (a writer that produced this shape); otherwise the
+    /// original digest line stays in front of the edited body (tampering).
+    fn rewrite_file_fact_body(
+        path: &Path,
+        reframe: bool,
+        edit: impl FnOnce(&mut serde_json::Value),
+    ) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+        let sep = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .filter(|_| bytes.starts_with(b"sha256:"))
+            .ok_or("stored entry must be framed behind a digest line")?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes[sep + 1..]).map_err(|err| err.to_string())?;
+        edit(&mut envelope);
+        let body = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        let out = if reframe {
+            framed_file_fact_entry(&body)
+        } else {
+            let mut out = bytes[..=sep].to_vec();
+            out.extend_from_slice(&body);
+            out
+        };
+        std::fs::write(path, out).map_err(|err| err.to_string())
     }
 
     #[test]
@@ -5386,13 +6155,10 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["probe_shapes"][0]["kind"] =
-            serde_json::Value::String("future_shape".to_string());
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["probe_shapes"][0]["kind"] =
+                serde_json::Value::String("future_shape".to_string());
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
             other => {
@@ -5428,14 +6194,11 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["functions"][0]["body"] = serde_json::Value::String(
-            "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }".to_string(),
-        );
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["functions"][0]["body"] = serde_json::Value::String(
+                "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }".to_string(),
+            );
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
             other => {
@@ -5477,16 +6240,13 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["calls"] = serde_json::json!([{
-            "line": 999,
-            "name": "phantom",
-            "text": "phantom()",
-        }]);
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["calls"] = serde_json::json!([{
+                "line": 999,
+                "name": "phantom",
+                "text": "phantom()",
+            }]);
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::Hit(loaded) if loaded.file_calls() == expected => {}
             other => {
@@ -5528,8 +6288,11 @@ mod tests {
         // Explicit synthesized e290-shaped predecessor, not an execution of
         // an old parser. The separate retained CLI receipt owns that capture.
         let mut favorable = current.clone();
-        let restore_old_text = |calls: &mut Vec<crate::analysis::facts::CallFact>| {
+        let restore_old_text = |calls: &mut crate::analysis::facts::SharedFactSlice<
+            crate::analysis::facts::CallFact,
+        >| {
             for call in calls
+                .make_mut()
                 .iter_mut()
                 .filter(|call| call.name == "discounted_total" && call.line == old_offset + 1)
             {
@@ -5858,15 +6621,9 @@ mod tests {
         let key = RepoFileFactCacheKey::new(file, b"pub fn a() {}\n");
         cache.store_file_facts(&key, &FileFacts::default())?;
         let path = cache.entry_path(&key);
-        let mut entry: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
-                .map_err(|err| err.to_string())?;
-        entry["file_facts"]["used_lexical_fallback"] = serde_json::Value::Bool(true);
-        std::fs::write(
-            &path,
-            serde_json::to_vec_pretty(&entry).map_err(|err| err.to_string())?,
-        )
-        .map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&path, false, |entry| {
+            entry["file_facts"]["used_lexical_fallback"] = serde_json::Value::Bool(true);
+        })?;
         let known = cache.known_file_paths();
         // The snapshot keeps the tampered entry as a candidate: it judged
         // only the header. An inventory that decoded and validated every body
@@ -5891,9 +6648,19 @@ mod tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let key = RepoFileFactCacheKey::new(Path::new("src/x.rs"), b"x");
         cache.store_file_facts(&key, &FileFacts::default())?;
-        let bytes = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        let framed = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        // The entry is framed behind its digest line; the header sits at the
+        // start of the body that follows.
+        let bytes = split_framed_header(&framed).to_vec();
+        assert!(
+            bytes.len() < framed.len(),
+            "a stored entry carries a digest header"
+        );
         let full: FileFactCacheHeader =
             serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        let from_disk =
+            read_file_fact_header(&cache.entry_path(&key)).ok_or("framed header must read")?;
+        assert_eq!(from_disk.file_path, full.file_path);
         // Any cut after the header fields still yields the same header.
         let cut = bytes.len().min(400);
         let prefixed = header_from_prefix(bytes.get(..cut).ok_or("short entry")?)
@@ -6202,6 +6969,124 @@ mod tests {
     }
 
     #[test]
+    fn classified_reference_budget_rejects_single_and_late_shard_without_a_prefix()
+    -> Result<(), String> {
+        use super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+
+        let test = related("budget", RelationReason::SameModule);
+        let seams = vec![
+            seam(1, vec![test.clone(), test.clone()]),
+            seam(2, vec![test]),
+        ];
+        for compact in [false, true] {
+            for sharded in [false, true] {
+                let scratch = integrity_scratch("reference-budget")?;
+                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                let mut key = empty_state().cache_key();
+                if compact {
+                    key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_owned();
+                }
+                cache.store_classified_seams_with_limit(
+                    &key,
+                    &seams,
+                    None,
+                    if sharded { 1 } else { 10 },
+                )?;
+                let load = || {
+                    related_test_table::with_test_classified_reference_limit(3, || {
+                        cache.load_classified_seams_with_fallback(&key)
+                    })
+                };
+                assert!(matches!(load(), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2));
+                related_test_table::take_test_reference_clones();
+                let path = if sharded {
+                    let manifest = codec::decode_sharded_manifest(
+                        &std::fs::read(cache.sharded_manifest_path(&key))
+                            .map_err(|err| err.to_string())?,
+                    )?;
+                    assert_eq!(manifest.shards.len(), 2);
+                    // The manifest names a shard as `g<id>/shard-N.json`. Resolve it
+                    // through the loader's own resolver so the path below is spelled
+                    // the way the load-side reason spells it: on Windows a plain
+                    // `join` keeps the `/` and the reason would not contain it (#13897).
+                    cache.sharded_shard_path(&key, 1)?
+                } else {
+                    cache.entry_path(&key)
+                };
+                let mut body: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
+                        .map_err(|err| err.to_string())?;
+                let seam_index = if sharded { 0 } else { 1 };
+                body["classified_seams"]["seams"][seam_index]["evidence"]["related_tests"] =
+                    if sharded {
+                        serde_json::json!([0, 0, 0, 0])
+                    } else {
+                        serde_json::json!([0, 0])
+                    };
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec(&body).map_err(|err| err.to_string())?,
+                )
+                .map_err(|err| err.to_string())?;
+                match load() {
+                    CacheLoad::CorruptIgnored { reason } => {
+                        assert!(reason.contains("related-test reference limit"), "{reason}");
+                        assert!(reason.contains(&path.display().to_string()), "{reason}");
+                    }
+                    other => {
+                        return Err(format!("over-limit generation must be rejected: {other:?}"));
+                    }
+                }
+                assert_eq!(
+                    related_test_table::take_test_reference_clones(),
+                    if sharded { 2 } else { 0 },
+                    "only the earlier valid shard may expand references"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_reference_budget_refuses_default_scale_amplification() -> Result<(), String> {
+        use super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+
+        let scratch = integrity_scratch("reference-budget-scale")?;
+        let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+        let key = empty_state().cache_key();
+        let seams = [seam(1, vec![related("scale", RelationReason::SameModule)])];
+        cache.store_classified_seams_with_limit(&key, &seams, None, 10)?;
+        let path = cache.entry_path(&key);
+        let mut body: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        let slot_bytes = std::mem::size_of::<Arc<RelatedTestGrip>>();
+        let limit = CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES / slot_bytes.max(8);
+        body["classified_seams"]["seams"][0]["evidence"]["related_tests"] =
+            serde_json::Value::Array(vec![serde_json::json!(0); limit + 1]);
+        let encoded = serde_json::to_vec(&body).map_err(|err| err.to_string())?;
+        assert!(encoded.len() < CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+        related_test_table::take_test_reference_clones();
+        let result = related_test_table::with_test_classified_reference_limit(limit, || {
+            codec::decode(&encoded)
+        });
+        assert!(
+            matches!(result, Err(ref reason) if reason.contains("related-test reference limit"))
+        );
+        assert_eq!(related_test_table::take_test_reference_clones(), 0);
+        println!(
+            "reference-budget: encoded={} references={} limit={} requested-slot-bytes={}",
+            encoded.len(),
+            limit + 1,
+            limit,
+            (limit + 1) * slot_bytes
+        );
+        Ok(())
+    }
+
+    #[test]
     fn same_key_classified_payload_and_metadata_edits_are_corrupt() -> Result<(), String> {
         for compact in [false, true] {
             let scratch = integrity_scratch(if compact { "compact" } else { "full" })?;
@@ -6378,7 +7263,8 @@ mod tests {
         let original = std::fs::read(&entry).map_err(|err| err.to_string())?;
         for digest in [None, Some(serde_json::json!("sha256:invalid"))] {
             let mut value: serde_json::Value =
-                serde_json::from_slice(&original).map_err(|err| err.to_string())?;
+                serde_json::from_slice(split_framed_header(&original))
+                    .map_err(|err| err.to_string())?;
             let object = value.as_object_mut().ok_or("envelope must be object")?;
             object.remove("payload_digest");
             if let Some(digest) = digest {
@@ -6424,7 +7310,8 @@ mod tests {
             return Err("valid entry must remain inventory".to_owned());
         }
         let mut signed: FileFactCacheEnvelope =
-            codec::decode_file_facts(&std::fs::read(&entry).map_err(|err| err.to_string())?)?;
+            codec::decode_file_facts(&std::fs::read(&entry).map_err(|err| err.to_string())?)?
+                .envelope;
         signed.file_facts.source = "changed semantic source".into();
         std::fs::write(&entry, codec::encode_file_facts(&signed)?)
             .map_err(|err| err.to_string())?;
@@ -7751,6 +8638,75 @@ mod tests {
         Ok(())
     }
 
+    /// #15040: a workspace member outside the root is read by classification
+    /// but is not in the corpus, so the production key must move when that
+    /// member's trait names or manifest move. An edit there that declares no
+    /// trait is the control: it keeps the key, so the entry is still reused.
+    #[test]
+    fn out_of_root_member_changes_change_cache_identity() -> Result<(), String> {
+        let base = isolated_dir("out-of-root-member");
+        ignore_remove_dir_all(&base);
+        let root = base.join("ws");
+        let shared = base.join("shared");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        std::fs::create_dir_all(shared.join("src"))
+            .map_err(|err| format!("create member: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../shared\"]\n",
+        )
+        .map_err(|err| format!("write manifest: {err}"))?;
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"shared\"\n")
+            .map_err(|err| format!("write member manifest: {err}"))?;
+        std::fs::write(shared.join("src/lib.rs"), "pub use std::fmt::Display;\n")
+            .map_err(|err| format!("write member source: {err}"))?;
+        let files: [(PathBuf, Vec<u8>); 0] = [];
+        let key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &files,
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = key();
+        assert_eq!(baseline.filename(), key().filename());
+
+        std::fs::write(shared.join("src/helper.rs"), "pub fn helper() {}\n")
+            .map_err(|err| format!("write non-trait edit: {err}"))?;
+        assert_eq!(
+            baseline.filename(),
+            key().filename(),
+            "an edit that declares no trait keeps the key"
+        );
+
+        std::fs::write(
+            shared.join("src/declares.rs"),
+            "pub trait Display {\n    fn fmt(&self);\n}\n",
+        )
+        .map_err(|err| format!("write trait: {err}"))?;
+        let declared = key();
+        assert_ne!(
+            baseline.workspace_manifests_hash,
+            declared.workspace_manifests_hash
+        );
+        assert_ne!(baseline.filename(), declared.filename());
+
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"renamed\"\n")
+            .map_err(|err| format!("change member manifest: {err}"))?;
+        let renamed = key();
+        assert_ne!(
+            declared.workspace_manifests_hash,
+            renamed.workspace_manifests_hash
+        );
+        assert_ne!(declared.filename(), renamed.filename());
+        ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
     /// (#2823) The portable identity fails closed: collected paths are
     /// root-relative by construction (the collector strips the checkout
     /// root), so a path that is still absolute means the strip missed, and
@@ -7933,6 +8889,37 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn given_oversized_cache_entry_when_loading_then_corrupt_ignored_is_reported()
+    -> Result<(), String> {
+        // Memory bound: a cache file above the encoded shard ceiling is
+        // never allocated whole; the load degrades to a rebuild.
+        let dir = isolated_dir("oversized");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let path = cache.entry_path(&key);
+        let oversized = vec![b'x'; CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES + 1];
+        std::fs::write(&path, oversized).map_err(|err| format!("write oversized entry: {err}"))?;
+        let result = match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => {
+                if reason.contains("exceeds") {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "oversized reason should name the byte limit, got {reason}"
+                    ))
+                }
+            }
+            other => Err(format!(
+                "expected CorruptIgnored on oversized entry, got {other:?}"
+            )),
+        };
+        ignore_remove_dir_all(&dir);
+        result
     }
 
     #[test]
@@ -8356,7 +9343,7 @@ mod tests {
         let path = cache.entry_path();
         let original = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
 
-        let edited = original.replace("\"name\": \"a\"", "\"name\": \"forged\"");
+        let edited = original.replace("\"name\":\"a\"", "\"name\":\"forged\"");
         assert_ne!(edited, original, "control: the edit applied");
         std::fs::write(&path, &edited).map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "edited body fails its digest");
@@ -8372,6 +9359,36 @@ mod tests {
 
         std::fs::write(&path, b"{not json").map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "undecodable bundle reads as empty");
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_above_the_byte_ceiling_reads_as_empty() -> Result<(), String> {
+        // Memory bound: a bundle file above the load ceiling is never
+        // allocated whole; the load degrades to a cold rebuild. Trailing
+        // spaces keep the oversized file decodable, so only the byte
+        // ceiling can explain an empty read.
+        let dir = isolated_dir("module-tree-scans-oversized");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        let scans = sample_module_tree_scans();
+        cache.store(&scans)?;
+        assert_eq!(cache.load(), scans, "control: the stored bundle loads");
+
+        let path = cache.entry_path();
+        let mut bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let ceiling = module_tree_scan_cache_max_bytes()
+            .map_err(|error| format!("ceiling must resolve: {error}"))?;
+        if bytes.len() > ceiling {
+            return Err("control: stored bundle already exceeds the ceiling".to_string());
+        }
+        bytes.resize(ceiling + 1, b' ');
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        assert!(
+            cache.load().is_empty(),
+            "a bundle above the byte ceiling reads as empty, not allocated whole"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }
@@ -9887,6 +10904,351 @@ mod file_fact_stale_schema_prune_tests {
             );
         }
         super::ignore_remove_dir_all(&root);
+        Ok(())
+    }
+}
+
+/// #7047: after a successful file-fact store, entries written by older builds
+/// in the current schema directory are removed, keeping the current build and
+/// the most recently written other builds.
+#[cfg(test)]
+mod file_fact_stale_build_prune_tests {
+    use super::build_retention::{BUILD_USE_DIR as FILE_FACT_BUILD_USE_DIR, build_use_marker_name};
+    use super::*;
+
+    fn scratch(label: &str) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+        let dir = super::tests::isolated_dir(label);
+        super::ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch: {error}"))?;
+        Ok(dir)
+    }
+
+    /// Bytes of a real current-build entry, from a throwaway cache.
+    fn current_entry_bytes(label: &str) -> Result<Vec<u8>, String> {
+        let base = scratch(label)?;
+        let cache = RepoFileFactCache::at_dir(base.clone());
+        let key = RepoFileFactCacheKey::new(Path::new("src/template.rs"), b"pub fn t() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let bytes = std::fs::read(base.join(key.filename()))
+            .map_err(|error| format!("read template entry: {error}"));
+        super::ignore_remove_dir_all(&base);
+        bytes
+    }
+
+    /// Plants an entry whose header names `analyzer` and whose mtime is
+    /// `age_days` days in the past.
+    fn plant_build_entry(
+        dir: &Path,
+        template: &[u8],
+        name: &str,
+        analyzer: &str,
+        age_days: u64,
+    ) -> Result<PathBuf, String> {
+        let text = String::from_utf8(template.to_vec()).map_err(|error| error.to_string())?;
+        let identity = crate::build_identity::cache_identity();
+        let needle = format!("\"analyzer_version\":\"{identity}\"");
+        let pretty_needle = format!("\"analyzer_version\": \"{identity}\"");
+        let replaced = if text.contains(&needle) {
+            text.replacen(&needle, &format!("\"analyzer_version\":\"{analyzer}\""), 1)
+        } else if text.contains(&pretty_needle) {
+            text.replacen(
+                &pretty_needle,
+                &format!("\"analyzer_version\": \"{analyzer}\""),
+                1,
+            )
+        } else {
+            return Err("template entry has no analyzer_version field".to_string());
+        };
+        std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+        let path = dir.join(name);
+        std::fs::write(&path, replaced).map_err(|error| format!("plant {name}: {error}"))?;
+        let when =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|error| format!("set mtime {name}: {error}"))?;
+        let header = read_file_fact_header(&path).ok_or("planted header unreadable")?;
+        if header.analyzer_version != analyzer {
+            return Err(format!("planted header names {}", header.analyzer_version));
+        }
+        Ok(path)
+    }
+
+    fn store_one(cache: &RepoFileFactCache) -> Result<PathBuf, String> {
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn cached() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        Ok(cache.entry_path(&key))
+    }
+
+    #[test]
+    fn store_keeps_current_and_two_newest_other_builds_and_removes_older() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template")?;
+        let base = scratch("build-prune-retention")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let dir = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        let oldest_a = plant_build_entry(&dir, &template, "a1.json", "0.9.0+old", 40)?;
+        let oldest_b = plant_build_entry(&dir, &template, "a2.json", "0.9.0+old", 39)?;
+        let middle = plant_build_entry(&dir, &template, "b.json", "0.10.0+mid", 20)?;
+        let newest = plant_build_entry(&dir, &template, "c.json", "0.10.1+new", 10)?;
+        let current = store_one(&cache)?;
+
+        let state = |path: &Path| path.exists();
+        let observed = (
+            state(&oldest_a),
+            state(&oldest_b),
+            state(&middle),
+            state(&newest),
+            state(&current),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (false, false, true, true, true) {
+            return Err(format!(
+                "expected (oldest gone x2, middle, newest, current kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn store_leaves_unreadable_temp_and_non_json_files() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-2")?;
+        let base = scratch("build-prune-unreadable")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let dir = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
+            plant_build_entry(
+                &dir,
+                &template,
+                &format!("old{index}.json"),
+                &format!("0.8.{index}+x"),
+                *age,
+            )?;
+        }
+        let garbage = dir.join("garbage.json");
+        std::fs::write(&garbage, b"not json").map_err(|error| error.to_string())?;
+        let temp = dir.join(".ripr-atomic-1-2-3.tmp");
+        std::fs::write(&temp, b"partial").map_err(|error| error.to_string())?;
+        let note = dir.join("README");
+        std::fs::write(&note, b"keep").map_err(|error| error.to_string())?;
+        store_one(&cache)?;
+
+        let observed = (
+            dir.join("old0.json").exists(),
+            garbage.exists(),
+            temp.exists(),
+            note.exists(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (false, true, true, true) {
+            return Err(format!(
+                "expected (oldest build gone, garbage/temp/note kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn at_dir_test_roots_never_prune_other_builds() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-3")?;
+        let dir = scratch("build-prune-at-dir")?;
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let mut planted = Vec::new();
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
+            planted.push(plant_build_entry(
+                &dir,
+                &template,
+                &format!("old{index}.json"),
+                &format!("0.7.{index}+x"),
+                *age,
+            )?);
+        }
+        store_one(&cache)?;
+        let all_kept = planted.iter().all(|path| path.exists());
+        super::ignore_remove_dir_all(&dir);
+        if !all_kept {
+            return Err("a non-production cache root must not prune".to_string());
+        }
+        Ok(())
+    }
+
+    fn plant_use_marker(layer: &Path, build: &str, age_days: u64) -> Result<(), String> {
+        let dir = layer.join(FILE_FACT_BUILD_USE_DIR);
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let path = dir.join(build_use_marker_name(build));
+        std::fs::write(&path, build).map_err(|error| error.to_string())?;
+        let when =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|error| format!("set marker mtime: {error}"))
+    }
+
+    #[test]
+    fn hit_only_build_with_a_fresh_use_marker_is_kept_over_newer_writers() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-4")?;
+        let base = scratch("build-prune-use-marker")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        let dir = layer.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        // The editor build wrote its entries long ago but still serves hits.
+        let editor = plant_build_entry(&dir, &template, "editor.json", "0.11.0+editor", 60)?;
+        plant_use_marker(&layer, "0.11.0+editor", 0)?;
+        let dev_old = plant_build_entry(&dir, &template, "dev1.json", "0.11.0+dev1", 30)?;
+        let dev_mid = plant_build_entry(&dir, &template, "dev2.json", "0.11.0+dev2", 20)?;
+        let dev_new = plant_build_entry(&dir, &template, "dev3.json", "0.11.0+dev3", 10)?;
+        store_one(&cache)?;
+        let observed = (
+            editor.exists(),
+            dev_old.exists(),
+            dev_mid.exists(),
+            dev_new.exists(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (true, false, false, true) {
+            return Err(format!(
+                "expected (editor kept, dev1 gone, dev2 gone, dev3 kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn grace_needs_a_hit_marker_and_write_only_builds_get_none() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-5")?;
+        let base = scratch("build-prune-grace")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        let dir = layer.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        // Four write-only dirty rebuilds from the last few days, plus one
+        // build that only hits, last seen 5 days ago (inside the grace).
+        let hitter = plant_build_entry(&dir, &template, "hitter.json", "0.6.9+hits", 50)?;
+        plant_use_marker(&layer, "0.6.9+hits", 5)?;
+        let mut writers = Vec::new();
+        for (index, age) in [4_u64, 3, 2, 1].iter().enumerate() {
+            writers.push(plant_build_entry(
+                &dir,
+                &template,
+                &format!("dirty{index}.json"),
+                &format!("0.6.{index}+dirty"),
+                *age,
+            )?);
+        }
+        // A spoofed marker (name is not the hash of its content) is ignored.
+        let spoof_dir = layer.join(FILE_FACT_BUILD_USE_DIR);
+        std::fs::write(spoof_dir.join("0000000000000000"), "0.6.0+dirty")
+            .map_err(|error| error.to_string())?;
+        store_one(&cache)?;
+        let observed = (
+            hitter.exists(),
+            writers.iter().map(|path| path.exists()).collect::<Vec<_>>(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (true, vec![false, false, true, true]) {
+            return Err(format!(
+                "expected hitter kept, two oldest dirty builds gone, two newest kept; got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn use_marker_is_never_written_through_a_symlinked_marker_dir() -> Result<(), String> {
+        let base = scratch("build-prune-marker-symlink")?;
+        let outside = scratch("build-prune-marker-outside")?;
+        let layer = base.join(CacheLayer::FileFacts.name());
+        std::fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(&outside, layer.join(FILE_FACT_BUILD_USE_DIR))
+            .map_err(|error| format!("symlink: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let key = RepoFileFactCacheKey::new(Path::new("src/sym.rs"), b"pub fn s() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        cache.note_build_use();
+        let outside_written = std::fs::read_dir(&outside)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        super::ignore_remove_dir_all(&base);
+        super::ignore_remove_dir_all(&outside);
+        if !hit || outside_written != 0 {
+            return Err(format!("hit={hit} files written outside={outside_written}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn noting_a_hit_records_the_use_marker_and_a_plain_read_does_not() -> Result<(), String> {
+        let base = scratch("build-prune-hit-marker")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let key = RepoFileFactCacheKey::new(Path::new("src/hit.rs"), b"pub fn hit() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let identity = crate::build_identity::cache_identity();
+        let marker = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_BUILD_USE_DIR)
+            .join(build_use_marker_name(identity));
+        let before_hit = marker.exists();
+        let plain_read_wrote = {
+            let _ = cache.load_file_facts(&key);
+            marker.exists()
+        };
+        let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        cache.note_build_use();
+        let content = std::fs::read_to_string(&marker).unwrap_or_default();
+        super::ignore_remove_dir_all(&base);
+        if before_hit || plain_read_wrote || !hit || content != identity {
+            return Err(format!(
+                "before_hit={before_hit} plain_read_wrote={plain_read_wrote} hit={hit} marker_content_matches={}",
+                content == identity
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_never_deletes_through_a_symlinked_layer_dir() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-6")?;
+        let base = scratch("build-prune-layer-symlink")?;
+        let outside = scratch("build-prune-layer-outside")?;
+        let outside_schema = outside.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        let mut planted = Vec::new();
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
+            planted.push(plant_build_entry(
+                &outside_schema,
+                &template,
+                &format!("victim{index}.json"),
+                &format!("0.5.{index}+x"),
+                *age,
+            )?);
+        }
+        std::os::unix::fs::symlink(&outside, base.join(CacheLayer::FileFacts.name()))
+            .map_err(|error| format!("symlink: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let _ = store_one(&cache);
+        let all_kept = planted.iter().all(|path| path.exists());
+        super::ignore_remove_dir_all(&base);
+        super::ignore_remove_dir_all(&outside);
+        if !all_kept {
+            return Err("prune deleted files through a symlinked layer dir".to_string());
+        }
         Ok(())
     }
 }

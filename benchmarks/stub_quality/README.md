@@ -67,5 +67,24 @@ and `D_dyn_closure` did not compile (fixed in #8371). Three cases read
 | `D_trait_defaults` | unknown | refused: the owner is a trait default method or nested function |
 | `D_unsafe_const` | unknown | stub offered |
 
+## Re-measure (main at 60114de3, debug build, #8361)
+
+13 of 34 cases print a stub command, and all 13 written stubs compile and stop
+at their own labelled `todo!()`. Counting the `todo!("ripr: …")` fill-ins in
+those 13 stubs:
+
+| fill-in | before | after building the receiver from a constructor |
+|---|---|---|
+| receiver (`build the T that m runs on`) | 4 | 0 |
+| input (`choose x …`) | 17 | 17 |
+| expected value | 12 | 12 |
+| total | 33 | 29 |
+
+Stubs whose only fill-in is the expected value went from 1
+(`C_workspace_pricing`) to 2 (`A_invoice_summary`). The four receivers
+(`A_invoice_summary`, `A_token_bucket`, `C_inventory_ledger`,
+`C_state_machine`) are now copied from a literal constructor call in an
+existing test. Expected values stay fill-ins by design.
+
 The static exposure and route columns are read from `ripr check` output for each case. This table is a snapshot from one run, not a gate. Re-run after stub changes
 and update it in the same PR.

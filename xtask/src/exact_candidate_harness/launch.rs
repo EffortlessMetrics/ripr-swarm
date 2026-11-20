@@ -1,7 +1,9 @@
 //! Isolated launch context and owned fixture cleanup (#4510).
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 #[cfg(unix)]
 pub(crate) const CHILD_PATH: &str = "/usr/bin:/bin";
@@ -38,10 +40,12 @@ pub(crate) fn environment_boundary() -> Vec<String> {
     ]
 }
 
+#[cfg(unix)]
 pub(crate) struct OwnedFixtureRoot {
     path: PathBuf,
 }
 
+#[cfg(unix)]
 impl OwnedFixtureRoot {
     pub(crate) fn new(parent: &Path, id: &str) -> Result<Self, String> {
         let path = parent.join(id);

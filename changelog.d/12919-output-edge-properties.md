@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Added xtask output-edge property tests (#12919): over generated Rust workspaces and diffs, every renderer emits only the static class vocabulary and none of the gate's runtime-outcome words, finding ids are unique and stable under diff reordering and unrelated line shifts, and JSON/SARIF output validates against `check.schema.json` and a SARIF 2.1.0 envelope subset. Test-only; no product output changes.

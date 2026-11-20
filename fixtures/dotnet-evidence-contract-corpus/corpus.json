@@ -78,6 +78,7 @@
         "to": "Lib.fsproj"
       },
       "edge_registered": false,
+      "limitation": "cross_language_edge_unregistered",
       "reject_class": "exposed"
     },
     {

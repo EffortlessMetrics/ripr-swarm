@@ -177,7 +177,9 @@ ripr agent repair --root . --seam-id <seam_id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-The before phase prints the exact `--attempt` command; see
+The before phase prints the after-phase command for that attempt as
+`ripr continue --root <root> --attempt <repair-attempt-id>`, which runs the
+same after phase as the `--phase after` line above; see
 [Repair attempt identity](REPAIR_ATTEMPT.md). The lower-level packet, verify,
 and receipt commands below remain available for gap-ledger records and explicit
 control.
@@ -186,7 +188,7 @@ When the gap ledger selects no top gap, `ripr first-pr` reads the review cards
 (`--review-comments`, default `target/ripr/review/comments.json`) and selects
 the first card that carries `llm_guidance.repair_command`. `start-here.md`
 then shows a `Start repair` line followed by the after-phase step (run the
-`--attempt ... --phase after` command the before phase prints; it verifies
+`ripr continue ... --attempt` command the before phase prints; it verifies
 movement and writes the receipt). The lower-level verify and receipt commands
 follow as `Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)` and `Manual receipt without a repair attempt (after the manual verify)`, not as peer steps: the manual verify
 compares a before snapshot taken before the test edit with an after snapshot
@@ -311,7 +313,7 @@ movement is not a replacement for the test suite.
 
 ## 7. Verify Movement
 
-If you started a repair attempt in step 5, run the `--attempt ... --phase after`
+If you started a repair attempt in step 5, run the `ripr continue ... --attempt`
 command its before phase printed. It captures the after snapshot, compares it,
 and writes the verify and receipt artifacts; steps 7 and 8 need nothing else.
 
@@ -354,28 +356,51 @@ cargo xtask goldens check
 
 ## 8. Keep A Receipt
 
-For a human-only pilot, attach the `ripr outcome` Markdown to the PR or upload
-it with the CI artifact packet.
+Keep the evidence for the route you actually ran:
 
-For an agent or repeatable workflow, produce the focused receipt:
+| Route | What to retain |
+| --- | --- |
+| Repair attempt prepared before the test edit | The attempt ID, its retained before/after evidence and terminal artifacts, the after-phase result, and the actual project test result. |
+| Manual snapshot comparison | The original before snapshot, the after snapshot, the `ripr outcome` Markdown or JSON, and the actual project test result. Optional agent verification follows the manual recipe below. |
+| Preview gap or output-contract route | The gap's printed verification command and its observed result, plus the receipt command that the first-PR packet names. A supplied `--status` records your observation; it does not execute the test. |
+
+For a prepared repair attempt, step 7 already writes the verify and receipt
+artifacts. Inspect the exact attempt:
 
 ```bash
-ripr agent verify \
-  --root . \
-  --before target/ripr/pilot/repo-exposure.json \
-  --after target/ripr/pilot/after.repo-exposure.json \
-  --json > target/ripr/agent/agent-verify.json
-
-ripr agent receipt \
-  --root . \
-  --verify-json target/ripr/agent/agent-verify.json \
-  --seam-id <seam_id> \
-  --json \
-  --out target/ripr/agent/agent-receipt.json
+ripr agent status --root . --attempt <repair-attempt-id> --json
 ```
 
-The receipt is the review trail. Without a receipt, do not infer improvement
-from the test diff alone.
+Use the ID and store printed by the before phase. Retain the whole attempt
+directory; a later attempt can replace shared workflow files and
+`target/ripr/reports/agent-receipt.json`. Follow the named recovery when the
+after phase or status refuses. Do not overwrite retained artifacts with a
+manually assembled pair or start a new before phase after the edit to claim
+the original baseline. [Repair attempt identity](REPAIR_ATTEMPT.md) owns the
+retained evidence and recovery contract.
+
+For a manual comparison, attach the `ripr outcome` result to the PR or upload
+it with the CI artifact packet. If an agent needs JSON, use the
+[manual verification and receipt recipe](TARGETED_TEST_WORKFLOW.md#manual-agent-verification-and-receipts).
+Use this workflow's before and after paths from step 7 in that recipe. The
+default pilot and step 7 use `--mode draft`; keep that mode for the sibling
+check instead of the targeted workflow's `ready` example. If you selected a
+different mode, retain the mode of your original snapshots.
+That recipe creates both the verification JSON and its required sibling
+`analysis-outcome.json` through RIPR's real producers. A pair of snapshots
+alone does not create a durable repair attempt. If the original before
+snapshot is missing or incompatible, keep that limitation visible; capturing
+a new snapshot after the edit cannot reconstruct it.
+
+An agent receipt's process exit and JSON `status` have different meanings.
+`status: advisory` records a complete validated static analysis outcome;
+it does not say the project test ran, that the selected scope was nonempty,
+or that the repair improved it. `incomplete` and `invalid` receipts are not
+review evidence. Read `analysis_outcome_status`, `analysis_outcome_error`
+and the recommended recovery, along with the actual movement and subject.
+Missing directories, a missing sibling outcome, a limited or stale document,
+and an ineligible attempt require different recoveries; the linked recipe
+names them.
 
 If you are working from VS Code, run `ripr: Show Status` after the receipt and
 refresh. The editor can point to the validated first-pr packet, open the
@@ -406,7 +431,7 @@ one focused test or output fixture
 after.repo-exposure.json
 ripr outcome Markdown
 optional agent-verify.json
-optional agent-receipt.json
+optional agent-receipt.json with its sibling analysis-outcome.json
 ```
 
 The reviewer should be able to say:

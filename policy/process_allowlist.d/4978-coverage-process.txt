@@ -1,0 +1,3 @@
+tools/repo-policy/src/coverage_diagnostics/process.rs|Command::new|1|coverage/4978|Fixed full coverage command with inherited streams/environment; one private non-reaping process owner and bounded record writer.
+tools/repo-policy/src/coverage_diagnostics/process_tests.rs|Command::new|6|coverage/4978|Exact command/environment, status, descendant and custody controls for the private coverage process owner.
+tools/repo-policy/src/coverage_diagnostics/strip_tests.rs|Command::new|1|coverage/4978|Fixed offline Cargo/LLVM strip comparison with bounded file capture, non-reaping cleanup, exact artifacts and acknowledged test selection.

@@ -5,6 +5,10 @@
 # with a reason; an entry whose row credits again fails `verdict-corpus check` until the entry is deleted (#10341).
 
 [[entry]]
+case = "arbitrary_cfg_test_generator_stays_test_code"
+reason = "Discriminated at runtime, abstained on purpose: the changed QuickCheck generator lives in `#[cfg(test)] mod tests`, whose CfgTestModule role outranks the test-input generator role (RIPR-SPEC-0153, #11545), so no production probe is produced and ripr stays silent like any cfg(test) helper (#12774). Delete this entry when the row credits."
+
+[[entry]]
 case = "assoc-generic-caller"
 reason = "Discriminated at runtime, abstained on purpose: the test reaches Tall::MAX only through `limited::<Tall>`, so `Self` is not statically named at the call (RIPR-SPEC-0048 associated-constant must-not-claim). Delete this entry when generic-caller binding credits it."
 
@@ -57,10 +61,6 @@ case = "grid-bindings-shadowed"
 reason = "Tests discriminate the change but ripr abstains because the changed syntax is not mapped to a probe family, so the infection stage is static_unknown (#12770; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
-case = "grid-bits-length-pinned"
-reason = "Tests discriminate the change but ripr abstains because the boundary operand is a local or computed value ripr cannot map to the related test input (#12771; parent #12766). Delete this entry when the row credits."
-
-[[entry]]
 case = "grid-delete-helper"
 reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
 
@@ -71,10 +71,6 @@ reason = "Tests discriminate the change but ripr abstains because the test reach
 [[entry]]
 case = "grid-flow-else-pinned"
 reason = "Tests discriminate the change but ripr abstains because the changed syntax is not mapped to a probe family, so the infection stage is static_unknown (#12770; parent #12766). Delete this entry when the row credits."
-
-[[entry]]
-case = "grid-flow-field-direct"
-reason = "Tests discriminate the change but ripr abstains because the boundary operand is a local or computed value ripr cannot map to the related test input (#12771; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
 case = "grid-loop-table"
@@ -151,26 +147,6 @@ reason = "Tests discriminate the change but ripr abstains because the test reach
 [[entry]]
 case = "loop-accumulator-bound-input"
 reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
-
-[[entry]]
-case = "macro-export-crate-call"
-reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-crate-call. Delete this entry if macro-defined bare calls regain a resolvable identity."
-
-[[entry]]
-case = "macro-export-group-import"
-reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-group-import. Delete this entry if macro-defined bare calls regain a resolvable identity."
-
-[[entry]]
-case = "macro-export-path-boundary"
-reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-path-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
-
-[[entry]]
-case = "macro-module-child-boundary"
-reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-child-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
-
-[[entry]]
-case = "macro-module-import-boundary"
-reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-import-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
 
 [[entry]]
 case = "method-hop-field-read-rebound"
@@ -429,8 +405,12 @@ case = "spec-b-0153-registered-harness-subject"
 reason = "The registered Trial callback is indexed for reach but its assertion is not credited, so this configured adapter control records static_unknown/limited rather than ideal credit. Removing only the valid registration loses the adapted relation and changes the exact row to no_static_path; this entry does not accept that drift (#10495)."
 
 [[entry]]
+case = "spec-b-0153-undeclared-harness-helper"
+reason = "Runtime truth is discriminated, but `src/lib.rs` declares `#[cfg_attr(é, path = \"alternate.rs\")] mod unicode_child;`, whose target `src/alternate.rs` shares this owner's directory; the shared base-owner gate decision does not follow that target's own `mod` declarations, so it reads every non-root file there as possibly that target's child, the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets' child declarations are read."
+
+[[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"
-reason = "RIPR-SPEC-0154 example 3 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
+reason = "RIPR-SPEC-0154 example 7 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
 
 [[entry]]
 case = "spec-b-0157-closure-capture"
@@ -641,12 +621,16 @@ case = "spec0360-ex09-call-term-second-argument"
 reason = "Discriminated at runtime, abstained on purpose: a call term with a second argument is outside the folded call terms and keeps its `static_unknown` probe (RIPR-SPEC-0360 example 9). Delete this entry if multi-argument call terms become evaluable."
 
 [[entry]]
-case = "spot-cap-generic-via-wrapper"
-reason = "Tests discriminate the change but ripr abstains because propagation is not established: the owner is reached through a caller that does not forward its result, or the flow is not syntactically obvious (#12773; parent #12766). Delete this entry when the row credits."
-
-[[entry]]
 case = "strsim-sorensen-dice-equal"
 reason = "Compares a local rebound from the parameter (`let a = a.chars()..collect()`), so the name-only credit is withheld and the row abstains; fail-closed by design (#9197)."
+
+[[entry]]
+case = "tier-flow-13037-transformed"
+reason = "The runtime test detects a changed tier after multiplication, but this witness does not prove propagation through a transformed return; retain unknown until that transformation has an independently justified static proof (#13037)."
+
+[[entry]]
+case = "tier-flow-13037-uncertain"
+reason = "The runtime test detects a changed tier through an opaque black-box input, but its selected branch cannot be established statically; retain unknown until that input is independently resolved (#13037)."
 
 [[entry]]
 case = "tokens-base-six-hop-chain"

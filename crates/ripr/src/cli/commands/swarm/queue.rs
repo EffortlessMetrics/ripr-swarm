@@ -1,6 +1,6 @@
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::commands_numeric::parse_positive_usize;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,7 @@ pub(super) struct Options {
 
 pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut gap_ledger = PathBuf::from("target/ripr/reports/gap-decision-ledger.json");
     let mut language = "python".to_string();
     let mut top = 10usize;
@@ -26,15 +27,17 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--root")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --root requires a non-empty path; pass a value right after --root".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--root", "swarm queue --root requires a non-empty path; pass a value right after --root"));
                 }
-                root = PathBuf::from(value);
+                let reconciled = reconcile_root(&root, root_explicit, value, "swarm queue")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--gap-ledger" => {
                 i += 1;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --gap-ledger requires a non-empty path; pass a value right after --gap-ledger".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--gap-ledger", "swarm queue --gap-ledger requires a non-empty path; pass a value right after --gap-ledger"));
                 }
                 gap_ledger = PathBuf::from(value);
             }
@@ -42,7 +45,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--language")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --language requires a non-empty language; pass a value right after --language".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--language", "swarm queue --language requires a non-empty language; pass a value right after --language"));
                 }
                 language = value.to_string();
             }

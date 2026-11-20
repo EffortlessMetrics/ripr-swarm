@@ -49,8 +49,9 @@ use super::no_behavior::{
     split_top_level_args,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, import_source_module_matches_owner, is_python_identifier_char,
-    owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
+    PythonHiddenCode, PythonRelatedCandidate, import_module_may_be_owners,
+    import_source_module_matches_owner, is_python_identifier_char, owner_module_callees,
+    owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::{
@@ -1369,14 +1370,15 @@ fn contains_ungated_identity_or_inequality(text: &str) -> bool {
 }
 
 fn live_token(text: &str, token: &str) -> bool {
-    text.match_indices(token)
-        .any(|(idx, _)| !python_text_hides_code(text, idx))
+    let mut hidden = PythonHiddenCode::new(text);
+    text.match_indices(token).any(|(idx, _)| !hidden.hides(idx))
 }
 
 fn live_keyword(text: &str, keyword: &str) -> bool {
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(keyword).any(|(idx, _)| {
         let end = idx + keyword.len();
-        !python_text_hides_code(text, idx)
+        !hidden.hides(idx)
             && !text[..idx]
                 .chars()
                 .next_back()
@@ -2021,6 +2023,9 @@ fn parametrize_case_row(
 /// after `import pricing` / `from pkg import pricing`. The argument is then the
 /// boundary value by identity. A name the test did not import from the
 /// owner's module, or that the test or its module rebinds, stays unresolved.
+/// The module the attribute is read through must still identify the owner's
+/// module for this test: a test-local module of that name ahead on `sys.path`
+/// (#13706) or a rival project's module (#4566) leaves it unresolved (#14035).
 fn imported_constant_value(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
@@ -2047,6 +2052,7 @@ fn imported_constant_value(
                 .and_then(|rest| rest.strip_prefix('.'))
                 .is_some_and(|name| name == constant.name)
                 && owner_modules.contains(&module)
+                && import_module_may_be_owners(import, owner, &test.file)
         })
     })?;
     Some(constant.value.clone())
@@ -2307,4 +2313,409 @@ mod call_line_text_tests {
         let text = call_line_text(&body, offset, call_len);
         assert!(text.contains(&format!("({argument})")), "{text}");
     }
+}
+
+/// A deliberately narrow unresolved case: an adjacent comparison change in
+/// the first statement of a loop, observed by one direct integer-sequence or integer-tuple value
+/// assertion. The loop element and accumulator are not owner arguments, so a
+/// literal list alone does not place either operand at the changed boundary.
+/// Identity assertions and other test shapes retain their existing treatment.
+pub(super) fn unresolved_loop_list_boundary(
+    line: usize,
+    line_text: &str,
+    old_line: Option<&str>,
+    source: Option<&str>,
+    owner: &PythonOwner,
+    candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    let Some(old_line) = old_line else {
+        return false;
+    };
+    if !line_text.trim_start().starts_with("if ") || !old_line.trim_start().starts_with("if ") {
+        return false;
+    }
+    let new = predicate_condition(line_text);
+    let old = predicate_condition(old_line);
+    let new_ops = relational_operators(&new);
+    let old_ops = relational_operators(&old);
+    let ([(ns, nl)], [(os, ol)]) = (new_ops.as_slice(), old_ops.as_slice()) else {
+        return false;
+    };
+    let (Some((left, right)), Some((old_left, old_right))) = (
+        simple_comparison_operands(&new, *ns, *nl),
+        simple_comparison_operands(&old, *os, *ol),
+    ) else {
+        return false;
+    };
+    if left != old_left
+        || right != old_right
+        || !matches!(
+            (old.get(*os..os + ol), new.get(*ns..ns + nl)),
+            (Some(">"), Some(">="))
+                | (Some(">="), Some(">"))
+                | (Some("<"), Some("<="))
+                | (Some("<="), Some("<"))
+        )
+    {
+        return false;
+    }
+    // The edit must change only the relational operator: any other change to
+    // the condition (for example removing `or True`) is a different edit.
+    let (Some(old_op), Some(new_prefix), Some(new_suffix)) =
+        (old.get(*os..os + ol), new.get(..*ns), new.get(ns + nl..))
+    else {
+        return false;
+    };
+    if format!("{new_prefix}{old_op}{new_suffix}").trim() != old.trim() {
+        return false;
+    }
+    // The condition must be the comparison alone. A further conjunct or
+    // disjunct (`if x >= best and xs.pop():`) can run on different iterations
+    // after the edit and change the selected value, so an integer pin can
+    // tell the two sides apart there.
+    let Some(new_op) = new.get(*ns..ns + nl) else {
+        return false;
+    };
+    let unspaced = |text: &str| text.split_whitespace().collect::<String>();
+    if unspaced(&new) != unspaced(&format!("{left}{new_op}{right}")) {
+        return false;
+    }
+    // Only the complete accumulator-selection owner is understood here. An
+    // arbitrary loop can visibly return or mutate on the equality branch.
+    let Some(source) = source else { return false };
+    let Some(parameter) = owner.parameters.first() else {
+        return false;
+    };
+    if !(1..=2).contains(&owner.parameters.len()) || parameter.keyword_only {
+        return false;
+    }
+    if owner.owner_kind != Some(OwnerKind::Function) || left == right {
+        return false;
+    }
+    if owner.parameters.get(1).is_some_and(|extra| {
+        extra.name == left
+            || extra.name == right
+            || matches!(extra.name.as_str(), "iter" | "next" | "StopIteration")
+    }) {
+        return false;
+    }
+    let Some(start) = owner.start_line.checked_sub(1) else {
+        return false;
+    };
+    let Some(length) = owner
+        .end_line
+        .checked_sub(owner.start_line)
+        .and_then(|n| n.checked_add(1))
+    else {
+        return false;
+    };
+    let lines: Vec<_> = source.lines().skip(start).take(length).collect();
+    let indentation = |text: &str| super::guard_activation::leading_whitespace(text);
+    let valid_shape = match lines.as_slice() {
+        [
+            definition,
+            iterator,
+            try_line,
+            initial,
+            handler,
+            empty,
+            loop_line,
+            condition,
+            update,
+            result,
+        ] if line == owner.start_line + 7 => {
+            let Some(iterator_name) = iterator
+                .trim()
+                .strip_suffix(&format!(" = iter({})", parameter.name))
+            else {
+                return false;
+            };
+            let indent = indentation(definition);
+            !iterator_name.is_empty()
+                && owner
+                    .parameters
+                    .get(1)
+                    .is_none_or(|extra| extra.name != iterator_name)
+                && iterator_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && iterator.trim() == format!("{iterator_name} = iter({})", parameter.name)
+                && try_line.trim() == "try:"
+                && initial.trim() == format!("{right} = next({iterator_name})")
+                && handler.trim() == "except StopIteration:"
+                && empty.trim() == "return None"
+                && loop_line.trim() == format!("for {left} in {iterator_name}:")
+                && condition.trim() == line_text.trim()
+                && update.trim() == format!("{right} = {left}")
+                && result.trim() == format!("return {right}")
+                && [iterator, try_line, handler, loop_line, result]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 4)
+                && [initial, empty, condition]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 8)
+                && indentation(update) == indent + 12
+        }
+        [definition, initial, loop_line, condition, update, result]
+            if line == owner.start_line + 3 =>
+        {
+            let indent = indentation(definition);
+            initial.trim() == format!("{right} = {}[0]", parameter.name)
+                // `for x in xs:` also visits `xs[0]` first; comparing it with
+                // itself either keeps `best` or rebinds it to the same object.
+                && [
+                    format!("for {left} in {}[1:]:", parameter.name),
+                    format!("for {left} in {}:", parameter.name),
+                ]
+                .contains(&loop_line.trim().to_string())
+                && condition.trim() == line_text.trim()
+                && update.trim() == format!("{right} = {left}")
+                && result.trim() == format!("return {right}")
+                && [initial, loop_line, result]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 4)
+                && indentation(condition) == indent + 8
+                && indentation(update) == indent + 12
+        }
+        _ => false,
+    };
+    if !valid_shape {
+        return false;
+    }
+    let constants = unrebound_constants(owner, candidates);
+    let (rows, _) = strong_owner_call_rows_with_gaps(owner, &constants, candidates, focus);
+    let oracle_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .collect();
+    !oracle_candidates.is_empty()
+        && oracle_candidates.iter().all(|candidate| {
+            // Every assertion must independently be a strong direct integer
+            // sequence value pin. In particular, an identity assertion must
+            // not disappear behind the selected stronger numeric assertion.
+            !candidate.test.assertions.is_empty()
+                && candidate.test.assertions.iter().all(|assertion| {
+                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                        && rows.iter().any(|row| {
+                            row.file == candidate.test.file
+                                && ((row.line == assertion.line
+                                    && is_direct_integer_sequence_assertion(row, owner, candidate))
+                                    || is_indirect_integer_sequence_assertion(
+                                        row, owner, candidate, assertion,
+                                    ))
+                        })
+                })
+        })
+}
+
+fn is_direct_integer_sequence_assertion(
+    row: &CallRow,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    fn integer(expr: &Expr) -> bool {
+        match expr {
+            Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
+            Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd) => {
+                matches!(unary.operand.as_ref(), Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_)))
+            }
+            _ => false,
+        }
+    }
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<loop-boundary-oracle>"),
+        &row.text,
+    ) else {
+        return false;
+    };
+    fn callee_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Name(name) => Some(name.id.to_string()),
+            Expr::Attribute(attribute) => Some(format!(
+                "{}.{}",
+                callee_name(&attribute.value)?,
+                attribute.attr
+            )),
+            _ => None,
+        }
+    }
+    fn value_pin(expr: &Expr, owner: &PythonOwner, candidate: &PythonRelatedCandidate<'_>) -> bool {
+        if let Expr::BoolOp(boolean) = expr {
+            return matches!(boolean.op, ast::BoolOp::And)
+                && !boolean.values.is_empty()
+                && boolean
+                    .values
+                    .iter()
+                    .all(|value| value_pin(value, owner, candidate));
+        }
+        let Expr::Compare(compare) = expr else {
+            return false;
+        };
+        let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+        else {
+            return false;
+        };
+        let observed = if integer(right) {
+            compare.left.as_ref()
+        } else if integer(&compare.left) {
+            right
+        } else {
+            return false;
+        };
+        let Expr::Call(call) = observed else {
+            return false;
+        };
+        let Some(callee) = callee_name(&call.func) else {
+            return false;
+        };
+        let bindings = &candidate.test.constant_rebinding;
+        let Some(root) = callee.split('.').next() else {
+            return false;
+        };
+        if !owner_module_callees(candidate.test, owner).contains(&callee)
+            || bindings.assigns_attribute(&owner.name)
+            || bindings.rebinds(root)
+        {
+            return false;
+        }
+        // Python evaluates defaults at definition time, even when the call
+        // supplies this argument. Do not bypass an effectful default.
+        if owner.parameters.len() == 2
+            && owner
+                .parameters
+                .iter()
+                .filter_map(|parameter| parameter.default.as_deref())
+                .any(|default| {
+                    super::approx_band::parse_expression(default)
+                        .is_none_or(|value| !integer(&value))
+                })
+        {
+            return false;
+        }
+        let argument = match (
+            owner.parameters.as_slice(),
+            call.args.as_slice(),
+            call.keywords.as_slice(),
+        ) {
+            ([_], [argument], []) => argument,
+            ([_, extra], [argument, value], []) if !extra.keyword_only && integer(value) => {
+                argument
+            }
+            ([_, extra], [argument], [keyword])
+                if !extra.positional_only
+                    && keyword
+                        .arg
+                        .as_ref()
+                        .is_some_and(|name| name.as_str() == extra.name)
+                    && integer(&keyword.value) =>
+            {
+                argument
+            }
+            ([_, extra], [argument], [])
+                if extra
+                    .default
+                    .as_deref()
+                    .and_then(super::approx_band::parse_expression)
+                    .is_some_and(|value| integer(&value)) =>
+            {
+                argument
+            }
+            _ => return false,
+        };
+        let elements = match argument {
+            Expr::List(list) => &list.elts,
+            Expr::Tuple(tuple) => &tuple.elts,
+            _ => return false,
+        };
+        !elements.is_empty() && elements.iter().all(integer)
+    }
+    !module.body.is_empty() && module.body.iter().all(|statement| {
+        matches!(statement, Stmt::Assert(assertion) if assertion.msg.is_none() && value_pin(&assertion.test, owner, candidate))
+    })
+}
+
+/// A closed result alias: one direct numeric owner call assigned to a local,
+/// followed immediately by one integer equality assertion on that same local.
+/// Other statements and assertions, decorators, fixtures, and aliases through
+/// wrappers are deliberately outside the rule.
+fn is_indirect_integer_sequence_assertion(
+    row: &CallRow,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+    assertion: &super::PythonAssertion,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
+    let rebinding = &candidate.test.constant_rebinding;
+    if row.line >= assertion.line
+        || candidate.test.assertions.len() != 1
+        || !candidate.test.decorators.is_empty()
+        || !candidate.test.fixtures.is_empty()
+        || rebinding.implicit_reach
+        || rebinding.header_reach
+        || rebinding.fixture_substitution
+        || rebinding.module_opaque
+        || rebinding.edited_in_diff
+    {
+        return false;
+    }
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<loop-boundary-result>"),
+        &candidate.test.body_text,
+    ) else {
+        return false;
+    };
+    let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
+        return false;
+    };
+    let [Stmt::Assign(assignment), Stmt::Assert(check)] = function.body.as_slice() else {
+        return false;
+    };
+    let [Expr::Name(target)] = assignment.targets.as_slice() else {
+        return false;
+    };
+    if !matches!(assignment.value.as_ref(), Expr::Call(_)) || check.msg.is_some() {
+        return false;
+    }
+    let Expr::Compare(compare) = check.test.as_ref() else {
+        return false;
+    };
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return false;
+    };
+    fn integer(value: &Expr) -> bool {
+        match value {
+            Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
+            Expr::UnaryOp(value) if matches!(value.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+                matches!(value.operand.as_ref(), Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_)))
+            }
+            _ => false,
+        }
+    }
+    let same_local = |value: &Expr| matches!(value, Expr::Name(name) if name.id == target.id);
+    if !((same_local(&compare.left) && integer(right))
+        || (integer(&compare.left) && same_local(right)))
+    {
+        return false;
+    }
+    let Some((row_target, call)) = row.text.split_once('=') else {
+        return false;
+    };
+    if row_target.trim() != target.id.as_str() {
+        return false;
+    }
+    // The row must be this test's own assignment. Rows come from every
+    // related test of the file, and an earlier test's `result = owner([1, 5])`
+    // must not stand in for this test's call on other arguments.
+    let own_call = candidate.test.body_text.get(
+        assignment.value.range().start().to_usize()..assignment.value.range().end().to_usize(),
+    );
+    if own_call.is_none_or(|own| own.trim() != call.trim()) {
+        return false;
+    }
+    let mut direct = row.clone();
+    direct.text = format!("assert {} == 0", call.trim());
+    is_direct_integer_sequence_assertion(&direct, owner, candidate)
 }

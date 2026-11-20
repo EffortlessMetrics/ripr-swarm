@@ -2,9 +2,12 @@
 
 **Write tests that notice changed behavior.**
 
-ripr reads your diff and related tests to find potential gaps in what they
-check. It explains the evidence and suggests where a focused test could help.
-Use the finding during review or hand it to a coding agent.
+Your tests pass. Would they notice if the change you just made were wrong?
+
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. Use the finding in review, or hand the
+gap to a coding agent.
 
 The analysis is static and advisory. ripr does not run mutants or prove test
 adequacy; real mutation testing remains the execution-backed confirmation step.

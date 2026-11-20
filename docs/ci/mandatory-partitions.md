@@ -11,7 +11,9 @@ with #7826; cache continuity with #7827; actual-G evidence with #4836.
 The current required producer is `.github/workflows/rust-gates.yml`: one
 `cargo nextest run --workspace --profile ci`, default features, retries zero,
 followed by separate `cargo test --workspace --doc`. It retains fresh JUnit
-and run context. `.config/nextest.toml` has no selection filters or overrides.
+and run context. `.config/nextest.toml` has no selection filters or execution
+overrides. The exact native-activation JUnit output row is the single
+receipt-only exception described in [the product-gate plan](PRODUCT_GATE_PLAN.md).
 The repository's runner-policy tests deliberately reject narrowing that row.
 Changing the row alone would violate that contract; activation needs its own
 reviewed change preserving the aggregate required status and all obligations.

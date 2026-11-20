@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A `use claims::assert_ok;` (or `assert_some`, `assert_err`, `assert_none`) now resolves the macro only where Rust would: in its own module, in the test's own body, or in an ancestor module that each module down to the test re-imports with `use super::*;`. An import in another function, in a sibling module, in a child module that does not re-import it, or under any `cfg` other than `cfg(test)` no longer credits the test (#12462).

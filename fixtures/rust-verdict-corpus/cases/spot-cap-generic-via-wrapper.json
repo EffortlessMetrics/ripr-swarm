@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "generic_helper_via_wrapper_exact_result",
-  "hard_case": "capped is generic and private, and the tests call only the capped_score wrapper; ripr relates them to capped by same_test_file only, does not pair the wrapper's exact pins with the boundary (same_test_pairing_missing), and reports propagation_unknown.",
+  "hard_case": "capped is generic and private, and the tests call only the capped_score wrapper. ripr relates them through the forwarding call chain and pairs the wrapper's exact pins with the boundary; the helper's `if cap < value { cap } else { value }` body returns its two parameters, so the condition is the returned value's sink and the row credits (#6694). Before that sink reading it read propagation_unknown.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

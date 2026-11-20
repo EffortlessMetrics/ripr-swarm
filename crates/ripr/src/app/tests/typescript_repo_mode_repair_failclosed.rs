@@ -239,8 +239,8 @@ fn json_of(output: &crate::app::CheckOutput) -> Result<Value, String> {
 /// #5531 matrix (8, 9, 10): real repo TS and JS fixtures carry the
 /// per-language scope prefix plus the literal specific reason in the
 /// actionability JSON, preview card, human limitation row and SARIF, with the
-/// packet closed. Real TS check JSON reaches the ledger with the same text and
-/// no route; JS keeps the existing zero-record boundary.
+/// packet closed. Real TS and JS check JSON reach the ledger with the same
+/// text and no repair route.
 #[test]
 fn real_repo_fixtures_carry_scope_led_reason_on_every_surface() -> Result<(), String> {
     const SPECIFIC: &str = "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract";
@@ -315,21 +315,18 @@ fn real_repo_fixtures_carry_scope_led_reason_on_every_surface() -> Result<(), St
             .iter()
             .filter(|r| r.language == "typescript" || r.language == "javascript")
             .collect();
-        if language == "typescript" {
-            if ts_records.is_empty()
-                || ts_records.iter().any(|r| {
-                    r.repair_route.is_some()
-                        || !r.static_limits.iter().any(|l| {
-                            l["detail"]
-                                .as_str()
-                                .is_some_and(|d| d.starts_with(&want) && d.contains(SPECIFIC))
-                        })
-                })
-            {
-                return Err(format!("ts ledger records wrong: {ts_records:?}"));
-            }
-        } else if !ts_records.is_empty() {
-            return Err(format!("js ledger boundary changed: {ts_records:?}"));
+        if ts_records.is_empty()
+            || ts_records.iter().any(|r| {
+                r.language != language
+                    || r.repair_route.is_some()
+                    || !r.static_limits.iter().any(|l| {
+                        l["detail"]
+                            .as_str()
+                            .is_some_and(|d| d.starts_with(&want) && d.contains(SPECIFIC))
+                    })
+            })
+        {
+            return Err(format!("{ext} ledger records wrong: {ts_records:?}"));
         }
     }
     Ok(())

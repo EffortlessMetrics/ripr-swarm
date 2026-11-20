@@ -3,7 +3,7 @@
 //! Neither command reads a token or the network; the workflow step that
 //! holds `GH_TOKEN` makes every call.
 
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::output::pr_inline_comment_github::{existing_comments, publish_requests};
 use crate::output::pr_summary_comment::summary_request;
@@ -44,13 +44,17 @@ pub(super) fn parse_pr_comments_existing_options(
         raw: PathBuf::from(DEFAULT_RAW),
         out: PathBuf::from(DEFAULT_EXISTING_OUT),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
             "--root" => {
-                options.root = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?)
+                let value = non_empty_string_arg(args, i, flag, EXISTING)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, EXISTING)?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--raw" => options.raw = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?),
             "--out" => options.out = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?),
@@ -80,8 +84,7 @@ pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
     let pages = if options.raw.as_os_str() == "-" {
         // The workflow pipes `gh api` straight in; keep the raw pages beside
         // the normalized file so the uploaded artifact still shows them.
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+        let bytes = crate::bounded_input::read_reader(std::io::stdin())
             .map_err(|err| format!("{EXISTING} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
         store_raw_copy(&options.root, &bytes)?;
         serde_json::from_slice(&bytes)
@@ -120,13 +123,17 @@ pub(super) fn parse_pr_comments_requests_options(
         pull_request: String::new(),
         head_sha: String::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
             "--root" => {
-                options.root = PathBuf::from(non_empty_string_arg(args, i, flag, REQUESTS)?)
+                let value = non_empty_string_arg(args, i, flag, REQUESTS)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, REQUESTS)?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--plan" => {
                 options.plan = PathBuf::from(non_empty_string_arg(args, i, flag, REQUESTS)?)
@@ -292,12 +299,18 @@ pub(super) fn parse_pr_comments_summary_options(args: &[String]) -> Result<Summa
         head_sha: String::new(),
         run_url: String::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?),
+            "--root" => {
+                let value = non_empty_string_arg(args, i, flag, SUMMARY)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, SUMMARY)?;
+                options.root = reconciled;
+                root_explicit = true;
+            }
             "--pr-guidance" => {
                 options.pr_guidance = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
             }
@@ -338,8 +351,7 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     let pages = match options.raw.as_deref() {
         None => Value::Array(Vec::new()),
         Some(raw) if raw.as_os_str() == "-" => {
-            let mut bytes = Vec::new();
-            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+            let bytes = crate::bounded_input::read_reader(std::io::stdin())
                 .map_err(|err| format!("{SUMMARY} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
             serde_json::from_slice(&bytes)
                 .map_err(|err| format!("{SUMMARY}: standard input is not JSON: {err}; pass the JSON the earlier step wrote on standard input"))?
@@ -474,7 +486,7 @@ fn manifest_field(text: &str) -> String {
 }
 
 fn read_json(path: &Path, command: &str) -> Result<Value, String> {
-    let bytes = fs::read(path)
+    let bytes = crate::bounded_input::read(path)
         .map_err(|err| format!("{command} could not read {}: {err}; check the path exists and you can access it, then rerun", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|err| {
         format!(

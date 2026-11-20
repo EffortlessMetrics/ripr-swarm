@@ -34,6 +34,27 @@ pub(crate) fn parse_cargo_vcs_info(text: &str) -> Option<(String, bool)> {
     Some((sha1.to_string(), dirty))
 }
 
+/// The file a publish-stage package carries beside its manifest, holding the
+/// commit the stage was checked out at (`xtask/src/publish_stage.rs`, #14198).
+pub(crate) const PUBLISH_STAGE_MARKER: &str = ".ripr-publish-stage";
+
+/// The identity of a package whose `.cargo_vcs_info.json` gave `commit` and
+/// `dirty`, given the text of its [`PUBLISH_STAGE_MARKER`], if any.
+///
+/// A publish stage is a checkout of `commit` in which only inline
+/// `#[cfg(test)]` modules were removed, so `cargo package` marks it dirty
+/// although a build without `cfg(test)` compiles exactly the commit's code.
+/// Such a package is identified by its commit as clean, but only when the
+/// marker names that same commit; any other dirty package stays dirty.
+pub(crate) fn publish_stage_identity(
+    commit: String,
+    dirty: bool,
+    marker: Option<&str>,
+) -> (String, bool) {
+    let staged = dirty && marker.map(str::trim) == Some(commit.as_str());
+    (commit, dirty && !staged)
+}
+
 /// The text after `"key"` and its `:` separator, with leading whitespace
 /// removed.
 fn json_value_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
@@ -45,6 +66,39 @@ fn json_value_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_publish_stage_marker_name_is_the_one_the_stage_writes() {
+        // `xtask/src/publish_stage.rs` writes this file name and the package
+        // `include` list carries it; a rename must change all three.
+        assert_eq!(PUBLISH_STAGE_MARKER, ".ripr-publish-stage");
+    }
+
+    #[test]
+    fn a_publish_stage_marker_naming_the_commit_clears_only_that_dirty_flag() {
+        let sha = || SHA.to_string();
+        let marker = format!("{SHA}\n");
+        assert_eq!(
+            publish_stage_identity(sha(), true, Some(&marker)),
+            (sha(), false)
+        );
+        // Surrounding whitespace is ignored.
+        assert_eq!(
+            publish_stage_identity(sha(), true, Some(&format!("  {SHA}\r\n"))),
+            (sha(), false)
+        );
+        // No marker, a marker for another commit, or an empty marker: dirty.
+        let other = "0".repeat(40);
+        for marker in [None, Some(other.as_str()), Some("")] {
+            assert_eq!(publish_stage_identity(sha(), true, marker), (sha(), true));
+        }
+        // A clean record stays clean with or without a marker.
+        assert_eq!(publish_stage_identity(sha(), false, None), (sha(), false));
+        assert_eq!(
+            publish_stage_identity(sha(), false, Some(&marker)),
+            (sha(), false)
+        );
+    }
 
     const SHA: &str = "e4da2d4a0c1b2d3e4f5a6b7c8d9e0f1a2b3c4d5e";
 

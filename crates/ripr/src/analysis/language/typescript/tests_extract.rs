@@ -278,15 +278,14 @@ fn extract_tests_expanding_suite_factories(
             test.imports_in_file = shared_imports.clone();
         }
         let code = blank_ranges(source, &masked);
-        let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
+        let enum_use = (!imports.is_empty())
+            .then(|| enum_member_guard::EnumMemberUse::new(&ret.program.body, source));
         let unstable_member_roots: Vec<String> = imports
             .iter()
             .filter(|import| {
-                !enum_member_guard::enum_member_root_is_read_only(
-                    &enum_code,
-                    &import.local,
-                    import.namespace,
-                )
+                enum_use.as_ref().is_some_and(|enum_use| {
+                    !enum_use.root_is_read_only(&import.local, import.namespace)
+                })
             })
             .map(|import| import.local.clone())
             .collect();
@@ -320,6 +319,13 @@ fn extract_tests_expanding_suite_factories(
             let replacements: Shared<_> = replacements.into();
             for test in &mut tests {
                 test.member_replacements_in_file = replacements.clone();
+            }
+        }
+        let loads = dynamic_load_specifiers(source);
+        if !loads.is_empty() {
+            let loads: Shared<_> = loads.into();
+            for test in &mut tests {
+                test.dynamic_load_specifiers_in_file = loads.clone();
             }
         }
         let factories = mock_factories(&ret.program.body, &code);
@@ -1053,6 +1059,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         if let Some(call) = statement_call(stmt)
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
                 || conditional_describe_factory(call).is_some())
@@ -1083,6 +1090,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             && let Some(call) = statement_call(stmt)
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
                 || conditional_describe_factory(call).is_some())
@@ -2006,10 +2014,44 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
         .collect()
 }
 
+/// Literal specifiers of dynamic `import(`, `require(`, `requireActual(` and
+/// `importActual(` calls anywhere in the file (#13750), with optional ASCII
+/// whitespace between the callee and `(`. Textual and whole-file, so it
+/// over-collects (comments, strings, the literal prefix of a concatenation)
+/// and never misses a literal load; non-literal arguments are not recorded.
+fn dynamic_load_specifiers(source: &str) -> Vec<String> {
+    let mut specifiers: Vec<String> = Vec::new();
+    for callee in ["import", "require", "requireActual", "importActual"] {
+        for (at, _) in source.match_indices(callee) {
+            if source[..at]
+                .chars()
+                .next_back()
+                .is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            let after = at + callee.len();
+            let rest = &source[after..];
+            let trimmed = rest.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+            if !trimmed.starts_with('(') {
+                continue;
+            }
+            let open = after + (rest.len() - trimmed.len()) + 1;
+            if let Some(specifier) = quoted_literal_after(source, open)
+                && !specifiers.contains(&specifier)
+            {
+                specifiers.push(specifier);
+            }
+        }
+    }
+    specifiers
+}
+
 /// `(local, member)` for each default import whose local is used, across the
-/// whole file, only as its own `import local` binding and as calls
-/// `local.member(` of one member. Any other use (assignment, `spyOn`,
-/// alias, argument) withholds the pair, wherever it sits in the file.
+/// whole file, only as its own `import local` binding and as direct calls
+/// `local.member(` (one pair per distinct called member; axios `utils.merge`
+/// beside `utils.extend`, #6653). Any other use (assignment, `spyOn`, alias,
+/// argument) withholds every pair of that local, wherever it sits in the file.
 fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
     if file_is_opaque(code) {
         return Vec::new();
@@ -2020,7 +2062,7 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
         .iter()
         .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
     {
-        let mut member: Option<String> = None;
+        let mut members: Vec<String> = Vec::new();
         let mut clean = true;
         for at in word_occurrences(code, &import.local) {
             let before = code[..at].trim_end();
@@ -2044,17 +2086,21 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
                 clean = false;
                 break;
             }
-            match (&member, name) {
-                (None, Some(name)) => member = Some(name),
-                (Some(seen), Some(name)) if *seen == name => {}
-                _ => {
+            match name {
+                Some(name) if !members.contains(&name) => members.push(name),
+                Some(_) => {}
+                None => {
                     clean = false;
                     break;
                 }
             }
         }
-        if let (true, Some(member)) = (clean, member) {
-            pairs.push((import.local.clone(), member));
+        if clean {
+            pairs.extend(
+                members
+                    .into_iter()
+                    .map(|member| (import.local.clone(), member)),
+            );
         }
     }
     pairs
@@ -3298,7 +3344,9 @@ fn referenced_callback_function<'s, 'a>(
     functions: &[DeclaredFunction<'s, 'a>],
     source: &SourceText<'_>,
 ) -> Option<&'s oxc_ast::ast::Function<'a>> {
-    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test) {
+    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        || call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test)
+    {
         return None;
     }
     let oxc_ast::ast::Argument::Identifier(identifier) =
@@ -3444,6 +3492,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
@@ -3774,9 +3823,20 @@ fn test_name_and_assertions_from_registration(
     bindings: &TypeScriptAssertionBindings,
     registration: Option<&RegistrationScope>,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
+    let vitest_for = call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test);
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        && !vitest_for
         && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Test)
+    {
+        return None;
+    }
+    // #10760: `.for` is read only through a resolved Vitest `test` / `it`
+    // import; any other `.for` chain stays a disclosed partial extraction.
+    if vitest_for
+        && !callee_root_name(&call.callee).is_some_and(|root| {
+            registration.is_some_and(|registration| registration.context.root_is_vitest_test(root))
+        })
     {
         return None;
     }
@@ -3837,6 +3897,10 @@ fn test_name_and_assertions_from_registration(
                 || body_declarations.iter().any(|declared| declared == name)
                 || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
         });
+    if vitest_for {
+        return vitest_for_assertions(call, callback, call_text, source, &bindings)
+            .map(|assertions| (name, assertions));
+    }
     // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
     // destructures the runner `expect` from the test context, unless the body
     // re-declares it. The callback's own parameter list is blanked before the
@@ -3893,6 +3957,53 @@ fn test_name_and_assertions_from_registration(
         })
         .unwrap_or_default();
     Some((name, assertions))
+}
+
+/// The assertions of a resolved Vitest `test.for(rows)(title, fn)` (#10760),
+/// or `None` to leave the registration unindexed and disclosed.
+///
+/// Vitest passes the row whole as the callback's first argument and the
+/// running `TestContext` as its second ([`for_test_context`]). A named
+/// context is accepted only while the body never mentions it: a
+/// `ctx.skip()` ends the test as skipped, so the test is withdrawn like a
+/// `.skip` registration, and other context uses are not read; a context destructured as
+/// exactly `{ expect }` supplies the runner `expect` unless the body
+/// re-declares it. The first-parameter context rules of `test("x", (t) =>
+/// ...)` never apply here: the first parameter is the row.
+fn vitest_for_assertions(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    callback: &Argument<'_>,
+    call_text: &str,
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<Vec<TypeScriptAssertion>> {
+    let bindings = match super::table_rows::for_test_context(callback)? {
+        super::table_rows::ForTestContext::Absent => bindings.clone(),
+        super::table_rows::ForTestContext::Named(context) => {
+            // Any use of the named context (`ctx.skip()`, an alias of
+            // `ctx.skip`, `ctx.expect`, passing `ctx` on) is not read, so
+            // the registration stays disclosed rather than credited.
+            let masked = mask_comments_and_strings_text(&call_text_without_callback_params(
+                call_text, call, callback,
+            ));
+            if body_calls_context_skip(call_text, &context)
+                || !super::mock_payload_guard::identifier_offsets(&masked, &context).is_empty()
+            {
+                return None;
+            }
+            bindings.clone()
+        }
+        super::table_rows::ForTestContext::DestructuredExpect => {
+            if super::related_tests::local_identifier_declared_in_test_body(
+                &call_text_without_callback_params(call_text, call, callback),
+                "expect",
+            ) {
+                return None;
+            }
+            bindings.clone().with_context_expect()
+        }
+    };
+    super::table_rows::for_table_row_assertions(call, callback, source, &bindings)
 }
 
 /// The identifier a registration callee starts from: `test` for `test`,
@@ -4032,7 +4143,10 @@ fn nested_rebinding_bodies(masked: &str, context: &str) -> Vec<std::ops::Range<u
             let Some(open) = open else { continue };
             let word_end = masked[..open].trim_end().len();
             let word_start = masked[..word_end]
-                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                // A non-ASCII char continues the word (a combining mark in an
+                // identifier is not alphanumeric), so the char found here is
+                // ASCII and one byte wide (#14089).
+                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$' || !c.is_ascii()))
                 .map_or(0, |k| k + 1);
             if matches!(
                 &masked[word_start..word_end],
@@ -4190,6 +4304,17 @@ fn call_callee_is_active_each_declaration(
 ) -> bool {
     each_declaration_callee(call, root).is_some_and(|each_call| {
         !each_table_is_empty(each_call) && declaration_options_are_active(call)
+    })
+}
+
+/// A Vitest `test.for(rows)(title, fn)` whose table is not known empty and
+/// whose options leave it running (#10760).
+fn call_callee_is_active_for_declaration(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    root: TestDeclarationRoot,
+) -> bool {
+    for_declaration_callee(call, root).is_some_and(|for_call| {
+        !for_table_is_empty(for_call) && declaration_options_are_active(call)
     })
 }
 

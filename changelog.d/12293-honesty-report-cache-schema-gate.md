@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `check-evidence-promotion-honesty` now fails when a committed repo-exposure honesty report records a `cache_schema_version` other than the analyzer's current `CACHE_SCHEMA_VERSION`, unless the report is pinned in the corpus's `report_cache_schema_pins` with the version it is held at and a reason; the stale proximity capture is recaptured and the 17 unreferenced historical inherent-receiver and async-fn captures are pinned at their generations (#12293).

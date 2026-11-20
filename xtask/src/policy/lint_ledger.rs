@@ -321,7 +321,10 @@ level = "deny"
         let (entries, violations) = parse_clippy_lints_ledger(ledger);
         assert!(violations.is_empty(), "{violations:?}");
         let names: Vec<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
-        assert_eq!(names, ["clippy::panic", "clippy::indexing_slicing", "panic"]);
+        assert_eq!(
+            names,
+            ["clippy::panic", "clippy::indexing_slicing", "panic"]
+        );
         assert_eq!(
             entries
                 .iter()

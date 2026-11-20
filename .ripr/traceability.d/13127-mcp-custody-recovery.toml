@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/gaps.rs::tests::limitation_custody_recovery_preserves_the_source_owner_remedy",
+  "crates/ripr/src/mcp/gaps.rs::tests::limitation_reports_the_first_failing_readiness_gate_with_its_owner",
+]
+code = [
+  "crates/ripr/src/mcp/gaps.rs",
+]
+outputs = [
+  "docs/interop/mcp.md",
+]

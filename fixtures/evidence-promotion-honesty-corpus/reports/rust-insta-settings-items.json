@@ -1,0 +1,116 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "ready",
+  "root": "fixtures/evidence-promotion-honesty-corpus/insta-settings-subjects/settings-items",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:9259e464d66d27fffd22ea48d7e8b165883574d863067e423a2eb260519f6dd3","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:f2088774",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:f2088774",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 9,
+        "expression": "items: items.iter().count()"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach make_record: record_snapshot"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: items: items.iter().count()"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach make_record: record_snapshot", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: items: items.iter().count()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: items: items.iter().count() (line 9)", "related test src/lib.rs:18 record_snapshot uses medium snapshot oracle: insta::assert_json_snapshot!(record);", "source function argument value items = 1 at line 19", "source function argument value items = 2 at line 19", "source function argument value prefix = \"ord\" at line 19"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"items: items.iter().count()","line":9}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: items: items.iter().count()", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach make_record: record_snapshot", "gap_withheld: weakly_exposed is not claimed; whether the framework oracle the related test checks notices the changed code (rust_framework_oracle_unresolved)", "limitation_last_established_edge: related tests `record_snapshot` (src/lib.rs:18)", "limitation_first_unresolved_edge: whether the framework oracle the related test checks notices the changed code", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "19": "let record = make_record(\"ord\", &[1, 2]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 19,
+            "value": "items = 1",
+            "context": "function_argument"
+          },
+          {
+            "line": 19,
+            "value": "items = 2",
+            "context": "function_argument"
+          },
+          {
+            "line": 19,
+            "value": "prefix = \"ord\"",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 19,
+          "value": "items = 1",
+          "context": "function_argument"
+        },
+        {
+          "line": 19,
+          "value": "items = 2",
+          "context": "function_argument"
+        },
+        {
+          "line": 19,
+          "value": "prefix = \"ord\"",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "record_snapshot",
+          "file": "src/lib.rs",
+          "line": 18,
+          "oracle_strength": "medium",
+          "oracle_kind": "snapshot",
+          "oracle": "insta::assert_json_snapshot!(record);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `items: items.iter().count()`"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "snapshot",
+      "oracle_strength": "medium",
+      "recommended_next_step": "`record_snapshot` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "suggested_next_action": "`record_snapshot` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails.",
+      "language": "rust",
+      "static_limit_kind": "rust_framework_oracle_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the framework oracle the related test checks notices the changed code",
+        "kind": "rust_framework_oracle_unresolved",
+        "last_established_edge": "related tests `record_snapshot` (src/lib.rs:18)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+,
+  "language_completeness": {"completeness":"complete","languages":[{"disclosure":"silent","findings":1,"language":"rust","limitations":[],"status":"complete"}],"mode":"diff","schema_version":"language_completeness.v1","total_findings":1},
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"fixtures/evidence-promotion-honesty-corpus/insta-settings-subjects/settings-items","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:field_construction:f2088774"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"unsupported_or_limited","stop":{"kind":"check_triage","case":"static_limited","detail_route":"ripr explain --root /workspace/scratch/3bc73c68798d/snapshot-settings-candidate/fixtures/evidence-promotion-honesty-corpus/insta-settings-subjects/settings-items --diff /workspace/scratch/3bc73c68798d/snapshot-settings-candidate/fixtures/evidence-promotion-honesty-corpus/insta-settings-subjects/settings-items/change.diff --mode ready probe:src_lib.rs:field_construction:f2088774"},"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

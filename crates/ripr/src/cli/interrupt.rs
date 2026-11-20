@@ -73,6 +73,8 @@ impl Drop for ServerInterrupts {
 /// cancellation: bounded child waits observe the flag at their poll cadence,
 /// terminate the owned process tree, and unwind, so no git child is left
 /// behind; a repeated signal restores native termination as the escape.
+/// A signal no attempt consumes is the server's own stop request: the MCP
+/// stdio transport reads the same flag at its idle point (#14102).
 /// Non-Unix targets have no signal-hook surface; containment there is the
 /// job-object ownership already in `process_owner`, and this is a no-op.
 pub(crate) fn install_server_interrupts() -> Result<(), String> {
@@ -108,7 +110,8 @@ pub(crate) fn server_interrupt_flag() -> Option<Arc<std::sync::atomic::AtomicBoo
 /// One atomic exchange both resets the repeated-signal escape and captures a
 /// late signal that arrived after the last analysis checkpoint. That signal
 /// refuses an otherwise successful result; an existing failure keeps its
-/// diagnostic. A signal stored after this exchange belongs to the next attempt.
+/// diagnostic. A signal stored after this exchange was not consumed: the MCP
+/// transport stops the server on it at its next idle point (#14102).
 #[cfg(unix)]
 pub(crate) fn settle_server_attempt<T, E>(
     interrupted: &std::sync::atomic::AtomicBool,
@@ -302,6 +305,15 @@ mod tests {
     }
 
     fn run_isolated(case: &str, filter: &str, timeout: Duration) -> Result<ChildResult, String> {
+        run_isolated_with_launcher(case, filter, timeout, None)
+    }
+
+    fn run_isolated_with_launcher(
+        case: &str,
+        filter: &str,
+        timeout: Duration,
+        launcher: Option<&str>,
+    ) -> Result<ChildResult, String> {
         use std::sync::atomic::AtomicU64;
         static NEXT_LOG: AtomicU64 = AtomicU64::new(0);
         let directory = std::env::temp_dir();
@@ -329,7 +341,16 @@ mod tests {
         // libtest paths omit the crate-name segment of module_path!().
         let module = module_path!();
         let module = module.split_once("::").map_or(module, |(_, rest)| rest);
-        let mut child = std::process::Command::new(executable)
+        let mut command = if let Some(script) = launcher {
+            let mut command = std::process::Command::new("sh");
+            // The script is a test-authored literal. Pass the executable and
+            // libtest arguments separately so paths never become shell source.
+            command.args(["-c", script]).arg(executable);
+            command
+        } else {
+            std::process::Command::new(executable)
+        };
+        let mut child = command
             .arg(format!("{module}::{filter}"))
             .args(["--exact", "--nocapture", "--test-threads=1"])
             .env(CHILD_CASE, case)
@@ -561,6 +582,20 @@ mod tests {
                 .is_err()
         );
         Ok(())
+    }
+
+    #[test]
+    fn isolated_child_inherited_ignored_sigint_takes_native_death() -> Result<(), String> {
+        // Reuse the retained child body so reverting its default-handler
+        // emulation to a bare raise makes this regression fail (#12887).
+        const CASE: &str = "isolated_child_signal_before_checkpoint_is_rejected";
+        let child = run_isolated_with_launcher(
+            CASE,
+            CASE,
+            CHILD_TIMEOUT,
+            Some(r#"trap "" INT; exec "$0" "$@""#),
+        )?;
+        child.require(CASE, "started", Some(signal_hook::consts::SIGINT))
     }
 
     #[test]

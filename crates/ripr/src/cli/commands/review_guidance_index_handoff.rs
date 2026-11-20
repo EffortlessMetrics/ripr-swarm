@@ -155,6 +155,7 @@ mod tests {
             absent_changed_files: Vec::new(),
             repo_seam_limit: None,
             consumed_sources: Default::default(),
+            evidence_limitations: Vec::new(),
         };
         assert!(
             !should_record_index_recompute_compatibility(true, &fast_path_inventory),

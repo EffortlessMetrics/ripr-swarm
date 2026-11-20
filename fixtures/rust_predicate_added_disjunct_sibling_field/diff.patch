@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,6 +7,6 @@ pub struct Options {
+ pub fn options_from_flag(flag: &str) -> Options {
+     Options {
+         retries: 3,
+-        verbose: flag == "-v",
++        verbose: flag == "-v" || flag == "--verbose",
+     }
+ }

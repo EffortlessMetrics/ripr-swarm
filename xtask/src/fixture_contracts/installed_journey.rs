@@ -54,8 +54,7 @@ pub(crate) struct InstalledJourneyFixtureContract {
     /// and edit-cage rules; languages without extra rules pass a no-op.
     pub(crate) extra_manifest_violations: fn(&Value) -> Vec<String>,
     /// Whether the snapshot commit and tree ids are rebuilt from the manifest
-    /// `construction_recipe` and compared (#9235). Rust keeps a prose-only
-    /// variant step, so it stays opted out until that recipe is structured.
+    /// `construction_recipe` and compared (#9235, #4516).
     pub(crate) rebuild_from_recipe: bool,
 }
 
@@ -72,7 +71,7 @@ pub(crate) const INSTALLED_RUST_CONTRACT: InstalledJourneyFixtureContract =
         head_binding: InstalledJourneyHeadBinding::AnySnapshot,
         reject_empty_scenario_inventory: false,
         extra_manifest_violations: no_extra_manifest_violations,
-        rebuild_from_recipe: false,
+        rebuild_from_recipe: true,
     };
 
 pub(crate) const INSTALLED_TYPESCRIPT_CONTRACT: InstalledJourneyFixtureContract =
@@ -605,14 +604,9 @@ pub(crate) fn validate_installed_journey_fixture(
             return Ok(());
         }
     };
-    for violation in installed_journey_manifest_violations(contract, root, &manifest) {
-        violations.push(violation);
-    }
-    if contract.rebuild_from_recipe {
-        violations.extend(installed_journey_recipe_rebuild_violations(
-            contract, root, &manifest,
-        ));
-    }
+    violations.extend(installed_journey_snapshot_violations(
+        contract, root, &manifest,
+    ));
     let corpus_path = Path::new("fixtures/blind_journey_execute/corpus.json");
     let corpus = match read_json_value(corpus_path) {
         Ok(value) => value,
@@ -628,6 +622,22 @@ pub(crate) fn validate_installed_journey_fixture(
         violations.push(violation);
     }
     Ok(())
+}
+
+/// The snapshot part of the public fixture gate, also used by the identity
+/// regression controls with an isolated copy of the retained fixture.
+pub(crate) fn installed_journey_snapshot_violations(
+    contract: &InstalledJourneyFixtureContract,
+    root: &Path,
+    manifest: &Value,
+) -> Vec<String> {
+    let mut violations = installed_journey_manifest_violations(contract, root, manifest);
+    if contract.rebuild_from_recipe {
+        violations.extend(installed_journey_recipe_rebuild_violations(
+            contract, root, manifest,
+        ));
+    }
+    violations
 }
 
 /// Environment-binding contract for the installed-Python journey
