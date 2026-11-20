@@ -92,6 +92,7 @@ fn self_as_part_of_a_path_or_identifier_does_not_bind() {
         ("Self::unit()", false),
         ("my_self.unit()", false),
         ("\u{e9}self.unit()", false),
+        ("\u{915}\u{94d}self.unit()", false),
         ("a::self.unit()", false),
         ("$self.unit()", false),
     ] {

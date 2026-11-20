@@ -788,17 +788,17 @@ enum MethodReceiver {
 
 /// Whether `receiver` ends in the whole word `self` (#15301): the word
 /// may follow any character that cannot continue a path or identifier
-/// (`=self`, `{self`, `,self`, `!self`, `&self`, `(self`, a space), so
+/// (`=self`, `{self`, `,self`, `!self`, `&self`, `(self`, a space; any
+/// Unicode identifier-continue character joins the name), so
 /// `self.unit()` binds in `let r=self.unit()?;`. `self.field.m()`
 /// (receiver `self.field`), `x.self` and `myself` never match.
 fn receiver_ends_with_self(receiver: &str) -> bool {
     let Some(before) = receiver.strip_suffix("self") else {
         return false;
     };
-    before
-        .chars()
-        .next_back()
-        .is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '$' | '#')))
+    before.chars().next_back().is_none_or(|c| {
+        !(unicode_ident::is_xid_continue(c) || matches!(c, '_' | '.' | ':' | '$' | '#'))
+    })
 }
 
 /// A receiver expression that is exactly a constructed value of an
