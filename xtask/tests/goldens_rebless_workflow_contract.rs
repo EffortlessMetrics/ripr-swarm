@@ -740,6 +740,17 @@ fn step_field<'a>(step: &[&'a str], key: &str) -> Option<(usize, &'a str)> {
     })
 }
 
+/// A deeper content line can extend a plain scalar even across a blank line.
+fn inline_scalar(value: &str, following: &[&str], indent: usize) -> Option<String> {
+    if nested_lines(following, indent).iter().any(|line| {
+        let trimmed = line.trim_start();
+        !trimmed.is_empty() && !trimmed.starts_with('#')
+    }) {
+        return None;
+    }
+    yaml_scalar(value)
+}
+
 /// Match the action and its input on the same direct item of `bless.steps`.
 /// The two-space block layout keeps deeper mappings and script text out.
 fn pinned_step_toolchain(steps: &[&str]) -> Option<String> {
@@ -755,7 +766,7 @@ fn pinned_step_toolchain(steps: &[&str]) -> Option<String> {
         })
         .find(|step| {
             step_field(step, "uses")
-                .and_then(|(_, value)| yaml_scalar(value))
+                .and_then(|(index, value)| inline_scalar(value, &step[index + 1..], 8))
                 .as_deref()
                 == Some(action.as_str())
         })?;
@@ -763,10 +774,11 @@ fn pinned_step_toolchain(steps: &[&str]) -> Option<String> {
     if !strip_trailing_comment(with_value).trim().is_empty() {
         return None;
     }
-    nested_lines(&step[with_index + 1..], 8)
-        .iter()
-        .find_map(|line| mapping_value(line.strip_prefix("          ")?, "toolchain"))
-        .and_then(yaml_scalar)
+    let inputs = nested_lines(&step[with_index + 1..], 8);
+    let (index, value) = inputs.iter().enumerate().find_map(|(index, line)| {
+        mapping_value(line.strip_prefix("          ")?, "toolchain").map(|value| (index, value))
+    })?;
+    inline_scalar(value, &inputs[index + 1..], 10)
 }
 
 /// The text of a one-line YAML scalar, or `None` when the key carries no
@@ -974,6 +986,20 @@ fn toolchain_parser_shapes() -> Result<(), String> {
             "input is on sibling step",
             format!(
                 "      - uses: dtolnay/rust-toolchain@{reference}\n\n      - uses: dtolnay/rust-toolchain@stable\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "continued action ref",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n\n          extra\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "continued toolchain value",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: 1.95.0\n\n            extra\n"
             ),
             None,
         ),
