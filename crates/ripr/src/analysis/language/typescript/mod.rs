@@ -1391,7 +1391,6 @@ impl TypeScriptAdapter {
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
-            let exact_replacements = std::cell::OnceCell::new();
             let mut multiline_lines: Option<Option<MultilineRanges>> = None;
             // #11250: one facts lookup and one line-table build per
             // changed file, not per added line. `file_facts_cached`
@@ -1648,14 +1647,24 @@ impl TypeScriptAdapter {
                             .map(|line| line.trim())
                             == Some(added.text.trim())
                         && let Some(new) = standalone_decimal(&added.text)
-                        && let Some(old) = exact_replacements
-                            .get_or_init(|| changed.replacement_counterparts())
-                            .get(&added.line)
-                            .and_then(|removed| standalone_decimal(&removed.text))
-                        && old != new
                     {
+                        // Only a lone replacement leaves the enclosing declaration
+                        // unchanged on both sides. Other edits can introduce the default.
+                        let previous = match (
+                            changed.added_lines.as_slice(),
+                            changed.removed_lines.as_slice(),
+                        ) {
+                            ([_], [removed]) if removed.new_side_line == added.line => {
+                                standalone_decimal(&removed.text).filter(|old| *old != new)
+                            }
+                            _ => None,
+                        };
+                        let detail = previous.map_or_else(
+                            || "default".to_string(),
+                            |old| format!("default was {old}"),
+                        );
                         finding.evidence.push(format!(
-                            "{}{binding} = {new} (default was {old})",
+                            "{}{binding} = {new} ({detail})",
                             crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX
                         ));
                     }

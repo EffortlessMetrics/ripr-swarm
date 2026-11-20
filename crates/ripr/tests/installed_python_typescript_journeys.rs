@@ -6134,6 +6134,28 @@ fn unrelated_numeric_tail_keeps_its_own_text() -> Result<(), String> {
 
 #[cfg(feature = "lang-typescript")]
 #[test]
+fn newly_introduced_fallback_does_not_claim_a_previous_default() -> Result<(), String> {
+    let before = "export function startOfWeek(input: number) {\n  const weekStartsOn = input +\n    0;\n  return weekStartsOn;\n}\n";
+    let after = before.replace("input +", "input ??").replace("0;", "1;");
+    let (_, data) = committed_typescript_edit(before, &after, &after)?;
+    let findings = data["findings"].as_array().ok_or("missing findings")?;
+    let tail = findings
+        .iter()
+        .find(|f| f["probe"]["line"] == 3)
+        .ok_or("missing literal line")?;
+    let evidence = tail["evidence"].as_array().ok_or("missing evidence")?;
+    assert!(
+        evidence
+            .iter()
+            .any(|e| e == "typescript_default_context: weekStartsOn = 1 (default)"),
+        "{tail}"
+    );
+    assert!(!tail.to_string().contains("default was 0"), "{tail}");
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
 fn ternary_advice_asks_whether_the_boundary_is_observable() -> Result<(), String> {
     // At zero the sign flips in both edits. Only the first use masks it.
     for result in ["amount === 0 ? 0 : sign", "sign"] {
