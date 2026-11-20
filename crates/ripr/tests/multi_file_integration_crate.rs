@@ -225,3 +225,29 @@ fn a_test_module_shared_by_two_integration_roots_keeps_its_reading() -> Result<(
         "tests/common/mod.rs",
     )
 }
+
+#[test]
+fn a_pin_in_a_multi_file_bench_crate_is_not_credited() -> Result<(), String> {
+    // `cargo test` never runs a bench target's `#[test]` (#15262), so
+    // recognizing `benches/NAME/main.rs` as a root must not credit a pin in
+    // it or a module it declares. The same pin in `tests/it/main.rs` is
+    // credited above, so the refusal comes from the bench target. The flat
+    // `benches/load.rs` row is the #15262 control. `[workspace]` matches
+    // `lib_test_false_credit.rs`'s bench fixture: without it this library
+    // call credits even the flat bench here (#15620).
+    for files in [
+        vec![("benches/load.rs", PIN)],
+        vec![("benches/load/main.rs", PIN)],
+        vec![
+            ("benches/load/main.rs", "mod fees;\n"),
+            ("benches/load/fees.rs", PIN),
+        ],
+    ] {
+        let manifest = format!("{MANIFEST}\n[workspace]\n");
+        let mut files = files;
+        files.push(("Cargo.toml", manifest.as_str()));
+        let finding = return_finding(&files)?;
+        assert_ne!(class_of(&finding), "exposed", "{files:?}: {finding}");
+    }
+    Ok(())
+}
