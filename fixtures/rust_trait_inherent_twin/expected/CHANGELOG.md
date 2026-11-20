@@ -12,3 +12,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_trait_inherent_twin (2)
+
+Reason:
+RIPR-SPEC-0090 (#15051): the typed no-call-path row changes the closing note for the inherent trait-method twin.
+
+Command:
+`cargo xtask goldens bless rust_trait_inherent_twin --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
