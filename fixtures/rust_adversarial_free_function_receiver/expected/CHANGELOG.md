@@ -400,3 +400,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_free_function_receiver (30)
+
+Reason:
+RIPR-SPEC-0090: the all-no-path note no longer calls related tests typed no-call-path "statically linked" (#15051)
+
+Command:
+`cargo xtask goldens bless rust_adversarial_free_function_receiver --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

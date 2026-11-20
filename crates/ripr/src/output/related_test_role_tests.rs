@@ -322,7 +322,13 @@ fn miss_reading_closures(source: &str) -> Vec<String> {
 
 /// Documented explanation-only readers and producers allowed to name the miss
 /// inside such a closure: `(path suffix, snippet fragment)`.
-const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 6] = [
+const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 7] = [
+    // RIPR-SPEC-0090: chooses the closing note's wording after counting
+    // all retained rows. It does not select rows for reach or oracle credit.
+    (
+        "output/human/no_path_note.rs",
+        ".all(|test| test.miss == Some(RelatedTestMiss::NoCallPath))",
+    ),
     // Tracked RIPR-SPEC-0224 gap: the exact-oracle next step still excludes
     // `missing_exact_assertion` rows after the role check; eligibility itself
     // is the role.

@@ -1302,7 +1302,14 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         .findings
         .iter()
         .any(|finding| finding.related_tests_total() > finding.related_tests.len());
-    let related_tests_count = if !any_packed {
+    let related_tests_count = if !any_packed
+        && retained_related_tests > 0
+        && no_path_note::all_rows_lack_call_path(output)
+    {
+        format!(
+            "{retained_related_tests} related test(s) with no established call path to the changed code"
+        )
+    } else if !any_packed {
         format!("{retained_related_tests} statically linked related test(s)")
     } else {
         let rows = if output.findings.len() == 1 {
@@ -1801,6 +1808,7 @@ mod evidence_lines;
 mod explain;
 #[cfg(test)]
 mod hidden_locations_tests;
+mod no_path_note;
 mod sections;
 mod shared;
 mod triage;

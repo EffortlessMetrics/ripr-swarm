@@ -109,3 +109,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (10)
+
+Reason:
+RIPR-SPEC-0090: the all-no-path note no longer calls related tests typed no-call-path "statically linked" (#15051)
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
