@@ -34,9 +34,11 @@ pub(crate) struct GateState {
 impl GateState {
     /// Whether the job can fail on the gate: the generated workflow sets
     /// `continue-on-error` only for an empty mode and `visible-only`, so any
-    /// other value, including one the gate refuses, can block merging.
+    /// other value, including one the gate refuses, can block merging. Actions
+    /// expressions compare strings ignoring case, so `VISIBLE-ONLY` keeps the
+    /// job advisory even though the gate refuses that spelling.
     fn can_block(&self) -> bool {
-        !self.mode.is_empty() && self.mode != "visible-only"
+        !self.mode.is_empty() && !self.mode.eq_ignore_ascii_case("visible-only")
     }
 }
 
@@ -515,8 +517,11 @@ mod tests {
     #[test]
     fn the_footer_says_it_can_block_merging_exactly_when_the_job_can_fail() -> Result<(), String> {
         let findings = guidance(vec![row("src/lib.rs", 2)]);
-        for advisory in ["", "visible-only"] {
-            let body = body_for(&findings, &gate(advisory, None))?;
+        for advisory in ["", "visible-only", "VISIBLE-ONLY", "Visible-Only"] {
+            // A case variant is refused by the gate, but the workflow's
+            // case-insensitive `continue-on-error` test keeps the job advisory.
+            let verdict = GateVerdict::from_mode(advisory);
+            let body = body_for(&findings, &gate(advisory, verdict))?;
             assert!(
                 body.contains("and it does not block merging."),
                 "{advisory}: {body}"
