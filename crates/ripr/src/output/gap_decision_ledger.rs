@@ -5639,7 +5639,10 @@ mod tests {
         // the diff did not change (or could not establish) weakly exposed;
         // each weak finding carries one orthogonal card, fourteen more in
         // total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 49, 1) {
+        // #15632: `python_membership_removed_member` keeps a removed
+        // literal-collection member no row passes weakly exposed; its weak
+        // finding names `val == "y"`, one more direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (24, 37, 49, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
