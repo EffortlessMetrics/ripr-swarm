@@ -20647,6 +20647,11 @@ tests = [
   "crates/ripr/tests/implicit_call_limit.rs::an_affinity_linked_implicit_dispatch_row_is_not_an_inspection_only_pointer",
   "crates/ripr/tests/implicit_call_limit.rs::an_iterator_impl_reached_through_collect_is_withheld",
   "crates/ripr/tests/implicit_call_limit.rs::an_operator_impl_reached_through_the_operator_is_credited",
+  "crates/ripr/tests/parse_call_credit.rs::a_string_literal_parsed_into_the_type_reads_as_the_named_from_str_call",
+  "crates/ripr/tests/parse_call_credit.rs::a_parse_ripr_cannot_tie_to_the_impl_stays_unrelated",
+  "crates/ripr/src/analysis/classify/related_tests/parse_dispatch.rs::tests::a_string_literal_parsed_into_the_type_is_a_site",
+  "crates/ripr/src/analysis/classify/related_tests/parse_dispatch.rs::tests::other_receivers_and_targets_are_not_sites",
+  "crates/ripr/src/analysis/classify/related_tests/parse_dispatch.rs::tests::the_turbofish_must_name_only_the_type",
   "crates/ripr/tests/operator_call_credit.rs::typed_operands_reach_each_operator_impl",
   "crates/ripr/tests/operator_call_credit.rs::every_binary_and_assigning_operator_reaches_its_impl",
   "crates/ripr/tests/operator_call_credit.rs::operands_that_are_not_established_as_the_impl_type_stay_unrelated",
@@ -20780,6 +20785,7 @@ code = [
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/classify/related_tests/parse_dispatch.rs",
 ]
 outputs = [
   "fixtures/rust_async_future_unpolled/expected/check.json",
