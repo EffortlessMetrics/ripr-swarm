@@ -744,9 +744,13 @@ fn inventory_classified_seams_report_collect(
         // key keeps the entry the old first pass stored: the canonical
         // prefix, whose per-seam evidence and class do not depend on the
         // other seams, so later plain reads and repair warm starts hit.
-        let widened_key = {
-            let _cap = PilotInventoryDefault::widen_to(cut.total);
-            state.cache_key()
+        // Only the limit differs from the key this walk was loaded under.
+        // Rebuilding the key here would reread manifests and lockfiles, so
+        // an edit made during classification could stamp these seams with
+        // input identity they were not computed from.
+        let widened_key = RepoSeamCacheKey {
+            seam_limit_key: format!("limit_{}", cut.total),
+            ..key.clone()
         };
         let cut_info = SeamLimitInfo {
             analyzed: cut.cap,
