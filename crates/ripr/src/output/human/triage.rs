@@ -551,7 +551,9 @@ pub(crate) fn render_human_triage(
                 }
             } else if let Some(base) = output.base.as_deref()
                 && (head_is_on_branch(&output.root, base)
-                    || head_is_on_remote_tracking_base(output, base))
+                    // #15326: a clone's `origin/<branch>` base at HEAD's own
+                    // commit, under the shared #7644 identity rule.
+                    || crate::analysis::base_is_checked_out_head(&output.root, base, None))
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
                 // last commit", so print that command instead of leaving it to
@@ -1702,38 +1704,6 @@ fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
     .ok()
     .filter(|output| output.status.success())
     .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == base)
-}
-
-/// True when the analyzed base is `origin/<branch>` for the checked-out
-/// `<branch>` (a clone of `master` or `trunk`, whatever the default branch is
-/// called) and both resolved to the same commit. A feature-branch clone whose
-/// `origin/HEAD` tracks the feature branch has the same shape while the real
-/// base is elsewhere (#7644), so, like `base_is_checked_out_head_with_parent`,
-/// only a conventional default name or the absence of any other base
-/// candidate counts; otherwise the probed `--base` arm names the real base.
-fn head_is_on_remote_tracking_base(output: &CheckOutput, base: &str) -> bool {
-    let at_base = output.analyzed_revisions.as_ref().is_some_and(|revisions| {
-        match (&revisions.base_commit, &revisions.head_commit) {
-            (Some(base_commit), Some(head_commit)) => base_commit == head_commit,
-            _ => false,
-        }
-    });
-    if !at_base {
-        return false;
-    }
-    let on_tracking_ref = crate::git::run_git_output_with_deadline(
-        &output.root,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-        Some(std::time::Duration::from_secs(5)),
-    )
-    .ok()
-    .filter(|git| git.status.success())
-    .map(|git| String::from_utf8_lossy(&git.stdout).trim().to_string())
-    .filter(|branch| !branch.is_empty() && base.strip_prefix("origin/") == Some(branch.as_str()));
-    on_tracking_ref.is_some_and(|branch| {
-        matches!(branch.as_str(), "main" | "master")
-            || crate::analysis::another_base_candidate(&output.root, None).is_none()
-    })
 }
 
 /// The probed `--base` candidate for an empty result whose analyzed base

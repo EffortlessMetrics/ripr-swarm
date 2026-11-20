@@ -7,4 +7,5 @@ tests = [
 ]
 code = [
   "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/analysis/diff/load.rs",
 ]
