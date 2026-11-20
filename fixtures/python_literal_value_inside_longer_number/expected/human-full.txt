@@ -42,18 +42,42 @@ Evidence
   - infection yes: Changed Python expression can alter preview-classified predicate behavior: `"lo": 80,`
   - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
   - observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)
-  - discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape
+  - discriminator weak: Python preview adapter found no strong discriminator; missing proof: `result["lo"] == 80`
   - local flow reaches unknown sink: "lo": 80, (line 3) — ripr could not classify where the changed value ends up; propagation confidence is limited
   - related test tests/test_ports.py:3 test_hi_is_8080 uses weak relational check oracle: assert "8080" in repr(ranges()); misses: assertion too weak to tell the old behavior from the new
 
 Weakness
   - Related Python test reaches `ranges` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed boundary
+  - missing discriminator result["lo"] == 80: changed Python returned-dict entry at line 3 needs an exact read of its key
 
-Repair placement
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `result["lo"] == 80`
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:ports.py:ranges:predicate_boundary:predicate:lo_80
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: ranges
+  changed behavior: predicate_boundary changed at ports.py:3: `"lo": 80,`
+  current test evidence: tests/test_ports.py:3 test_hi_is_8080 currently has oracle_strength=weak, oracle_kind=relational_check: assert "8080" in repr(ranges())
+  missing discriminator: result["lo"] == 80
+  recommended test shape: Strengthen the existing pytest boundary assertion for `result["lo"] == 80`.
+  suggested assertion: Assert the owner result or effect at the boundary `result["lo"] == 80`.
   suggested file: tests/test_ports.py
   suggested test: test_hi_is_8080
   pytest node: tests/test_ports.py::test_hi_is_8080
   verify (Bash): (cd -P -- <cwd>/fixtures/python_literal_value_inside_longer_number/input && python -m pytest tests/test_ports.py::test_hi_is_8080) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_literal_value_inside_longer_number/input --diff <cwd>/fixtures/python_literal_value_inside_longer_number/diff.patch --mode fast probe:ports.py:python_preview:64ed4168

@@ -5639,7 +5639,11 @@ mod tests {
         // the diff did not change (or could not establish) weakly exposed;
         // each weak finding carries one orthogonal card, fourteen more in
         // total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 49, 1) {
+        // #15357: a changed entry of a multi-line `return {` now names an
+        // exact key read, so two weak findings gain a repair card:
+        // `python_literal_value_inside_longer_number` (no strong oracle) and
+        // `python_multiline_literal_sibling_read` (orthogonal sibling read).
+        if (direct, no_strong, orthogonal, family_selection) != (23, 38, 50, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

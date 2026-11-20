@@ -1452,6 +1452,171 @@ fn classify_probe_shape_recognizes_python_field_and_call_shapes() {
     assert_eq!(delta, DeltaKind::Effect);
 }
 
+// #15357: a changed entry of a multi-line `return {` literal names an exact
+// read of its key; the shape is closed.
+#[test]
+fn multiline_return_dict_entry_names_an_exact_key_read() -> Result<(), String> {
+    let source = "def default_headers():\n    return {\n        \"User-Agent\": USER_AGENT,\n        \"Accept-Encoding\": \"gzip, deflate, br\",\n        \"Extra\": {\n            \"inner\": 1,\n        },\n        \"Call\": make(),\n    }\n";
+    let owners = extract_owners(Path::new("src/h.py"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "default_headers")
+        .ok_or_else(|| "owner must be extracted".to_string())?;
+    let line_text = |line: usize| source.lines().nth(line - 1).unwrap_or_default();
+    let value = |line: usize, span: Option<(usize, usize)>, src: Option<&str>| {
+        super::discriminators::python_multiline_return_dict_entry_discriminator(
+            line,
+            line_text(line),
+            span,
+            src,
+            owner,
+            None,
+        )
+        .map(|fact| fact.value)
+    };
+    let span = Some((2, 9));
+    assert_eq!(
+        value(4, span, Some(source)).as_deref(),
+        Some("result[\"Accept-Encoding\"] == \"gzip, deflate, br\"")
+    );
+    // A non-literal value names the placeholder, never the computation.
+    assert_eq!(
+        value(8, span, Some(source)).as_deref(),
+        Some("result[\"Call\"] == <expected value>")
+    );
+    // Inside a nested literal, on the opening or closing line, or without a
+    // bracket span or source: no key read is named.
+    assert_eq!(value(6, span, Some(source)), None);
+    assert_eq!(value(2, span, Some(source)), None);
+    assert_eq!(value(9, span, Some(source)), None);
+    assert_eq!(value(4, None, Some(source)), None);
+    assert_eq!(value(4, span, None), None);
+    // A statement that is not a bare `return {` (a keyword argument dict, a
+    // plain assignment) keeps the generic path.
+    let assigned = source.replace("    return {", "    headers = {");
+    assert_eq!(value(4, span, Some(&assigned)), None);
+    let called = source.replace("    return {", "    return dict(a={");
+    assert_eq!(value(4, span, Some(&called)), None);
+    // A closing line that combines or indexes the literal returns another
+    // value, so the entry is not what the caller reads for its key.
+    for suffix in ["} | overrides", "}[\"Accept-Encoding\"]", "}.copy()"] {
+        let combined = source.replace("\n    }\n", &format!("\n    {suffix}\n"));
+        assert_ne!(combined, source, "the closing line must be replaced");
+        assert_eq!(value(4, span, Some(&combined)), None, "{suffix}");
+    }
+    Ok(())
+}
+
+// #15357: the entry shape is closed against comprehensions, later overrides,
+// comments, shared lines, escaped keys and set literals.
+#[test]
+fn multiline_return_dict_entry_refuses_what_it_cannot_prove() -> Result<(), String> {
+    let check = |body: &str, changed: usize| -> Result<Option<String>, String> {
+        let source = format!("def f(items):\n    return {{\n{body}    }}\n");
+        let owners = extract_owners(Path::new("src/h.py"), &source);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "f")
+            .ok_or_else(|| "owner must be extracted".to_string())?;
+        let line = changed + 2;
+        let total = source.lines().count();
+        Ok(
+            super::discriminators::python_multiline_return_dict_entry_discriminator(
+                line,
+                source.lines().nth(line - 1).unwrap_or_default(),
+                Some((2, total)),
+                Some(&source),
+                owner,
+                None,
+            )
+            .map(|fact| fact.value),
+        )
+    };
+    // Control: the same shape with a plain literal body names the read.
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2,\n", 1)?.as_deref(),
+        Some("result[\"k\"] == 1")
+    );
+    // A comprehension body: later `for`/`async for`/`if`, or one on the line.
+    assert_eq!(
+        check("        \"k\": v\n        for v in items\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": v\n        async for v in items\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check(
+            "        \"k\": v\n        for v in items\n        if v\n",
+            1
+        )?,
+        None
+    );
+    assert_eq!(check("        \"k\": v for v in items\n", 1)?, None);
+    // A later spread or duplicate key overrides the entry.
+    assert_eq!(check("        \"k\": 1,\n        **extra,\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1,\n        \"k\": 2,\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1,\n        'k': 2,\n", 1)?, None);
+    // A trailing comment, two entries on one line, an escaped-quote key.
+    assert_eq!(check("        \"k\": 1,  # note\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1, \"j\": 2,\n", 1)?, None);
+    assert_eq!(check("        \"k\\\"q\": 1,\n", 1)?, None);
+    // A set literal with quoted elements has no key to read.
+    assert_eq!(check("        \"a\",\n        \"b\",\n", 1)?, None);
+    // A value that continues on the next line (implicit string concatenation,
+    // a `+` continuation) is only partly spelled on the changed line.
+    assert_eq!(
+        check("        \"m\": \"hello\"\n        \" world\",\n", 1)?,
+        None
+    );
+    assert_eq!(check("        \"m\": 1\n        + 2,\n", 1)?, None);
+    // The last entry may omit its trailing comma: the closing brace follows.
+    assert_eq!(
+        check("        \"j\": 2,\n        \"m\": \"hello\"\n", 2)?.as_deref(),
+        Some("result[\"m\"] == \"hello\"")
+    );
+    // A later dynamic key (a parameter may equal `k`), an escaped spelling of
+    // the same key, or a later comment line can override or hide an override.
+    assert_eq!(check("        \"k\": 1,\n        items: 2,\n", 1)?, None);
+    assert_eq!(
+        check("        \"k\": 1,\n        \"\\x6b\": 2,\n", 1)?,
+        None
+    );
+    assert_eq!(check("        \"k\": 1,\n        # \"k\": 2,\n", 1)?, None);
+    // A later line with several entries is read whole, and a line that closes
+    // a nested value may not start another entry.
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, \"k\": 5,\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, **over,\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check(
+            "        \"k\": 1,\n        \"n\": {\n            \"x\": 1}, \"k\": 5,\n",
+            1
+        )?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, \"m\": 3,\n", 1)?.as_deref(),
+        Some("result[\"k\"] == 1")
+    );
+    // Later nested values are skipped; only their entry keys are read.
+    assert_eq!(
+        check(
+            "        \"k\": 1,\n        \"n\": {\n            \"k\": 2,\n        },\n",
+            1
+        )?
+        .as_deref(),
+        Some("result[\"k\"] == 1")
+    );
+    Ok(())
+}
+
 // #13630: the field-value missing check localizes a `return {...}` change
 // against the paired old line; without one the unlocalized pick stands.
 #[test]

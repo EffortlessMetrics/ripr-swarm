@@ -58,6 +58,9 @@ impl NullishChainChange {
     /// `??` operands (no `||`, `&&`, ternary or call) that differ in one
     /// non-first operand, where earlier operands are reads of one parameter.
     pub(crate) fn read(old_line: &str, new_line: &str, params: &[String]) -> Option<Self> {
+        if statement_head(old_line)?.0 != statement_head(new_line)?.0 {
+            return None;
+        }
         let old = chain_operands(old_line)?;
         let new = chain_operands(new_line)?;
         if old.len() != new.len() || old.len() < 2 {
@@ -93,6 +96,27 @@ impl NullishChainChange {
             new: new_operand,
             last: at + 1 == old.len(),
         })
+    }
+
+    /// The `(property, new default)` of a two-operand `param.prop ?? literal`
+    /// change, spelled as the source writes it. `None` for a longer chain or a
+    /// non-default operand.
+    pub(crate) fn changed_default(&self) -> Option<(&str, String)> {
+        let [Operand::Read { prop, .. }] = self.earlier.as_slice() else {
+            return None;
+        };
+        if !self.last || !matches!(self.old, Operand::Literal(_)) {
+            return None;
+        }
+        let Operand::Literal(new) = &self.new else {
+            return None;
+        };
+        let text = match new {
+            LiteralValue::Word(word) => (*word).to_string(),
+            LiteralValue::Text(text) => format!("\"{text}\""),
+            LiteralValue::Number(bits) => f64::from_bits(*bits).to_string(),
+        };
+        Some((prop.as_str(), text))
     }
 
     /// What the argument expression `argument` (an object literal as written
@@ -187,6 +211,49 @@ const OBJECT_PROTOTYPE_MEMBERS: [&str; 8] = [
 /// the list cannot be read. An omitted or `undefined` argument is then not
 /// nullish in the body.
 pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
+    let Some(entries) = parameter_entries(source) else {
+        return true;
+    };
+    entries.iter().any(|entry| {
+        parameter_entry_default(entry, name).is_some_and(|default| {
+            // `options: T = {}` only makes an omitted argument an empty
+            // object, so a property read on it is still nullish (#15357).
+            default != "{}"
+        })
+    })
+}
+
+/// `true` when the owner's parameter list reads and gives `name` exactly the
+/// `= {}` default: an explicit `undefined` argument then binds `{}`, whose
+/// inherited members a `?.` read can still reach (#15357).
+pub(crate) fn parameter_has_empty_object_default(source: &str, name: &str) -> bool {
+    parameter_entries(source).is_some_and(|entries| {
+        entries
+            .iter()
+            .any(|entry| parameter_entry_default(entry, name) == Some("{}"))
+    })
+}
+
+/// The default text of the parameter entry `entry` when it declares `name`
+/// with `=`.
+fn parameter_entry_default<'a>(entry: &'a str, name: &str) -> Option<&'a str> {
+    let entry = entry.trim();
+    if !entry.contains('=') {
+        return None;
+    }
+    let rest = entry.strip_prefix(name)?;
+    if rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$') {
+        return None;
+    }
+    Some(
+        rest.rsplit_once('=')
+            .map_or("", |(_, default)| default.trim()),
+    )
+}
+
+/// The top-level entries of the owner's parameter list. No list reads as no
+/// entries; an unclosed list is `None` (unreadable).
+fn parameter_entries(source: &str) -> Option<Vec<String>> {
     // Skip a generic list (`<T = {}>`) before the parameter list.
     let mut angle = 0usize;
     let Some(open) = source.char_indices().find_map(|(at, ch)| match ch {
@@ -201,7 +268,7 @@ pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
         '(' if angle == 0 => Some(at),
         _ => None,
     }) else {
-        return false;
+        return Some(Vec::new());
     };
     let mut depth = 0usize;
     let mut entries = vec![String::new()];
@@ -231,16 +298,7 @@ pub(crate) fn parameter_may_have_default(source: &str, name: &str) -> bool {
             entry.push(ch);
         }
     }
-    if !closed {
-        return true;
-    }
-    entries.iter().any(|entry| {
-        let entry = entry.trim();
-        entry.contains('=')
-            && entry.strip_prefix(name).is_some_and(|rest| {
-                !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$')
-            })
-    })
+    closed.then_some(entries)
 }
 
 /// `param?.prop` or `param.prop`, with plain identifiers only.
@@ -259,12 +317,36 @@ fn property_read(text: &str) -> Option<(String, String, bool)> {
 /// The `??`-separated operands of `return a ?? b ?? c;`. Strings are kept
 /// whole; any bracket, comment, `||`, `&&`, `?`/`:` outside `?.` and `??`
 /// refuses the read.
-fn chain_operands(line: &str) -> Option<Vec<String>> {
-    let rest = line.trim().strip_prefix("return")?;
-    if !rest.starts_with(char::is_whitespace) {
+/// The statement head and the expression after it: `return` or a plain
+/// `const name =` / `let name =` declaration (#15357), so `const x = o.a ?? 1;`
+/// reads like `return o.a ?? 1;`. Anything else, including a typed or
+/// destructured declaration, refuses.
+fn statement_head(line: &str) -> Option<(String, &str)> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("return")
+        && rest.starts_with(char::is_whitespace)
+    {
+        return Some((
+            "return".to_string(),
+            rest.trim().trim_end_matches(';').trim_end(),
+        ));
+    }
+    let rest = line
+        .strip_prefix("const ")
+        .or_else(|| line.strip_prefix("let "))?;
+    let (name, expression) = rest.split_once('=')?;
+    let name = name.trim();
+    if !is_identifier(name) || expression.starts_with('=') || expression.starts_with('>') {
         return None;
     }
-    let expression = rest.trim().trim_end_matches(';').trim_end();
+    Some((
+        format!("decl {name}"),
+        expression.trim().trim_end_matches(';').trim_end(),
+    ))
+}
+
+fn chain_operands(line: &str) -> Option<Vec<String>> {
+    let (_, expression) = statement_head(line)?;
     let chars: Vec<char> = expression.chars().collect();
     let mut operands = Vec::new();
     let mut current = String::new();

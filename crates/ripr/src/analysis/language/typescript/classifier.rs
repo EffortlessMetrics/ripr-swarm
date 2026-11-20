@@ -8545,7 +8545,28 @@ pub(crate) fn classify_resolved_owner(
         && has_owner_call_evidence
         && static_limit.is_none()
     {
-        typescript_missing_discriminators(&probe_shape, line, boundary_text, flow_sink.as_ref())
+        let mut facts = typescript_missing_discriminators(
+            &probe_shape,
+            line,
+            boundary_text,
+            flow_sink.as_ref(),
+        );
+        if facts.is_empty() {
+            let change = old_line_text
+                .and_then(|old| NullishChainChange::read(old, line_text, &owner.params));
+            facts.extend(change.and_then(|change| {
+                ts_unexercised_default_discriminator(
+                    owner,
+                    &change,
+                    line,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                    flow_sink.as_ref(),
+                )
+            }));
+        }
+        facts
     } else {
         Vec::new()
     };
@@ -9768,6 +9789,39 @@ pub(crate) fn ts_spread_override_unseen(
     }
 }
 
+/// #15357: the missing check for a changed `??` default (`const x = o.p ?? 1;`
+/// edited to another literal) when the source shows that every observed owner
+/// call passes `p` explicitly, so none reaches the default: call the owner
+/// without `p`. Fail-closed through `ts_nullish_operand_unreached`, which
+/// refuses unreadable arguments, calls that omit or may drop `p`, and owners
+/// whose parameter has a non-empty default.
+pub(crate) fn ts_unexercised_default_discriminator(
+    owner: &TypeScriptOwner,
+    change: &NullishChainChange,
+    line: usize,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    flow_sink: Option<&FlowSinkFact>,
+) -> Option<MissingDiscriminatorFact> {
+    let (prop, default) = change.changed_default()?;
+    if !ts_nullish_operand_unreached(change, owner, candidates, alias_map, workspace_root) {
+        return None;
+    }
+    Some(MissingDiscriminatorFact {
+        value: format!(
+            "call `{}` without `{prop}` and assert the result of the `{default}` default",
+            owner.name
+        ),
+        reason: format!(
+            "every call read under a strong assertion passes `{prop}`, so the changed default at line {line} is not exercised there"
+        ),
+        flow_sink: flow_sink.cloned(),
+        shape: crate::domain::DiscriminatorShape::Other,
+        drafted_boundary: None,
+    })
+}
+
 /// RIPR-SPEC-0246 rule 5: `true` when at least one owner call has its whole
 /// result observed by a strong assertion, every such call's argument is
 /// readable, and none reaches the changed `??` operand with a differing value.
@@ -9795,6 +9849,10 @@ pub(crate) fn ts_nullish_operand_unreached(
     }) {
         return false;
     }
+    let empty_object_default = owner
+        .source_text
+        .as_deref()
+        .is_some_and(|source| parameter_has_empty_object_default(source, &change.subject));
     let mut observed = false;
     for candidate in candidates
         .iter()
@@ -9837,12 +9895,15 @@ pub(crate) fn ts_nullish_operand_unreached(
             let Some(argument) = arguments.get(index).map(|argument| argument.trim()) else {
                 return false;
             };
-            let object =
-                if argument.starts_with('{') || argument == "undefined" || argument == "null" {
-                    Some(argument.to_string())
-                } else {
-                    ts_test_local_object(&candidate.test.body_text, argument, &callees)
-                };
+            // `p = {}` binds `{}` for an explicit `undefined`, so its
+            // inherited members stay readable (#15357).
+            let object = if argument == "undefined" && empty_object_default {
+                Some("{}".to_string())
+            } else if argument.starts_with('{') || argument == "undefined" || argument == "null" {
+                Some(argument.to_string())
+            } else {
+                ts_test_local_object(&candidate.test.body_text, argument, &callees)
+            };
             match object.map_or(ChainInput::Unknown, |object| change.input(&object)) {
                 ChainInput::Unreached => {}
                 ChainInput::Differs | ChainInput::Unknown => return false,
