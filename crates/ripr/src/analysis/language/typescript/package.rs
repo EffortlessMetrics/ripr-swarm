@@ -347,7 +347,7 @@ pub(crate) fn resolve_package_discovery(
 fn manifest_test_script_is_placeholder(pkg_json: &str) -> bool {
     parse_manifest_facts(pkg_json)
         .and_then(|facts| facts.test_script)
-        .is_some_and(|script| script.contains("no test specified"))
+        .is_some_and(|script| script.contains("no test specified") && script.contains("exit 1"))
 }
 
 // ─── Manifest helpers ─────────────────────────────────────────────────────────
@@ -1856,6 +1856,9 @@ mod tests {
             r#"{"scripts":{"test":"mocha"}}"#
         ));
         assert!(!manifest_test_script_is_placeholder(r#"{"name":"x"}"#));
+        assert!(!manifest_test_script_is_placeholder(
+            r#"{"scripts":{"test":"mocha || echo 'no test specified'"}}"#
+        ));
     }
 
     #[test]

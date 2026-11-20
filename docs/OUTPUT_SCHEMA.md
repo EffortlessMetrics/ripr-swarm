@@ -3062,7 +3062,7 @@ The evidence-first fields are additive in schema `0.2`:
     emitted, `typescript_preview_card.verify.command` reflects the same value.
     Command forms (RIPR-SPEC-0085 PR 3):
     `<launch> jest <file>`, `<launch> vitest run <file>`, `bun test <file>`,
-    `<launch> ava <file>`, `node --test <file>`, `npm test -- <file>`,
+    `<launch> ava <file>`, `<launch> mocha <file>`, `node --test <file>`, `npm test -- <file>`,
     `pnpm test -- <file>`, `yarn test <file>`. `<launch>` is the package
     runner's local-binary launcher (`npx --no-install` for npm or an
     unresolved runner, `pnpm exec`, `yarn`, `bun run`), because devDependency
@@ -19568,7 +19568,7 @@ repair-routing records. Python preview GapRecords accept bounded
 `python -m pytest ...` (and the earlier bare `pytest ...` form) and
 `python -m unittest ...` verification commands, and TypeScript preview
 GapRecords accept the local-only launcher forms (`npx --no-install`,
-`pnpm exec`, `yarn`, `bun run` followed by `jest`, `vitest run` or `ava`, plus
+`pnpm exec`, `yarn`, `bun run` followed by `jest`, `vitest run`, `ava` or `mocha`, plus
 `bun test`, `node --test`, `npm|pnpm test --` and `yarn test`). After the
 runner, a verify command may name only package-relative test paths and node
 ids: an option token (`--config`, `-p`), an absolute or home path (`/`, `C:`,

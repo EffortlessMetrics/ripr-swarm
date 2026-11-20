@@ -97,5 +97,13 @@ fn placeholder_test_script_without_a_framework_emits_no_npm_test_command() -> Re
             "placeholder script must not be run via npm: {json}"
         ));
     }
+    // No framework resolves, so no verify command is invented: the finding
+    // still reports on the changed file, with no runner launch for it.
+    if !json.contains("src/age.js") {
+        return Err(format!("expected the age.js finding to remain: {json}"));
+    }
+    if json.contains("npx --no-install") || json.contains("test -- test/") {
+        return Err(format!("expected no verify command: {json}"));
+    }
     Ok(())
 }
