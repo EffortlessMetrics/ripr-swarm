@@ -20784,6 +20784,30 @@
           "class": "reachable_unrevealed"
         }
       ]
+    },
+    {
+      "id": "rust_dyn_box_bare_object_other_file",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_bare_object_other_file",
+      "vector": "a_bare_trait_object_impl_in_another_file_answers_a_box_dyn_call_first",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
     }
   ]
 }

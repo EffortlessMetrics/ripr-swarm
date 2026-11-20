@@ -164,7 +164,12 @@ pub(super) fn binding_is_mut(masked_body: &str, receiver: &str) -> bool {
 ///   `exact!(dyn Shape)`, an `as` cast, a generic argument).
 fn workspace_may_extend_dyn_or_box(trait_name: &str, index: &RustIndex) -> bool {
     index.files().values().any(|facts| {
-        if !facts.source.contains("Box") && !facts.source.contains("dyn") {
+        // A bare (edition 2018) object impl or a rename spells only the
+        // trait's name, so a file naming none of the three is skipped.
+        if !facts.source.contains("Box")
+            && !facts.source.contains("dyn")
+            && !facts.source.contains(trait_name)
+        {
             return false;
         }
         let masked = mask_comments_and_strings(&facts.source);
