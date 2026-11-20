@@ -7,19 +7,15 @@ pub(crate) use ripr_contract::path_identity::{
     host_paths_case_insensitive, path_identity_key, path_identity_key_on,
 };
 
-/// The location text a human report shows for a finding file (#15473).
-///
-/// [`crate::analysis::finding_location_text`] spells a root-relative file
-/// `./<path>`, which JSON, MCP, LSP and selectors keep as the identity.
-/// A reader who ran `ripr` from a directory below the analysis root (the
-/// implicit root walk moved up from `py/` to the repository root) cannot paste
-/// that `./` form: it names nothing under the invocation directory. When the
-/// invocation directory is strictly inside the root, the human spelling is
-/// relative to the invocation directory (`../crates/core/src/lib.rs`). At the
-/// root, with a relative root, or for a file outside the root, the text is the
-/// shared location text byte for byte.
+/// Show an in-root human location from the invocation directory (#15473, #15566).
+/// At the root or outside it, retain the shared finding spelling.
 pub(crate) fn human_location_text(root: &Path, file: &Path) -> String {
     let shared = crate::analysis::finding_location_text(root, file);
+    // A producer may supply an already-relative path outside the root prefix.
+    // Its fallback can also start with "./", which is not a root marker here.
+    if file.is_relative() && !file.starts_with(root) {
+        return shared;
+    }
     match invocation_depth_below(root) {
         Some(depth) => relative_to_invocation_dir(&shared, depth),
         None => shared,
@@ -30,15 +26,17 @@ pub(crate) fn human_location_text(root: &Path, file: &Path) -> String {
 /// invocation directory sits below the root.
 fn relative_to_invocation_dir(shared: &str, depth: usize) -> String {
     match shared.strip_prefix("./") {
-        Some(rest) if depth > 0 => format!("{}{rest}", "../".repeat(depth)),
+        // Only undo the literal-percent escape. A name containing the text
+        // `%0A` must stay on one line, and a non-UTF-8 byte keeps its escape.
+        Some(rest) if depth > 0 => format!("{}{}", "../".repeat(depth), rest.replace("%25", "%")),
         _ => shared.to_string(),
     }
 }
 
 /// Components between the root and the process working directory, or `None`
-/// unless the working directory is strictly below an absolute root.
+/// unless the working directory is strictly below the resolved analysis root.
 fn invocation_depth_below(root: &Path) -> Option<usize> {
-    if !root.is_absolute() {
+    if root == Path::new(".") {
         return None;
     }
     let cwd = std::fs::canonicalize(std::env::current_dir().ok()?).ok()?;

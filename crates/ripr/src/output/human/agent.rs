@@ -1303,11 +1303,14 @@ fn test_and_stages_key(root: &Path, finding: &Finding) -> (Option<String>, Strin
 }
 
 fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missing: bool) -> String {
-    let location = format!(
-        "{}:{}",
-        repository_display_path(root, &finding.probe.location.file),
-        finding.probe.location.line
-    );
+    // In-root gap rows join to the JSON finding even when the producer
+    // joined a relative --root to its file. Folding still uses the original key.
+    let file = &finding.probe.location.file;
+    let shared = crate::analysis::finding_location_text(root, file);
+    let path = shared
+        .strip_prefix("./")
+        .map_or_else(|| repository_display_path(root, file), str::to_owned);
+    let location = format!("{path}:{}", finding.probe.location.line);
     // An open limited finding has no established missing discriminator; its
     // `missing` text is the limitation prose, which is not a value to assert.
     let owner_hint = unreferenced_owner_hint(finding);

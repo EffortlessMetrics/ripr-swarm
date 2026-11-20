@@ -43,6 +43,9 @@ mod check_artifact_stdin;
 #[path = "cli_smoke/check_budget_refusals.rs"]
 mod check_budget_refusals;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/check_output_paths.rs"]
+mod check_output_paths;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/check_work_budget.rs"]
 mod check_work_budget;
 #[path = "cli_smoke/cli_value_contracts.rs"]
