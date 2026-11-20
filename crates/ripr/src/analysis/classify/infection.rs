@@ -705,15 +705,6 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) unary_tail: Option<&'a super::UnaryTailChange>,
 }
 
-/// [`infection_evidence_with_boundary_input`] given the changed owner, which
-/// the `&&`/`||` skipped-operand reading (#7970) needs to know the owner's
-/// parameters and that its body is the whole chain. Without an owner, or when
-/// any function other than the related tests calls the owner by name
-/// (`owner_has_other_callers`: a wrapper or helper may feed it other inputs),
-/// that reading declines. The truth-table reading (#6488) also declines when
-/// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
-/// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
-/// a shadowing `macro_rules!` compares nothing.
 /// Why a related test's input to `owner` is unreadable when no boundary
 /// input was found: a boundary literal passed to a macro whose expansion
 /// ripr does not read (a test-local wrapper such as `check!(100, 0)` may
@@ -729,7 +720,7 @@ fn opaque_boundary_input(
         // (`info!`, `assert_that!`) is no evidence that its arguments feed
         // the owner.
         for (name, arguments) in unread_macro_arguments(&test.body) {
-            if !defines_local_macro(&test.body, &name) {
+            if !local_macro_calls(&test.body, &name, owner) {
                 continue;
             }
             let literals = extract_literals(&arguments);
@@ -771,11 +762,15 @@ fn opaque_boundary_input(
             continue;
         }
         for call in test.calls.iter().filter(|call| call.name == owner) {
+            // Only an owner call whose arguments are all unread: beside a
+            // visible literal (`pick(&ctx, 50)`) the fixture may fill another
+            // parameter, so the readable input's gap stands.
             if let Some(fixture) = fixtures.iter().find(|fixture| {
                 call_arguments(call.text.as_ref(), owner)
                     .iter()
                     .any(|arguments| {
-                        super::activation::free_identifiers(arguments).contains(fixture)
+                        extract_literals(arguments).is_empty()
+                            && super::activation::free_identifiers(arguments).contains(fixture)
                     })
             }) {
                 return Some(format!(
@@ -833,21 +828,41 @@ const RUST_KEYWORDS: &[&str] = &[
     "if", "while", "match", "return", "in", "let", "else", "loop", "break", "yield", "move",
 ];
 
-/// Whether `body` holds a `macro_rules! name` definition.
-fn defines_local_macro(body: &str, name: &str) -> bool {
+/// Whether `body` holds a `macro_rules! name` definition whose rules call
+/// `owner`: a local macro that never calls it (`approx!(pick(50), 100)`)
+/// cannot pass the boundary to the owner, so its literals stay expected
+/// values.
+fn local_macro_calls(body: &str, name: &str, owner: &str) -> bool {
     let masked = mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
     masked.match_indices("macro_rules").any(|(at, _)| {
-        masked[at + "macro_rules".len()..]
-            .trim_start()
-            .strip_prefix('!')
-            .map(str::trim_start)
-            .and_then(|rest| rest.strip_prefix(name))
-            .is_some_and(|rest| {
-                !rest
-                    .chars()
-                    .next()
-                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-            })
+        let after = at + "macro_rules".len();
+        let rest = masked[after..].trim_start();
+        let Some(rest) = rest.strip_prefix('!').map(str::trim_start) else {
+            return false;
+        };
+        let Some(tail) = rest.strip_prefix(name) else {
+            return false;
+        };
+        if tail
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return false;
+        }
+        let tail_at = masked.len() - tail.len();
+        let Some(open) = bytes[tail_at..]
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())
+            .map(|skip| tail_at + skip)
+            .filter(|open| matches!(bytes[*open], b'(' | b'[' | b'{'))
+        else {
+            return false;
+        };
+        balanced_close(bytes, open)
+            .and_then(|close| body.get(open + 1..close))
+            .is_some_and(|rules| !call_arguments(rules, owner).is_empty())
     })
 }
 
@@ -892,6 +907,15 @@ fn call_arguments(text: &str, owner: &str) -> Vec<String> {
         .collect()
 }
 
+/// [`infection_evidence_with_boundary_input`] given the changed owner, which
+/// the `&&`/`||` skipped-operand reading (#7970) needs to know the owner's
+/// parameters and that its body is the whole chain. Without an owner, or when
+/// any function other than the related tests calls the owner by name
+/// (`owner_has_other_callers`: a wrapper or helper may feed it other inputs),
+/// that reading declines. The truth-table reading (#6488) also declines when
+/// the workspace rebinds `assert`, `assert_eq` or `assert_ne`
+/// (`assertion_macros_rebound`, #10386): it trusts those names to compare, and
+/// a shadowing `macro_rules!` compares nothing.
 pub(in crate::analysis) fn infection_evidence_for_owner(
     probe: &Probe,
     related_tests: &[&TestSummary],
@@ -2932,10 +2956,98 @@ mod tests {
                 &[][..],
                 &["assert_eq!(discount(amount), 0);"][..],
             ),
+            // A fixture beside a visible non-boundary literal: the literal
+            // is a readable input, so its gap stands.
+            (
+                "fn t(ctx: Ctx) { assert_eq!(discount(&ctx, 50), 0); }",
+                &["#[rstest]"][..],
+                &["assert_eq!(discount(&ctx, 50), 0);"][..],
+            ),
+            // A local macro that never calls the owner: 100 is an expected
+            // value, not an input.
+            (
+                "fn t() { macro_rules! approx { ($a:expr, $b:expr) => { assert!(($a - $b) < 1) }; } approx!(discount(50), 100); }",
+                &[][..],
+                &[][..],
+            ),
         ] {
             let test = test_with(body, attrs, calls);
             assert_eq!(opaque(&test), None, "{body}");
         }
+    }
+
+    /// #15343: through `infection_evidence_for_owner`, a fixture-fed owner
+    /// call reads unknown, a readable boundary input still reads reached,
+    /// and an expected-value-only boundary without a fixture stays weak.
+    #[test]
+    fn an_rstest_fixture_input_reads_unknown_through_the_owner_reading() {
+        let body = "pub fn pick(amount: u32) -> u32 {\n    if amount >= 100 { 10 } else { 0 }\n}\n";
+        let owner = owner_with_body(body);
+        let mut changed = probe(ProbeFamily::Predicate, "amount >= 100");
+        changed.location = SourceLocation::new("src/lib.rs", 2, 1);
+        let evidence = |test: &TestSummary, activation: &ActivationEvidence| {
+            infection_evidence_for_owner(
+                &changed,
+                &[test],
+                activation,
+                None,
+                OwnerInputs {
+                    owner: Some(&owner),
+                    literal_length_boundary: None,
+                    slice_counter_boundary: None,
+                    unary_tail: None,
+                },
+                false,
+                false,
+            )
+        };
+        let rstest = |body: &str, attrs: &[&str], call: &str, literals: &[&str]| {
+            let mut test = test_with_literals(literals);
+            test.body = body.into();
+            test.attrs = attrs
+                .iter()
+                .map(|attr| (*attr).to_string())
+                .collect::<Vec<_>>()
+                .into();
+            test.calls = vec![crate::analysis::facts::CallFact {
+                name: "pick".to_string(),
+                line: 2,
+                text: call.to_string().into(),
+            }]
+            .into();
+            test
+        };
+        let fed = rstest(
+            "fn at_threshold(amount: u32) { assert_eq!(pick(amount), 10); }",
+            &["#[rstest]"],
+            "assert_eq!(pick(amount), 10);",
+            &["10"],
+        );
+        let unknown = evidence(&fed, &activation_with(&[]));
+        assert_eq!(unknown.state, StageState::Unknown, "{}", unknown.summary);
+        assert!(
+            unknown.summary.contains("fixture `amount`"),
+            "{}",
+            unknown.summary
+        );
+        // A readable boundary input still wins over the opaque reading.
+        let reached = evidence(
+            &fed,
+            &activation_with(&[("amount = 100", ValueContext::FunctionArgument)]),
+        );
+        assert_eq!(reached.state, StageState::Yes, "{}", reached.summary);
+        // The boundary only as an expected value, with no fixture: weak.
+        let oracle_only = rstest(
+            "fn t() { assert_eq!(pick(50), 100); }",
+            &["#[test]"],
+            "assert_eq!(pick(50), 100);",
+            &["50", "100"],
+        );
+        let weak = evidence(
+            &oracle_only,
+            &activation_with(&[("amount = 50", ValueContext::FunctionArgument)]),
+        );
+        assert_eq!(weak.state, StageState::Weak, "{}", weak.summary);
     }
 
     #[test]
