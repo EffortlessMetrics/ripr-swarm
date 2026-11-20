@@ -776,14 +776,20 @@ fn inventory_classified_seams_report_collect(
             );
         }
         let cut_len = cut.cap.min(classified.len());
-        store_classified_family(
-            &cache,
-            &key,
-            &classified[..cut_len],
-            Some(&cached_cut_info),
-            &store_context,
-            family_store_failures,
-        );
+        // The prefix equals the old first pass's cut only while
+        // classification kept every discovered seam in order (evidence is
+        // one per seam today). If a seam was dropped, the count-based prefix
+        // could reach past the cut, so the default key is left a miss.
+        if classified.len() == cut.total {
+            store_classified_family(
+                &cache,
+                &key,
+                &classified[..cut_len],
+                Some(&cached_cut_info),
+                &store_context,
+                family_store_failures,
+            );
+        }
         let declined = rust_index::declined_rust_files_at(root, &lexical_fallback_files);
         if declined.is_empty() {
             *widening = RepairWidening::Widened;
