@@ -9804,9 +9804,9 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             {
                 return None;
             }
-            let import_lines = static_import_lines(&text)?;
+            let import_lines = static_import_lines(text)?;
             let import_line = |number: usize, _: &str| import_lines.contains(&number);
-            if !calls_all_fill(&text, &import_line) {
+            if !calls_all_fill(text, &import_line) {
                 return None;
             }
             continue;
@@ -9829,7 +9829,7 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             }
             let start_line = owner.start_line;
             let blank = |number: usize, line: &str| number == start_line || is_reexport(line);
-            if !calls_all_fill(&text, &blank) {
+            if !calls_all_fill(text, &blank) {
                 return None;
             }
             continue;
