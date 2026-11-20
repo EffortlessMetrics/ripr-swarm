@@ -878,18 +878,27 @@ test('Given missing components on installed SDKs, ensure repairs them without ad
   });
 
 test('An unusable default npm cache fails before ci with the native cause and recovery',
-  { skip: !NATIVE || process.getuid() === 0 }, t => {
+  { skip: !NATIVE }, async t => {
     const f = makeFixture(t);
     const cache = path.join(f.env.HOME, 'default cache');
     fs.mkdirSync(cache, { recursive: true });
     fs.chmodSync(cache, 0o555);
     t.after(() => { if (fs.existsSync(cache)) fs.chmodSync(cache, 0o755); });
     f.update(state => { state.defaultCache = cache; state.failAtInstall = true; });
-    const result = f.cli(['--ensure']);
-    assert.match(result.stderr, /EACCES/);
-    assert.match(result.stderr, /npm_config_cache=/);
-    assert.doesNotMatch(result.stderr, /corrupt/i);
-    assert.notEqual(result.status, 0);
+    if (process.getuid() === 0) {
+      // Root can bypass mode bits. Inject the same native refusal at the
+      // exclusive probe open while retaining real child processes and paths.
+      const open = fs.openSync;
+      t.mock.method(fs, 'openSync', (filename, flags, ...rest) => {
+        if (flags === 'wx+' && path.basename(filename).startsWith('.ripr-provision-')) {
+          throw Object.assign(new Error('EACCES: permission denied, open ' + filename), { code: 'EACCES' });
+        }
+        return open(filename, flags, ...rest);
+      });
+    }
+    await assert.rejects(f.run(['--ensure']), error => error.exitCode === 1
+      && /EACCES/.test(error.message) && /npm_config_cache=/.test(error.message)
+      && !/corrupt/i.test(error.message));
     const events = f.read().events;
     assert.deepEqual(events.filter(event => event.command === 'npm').map(event => event.args),
       [['config', 'get', 'cache']]);
