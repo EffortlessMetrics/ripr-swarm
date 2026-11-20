@@ -726,7 +726,7 @@ async fn unit_async_labelled(buf: &mut Vec<u8>) {
         break 'done;
     }
 }
-fn value_unsafe(p: *const u8) {
+fn value_unsafe(p: *const u8) -> u8 {
     unsafe { *p }
 }
 fn typed_owner(buf: &mut Vec<u8>) -> () {
