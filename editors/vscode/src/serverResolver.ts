@@ -432,7 +432,7 @@ export function missingServerRemedy(autoDownload: boolean): string {
  */
 export const NETWORK_FAILURE_REMEDY =
   'The download host could not be reached; check the network connection, then retry. ' +
-  'Behind a proxy, set VS Code http.proxy (and keep http.proxySupport on); the download uses VS Code proxy settings. ' +
+  'Behind a proxy, set VS Code http.proxy and keep http.proxySupport on. ' +
   'To work offline, set ripr.server.path to a ripr binary already on this machine ' +
   '(ripr.server.downloadBaseUrl for a mirror).';
 

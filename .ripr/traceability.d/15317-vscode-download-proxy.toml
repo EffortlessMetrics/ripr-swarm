@@ -7,6 +7,7 @@ tests = [
   "editors/vscode/test/suite/download_proxy.test.ts::the managed download goes through http.proxy and the proxy refusal reaches it as HTTP 407",
   "editors/vscode/test/suite/download_proxy.test.ts::a host listed in http.noProxy bypasses the proxy",
   "editors/vscode/test/suite/download_proxy.test.ts::the transport-failure hint names the VS Code proxy settings",
+  "editors/vscode/test/suite/missing_server_message.test.ts::network guidance names the connection and the offline route, other kinds do not (#13638)",
 ]
 code = [
   "editors/vscode/src/downloader.ts",

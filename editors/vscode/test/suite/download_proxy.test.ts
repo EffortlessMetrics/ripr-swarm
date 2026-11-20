@@ -3,7 +3,7 @@ import * as http from 'http';
 import * as net from 'net';
 import * as vscode from 'vscode';
 import { fetchManifestBytesOverHttps } from '../../src/downloader';
-import { classifyDownloadFailureKind, NETWORK_FAILURE_REMEDY } from '../../src/serverResolver';
+import { NETWORK_FAILURE_REMEDY } from '../../src/serverResolver';
 
 // The managed download uses Node's https module inside the extension host,
 // which VS Code patches with its own proxy support (`http.proxySupport`,
@@ -18,6 +18,8 @@ suite('VS Code download proxy support (#15317)', () => {
   let proxyPort = 0;
   const connects: string[] = [];
   const sockets = new Set<net.Socket>();
+  let previousProxy: unknown;
+  let previousNoProxy: unknown;
 
   suiteSetup(async () => {
     proxy = http.createServer((_request, response) => response.end());
@@ -28,12 +30,15 @@ suite('VS Code download proxy support (#15317)', () => {
     });
     await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
     proxyPort = (proxy.address() as net.AddressInfo).port;
+    const settings = vscode.workspace.getConfiguration('http');
+    previousProxy = settings.inspect('proxy')?.globalValue;
+    previousNoProxy = settings.inspect('noProxy')?.globalValue;
   });
 
   suiteTeardown(async () => {
     const settings = vscode.workspace.getConfiguration('http');
-    await settings.update('proxy', undefined, vscode.ConfigurationTarget.Global);
-    await settings.update('noProxy', undefined, vscode.ConfigurationTarget.Global);
+    await settings.update('proxy', previousProxy, vscode.ConfigurationTarget.Global);
+    await settings.update('noProxy', previousNoProxy, vscode.ConfigurationTarget.Global);
     for (const socket of sockets) {
       socket.destroy();
     }
@@ -44,10 +49,30 @@ suite('VS Code download proxy support (#15317)', () => {
     connects.length = 0;
   });
 
-  async function configure(noProxy: string[] | undefined): Promise<void> {
+  // Resolve once the host has seen the change, so the proxy resolver reads the
+  // new value instead of racing the configuration event.
+  async function update(key: 'proxy' | 'noProxy', value: unknown): Promise<void> {
     const settings = vscode.workspace.getConfiguration('http');
-    await settings.update('proxy', `http://127.0.0.1:${proxyPort}`, vscode.ConfigurationTarget.Global);
-    await settings.update('noProxy', noProxy, vscode.ConfigurationTarget.Global);
+    if (JSON.stringify(settings.inspect(key)?.globalValue) === JSON.stringify(value)) {
+      return;
+    }
+    const seen = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => { listener.dispose(); resolve(); }, 5000);
+      const listener = vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration(`http.${key}`)) {
+          clearTimeout(timer);
+          listener.dispose();
+          resolve();
+        }
+      });
+    });
+    await settings.update(key, value, vscode.ConfigurationTarget.Global);
+    await seen;
+  }
+
+  async function configure(noProxy: string[] | undefined): Promise<void> {
+    await update('proxy', `http://127.0.0.1:${proxyPort}`);
+    await update('noProxy', noProxy);
   }
 
   test('the managed download goes through http.proxy and the proxy refusal reaches it as HTTP 407', async () => {
@@ -70,12 +95,13 @@ suite('VS Code download proxy support (#15317)', () => {
       [],
       JSON.stringify(outcome)
     );
-    assert.strictEqual(outcome.kind, 'transport_failure', JSON.stringify(outcome));
+    // Direct, `.invalid` never resolves; an environment proxy (if any) may
+    // answer instead. Either way the download must not succeed.
+    assert.notStrictEqual(outcome.kind, 'ok', JSON.stringify(outcome));
   });
 
   test('the transport-failure hint names the VS Code proxy settings', () => {
     assert.ok(/http\.proxy\b/.test(NETWORK_FAILURE_REMEDY), NETWORK_FAILURE_REMEDY);
     assert.ok(/http\.proxySupport/.test(NETWORK_FAILURE_REMEDY), NETWORK_FAILURE_REMEDY);
-    assert.strictEqual(classifyDownloadFailureKind('Could not fetch https://x/: read ECONNRESET'), 'network');
   });
 });
