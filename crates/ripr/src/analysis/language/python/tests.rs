@@ -4272,12 +4272,48 @@ fn bracket_continuation_ranges_cover_lines_that_start_inside_a_bracket() -> Resu
         "    # (not a bracket\n",
         "    return x\n",
     );
-    let ranges = super::no_behavior::bracket_continuation_line_ranges(source)
-        .ok_or_else(|| "a valid module must lex".to_string())?;
-    assert_eq!(ranges, vec![3..=5]);
-    // An unclosed bracket does not lex, so callers fail closed.
-    assert!(super::no_behavior::bracket_continuation_line_ranges("x = (\n").is_none());
+    let facts = super::no_behavior::BracketEvidence::read(Some(source), None);
+    for line in 1..=8 {
+        let expected = (3..=5).contains(&line);
+        assert_eq!(facts.new_line_in(line), expected);
+        assert_eq!(facts.new_statement_span(line), expected.then_some((2, 5)));
+    }
+    let malformed = super::no_behavior::BracketEvidence::read(Some("x = (\n"), None);
+    assert!(malformed.new_line_in(1));
+    assert!(malformed.new_statement_span(1).is_none());
     Ok(())
+}
+
+#[test]
+fn explicit_join_ranges_use_token_gaps_and_keep_indentation_boundaries() {
+    let source = concat!(
+        "def f(ok):\n",             // 1
+        "    if ok:\n",             // 2
+        "        return \"\"\"a\n", // 3
+        "inside\n",                 // 4: inside the first token
+        "b\"\"\" \\\n",             // 5
+        " \"c\" \\\n",              // 6: arbitrary continuation indentation
+        "            \"d\"\n",      // 7
+        "    \"standalone\"\n",     // 8: real dedent and logical newline
+    );
+    for text in [source.to_owned(), source.replace('\n', "\r\n")] {
+        let evidence = super::no_behavior::BracketEvidence::read(Some(&text), Some(&text));
+        for line in 1..=8 {
+            let expected = (6..=7).contains(&line);
+            assert_eq!(evidence.new_line_in(line), expected, "{line}");
+            assert_eq!(evidence.old_line_in(line), expected, "{line}");
+            assert_eq!(
+                evidence.new_statement_span(line),
+                expected.then_some((3, 7))
+            );
+        }
+    }
+    // A space after the backslash is a lexer error. Keep existing fallback.
+    let bad = "x = \"a\" \\ \n    \"b\"\n";
+    let evidence = super::no_behavior::BracketEvidence::read(Some(bad), None);
+    assert!(evidence.new_line_in(2));
+    assert_eq!(evidence.new_statement_span(2), None);
+    assert!(!evidence.old_line_in(2));
 }
 
 #[test]
@@ -4318,6 +4354,7 @@ fn a_changed_message_string_on_a_continuation_line_gets_a_probe() -> Result<(), 
             new_in: in_brackets,
             old_in: in_brackets,
             span: in_brackets.then_some((2, 5)),
+            ..BracketLine::default()
         },
         ..PythonNoBehaviorContext::default()
     };
@@ -4373,6 +4410,7 @@ fn an_unlexable_file_keeps_a_changed_bare_string_quiet() {
             new_in: true,
             old_in: true,
             span: None,
+            ..BracketLine::default()
         },
         ..PythonNoBehaviorContext::default()
     };
@@ -4429,6 +4467,7 @@ fn a_bracketed_raise_message_is_not_credited_to_a_return_assertion() -> Result<(
             new_in: true,
             old_in: true,
             span: Some((3, 5)),
+            ..BracketLine::default()
         },
         ..PythonNoBehaviorContext::default()
     };
@@ -4472,6 +4511,7 @@ fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result
             new_in: true,
             old_in: true,
             span: Some((3, 5)),
+            ..BracketLine::default()
         },
         ..PythonNoBehaviorContext::default()
     };
@@ -4515,6 +4555,7 @@ fn a_changed_message_argument_with_a_trailing_comment_is_an_error_path() -> Resu
             new_in: true,
             old_in: true,
             span: Some((3, 5)),
+            ..BracketLine::default()
         },
         ..PythonNoBehaviorContext::default()
     };
