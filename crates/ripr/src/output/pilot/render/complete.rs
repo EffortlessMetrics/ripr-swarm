@@ -620,8 +620,13 @@ fn render_pilot_summary_md_with_target(
         (None, Some(routes)) => {
             let commands = PilotLanguageRoutes::commands(routes);
             if commands.is_empty() {
-                out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
-                out.push('\n');
+                match PilotLanguageRoutes::blocked_route_text(routes) {
+                    Some(route) => out.push_str(&format!("{route}\n")),
+                    None => {
+                        out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
+                        out.push('\n');
+                    }
+                }
                 return out;
             }
             out.push_str(
@@ -1043,7 +1048,12 @@ fn render_pilot_terminal_with_target(
     }
     if let Some(routes) = routes {
         let commands = PilotLanguageRoutes::commands(routes);
-        if commands.is_empty() {
+        if let (true, Some(route)) = (
+            commands.is_empty(),
+            PilotLanguageRoutes::blocked_route_text(routes),
+        ) {
+            out.push_str(&format!("Next: {route}\n"));
+        } else if commands.is_empty() {
             out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
             out.push('\n');
         } else {
@@ -1810,6 +1820,17 @@ fn push_declined_rust_files_terminal(
 }
 
 fn route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: in a root where `ripr check` refuses, neither "diff-first" nor
+    // the enable step is the next action; the route guidance names it.
+    if route.blocked_by_work_tree {
+        // A saved patch still reads only enabled languages, so a disabled
+        // one keeps its disclosure next to the blocker.
+        return if route.enabled {
+            "preview; ripr check cannot run at this root"
+        } else {
+            "preview; ripr check cannot run at this root, and it is not enabled in ripr.toml [languages]"
+        };
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
         (true, true) => "preview, diff-first",
@@ -1828,6 +1849,17 @@ fn terminal_rank_label(label: &str) -> &'static str {
 }
 
 fn terminal_route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: checked before `enabled`, so a disabled language in a root
+    // where `ripr check` refuses is not told to turn it on to check it.
+    if route.blocked_by_work_tree {
+        // A saved patch still reads only enabled languages, so a disabled
+        // one keeps its disclosure next to the blocker.
+        return if route.enabled {
+            "preview; ripr check cannot run at this root"
+        } else {
+            "preview; ripr check cannot run at this root, and it is not enabled in ripr.toml [languages]"
+        };
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
         (true, true) => "preview; run the command below to check the diff",

@@ -13,7 +13,9 @@ mod render;
 mod types;
 
 pub(crate) use current_change::{ChangeSeams, PilotCurrentChange};
-pub(crate) use language_routes::{PilotLanguageRoute, PilotLanguageRoutes, RUST_EXCLUDED_GUIDANCE};
+pub(crate) use language_routes::{
+    CheckBlocker, PilotLanguageRoute, PilotLanguageRoutes, RUST_EXCLUDED_GUIDANCE,
+};
 pub(crate) use ranking::top_actionable_seams;
 pub(crate) use render::{
     render_pilot_human_summaries, render_pilot_summary_json, render_pilot_timeout_summary_json,

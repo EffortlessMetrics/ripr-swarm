@@ -43,7 +43,14 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     // #5252 item 7: `init` into a non-repo wrote branch-based configuration
     // with no hint that no branch exists there. Advisory like the root
     // warning, in both dry-run and real runs.
-    if let Some(warning) = non_git_root_warning(&options.root) {
+    let work_tree = output::doctor::work_tree_probe(&options.root);
+    // #15297: a bare repository has no checked-out source to configure, and
+    // `git init` there is a no-op. Refuse before anything is written (a
+    // dry run reports the same refusal) and name the repair.
+    if matches!(work_tree, Some(output::doctor::WorkTreeProbe::Bare)) {
+        return Err(bare_root_refusal(&options.root));
+    }
+    if let Some(warning) = non_git_root_warning_for_probe(&options.root, work_tree) {
         eprintln!("{warning}");
     }
     // #5208: an unreleased generator cannot pin itself — that version does
@@ -208,8 +215,17 @@ fn detected_preview_language_warning(root: &Path, plan: &[InitTarget]) -> Option
 /// outside a repository, and a probe that never answered says Git could
 /// not confirm the state. Advisory either way: the configuration is
 /// written regardless.
+#[cfg(test)]
 fn non_git_root_warning(root: &Path) -> Option<String> {
     non_git_root_warning_for_probe(root, output::doctor::work_tree_probe(root))
+}
+
+/// The refusal for `init` at a bare repository (#15297).
+fn bare_root_refusal(root: &Path) -> String {
+    format!(
+        "ripr init: the root `{}` is a bare Git repository with no work tree, so there is no source to configure and nothing was written. Check out a work tree (`git worktree add <path>` or `git clone`), then run `ripr init --root <path>`.",
+        output::path::human_path(root)
+    )
 }
 
 /// The warning dispatch, split from the probe call so every wording branch
@@ -224,6 +240,10 @@ fn non_git_root_warning_for_probe(
         Some(WorkTreeProbe::Inside) => None,
         Some(WorkTreeProbe::Outside) => Some(format!(
             "ripr: warning: the root `{shown}` is not inside a Git work tree. The generated configuration analyzes branches against their default branch, so `ripr check` has no branch to compare until this directory is inside a repository."
+        )),
+        Some(WorkTreeProbe::Bare) => Some(bare_root_refusal(root)),
+        Some(WorkTreeProbe::GitMissing) => Some(format!(
+            "ripr: warning: Git was not found on PATH, so ripr cannot confirm the root `{shown}` is inside a work tree. Install Git: the generated configuration analyzes branches against their default branch, which `ripr check` reads through Git."
         )),
         Some(WorkTreeProbe::Refused(repair)) => Some(format!(
             "ripr: warning: Git could not confirm the root `{shown}` is inside a work tree ({repair}). The generated configuration analyzes branches against their default branch, so confirm the directory is inside a repository or `ripr check` has no branch to compare."
@@ -739,10 +759,8 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         };
         let doctor = format!("ripr doctor{root_flag}");
         let check = format!("ripr check{root_flag}");
-        let inside_git = matches!(
-            output::doctor::work_tree_probe(root),
-            Some(output::doctor::WorkTreeProbe::Inside)
-        );
+        let work_tree = output::doctor::work_tree_probe(root);
+        let inside_git = matches!(work_tree, Some(output::doctor::WorkTreeProbe::Inside));
         if plan.iter().any(|target| {
             target
                 .path
@@ -827,13 +845,17 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 }
                 _ => InitNextStep::Ready,
             }
+        } else if matches!(work_tree, Some(output::doctor::WorkTreeProbe::GitMissing)) {
+            InitNextStep::GitMissing
         } else {
             InitNextStep::NoGit
         };
         println!("{}", init_next_step_line(next, &doctor, &check));
         let commands: &[&String] = match next {
             InitNextStep::Ready | InitNextStep::NoCommits => &[&doctor, &check],
-            InitNextStep::NoGit | InitNextStep::NoDefaultBase => &[&doctor],
+            InitNextStep::NoGit | InitNextStep::NoDefaultBase | InitNextStep::GitMissing => {
+                &[&doctor]
+            }
         };
         for command in commands.iter().copied() {
             if let Some(powershell) = output::markdown::powershell_text_variant(command) {
@@ -859,11 +881,19 @@ enum InitNextStep {
     NoDefaultBase,
     /// Not established as inside a work tree.
     NoGit,
+    /// `git` is not on `PATH`, so `git init` cannot run either (#15297).
+    GitMissing,
 }
 
 /// The closing `Next:` line. Split from the probes so every state's wording
 /// pins without arranging a repository.
 fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String {
+    // `git init` acts on the caller's directory, so a configured `--root`
+    // binds it too (#15297). `check` carries the already shell-quoted root.
+    let git_init = check.strip_prefix("ripr check --root ").map_or_else(
+        || "git init".to_string(),
+        |root| format!("git -C {root} init"),
+    );
     match next {
         InitNextStep::Ready => format!(
             "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
@@ -875,7 +905,10 @@ fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String 
             "Next: run `{doctor}` to verify your setup. `ripr check` cannot find a default branch to compare against here (no origin/HEAD, origin/main, origin/master, main or master): run `git remote set-head origin --auto` if `origin` has a default branch (offline: `git remote set-head origin <branch>`), or run `{check} --base <ref>`."
         ),
         InitNextStep::NoGit => format!(
-            "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
+            "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `{git_init}` or choose a root inside one first."
+        ),
+        InitNextStep::GitMissing => format!(
+            "Next: run `{doctor}` to verify your setup. Git was not found on PATH, so `ripr check` cannot run: install Git (then `{git_init}` if the root is not a repository), or analyze a saved patch with `{check} --diff PATH`."
         ),
     }
 }
@@ -1723,6 +1756,38 @@ mod tests {
         let no_git = init_next_step_line(InitNextStep::NoGit, "ripr doctor", "ripr check");
         assert!(no_git.contains("run `git init`"), "{no_git}");
         assert!(!no_git.contains("no commits yet"), "{no_git}");
+        // A configured root binds `git init` to it, not the caller's directory.
+        let bound = init_next_step_line(
+            InitNextStep::NoGit,
+            "ripr doctor --root 'my repo'",
+            "ripr check --root 'my repo'",
+        );
+        assert!(bound.contains("run `git -C 'my repo' init`"), "{bound}");
+
+        // #15297: with Git missing, `git init` cannot run either; the
+        // advice is to install Git, and a saved patch still works.
+        let missing = init_next_step_line(
+            InitNextStep::GitMissing,
+            "ripr doctor --root repo",
+            "ripr check --root repo",
+        );
+        assert!(missing.contains("install Git"), "{missing}");
+        // The saved-patch route is bound to the configured root.
+        assert!(
+            missing.contains("`ripr check --root repo --diff PATH`"),
+            "{missing}"
+        );
+        assert!(!missing.contains("run `git init` or"), "{missing}");
+        assert!(missing.contains("`git -C repo init`"), "{missing}");
+    }
+
+    #[test]
+    fn bare_root_refusal_names_a_work_tree_not_git_init() {
+        let refusal = bare_root_refusal(Path::new("repo.git"));
+        assert!(refusal.contains("bare Git repository"), "{refusal}");
+        assert!(refusal.contains("git worktree add"), "{refusal}");
+        assert!(refusal.contains("nothing was written"), "{refusal}");
+        assert!(!refusal.contains("run `git init`"), "{refusal}");
     }
 
     /// A repository whose default branch is not `main`/`master` (and has no
