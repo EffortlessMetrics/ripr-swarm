@@ -3641,8 +3641,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value`,
   `layout_whitespace_cannot_invert_the_chain_direction`,
   `layout_whitespace_does_not_hide_a_retained_operand`,
-  `a_char_literal_operator_is_not_an_arithmetic_split` and
-  `a_quote_char_literal_does_not_flip_the_literal_scan`;
+  `a_char_literal_operator_is_not_an_arithmetic_split`,
+  `a_quote_char_literal_does_not_flip_the_literal_scan` and
+  `whitespace_inside_a_raw_string_with_an_inner_quote_is_content` (#15021);
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
   `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,
