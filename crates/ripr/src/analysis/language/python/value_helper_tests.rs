@@ -187,3 +187,38 @@ fn given_a_value_helper_test_beside_a_same_module_caller_test_then_both_rows_sta
     assert!(finding.related_tests.iter().all(|row| row.oracle.is_none()));
     Ok(())
 }
+
+#[test]
+fn given_a_value_helper_test_beside_a_cross_module_caller_test_then_the_reading_stays_weak()
+-> Result<(), String> {
+    let mut owners = extract_owners(Path::new(CORE), CORE_PY);
+    owners.extend(extract_owners(
+        Path::new("src/pkg/api.py"),
+        "from pkg.core import total\n\n\ndef api(n):\n    return total(n)\n",
+    ));
+    let mut tests = extract_tests(
+        Path::new("tests/test_api.py"),
+        "from pkg.api import api\n\n\ndef test_api():\n    assert api(1) == 11\n",
+    );
+    tests.extend(extract_tests(
+        Path::new(TESTS),
+        "from pkg.core import total\n\n\ndef run(n):\n    return total(n)\n\n\ndef test_total():\n    assert run(1) == 11\n",
+    ));
+    let finding = classify_change(Path::new(CORE), 2, "    return n + 10", &owners, &tests)
+        .ok_or_else(|| "expected a finding for the changed owner line".to_string())?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.evidence
+    );
+    let mut names: Vec<&str> = finding
+        .related_tests
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["test_api", "test_total"], "{:?}", finding.evidence);
+    assert!(finding.related_tests.iter().all(|row| row.oracle.is_none()));
+    Ok(())
+}
