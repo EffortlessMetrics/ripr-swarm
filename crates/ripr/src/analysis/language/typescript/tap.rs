@@ -131,16 +131,33 @@ pub(super) fn callback_has_assertion_authority(
     let Some(receiver) = receiver else {
         return false;
     };
-    let (statements, asynchronous) = match callback {
-        Argument::ArrowFunctionExpression(arrow) => (&arrow.body.statements, arrow.r#async),
+    let (params, statements, asynchronous) = match callback {
+        Argument::ArrowFunctionExpression(arrow) => {
+            (&arrow.params, &arrow.body.statements, arrow.r#async)
+        }
         Argument::FunctionExpression(function) if !function.generator => {
             let Some(body) = &function.body else {
                 return false;
             };
-            (&body.statements, function.r#async)
+            (&function.params, &body.statements, function.r#async)
         }
         _ => return false,
     };
+    // Parameter initializers and destructuring patterns execute before the
+    // body and can replace the matcher, leak the context or call eval without
+    // the body visitor ever seeing it. Only plain identifier parameters
+    // without defaults or a rest element are inspectable; refuse the rest.
+    if params.rest.is_some()
+        || params.items.iter().any(|param| {
+            param.initializer.is_some()
+                || !matches!(
+                    param.pattern,
+                    oxc_ast::ast::BindingPattern::BindingIdentifier(_)
+                )
+        })
+    {
+        return false;
+    }
     let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
         return false;
     };

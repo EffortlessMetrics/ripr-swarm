@@ -2135,6 +2135,30 @@ fn tap_callback_assertion_profile_keeps_completion_and_receiver_fences() {
 }
 
 #[test]
+fn tap_callback_parameter_initializers_and_patterns_refuse_authority() {
+    for params in [
+        "t, ignored = (t.equal = () => true)",
+        "t, ignored = eval('t.equal = () => true')",
+        "t = { equal() {}, end() {} }",
+        "t, { a = (t.equal = () => true) }",
+        "t, ...rest",
+        "{ equal, end }",
+    ] {
+        let source = format!(
+            "const {{ test }} = require('tap'); test('x', ({params}) => {{ t.equal(value(), 1); t.end(); }});"
+        );
+        let tests = extract_tests(Path::new("test.cjs"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert!(tests[0].assertions.is_empty(), "{source}: {tests:?}");
+    }
+    // Positive control: plain identifier parameters keep strong credit.
+    let source = "const { test } = require('tap'); test('x', (t, extra) => { t.equal(value(), 1); t.end(); });";
+    let tests = extract_tests(Path::new("test.cjs"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
+
+#[test]
 fn tap_renamed_binding_and_local_shadow_have_distinct_authority() {
     let source = "const { test: check } = require('tap'); check('x', t => { t.equal(value(), 1); t.end(); }); { const check = () => {}; check('shadow', t => { t.equal(value(), 1); t.end(); }); }";
     let tests = extract_tests(Path::new("test.js"), source);
