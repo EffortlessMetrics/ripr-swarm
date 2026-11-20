@@ -7,4 +7,4 @@
   `rust_gated_doctest_unread` limitation; nothing is credited (#14935).
 - Rust doc examples now require a resolved free call to count as calling the
   changed owner. An unbound crate or function name in the example previously
-  gave the documented function direct reach credit.
+  gave the documented function direct reach credit (#14935).
