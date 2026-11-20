@@ -1994,8 +1994,9 @@ pub(super) fn cross_module_reach_limit(
         });
     }
     // Helpers are only gathered when no test relates to the owner directly,
-    // so equal lengths mean every related candidate is a helper candidate;
-    // the check keeps the limit off if candidates are ever appended later.
+    // so equal lengths mean every related candidate is a helper candidate. A
+    // same-file value-helper row (#15350) can sit beside them; it reaches the
+    // owner from its own file, so the unequal lengths keep the limit off.
     if helper_callers.is_empty()
         || related_candidates.len() != helper_callers.len()
         || !helper_callers.iter().all(|helper| helper.cross_module)
