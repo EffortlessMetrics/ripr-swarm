@@ -205,7 +205,14 @@ pub fn is_detectable_generated_typescript_path(path: &Path) -> bool {
 /// so the real functions would be dead code in a rust-only build. The
 /// exclusion authorities above stay real in every lane (#10730).
 #[cfg(any(feature = "lang-typescript", test))]
-pub const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &["tsconfig.json", "jsconfig.json"];
+pub const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &[
+    "tsconfig.json",
+    "jsconfig.json",
+    // A Deno project runs TypeScript natively and often has no `package.json`
+    // or `tsconfig.json` (#15623).
+    "deno.json",
+    "deno.jsonc",
+];
 #[cfg(any(feature = "lang-typescript", test))]
 pub const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 
