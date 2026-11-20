@@ -35,11 +35,15 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/config/ripr-toml.schema.json`](../../schemas/config/ripr-toml.schema.json) | Repository `ripr.toml` input, for editor validation and completion (not a ripr output). |
 | [`schemas/ripr/pr-evidence.schema.json`](../../schemas/ripr/pr-evidence.schema.json) | Canonical PR evidence summary packet. |
 | [`schemas/ripr/review-comments.schema.json`](../../schemas/ripr/review-comments.schema.json) | `ripr review-comments` guidance output. |
+| [`schemas/ripr/cache-export.schema.json`](../../schemas/ripr/cache-export.schema.json) | `ripr cache export` success report: the export directory and the entry, file and byte counts it copied. |
 | [`schemas/ripr/cache-status.schema.json`](../../schemas/ripr/cache-status.schema.json) | `ripr cache status --json` report: cache location, readability, and owned versus foreign file counts. |
 | [`schemas/ripr/capabilities.schema.json`](../../schemas/ripr/capabilities.schema.json) | `ripr capabilities --json` language capability registry: build availability per language and the support cells per language, framework and mode. |
 | [`schemas/ripr/cli-refusal.schema.json`](../../schemas/ripr/cli-refusal.schema.json) | Minimal `cli_refusal` document for argv usage errors and selector misses under an explicit JSON request (#11584). |
 | [`schemas/ripr/diff.schema.json`](../../schemas/ripr/diff.schema.json) | `ripr diff --json` `ripr_diff` report: changed files, changed seams, completion state, and the full-repository-context limitation. |
 | [`schemas/ripr/diff-refusal.schema.json`](../../schemas/ripr/diff-refusal.schema.json) | The refusal envelope `ripr diff --json` writes with exit code 2 when it cannot produce a report. |
+| [`schemas/ripr/rerun-refusal.schema.json`](../../schemas/ripr/rerun-refusal.schema.json) | The refusal envelope `ripr rerun --json` writes with exit code 2 when it cannot produce a targeted rerun report. |
+| [`schemas/ripr/agent-brief-refusal.schema.json`](../../schemas/ripr/agent-brief-refusal.schema.json) | The refusal envelope `ripr agent brief --json` writes with exit code 2 when it cannot produce a brief. |
+| [`schemas/ripr/agent-packet-refusal.schema.json`](../../schemas/ripr/agent-packet-refusal.schema.json) | The refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet: exit code 3 for an unknown seam, exit code 2 otherwise. |
 | [`schemas/ripr/gate-decision.schema.json`](../../schemas/ripr/gate-decision.schema.json) | `ripr gate evaluate` decision output and its structured repair route. |
 | [`schemas/ripr/check.schema.json`](../../schemas/ripr/check.schema.json) | `ripr check --json` primary findings and typed analysis-outcome output. |
 | [`schemas/ripr/check-timeout-refusal.schema.json`](../../schemas/ripr/check-timeout-refusal.schema.json) | `ripr check --json` `analysis_timeout` refusal with input context (refusal generation 0.3, RIPR-SPEC-0241 amendment #10796). |
@@ -121,3 +125,14 @@ workflow docs still own their detailed surfaces:
 - [`docs/PR_EVIDENCE_LEDGER_WORKFLOW.md`](../PR_EVIDENCE_LEDGER_WORKFLOW.md)
   for PR movement ledgers;
 - [`docs/CI.md`](../CI.md) for generated GitHub workflow projection.
+
+## Internal Kani observations
+
+The [Kani observation journal](kani-observation.md) documents the internal
+`cargo xtask kani` JSON/Markdown producer, run identity, failure publication,
+retention bounds, qualification commands and remaining custody limitations.
+Its [schema](kani-observation-v1.schema.json) and
+[synthetic example](kani-observation-v1.example.json) describe internal
+observations, not a portable product assurance contract or native proof receipt.
+The owning process tests compare actual output fields and JSON/Markdown identity;
+schema conformance alone cannot grant registered assurance.

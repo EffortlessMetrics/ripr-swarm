@@ -18,7 +18,7 @@ surfaces where a developer would feel ripr in the inner loop.
 | Muse | Guided setup and one bounded test repair | [Native package guide](../plugins/muse/ripr/README.md): two skills and an explicitly approved MCP server; requires an MCP-capable RIPR build |
 | pre-commit framework | Catches the gap before the push | Commit and push hooks ship in `.pre-commit-hooks.yaml`; local form below |
 | lefthook, husky, plain Git hooks | Teams that do not use pre-commit | Snippets below |
-| GitLab CI and other hosted CI | Not everyone is on GitHub | Snippet below; no generator |
+| GitLab CI and other hosted CI | Not everyone is on GitHub | `ripr init --ci gitlab` writes an advisory merge-request job ([guide](ADOPTING_IN_CI.md#gitlab-merge-requests)); hand-written snippet below |
 | cargo-nextest | The standard Rust test runner | Ordering guidance below; ripr never runs tests |
 | cargo-mutants | The runtime authority ripr is the cheap pre-filter for | Advisory import of existing results; external execution |
 | Dev containers and Docker | Reproducible onboarding | Snippet below |
@@ -161,6 +161,9 @@ pre-push:
       run: ripr check --committed --quiet
 ```
 
+For Python and TypeScript/JavaScript changes too, widen each `glob` to
+`"*.{rs,py,js,jsx,ts,tsx}"`.
+
 [husky](https://typicode.github.io/husky/) 9, `.husky/pre-commit` and
 `.husky/pre-push`, one line each:
 
@@ -194,8 +197,38 @@ run compared against `origin/main`. With a second, wholly unstaged file,
 lefthook's commit report included that file too. husky's commit run included
 an unstaged edit, as did the plain hook. All exited 0.
 
+## How long a hook takes
+
+On a small or medium workspace a commit-time check finishes in well under a
+second. On a very large one the default mode can take tens of seconds, because
+it indexes every package the diff touches. Measured on Linux (4 cores) with a
+release build, after a one-line edit to a comparison, running
+`ripr check --worktree --base HEAD --quiet --format agent`:
+
+| Workspace | Default mode (`draft`) | `--mode instant` |
+| --- | --- | --- |
+| One-file scratch crate | 0.07 s | 0.06 s |
+| ripr's own repository (about 3,700 `.rs` files) | 110 s first run, 36 s once `target/ripr/cache` is warm | 0.9 s |
+
+If commits feel slow, add `--mode instant` to the commit hook:
+
+```yaml
+      - id: ripr
+        args: [--mode, instant]
+```
+
+In lefthook, husky or a plain hook, append `--mode instant` to the commit
+command. `instant` indexes the changed files plus the parent module files that
+declare them, so it can miss tests that live elsewhere, such as integration
+tests under `tests/`. In a crate whose boundary test sits in `tests/`,
+the default mode reported that edit as `exposed` and `instant` reported
+`no_static_path`. Keep the push hook (`ripr check --committed`) on the default
+mode so the branch gets the fuller check before it leaves your machine.
+
 ## GitLab CI and other hosted CI
 
+`ripr init --ci gitlab` generates an advisory `.gitlab-ci.yml` job for merge
+requests. The hand-written alternative below also keeps a SARIF file.
 Install the prebuilt archive, verify its checksum, run, keep the report.
 Replace `0.11.0` with the release you pin. The archive name is the one the
 release workflow publishes; 0.11.0 assets must exist first (see

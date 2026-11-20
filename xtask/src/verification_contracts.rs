@@ -77,12 +77,55 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The refusal envelope `ripr rerun --json` writes when it cannot
+        // produce a targeted rerun report, keyed with that report's version
+        // through its own mirrored constant.
+        "rerun-refusal",
+        &[producer(
+            "crates/ripr/src/cli/rerun.rs",
+            "const TARGETED_RERUN_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // The refusal envelope `ripr agent brief --json` writes when it
+        // cannot produce a brief. The brief's own version constant keys it;
+        // the brief document itself is not a published schema.
+        "agent-brief-refusal",
+        &[producer(
+            "crates/ripr/src/output/agent_brief.rs",
+            "pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // The refusal envelope `ripr agent packet --json` writes when it
+        // cannot produce a seam packet. The packet's own version constant
+        // keys it; the packet document itself is not a published schema.
+        "agent-packet-refusal",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // `ripr cache status --json`. This versions the status report, not
         // the on-disk cache layers.
         "cache-status",
         &[producer(
             "crates/ripr/src/cli/commands/cache.rs",
             "const CACHE_STATUS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr cache export` success stdout. This versions the export report,
+        // not the copied cache layers.
+        "cache-export",
+        &[producer(
+            "crates/ripr/src/analysis/seam_cache/export.rs",
+            "pub(crate) const CACHE_EXPORT_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -519,6 +562,44 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["analysis_scope.scope", "run_limitations"],
     },
+    // The refusal envelopes of `ripr rerun --json`, `ripr agent brief --json`
+    // and `ripr agent packet --json`: captures of real refusals with the
+    // host path replaced by `.`, kept as edge fixtures.
+    VerificationContract {
+        schema_path: "schemas/ripr/rerun-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/rerun-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["ripr-targeted-rerun-v1", "run_limitations"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-brief-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-brief-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["--base", "run_limitations"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-packet-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["seam_id_unknown", "run_limitations"],
+    },
+    // `ripr cache export` success stdout. The fixture is a capture with the
+    // host's absolute export directory replaced by a portable path; the
+    // producer-byte authority is `cache_export_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/cache-export.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cache-export.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["classified_entries", "logical_file_bytes"],
+    },
     // `ripr cache status --json`. The fixture is hand-written with a portable
     // path: the real document carries the host's absolute cache directory.
     // The producer-byte authority is `cache_clear_safety.rs`.
@@ -533,6 +614,8 @@ const CONTRACTS: &[VerificationContract] = &[
             "via_symlink",
             "foreign_entry_count",
             "foreign_total_size_bytes",
+            "reclaimable_entry_count",
+            "reclaimable_size_bytes",
             "not_found",
             "unavailable",
         ],

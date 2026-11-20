@@ -646,6 +646,12 @@ fn read_error_triggers_missing_required_report() -> Result<(), String> {
         rendered.contains("guidance.json"),
         "expected missing path in report"
     );
+    // One warning names the supplied input and its cause; it is not also
+    // called a missing required artifact.
+    assert_eq!(
+        report.warnings,
+        vec!["PR guidance path guidance.json was supplied but no input text was loaded"]
+    );
     // An unreadable input is named; no producing command is guessed for it.
     assert_eq!(report.title, "Supply a readable PR guidance before routing");
     assert_eq!(report.commands.assistant_proof, None);

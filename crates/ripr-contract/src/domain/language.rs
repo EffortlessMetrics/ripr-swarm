@@ -16,7 +16,10 @@ use std::path::Path;
 /// like the unittest route's `python -m unittest`: inside a virtual
 /// environment, where pytest is normally installed, `python` names the
 /// environment's interpreter on Linux, macOS and Windows alike, while
-/// `python3` is absent from Windows virtual environments.
+/// `python3` is absent from Windows virtual environments. This is the
+/// fallback when no project virtual environment is found; on POSIX the Python
+/// producer substitutes a project `.venv/bin/python` or `venv/bin/python`
+/// (see [`PYTEST_VERIFY_INTERPRETERS`], #13801).
 pub const PYTEST_VERIFY_PROGRAM: &str = "python -m pytest";
 
 /// Whether a verify command runs pytest.
@@ -25,10 +28,26 @@ pub const PYTEST_VERIFY_PROGRAM: &str = "python -m pytest";
 /// `pytest ...` form earlier artifacts and recorded evals carry, so a
 /// consumer reading either keeps its pytest-specific behavior.
 pub fn is_pytest_verify_command(command: &str) -> bool {
-    command
-        .strip_prefix(PYTEST_VERIFY_PROGRAM)
-        .or_else(|| command.strip_prefix("pytest"))
-        .is_some_and(|rest| rest.starts_with(' '))
+    pytest_verify_interpreter(command).is_some()
+        || command
+            .strip_prefix("pytest")
+            .is_some_and(|rest| rest.starts_with(' '))
+}
+
+/// Interpreters a generated pytest verify command may name (#13801): PATH
+/// `python`, or the root-relative POSIX interpreter of a project virtualenv
+/// that the Python producer found statically at the selected root.
+pub const PYTEST_VERIFY_INTERPRETERS: [&str; 3] = ["python", ".venv/bin/python", "venv/bin/python"];
+
+/// The interpreter of a generated `<interpreter> -m pytest <selector>`
+/// command, when it is one of [`PYTEST_VERIFY_INTERPRETERS`].
+pub fn pytest_verify_interpreter(command: &str) -> Option<&'static str> {
+    PYTEST_VERIFY_INTERPRETERS.into_iter().find(|interpreter| {
+        command
+            .strip_prefix(interpreter)
+            .and_then(|rest| rest.strip_prefix(" -m pytest "))
+            .is_some_and(|selector| !selector.trim().is_empty())
+    })
 }
 
 /// The set of source languages an adapter can report.
@@ -514,6 +533,15 @@ pub enum StaticLimitKind {
     /// those tests, so reach is not claimed. The gap is withheld and the class
     /// is `static_unknown`; no runtime is chosen. See RIPR-SPEC-0240 / #13702.
     RustFutureNeverPolled,
+    /// A changed predicate boundary's compared operand does not bind to an
+    /// owner argument ripr can read from a test call: it is local, computed
+    /// (`cents % 100 > 49`), iterator-derived or closure-derived, so no test
+    /// input can be matched against the boundary value. The producer withholds
+    /// the repair packet; the class is unchanged (a `no_static_path` finding
+    /// stays `no_static_path`), and the sub-case is carried by the repair
+    /// route, not by this label. This names the unresolved boundary input,
+    /// not a coverage claim. See RIPR-SPEC-0068 (#13892, #14951).
+    ActivationBoundaryInputUnresolved,
 }
 
 impl StaticLimitKind {
@@ -593,6 +621,9 @@ impl StaticLimitKind {
             }
             StaticLimitKind::TypescriptWorkspaceReadLimited => "typescript_workspace_read_limited",
             StaticLimitKind::RustFutureNeverPolled => "rust_future_never_polled",
+            StaticLimitKind::ActivationBoundaryInputUnresolved => {
+                "activation_boundary_input_unresolved"
+            }
         }
     }
 
@@ -800,6 +831,12 @@ impl StaticLimitKind {
                  attribute, so the changed body does not run in them. ripr does not claim reach \
                  or a gap; this is a named limitation, not a coverage claim."
             }
+            StaticLimitKind::ActivationBoundaryInputUnresolved => {
+                "The changed boundary compares a local, computed, iterator-derived or \
+                 closure-derived operand that ripr cannot map to a test call's arguments, so it \
+                 cannot tell which side of the boundary a test input lands on. The repair is \
+                 withheld; this is a named limitation, not a coverage claim."
+            }
         }
     }
 }
@@ -853,6 +890,27 @@ mod tests {
     }
 
     #[test]
+    fn pytest_verify_interpreter_names_path_or_project_venv_python_only() {
+        let node = " -m pytest tests/test_pricing.py::test_boundary";
+        for interpreter in PYTEST_VERIFY_INTERPRETERS {
+            let command = format!("{interpreter}{node}");
+            assert_eq!(pytest_verify_interpreter(&command), Some(interpreter));
+            assert!(is_pytest_verify_command(&command));
+        }
+        for other in [
+            "python3 -m pytest tests",
+            "/usr/bin/python -m pytest tests",
+            "env/bin/python -m pytest tests",
+            ".venv/bin/python -m pytest ",
+            ".venv/bin/python -m unittest tests.test_x",
+            ".venv/bin/pythonx -m pytest tests",
+            "pytest tests",
+        ] {
+            assert_eq!(pytest_verify_interpreter(other), None, "{other}");
+        }
+    }
+
+    #[test]
     fn language_id_wire_strings_are_stable() {
         assert_eq!(LanguageId::Rust.as_str(), "rust");
         assert_eq!(LanguageId::TypeScript.as_str(), "typescript");
@@ -891,7 +949,7 @@ mod tests {
 
     #[test]
     fn language_feature_availability_matches_build() {
-        assert!(LanguageId::Rust.is_available());
+        assert_eq!(LanguageId::Rust.is_available(), cfg!(feature = "lang-rust"));
         assert_eq!(
             LanguageId::TypeScript.is_available(),
             cfg!(feature = "lang-typescript")
@@ -1175,6 +1233,10 @@ mod tests {
             StaticLimitKind::RustFutureNeverPolled.as_str(),
             "rust_future_never_polled"
         );
+        assert_eq!(
+            StaticLimitKind::ActivationBoundaryInputUnresolved.as_str(),
+            "activation_boundary_input_unresolved"
+        );
     }
 
     #[test]
@@ -1215,6 +1277,7 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
             StaticLimitKind::TypescriptWorkspaceReadLimited,
             StaticLimitKind::RustFutureNeverPolled,
+            StaticLimitKind::ActivationBoundaryInputUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
@@ -1273,5 +1336,92 @@ mod tests {
             );
         }
         assert_eq!(LanguageId::display_name_for_wire("cobol"), None);
+    }
+
+    #[test]
+    fn rust_markers_reach_one_child_directory_and_no_deeper() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-rust-markers-child-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tools/nested"))
+            .map_err(|err| format!("create dirs: {err}"))?;
+        std::fs::write(root.join("tools/nested/deep.rs"), "fn f() {}\n")
+            .map_err(|err| format!("write deep.rs: {err}"))?;
+        let grandchild_only = rust_markers_at(&root);
+        std::fs::write(root.join("tools/build.rs"), "fn main() {}\n")
+            .map_err(|err| format!("write build.rs: {err}"))?;
+        let child = rust_markers_at(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!grandchild_only, "a grandchild .rs is not a marker");
+        assert!(child, "a .rs in one child directory is a marker");
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_match_arm_rewrites_the_assertion_context_spelling() {
+        use super::super::ProbeFamily;
+        let kind = StaticLimitKind::RustAssertionContextUnresolved;
+        let match_arm = kind.describe_for_family(&ProbeFamily::MatchArm);
+        assert!(match_arm.contains("`assert!`"));
+        assert!(!match_arm.contains("`assert_eq!`"));
+        assert_eq!(
+            kind.describe_for_family(&ProbeFamily::Predicate),
+            kind.describe()
+        );
+        let other = StaticLimitKind::DynamicDispatch;
+        assert_eq!(
+            other.describe_for_family(&ProbeFamily::MatchArm),
+            other.describe()
+        );
+    }
+
+    #[test]
+    fn every_language_wire_token_round_trips_and_others_are_unknown() {
+        for language in LanguageId::ALL {
+            assert_eq!(LanguageId::from_wire(language.as_str()), Some(language));
+        }
+        for token in ["", "Rust", "ts", "js", "python3", "perl "] {
+            assert_eq!(LanguageId::from_wire(token), None, "{token:?}");
+        }
+    }
+
+    #[test]
+    fn only_perl_has_an_enable_prerequisite_and_it_names_the_fact_packet() {
+        assert_eq!(
+            LanguageId::Perl.enable_prerequisite(),
+            Some(format!(
+                "Perl also needs a fact packet: pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`, not yet published)"
+            ))
+        );
+        for language in LanguageId::ALL {
+            if language != LanguageId::Perl {
+                assert_eq!(language.enable_prerequisite(), None, "{language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_match_arm_reads_the_assertion_context_limit_as_assert() {
+        use crate::domain::ProbeFamily;
+        let unresolved = StaticLimitKind::RustAssertionContextUnresolved;
+        let base = unresolved.describe();
+        assert!(base.contains("`assert_eq!`"), "{base}");
+        let arm = unresolved.describe_for_family(&ProbeFamily::MatchArm);
+        assert_eq!(arm, base.replace("`assert_eq!`", "`assert!`"));
+        assert!(!arm.contains("`assert_eq!`"));
+        assert_eq!(
+            unresolved.describe_for_family(&ProbeFamily::Predicate),
+            base
+        );
+        let other = StaticLimitKind::DynamicDispatch;
+        assert_eq!(
+            other.describe_for_family(&ProbeFamily::MatchArm),
+            other.describe()
+        );
     }
 }

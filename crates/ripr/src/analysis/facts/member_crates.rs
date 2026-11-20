@@ -870,11 +870,42 @@ impl MemberCrates {
         crate_root: &Path,
     ) -> Option<std::collections::BTreeSet<String>> {
         let package = self.default_library_package(crate_root)?;
-        // Package selection above reads the worktree; the feature table is
+        self.package_default_features(&package)
+    }
+
+    /// The cargo features a plain `cargo test` enables for the package that
+    /// owns `file` (root-relative): every target of a package, its test
+    /// targets included, is built with the package's default feature
+    /// closure (#8780). Whether `file` is compiled at all is the caller's
+    /// question. `None` without manifest authority, for a file under no
+    /// readable package, or for a feature table this cannot read.
+    ///
+    /// The owning package is selected where the analyzed sources are read
+    /// (the committed-source overlay when one is active), like its feature
+    /// table: an uncommitted nested manifest must not hide the analyzed
+    /// commit's package, and an uncommitted deletion of one must not hand
+    /// the test an outer package's defaults.
+    pub(crate) fn default_test_features(
+        &self,
+        file: &Path,
+    ) -> Option<std::collections::BTreeSet<String>> {
+        let root = lexical(self.root.as_ref()?);
+        let file = lexical(&root.join(file));
+        let (package, _) = nearest_package_snapshot(&root, file.parent()?, true)?;
+        self.package_default_features(&package)
+    }
+
+    /// The closure of `package`'s `[features] default = [..]`; see
+    /// [`Self::default_library_features`] for the rule.
+    fn package_default_features(
+        &self,
+        package: &Package,
+    ) -> Option<std::collections::BTreeSet<String>> {
+        // Package selection reads the worktree; the feature table is
         // read where the analyzed sources are read, so a dirty `Cargo.toml`
         // cannot add a default feature the analyzed commit lacks (review of
         // #12368). With no committed overlay active this is the worktree file.
-        let manifest = self.analyzed_manifest(&package)?;
+        let manifest = self.analyzed_manifest(package)?;
         let Some(table) = manifest.get("features") else {
             return Some(std::collections::BTreeSet::new());
         };
@@ -1025,6 +1056,42 @@ impl MemberCrates {
     /// through the committed-source overlay; a missing, unreadable or
     /// virtual manifest, or absent manifest authority, answers no.
     pub(crate) fn is_declared_target_entry(&self, file: &Path) -> bool {
+        self.is_declared_entry_of(file, &["bin", "example", "test", "bench"])
+    }
+
+    /// [`Self::is_declared_target_entry`] for `[[test]]` targets only: the
+    /// file roots an integration-test crate Cargo builds for `cargo test`
+    /// although it sits outside `tests/` (#15332).
+    /// Only an entry `cargo test` builds and runs through libtest counts: an
+    /// entry spelling `test = false`, `harness = false` or any
+    /// `required-features` answers no, without consulting Cargo metadata.
+    /// `root_package_only` further requires the declaring manifest to be the
+    /// analysis root's own package: a member or nested package's entry has
+    /// no package prefix of its own in the path-shape keys, so it must never
+    /// read as the root package's integration test (#15332 review).
+    pub(crate) fn is_declared_test_target_entry(
+        &self,
+        file: &Path,
+        root_package_only: bool,
+    ) -> bool {
+        self.is_declared_entry_matching(file, &["test"], root_package_only, |target| {
+            target.get("test").and_then(toml::Value::as_bool) != Some(false)
+                && target.get("harness").and_then(toml::Value::as_bool) != Some(false)
+                && target.get("required-features").is_none()
+        })
+    }
+
+    fn is_declared_entry_of(&self, file: &Path, kinds: &[&str]) -> bool {
+        self.is_declared_entry_matching(file, kinds, false, |_| true)
+    }
+
+    fn is_declared_entry_matching(
+        &self,
+        file: &Path,
+        kinds: &[&str],
+        root_package_only: bool,
+        admits: impl Fn(&toml::Value) -> bool,
+    ) -> bool {
         let Some(root) = &self.root else {
             return false;
         };
@@ -1038,7 +1105,10 @@ impl MemberCrates {
         else {
             return false;
         };
-        ["bin", "example", "test", "bench"].iter().any(|kind| {
+        if root_package_only && package != root {
+            return false;
+        }
+        kinds.iter().any(|kind| {
             manifest
                 .get(*kind)
                 .and_then(toml::Value::as_array)
@@ -1048,6 +1118,7 @@ impl MemberCrates {
                             .get("path")
                             .and_then(toml::Value::as_str)
                             .is_some_and(|path| lexical(&package.join(path)) == file_abs)
+                            && admits(target)
                     })
                 })
         })

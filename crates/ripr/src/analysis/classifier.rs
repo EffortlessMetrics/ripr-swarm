@@ -29,7 +29,8 @@ pub fn classify_probe(
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
 ) -> Finding {
-    let candidate_index = RelatedTestCandidateIndex::new(index);
+    let candidate_index =
+        RelatedTestCandidateIndex::new(index).with_unchanged_module_declarations(index);
     let transitive_reach = TransitiveReachIndex::new(index);
     classify_probe_with_candidate_index_and_origins(
         probe,
@@ -313,6 +314,34 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.const_readers = const_readers;
     context.const_flow = const_flow;
     context.binding_return_flow = binding_return_flow;
+    // #14852: a returned constant replaced by a different constant, read
+    // from the owner's base-side body in the diff (never `probe.before`).
+    context.constant_tail_change = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::constant_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+            candidate_index.base_may_rebind_trusted_macros(),
+        )
+    });
+    // #15104: the legacy constant-tail edge reads only the new-side owner,
+    // so it asks the shared owner's gate decision whether a test may run a
+    // `cfg` twin instead, only for a probe that edge would read.
+    context.owner_may_be_swapped = owner_fn.is_some_and(|owner| {
+        super::classify::changes_constant_owner_tail(probe, owner)
+            && find_file_facts(index, &owner.file).is_none_or(|facts| {
+                crate::analysis::diff::owner_may_be_swapped(
+                    facts.source.as_ref(),
+                    &owner.file,
+                    candidate_index.module_declarations(),
+                    &owner.name,
+                    owner.start_line,
+                    owner.end_line,
+                )
+            })
+    });
     context.compile_time_guarded = owner_fn.is_none()
         && candidate_index
             .probe_index_file(probe, index)
@@ -327,6 +356,21 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
+    // #14815: a prefix `-`/`!` added to or removed from the owner's whole
+    // one-line tail, read from the diff so the base-side owner is established.
+    context.unary_tail = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        super::classify::unary_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.owner_pin_syntax(),
+            candidate_index.module_declarations(),
+        )
+    });
+    context.owner_sole_change = changed_file
+        .zip(owner_fn)
+        .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -881,6 +925,34 @@ fn restore_reveal_misses(
     for (test, reveal_miss) in related_tests.iter_mut().zip(reveal_misses) {
         test.miss = reveal_miss.filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
+}
+
+/// #14387: the old text of `line` when it is the one line of `owner` the diff
+/// replaces: exactly one added line inside the owner, at `line`, paired with
+/// exactly one removed line inside it.
+fn owner_sole_change(
+    changed: &crate::analysis::diff::ChangedFile,
+    owner: &crate::analysis::rust_index::FunctionSummary,
+    line: usize,
+) -> Option<String> {
+    let inside = |at: usize| (owner.start_line..=owner.end_line).contains(&at);
+    let mut added = changed
+        .added_lines
+        .iter()
+        .filter(|added| inside(added.new_side_line));
+    let mut removed = changed
+        .removed_lines
+        .iter()
+        .filter(|removed| inside(removed.new_side_line));
+    let (Some(added), None, Some(removed), None) =
+        (added.next(), added.next(), removed.next(), removed.next())
+    else {
+        return None;
+    };
+    let paired = changed.replaced_line_counterpart(line)?;
+    // The counterpart must be this very removed line, not one elsewhere in
+    // the file with the same text (#14786 review).
+    (added.new_side_line == line && std::ptr::eq(paired, removed)).then(|| removed.text.clone())
 }
 
 #[cfg(test)]
@@ -2336,7 +2408,7 @@ pub(super) mod tests {
         assert_eq!(
             finding.recommended_next_step.as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -3575,14 +3647,14 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
         assert_eq!(
             recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown, false, &[])
                 .as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -3660,7 +3732,7 @@ fn far_above_threshold_discounts() {
                 "{step}"
             );
             assert!(
-                step.contains("original and changed") && step.contains("may remain unknown"),
+                step.contains("old and new code") && step.contains("may remain unknown"),
                 "{step}"
             );
         } else {

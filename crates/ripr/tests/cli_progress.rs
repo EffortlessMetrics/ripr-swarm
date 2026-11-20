@@ -21,7 +21,10 @@ fn ripr() -> Command {
 /// The binary exactly as a script runs it: no progress switches set.
 fn ripr_default() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-    command.env_remove("RIPR_PROGRESS").env_remove("RIPR_QUIET");
+    command
+        .env_remove("RIPR_PROGRESS")
+        .env_remove("RIPR_QUIET")
+        .env_remove("RIPR_VERBOSE");
     command
 }
 
@@ -514,6 +517,146 @@ fn verbose_check_names_the_effort_mode_and_the_scope_separately() -> Result<(), 
         "the line is verbose-only: {}",
         stderr_text(&plain)
     );
+    Ok(())
+}
+
+/// `RIPR_VERBOSE` turns on the stderr diagnostics only: phase timings and
+/// per-finding verdict lines appear on stderr, no notice is printed, and the
+/// JSON stdout stays byte-identical to a plain run (the `-v` flag's stdout
+/// widenings never ride on an ambient variable).
+#[test]
+fn ripr_verbose_env_adds_stderr_diagnostics_and_keeps_json_stdout_identical() -> Result<(), String>
+{
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let args = [
+        "check",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        "--format",
+        "json",
+    ];
+    let traced = ripr()
+        .env("RIPR_VERBOSE", "1")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run traced check: {error}"))?;
+    let plain = run_check(&fixture, &["--format", "json"])?;
+    assert!(traced.status.success(), "{}", stderr_text(&traced));
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    assert_eq!(
+        traced.stdout, plain.stdout,
+        "RIPR_VERBOSE must not change machine stdout"
+    );
+    let err = stderr_text(&traced);
+    for needle in [
+        "ripr: mode = draft; scope = diff",
+        "ripr: timing [diff] analyzing took ",
+        "ripr: timing [diff] completed after ",
+        "ripr: verdict ",
+    ] {
+        assert!(err.contains(needle), "missing {needle:?} in:\n{err}");
+    }
+    assert!(
+        !err.contains("verbose mode enabled"),
+        "the variable prints no notice: {err}"
+    );
+    let plain_err = stderr_text(&plain);
+    assert!(
+        !plain_err.contains("ripr: timing") && !plain_err.contains("ripr: verdict"),
+        "diagnostics are off by default: {plain_err}"
+    );
+
+    let off = ripr()
+        .env("RIPR_VERBOSE", "0")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run check with RIPR_VERBOSE=0: {error}"))?;
+    assert!(
+        !stderr_text(&off).contains("ripr: verdict"),
+        "RIPR_VERBOSE=0 leaves diagnostics off: {}",
+        stderr_text(&off)
+    );
+    Ok(())
+}
+
+/// Suppressed findings stay in the check output with their ids recorded, so
+/// the verdict trace must filter them: with a policy that suppresses the
+/// fixture's finding, stderr names the withheld count and prints no verdict
+/// line; without the policy the same run prints the verdict line.
+#[test]
+fn ripr_verbose_env_verdict_lines_skip_suppressed_findings() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let policy = fixture.0.join("ripr-suppressions.toml");
+    std::fs::write(
+        &policy,
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"**\"\nreason = \"accepted for this test\"\nowner = \"repo-owner\"\n",
+    )
+    .map_err(|error| format!("write suppression policy: {error}"))?;
+    let policy_arg = policy.display().to_string();
+    let mut suppressed = ripr();
+    suppressed.env("RIPR_VERBOSE", "1");
+    let suppressed = run_check_as(
+        suppressed,
+        &fixture,
+        &[
+            "--format",
+            "json",
+            "--suppression-policy",
+            policy_arg.as_str(),
+        ],
+    )?;
+    let mut plain = ripr();
+    plain.env("RIPR_VERBOSE", "1");
+    let plain = run_check_as(plain, &fixture, &["--format", "json"])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    let plain_err = stderr_text(&plain);
+    assert!(
+        plain_err.contains("ripr: verdict "),
+        "control run traces its finding: {plain_err}"
+    );
+    let err = stderr_text(&suppressed);
+    assert!(
+        err.contains(
+            "withheld by suppressions or owner opt-outs; verdict lines cover the 0 reported"
+        ),
+        "the withheld count is named: {err}"
+    );
+    assert!(
+        !err.contains("ripr: verdict "),
+        "a suppressed finding gets no verdict line: {err}"
+    );
+    Ok(())
+}
+
+/// The machine-discovery route and version queries keep a silent stderr
+/// under an exported `RIPR_VERBOSE`.
+#[test]
+fn ripr_verbose_env_leaves_help_json_and_version_stderr_silent() -> Result<(), String> {
+    for args in [
+        ["help", "--json"].as_slice(),
+        ["--version"].as_slice(),
+        ["lsp", "--version"].as_slice(),
+    ] {
+        let output = ripr_default()
+            .env("RIPR_VERBOSE", "1")
+            .args(args)
+            .output()
+            .map_err(|error| format!("run ripr {args:?}: {error}"))?;
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            stderr_text(&output)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{args:?} must keep stderr silent: {}",
+            stderr_text(&output)
+        );
+    }
     Ok(())
 }
 
@@ -1848,7 +1991,7 @@ fn silent_catalog_argv(path: &str, root: &str) -> Option<Vec<String>> {
 
 /// #12103: every catalog command is classified, and each progress/`wrote`
 /// path stays silent under `RIPR_QUIET=1` without changing stdout, exit, or
-/// refusal prose.
+/// refusal prose. Each such leaf also accepts `--quiet` with the same effect.
 #[test]
 fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result<(), String> {
     let catalog = catalog_paths()?;
@@ -1939,6 +2082,46 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
         if strip_narration(&loud_err) != strip_narration(&quiet_err) {
             failures.push(format!(
                 "{path}: RIPR_QUIET changed refusal prose\nloud={loud_err}\nquiet={quiet_err}"
+            ));
+            continue;
+        }
+        // The flag twin: every command `RIPR_QUIET` silences also takes
+        // `--quiet` and means the same thing, so a harness that passes the
+        // flag instead of exporting the variable gets the same run. The bare
+        // `agent` family only prints its help.
+        if path == "agent" {
+            continue;
+        }
+        let mut flagged = args.clone();
+        flagged.push("--quiet".to_string());
+        let flag = run_catalog_command(&flagged, None)?;
+        let flag_err = stderr_text(&flag);
+        if flag.status.code() != quiet.status.code() {
+            failures.push(format!(
+                "{path}: --quiet exits {:?} but RIPR_QUIET=1 exits {:?}\nstderr={flag_err}",
+                flag.status.code(),
+                quiet.status.code()
+            ));
+            continue;
+        }
+        let leaked = narration_lines(&flag_err);
+        if !leaked.is_empty() {
+            failures.push(format!(
+                "{path}: --quiet still printed narration: {leaked:?}\nstderr={flag_err}"
+            ));
+            continue;
+        }
+        if path != "reports ci-packet" && flag.stdout != quiet.stdout {
+            failures.push(format!(
+                "{path}: --quiet and RIPR_QUIET=1 print different stdout\nflag={:?}\nenv={:?}",
+                String::from_utf8_lossy(&flag.stdout),
+                String::from_utf8_lossy(&quiet.stdout)
+            ));
+            continue;
+        }
+        if strip_narration(&flag_err) != strip_narration(&quiet_err) {
+            failures.push(format!(
+                "{path}: --quiet and RIPR_QUIET=1 print different stderr\nflag={flag_err}\nenv={quiet_err}"
             ));
         }
     }

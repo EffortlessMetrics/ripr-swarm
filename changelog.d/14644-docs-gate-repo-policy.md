@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Add `cargo policy docs-gate`, a product-free docs/spec gate in `tools/repo-policy` that runs the verified scoped subset (text encoding, static language, Markdown links, generated-clean, plus spec/changelog/disposition gates when those surfaces change) without building `ripr`, and fails closed to full proof on manifest/lockfile, capability-registry, or unrecognized paths (#14644).

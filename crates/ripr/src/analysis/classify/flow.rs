@@ -643,17 +643,31 @@ const ARM_RESULT_BUDGET: usize = 60;
 /// `Err(..)` (whose sink kind the probe text decides). Anything else is
 /// `None`, and the sink keeps the head.
 fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String> {
-    let line = owner
-        .body
-        .lines()
-        .nth(probe.location.line.checked_sub(owner.start_line)?)?;
+    same_line_arm_result_in(
+        &probe.expression,
+        probe.location.line,
+        &owner.body,
+        owner.start_line,
+    )
+}
+
+/// [`same_line_arm_result`] over any source text: `body` is text whose first
+/// line is `start_line`, and `head` is the arm head on `line` (#14683: the
+/// agent brief reads a seam's arm from its whole file with `start_line` 1).
+pub(in crate::analysis) fn same_line_arm_result_in(
+    head: &str,
+    line_number: usize,
+    body: &str,
+    start_line: usize,
+) -> Option<String> {
+    let line = body.lines().nth(line_number.checked_sub(start_line)?)?;
     let masked = crate::analysis::extract::mask_comments_and_strings(line);
     if masked.len() != line.len() || masked.matches("=>").count() != 1 {
         return None;
     }
     let arrow = masked.find("=>")?;
     let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let head = probe.expression.trim().strip_suffix("=>")?;
+    let head = head.trim().strip_suffix("=>")?;
     if compact(&line[..arrow]) != compact(head) {
         return None;
     }
@@ -681,10 +695,9 @@ fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String
     // the next line (`base` then `+ 1,`) and its first line alone would
     // name a wrong value.
     if !tail.trim_end().ends_with(',') {
-        let next = owner
-            .body
+        let next = body
             .lines()
-            .skip(probe.location.line.checked_sub(owner.start_line)? + 1)
+            .skip(line_number.checked_sub(start_line)? + 1)
             .map(str::trim)
             .find(|next| !next.is_empty() && !next.starts_with("//"));
         if !next.is_some_and(|next| next.starts_with('}')) {
@@ -808,7 +821,16 @@ fn predicate_as_owner_tail(
     let ast::Expr::BinExpr(binary) = &comparison else {
         return None;
     };
-    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+    // #15027: an `||` chain carries the predicate's value to the return only
+    // when the edit appends one equality arm on the same parameter
+    // (`n == 1` to `n == 1 || n == 2`). Any input equal to the new literal
+    // then flips the whole chain, so the chain's change is the returned
+    // change. Every other connective tail keeps no sink: a changed operand
+    // of `x > 1 || y` may be masked by `y`.
+    let op = binary.op_kind();
+    let appended_arm = matches!(op, Some(ast::BinaryOp::LogicOp(ast::LogicOp::Or)))
+        && super::infection::appended_equality_arm(probe, owner).is_some();
+    if !matches!(op, Some(ast::BinaryOp::CmpOp(_))) && !appended_arm {
         return None;
     }
     let actual = comparison.syntax().text().to_string();
@@ -2182,9 +2204,28 @@ fn is_obvious_return_expression(text: &str) -> bool {
         || trimmed.contains('(')
         || trimmed.contains('"')
         || trimmed.chars().any(|ch| ch.is_ascii_digit())
+        // #15029: a char literal is a value as plainly as a digit or a
+        // string literal is (`c == ',' || c == ';'`).
+        || contains_char_literal(trimmed)
         || [" + ", " - ", " * ", " / ", " % "]
             .iter()
             .any(|operator| trimmed.contains(operator))
+}
+
+/// Whether `text` holds a char literal: `'x'` or an escape such as `'\\n'`.
+/// A lifetime (`'a`) has no closing quote right after its first char, so it
+/// is not one.
+fn contains_char_literal(text: &str) -> bool {
+    text.match_indices('\'').any(|(at, _)| {
+        let mut chars = text[at + 1..].chars();
+        match chars.next() {
+            // An escape: the escaped char, then a closing quote within the
+            // longest escape (`\\u{10FFFF}`).
+            Some('\\') => chars.next().is_some() && chars.take(9).any(|ch| ch == '\''),
+            Some('\'') | None => false,
+            Some(_) => chars.next() == Some('\''),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -2251,6 +2292,29 @@ mod tests {
                 "{discarded}: {sinks:?}"
             );
         }
+    }
+
+    /// #15029: a char-literal chain on the owner's tail sinks to the return
+    /// like its integer twin; a lifetime is not a char literal.
+    #[test]
+    fn char_literal_tail_reaches_the_return_sink() {
+        for text in [
+            "c == ',' || c == ';'",
+            "c == '\\n'",
+            "c == '\\''",
+            "c == '\\u{1F600}'",
+        ] {
+            assert!(contains_char_literal(text), "{text}");
+            assert!(is_obvious_return_expression(text), "{text}");
+        }
+        for text in ["x as &'a str", "a || b", "'", "''", "'a"] {
+            assert!(!contains_char_literal(text), "{text}");
+        }
+        let owner = tail_owner("pub fn is_sep(c: char) -> bool {\n    c == ',' || c == ';'\n}");
+        let probe = probe(ProbeFamily::ReturnValue, "c == ',' || c == ';'", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert_eq!(sinks.len(), 1, "{sinks:?}");
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
     }
 
     #[test]
@@ -2365,6 +2429,81 @@ mod tests {
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
         probe.owner = Some(owner.id.clone());
         probe.location.file = std::path::PathBuf::from("src/other.rs");
+        assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+    }
+
+    /// #15027: a returned `||` tail reaches the return sink only when it is
+    /// an appended equality arm on the same parameter; other connective tails
+    /// keep no sink because an operand may be masked.
+    #[test]
+    fn appended_equality_arm_tail_reaches_return_sink_and_other_or_tails_do_not() {
+        for (body, before, after) in [
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(c: char) -> bool { c == ',' || c == ';' }",
+                "c == ','",
+                "c == ',' || c == ';'",
+            ),
+            (
+                "pub fn gate(flag: &str) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue && sink.line == 1),
+                "{body}: {sinks:?}"
+            );
+        }
+        for (body, before, after) in [
+            (
+                "pub fn gate(x: u32, y: bool) -> bool { x >= 1 || y }",
+                "x >= 1",
+                "x >= 1 || y",
+            ),
+            (
+                "pub fn gate(n: u32, m: u32) -> bool { n == 1 || m == 2 }",
+                "n == 1",
+                "n == 1 || m == 2",
+            ),
+            (
+                "pub fn gate(flag: Flag) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+            (
+                "pub fn gate(n: f64) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 || n == 3 }",
+                "n == 1",
+                "n == 1 || n == 2 || n == 3",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            assert_eq!(
+                predicate_as_owner_tail(&probe, Some(&owner)),
+                None,
+                "{body}"
+            );
+        }
+        // Without a recorded pre-edit text the chain is not an appended arm.
+        let owner = tail_owner("pub fn gate(n: u32) -> bool { n == 1 || n == 2 }");
+        let probe = probe(ProbeFamily::Predicate, "n == 1 || n == 2", 1);
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
     }
 

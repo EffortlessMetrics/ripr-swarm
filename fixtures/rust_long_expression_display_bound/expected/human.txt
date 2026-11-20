@@ -23,9 +23,8 @@ Start here:
     existing tests. Trace their inputs through the local or computed operand (including default and
     empty cases) to see which side of the changed condition they exercise, then name an input that
     would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
-    strengthen a test only if this inspection finds a gap. Compare the original and changed
-    implementations with a focused run using the project's configured test runner (`cargo test` for
-    ordinary Cargo tests). Static classification may remain unknown
+    tighten a test only if this finds a gap; compare old and new code with the project's configured
+    test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,7 +44,7 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_long_expression_display_bound/input --diff <cwd>/fixtures/rust_long_expression_display_bound/diff.patch --mode fast probe:src_lib.rs:predicate:cbead9b7
   ripr context --root <cwd>/fixtures/rust_long_expression_display_bound/input --diff <cwd>/fixtures/rust_long_expression_display_bound/diff.patch --mode fast --at probe:src_lib.rs:predicate:cbead9b7
-  no repair start offered: ripr found 5 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+  no repair start offered: this finding's changed line holds 2 spots (`d.decision == "blocking"`, `decisions.iter().filter(|d| d.decision == "blocking").count() == 1`) and ripr will not pick one for you; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_long_expression_display_bound/input --seam-id 034db2197ad92c55
 

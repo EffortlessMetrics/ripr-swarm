@@ -1,5 +1,7 @@
 //! Real workflow shell and immutable Git histories; no wheel build or consumers.
 #![cfg(target_os = "linux")]
+#[path = "python_wheel_workflow/boundaries.rs"]
+mod boundaries;
 #[path = "python_wheel_workflow/ordinary.rs"]
 mod ordinary;
 #[path = "../test_support.rs"]
@@ -142,6 +144,7 @@ impl Fixture {
             "Cargo.lock",
             "rust-toolchain.toml",
             "tools/repo-policy",
+            "xtask/src/policy/user_text.rs",
             ".github",
             ".agents",
             ".claude",
@@ -307,7 +310,7 @@ fn wheel_records_and_ambiguous_inputs_qualify() -> TestResult {
             wheel,
             &wheel.replace(WHEEL, ".github/workflows/renamed-wheel.yml"),
         ),
-        initial.replace(wheel, &wheel.replace("|194|", "|195|")),
+        initial.replace(wheel, &wheel.replace("|243|", "|244|")),
         initial.replace(wheel, &format!("{wheel} changed")),
         format!("{initial}\n{wheel}\n"),
         format!("{initial}\n{}\n", wheel.replace('/', "\\")),
@@ -402,7 +405,10 @@ fn main_drift_and_independent_matching_edits_use_the_merge_base() -> TestResult 
     let fixture = Fixture::new()?;
     let original = fixture.ledger()?;
     let fork = fixture.git(&["rev-parse", "HEAD"])?;
-    let main_ledger = original.replace("|194|", "|195|");
+    let main_ledger = original.replace(
+        ".github/workflows/python-wheel-qualification.yml|243|",
+        ".github/workflows/python-wheel-qualification.yml|244|",
+    );
     assert_ne!(main_ledger, original, "wheel budget fixture value changed");
     let main = fixture.change(LEDGER, &main_ledger)?;
     fixture.git(&["checkout", "-b", "candidate", &fork])?;

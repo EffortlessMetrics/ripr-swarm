@@ -83,5 +83,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_guarded_write_same_line_mask/input --diff <cwd>/fixtures/python_guarded_write_same_line_mask/diff.patch --mode fast probe:shapes_noter.py:python_preview:d1ecfa8a
   ripr context --root <cwd>/fixtures/python_guarded_write_same_line_mask/input --diff <cwd>/fixtures/python_guarded_write_same_line_mask/diff.patch --mode fast --at probe:shapes_noter.py:python_preview:d1ecfa8a
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -368,6 +368,34 @@ fn diff_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
     }
 }
 
+/// The refusal envelope is documented as keyed with the diff report's
+/// `schema_version`, but the two values come from separate constants and are
+/// pinned by separate schemas. This holds them equal on real output, so a
+/// bump of one alone cannot leave the documented relationship false.
+#[test]
+fn diff_refusal_is_keyed_with_the_report_schema_version() -> Result<(), String> {
+    let root = fixture_repo("version-pair")?;
+    let report = diff_json(&root, "HEAD~1");
+    let refusal = diff_refusal_json(&root, "no-such-ref-14067");
+    let _ = std::fs::remove_dir_all(&root);
+    let (report, refusal) = (report?, refusal?);
+    let observed = json!([
+        report["kind"],
+        refusal.get("kind"),
+        report["schema_version"].is_string(),
+        report["schema_version"] == refusal["schema_version"],
+    ]);
+    let expected = json!(["ripr_diff", null, true, true]);
+    if observed == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "report schema_version {} and refusal schema_version {} must agree: {observed}",
+            report["schema_version"], refusal["schema_version"]
+        ))
+    }
+}
+
 /// The negative experiment for the refusal arm.
 #[test]
 fn published_diff_refusal_schema_rejects_documents_it_forbids() -> Result<(), String> {

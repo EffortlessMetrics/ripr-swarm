@@ -726,6 +726,11 @@ fn no_worktree_merge_base_error(
     git_timeout: Option<Duration>,
 ) -> CoreError {
     let stderr = String::from_utf8_lossy(&merge_base.stderr);
+    if git_stderr_names_promisor_fetch_failure(&stderr) {
+        return CoreError::message(format!(
+            "the working-tree diff from `{base}` cannot start: {PROMISOR_FETCH_REPAIR}"
+        ));
+    }
     if git_stderr_names_object_damage(&stderr) {
         return worktree_damage_error(base, &merge_base.stderr);
     }
@@ -1046,6 +1051,31 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
 const OBJECT_DAMAGE_REPAIR: &str = "Git reports a damaged object store; run `git fsck`, restore \
     the missing objects (for example `git fetch`), then re-run.";
 
+/// The cause and repair when a partial clone (`--filter=blob:none` and
+/// similar) needs objects it never downloaded and Git could not fetch them
+/// from the promisor remote, usually because the machine is offline or the
+/// remote is unreachable. ripr makes no network requests itself; this is
+/// Git's own on-demand fetch. Checked before [`git_stderr_names_object_damage`]:
+/// Git's transport text ("Could not read from remote repository") otherwise
+/// reads as local object damage, whose `git fsck` repair cannot help.
+const PROMISOR_FETCH_REPAIR: &str = "This is a partial clone (for example \
+    `--filter=blob:none`): the file contents for this range were never downloaded, and Git \
+    could not fetch them from the clone's remote, which is unreachable (offline), refused access, \
+    or no longer has them (the analysis did not run; ripr itself makes no network requests). \
+    Re-run where Git can reach and authenticate to that remote, or analyze a full clone (in \
+    GitHub Actions, remove `filter:` from actions/checkout).";
+
+/// Whether Git's stderr reports a failed on-demand fetch from a partial
+/// clone's promisor remote. Git words it `could not fetch <oid> from promisor
+/// remote`; anchored to `fatal:`/`error:` lines like the damage markers.
+fn git_stderr_names_promisor_fetch_failure(stderr: &str) -> bool {
+    stderr
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .any(|line| line.contains("from promisor remote"))
+}
+
 /// The generic repair when Git failed for a reason that names repository
 /// state the user must correct, shared by the ref-probe failure text and the
 /// working-tree origin failure (#7076) so both name one repair.
@@ -1205,6 +1235,8 @@ fn unreadable_repository_message_with_ref_repair(
         // reading any repository file.
         "Git rejected configuration from the environment (`GIT_CONFIG_*`); correct or unset \
          it, then re-run."
+    } else if git_stderr_names_promisor_fetch_failure(&stderr) {
+        PROMISOR_FETCH_REPAIR
     } else if git_stderr_names_object_damage(&stderr) {
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
@@ -2902,11 +2934,20 @@ fn run_git_diff_bytes(
     // reading orderfile `''` — while /dev/null holds no patterns on any
     // platform git runs (verified on git-for-Windows 2.47.1, which maps it
     // to NUL; the hostile-config test pins the behavior everywhere it runs).
+    // `diff.renames=true` pins git's own default (#14193). With an ambient
+    // `diff.renames=false` a renamed and edited file arrives as a deletion
+    // plus a whole new file, so every line of it is read as added and probed
+    // and the rename disclosure is lost; with `copies` a new file can arrive
+    // as a copy section that carries only its difference from another file.
+    // It is a config pin, not a flag, so a caller extra such as
+    // `--no-renames` still decides for its own invocation.
     let mut args: Vec<&str> = vec![
         "-c",
         "core.quotePath=true",
         "-c",
         "diff.orderFile=/dev/null",
+        "-c",
+        "diff.renames=true",
         "diff",
     ];
     args.extend_from_slice(extra_args);
@@ -2973,6 +3014,8 @@ fn run_git_diff_bytes(
                  and the base ref, then re-run.",
                 crate::terminal_text::terminal_safe(range.to_string())
             )
+        } else if git_stderr_names_promisor_fetch_failure(raw_stderr) {
+            format!(" {PROMISOR_FETCH_REPAIR}")
         } else if git_stderr_names_object_damage(raw_stderr) {
             format!(" {OBJECT_DAMAGE_REPAIR}")
         } else {
@@ -6166,6 +6209,23 @@ mod tests {
         ] {
             assert!(!git_reason_means_no_repository(reason), "{reason}");
         }
+    }
+
+    #[test]
+    fn offline_partial_clone_fetch_is_not_object_damage() {
+        // Git 2.43's exact text for an unreachable promisor remote. Its
+        // transport line also matches the damage marker "Could not read", so
+        // the order of the two checks is load-bearing.
+        let offline = "fatal: unable to access 'https://example.invalid/r.git/': Could not resolve host: example.invalid\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\nfatal: could not fetch 2992d22562e72cc4b0de14ee1ba01e94999add3a from promisor remote\n";
+        assert!(git_stderr_names_promisor_fetch_failure(offline));
+        assert!(git_stderr_names_object_damage(offline));
+        // A local read failure in a full clone stays object damage.
+        let damaged = "error: Could not read 0123abc\nfatal: bad object HEAD\n";
+        assert!(!git_stderr_names_promisor_fetch_failure(damaged));
+        // The phrase outside a Git diagnostic line is not a fetch failure.
+        assert!(!git_stderr_names_promisor_fetch_failure(
+            "warning: branch from promisor remote cleanup\n"
+        ));
     }
 
     #[test]

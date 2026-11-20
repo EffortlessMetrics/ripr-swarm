@@ -21,6 +21,8 @@ pub(crate) use report::{
     render_with_config,
 };
 pub(crate) use terse::render_terse;
+#[cfg(test)]
+pub(crate) use terse::restore_related_test_rows;
 
 pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 

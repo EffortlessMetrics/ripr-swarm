@@ -24,3 +24,5 @@ workspace_member|xtask|unpublished Rust automation
 cargo_manifest|tools/repo-policy/Cargo.toml|unpublished workflow and agent policy boundary (#7158)
 workspace_member|tools/repo-policy|product-independent Rust repository policy (#7158)
 cargo_manifest|examples/**/Cargo.toml|standalone starter example projects users run ripr on; each declares its own empty [workspace], never a member (#14151)
+cargo_manifest|evals/Cargo.toml|Tier 2 excluded evals workspace manifest (#14643)
+cargo_manifest|evals/**/Cargo.toml|Tier 2 excluded evals workspace member manifests (#14643)

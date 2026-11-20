@@ -277,7 +277,8 @@ pub(super) fn line_findings_hover_response(
             "### `{}` {} `{}`",
             finding.class.as_str(),
             finding.probe.family.as_str(),
-            finding.probe.expression
+            // #14420: a head-only arm names its result (`Size::Medium => 450`).
+            crate::output::flow_sink_line::with_arm_result(finding, &finding.probe.expression)
         ));
         lines.push(format!("Finding: `{}`", finding.id));
         lines.extend([
@@ -767,6 +768,14 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             .and_then(Value::as_str)
         {
             witness.explain_command = command.to_string();
+        }
+        // #14420: a head-only arm names the result the flow model read on its
+        // line (`Size::Medium => 450`), the value a test must pin. Hover text
+        // only: the diagnostic's data and identity keep the head.
+        if let std::borrow::Cow::Owned(joined) =
+            crate::output::flow_sink_line::with_arm_result(finding, &witness.changed_expression)
+        {
+            witness.changed_expression = joined;
         }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
@@ -1405,7 +1414,16 @@ fn push_editor_commands(
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
     if let Some(repair) = repair_start_command_for(entry, &root) {
-        lines.push(format!("- repair (start here): `{repair}`"));
+        // #13636: the start refuses a dirty production premise; name the
+        // commit step first, as the inert "Start repair" action does.
+        if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {
+            lines.push(format!(
+                "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
+            ));
+            lines.push(format!("- then repair: `{repair}`"));
+        } else {
+            lines.push(format!("- repair (start here): `{repair}`"));
+        }
     }
     lines.push(format!(
         "- packet: `{}`",

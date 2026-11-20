@@ -1,5 +1,6 @@
 //! CLI adapter for `ripr reports` index, gap-ledger, and TypeScript routes (#4854).
 
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 use crate::cli::help;
@@ -13,6 +14,22 @@ use super::ci_summary;
 use super::kani_report;
 use super::{non_empty_path_arg, non_empty_string_arg};
 use super::{read_optional_text_for_report, write_text_file};
+
+/// No-source refusal for `reports gap-ledger` (#14076): names a concrete
+/// source and the command that produces it.
+const GAP_LEDGER_REQUIRES_SOURCE: &str = "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH; pass one source, for example `--check-output check.json` saved by `ripr check --format json > check.json`";
+
+/// The binary's `ripr reports` entry. `ci-packet` keeps the gate's decision
+/// exit (`3` when the gate blocked); every other route maps its error to `2`.
+pub(in crate::cli) fn reports_command(args: &[String]) -> Result<(), crate::cli::CommandError> {
+    let wants_help = args.iter().any(|arg| arg == "--help" || arg == "-h");
+    match args.split_first() {
+        Some((subcommand, rest)) if subcommand == "ci-packet" && !wants_help => {
+            ci_packet::ci_packet_command(rest)
+        }
+        _ => reports(args).map_err(crate::cli::CommandError::from),
+    }
+}
 
 pub(in crate::cli) fn reports(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -49,6 +66,7 @@ pub(in crate::cli) fn reports(args: &[String]) -> Result<(), String> {
 
 fn report_packet_index(args: &[String]) -> Result<(), String> {
     let options = parse_report_packet_index_options(args)?;
+    ensure_command_root(Path::new(&options.root), "reports index")?;
     let input = output::report_packet_index::ReportPacketIndexInput {
         root: options.root,
         generated_at: report_packet_index_generated_at()?,
@@ -416,10 +434,7 @@ fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedge
     let supplied_sources =
         records.is_some() as u8 + repo_exposure.is_some() as u8 + check_output.is_some() as u8;
     if supplied_sources == 0 {
-        return Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string(),
-        );
+        return Err(GAP_LEDGER_REQUIRES_SOURCE.to_string());
     }
     if supplied_sources > 1 {
         return Err(
@@ -434,10 +449,7 @@ fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedge
     } else if let Some(check_output) = check_output {
         GapDecisionLedgerSource::CheckOutput(check_output)
     } else {
-        return Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string(),
-        );
+        return Err(GAP_LEDGER_REQUIRES_SOURCE.to_string());
     };
 
     let source_flag = match &source {
@@ -506,7 +518,10 @@ fn parse_typescript_limitations_options(
     }
 
     let Some(check_output) = check_output else {
-        return Err("reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`".to_string());
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--check-output",
+            "reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`",
+        ));
     };
 
     super::refuse_output_naming_input(
@@ -574,7 +589,10 @@ fn parse_typescript_false_actionable_options(
     }
 
     let Some(corpus) = corpus else {
-        return Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)".to_string());
+        return Err(crate::cli::usage_refusal::missing_required(
+            "--corpus",
+            "reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)",
+        ));
     };
 
     super::refuse_output_naming_input(
@@ -611,18 +629,16 @@ mod tests {
     use super::super::tests::{
         args, repo_root, unique_command_test_dir, unique_repo_relative_test_dir,
     };
+    use super::GAP_LEDGER_REQUIRES_SOURCE;
     use super::reports;
     use std::path::Path;
 
     #[test]
     fn reports_gap_ledger_requires_records_input() {
         assert_eq!(
-        super::reports(&args(&["gap-ledger"])),
-        Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string()
-        )
-    );
+            super::reports(&args(&["gap-ledger"])),
+            Err(GAP_LEDGER_REQUIRES_SOURCE.to_string())
+        );
         assert_eq!(
             super::reports(&args(&["gap-ledger", "--records"])),
             Err("missing value for --records; pass a value right after it".to_string())
@@ -677,12 +693,9 @@ mod tests {
         // Negative control: the retired root-only example still returns
         // the required-source diagnostic.
         assert_eq!(
-        super::parse_gap_decision_ledger_options(&args(&["--root", "."])),
-        Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string()
-        )
-    );
+            super::parse_gap_decision_ledger_options(&args(&["--root", "."])),
+            Err(GAP_LEDGER_REQUIRES_SOURCE.to_string())
+        );
         Ok(())
     }
 
@@ -1284,6 +1297,7 @@ mod tests {
                 None,
                 None,
                 &[],
+                crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
                 &context,
             )?;
         let repo_exposure = dir.join("repo-exposure.json");

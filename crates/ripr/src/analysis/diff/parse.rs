@@ -146,12 +146,24 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
 pub(crate) struct ParsedDiff {
     pub(crate) changed_files: Vec<ChangedFile>,
     pub(crate) deleted_file_count: usize,
+    /// #15324: the old-side path of each deleted file section, in diff
+    /// order, so an empty result can name what the diff removed.
+    pub(crate) deleted_paths: Vec<PathBuf>,
+    /// #15324: the path of each non-deleted file section git rendered as
+    /// `Binary files ... differ`, read from the section's own header or
+    /// rename/copy metadata, so the caller can name unread source files.
+    pub(crate) binary_paths: Vec<PathBuf>,
     pub(crate) submodule_file_count: usize,
     /// Symlink (mode `120000`) file sections, counted once per section (#13659).
     pub(crate) symlink_file_count: usize,
     pub(crate) renamed_file_count: usize,
     pub(crate) pure_rename_file_count: usize,
     pub(crate) pure_rename_paths: Vec<PathBuf>,
+    /// #15121: destinations of `copy from`/`copy to` sections, pure or
+    /// edited. A copy leaves its source in place, so every line of the
+    /// destination is new code the patch does not carry; the diff intake
+    /// reads these files as added (`expand_copy_destinations`).
+    pub(crate) copy_destination_paths: Vec<PathBuf>,
     /// File sections (#4375) that opened with a registered textual `+++ `
     /// header, are not submodule gitlink or binary-sentinel sections, and
     /// closed without a validated hunk body line. Positive means the
@@ -336,8 +348,11 @@ mod parser_state {
         parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
         parse_rename_to_path, source_line_text,
     };
+    use crate::analysis::diff::side_prefix::MnemonicSides;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+
+    use crate::analysis::diff::path::{parse_copy_from_path, parse_copy_to_path};
 
     /// The single-character diff side a conflict region was opened on. A region
     /// opened on `+` is only closed by a `+` terminator, so an unrelated `-`
@@ -371,6 +386,24 @@ mod parser_state {
         rest.is_empty() || rest.starts_with(' ')
     }
 
+    /// A line that ends the patch text of one `git format-patch` message: the
+    /// mail signature separator (`-- `, RFC 3676) or the mbox separator git
+    /// writes before the next message (`From <object id> <date>`). Only
+    /// consulted once a hunk's declared counts are complete, where neither
+    /// could be a body line the header still owes.
+    fn is_mail_patch_boundary(raw: &str) -> bool {
+        if raw == "-- " {
+            return true;
+        }
+        raw.strip_prefix("From ")
+            .and_then(|rest| rest.split_once(' '))
+            .is_some_and(|(object_id, date)| {
+                matches!(object_id.len(), 40 | 64)
+                    && object_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && !date.is_empty()
+            })
+    }
+
     #[derive(Default)]
     pub(super) struct ParserState {
         /// Ordinary added/removed `ChangedLine` payloads recorded so far
@@ -390,9 +423,14 @@ mod parser_state {
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         section_git_header: Option<String>,
+        /// #15103: this section's sides use git's mnemonic prefixes; its
+        /// header and path markers are read respelled as `a/` and `b/`.
+        section_mnemonic_sides: Option<MnemonicSides>,
         deletion_section: bool,
         deletion_counted: bool,
         deleted_file_count: usize,
+        deleted_paths: Vec<PathBuf>,
+        binary_paths: Vec<PathBuf>,
         submodule_section: bool,
         submodule_counted: bool,
         submodule_new_file: bool,
@@ -417,6 +455,8 @@ mod parser_state {
         pure_rename_counted: bool,
         pure_rename_file_count: usize,
         pure_rename_paths: Vec<PathBuf>,
+        copy_from_path: Option<PathBuf>,
+        copy_destination_paths: Vec<PathBuf>,
         /// Set while an n-way (`@@@`) hunk body is being skipped. Cleared at the
         /// next file boundary or the next ordinary `@@` header.
         combined_quarantine: bool,
@@ -493,6 +533,14 @@ mod parser_state {
             self.deleted_file_count
         }
 
+        pub(super) fn deleted_paths(&self) -> &[PathBuf] {
+            &self.deleted_paths
+        }
+
+        pub(super) fn binary_paths(&self) -> &[PathBuf] {
+            &self.binary_paths
+        }
+
         pub(super) fn symlink_paths(&self) -> &std::collections::BTreeSet<PathBuf> {
             &self.symlink_paths
         }
@@ -511,6 +559,10 @@ mod parser_state {
 
         pub(super) fn pure_rename_paths(&self) -> Vec<PathBuf> {
             self.pure_rename_paths.clone()
+        }
+
+        pub(super) fn copy_destination_paths(&self) -> Vec<PathBuf> {
+            self.copy_destination_paths.clone()
         }
 
         /// Ordinary changed-line payloads recorded so far (#2398).
@@ -636,6 +688,16 @@ mod parser_state {
             if self.in_hunk || self.combined_quarantine {
                 return false;
             }
+            // #15103: rename or copy metadata means the header's two tokens
+            // are two real paths, not one path under mnemonic prefixes.
+            if ["similarity index ", "rename from ", "copy from "]
+                .iter()
+                .any(|prefix| raw.starts_with(prefix))
+                && let Some(sides) = self.section_mnemonic_sides.take()
+            {
+                self.section_old_path = parse_git_old_path(sides.raw_header());
+                self.section_git_header = Some(sides.raw_header().to_owned());
+            }
             if let Some(percent) = raw.strip_prefix("similarity index ") {
                 let value = percent
                     .trim()
@@ -678,7 +740,42 @@ mod parser_state {
                 });
                 return true;
             }
-            false
+            self.handle_copy_metadata(raw, files)
+        }
+
+        /// #15121: `copy from`/`copy to` under a `similarity index` line. The
+        /// destination is registered as a changed file even when the section
+        /// carries no hunk, and recorded as a copy destination only when the
+        /// header and both lines name the same pair of paths.
+        fn handle_copy_metadata(
+            &mut self,
+            raw: &str,
+            files: &mut BTreeMap<PathBuf, ChangedFile>,
+        ) -> bool {
+            if raw.starts_with("copy from ") {
+                self.copy_from_path = parse_copy_from_path(raw);
+                return true;
+            }
+            let Some(path) = parse_copy_to_path(raw) else {
+                return false;
+            };
+            let valid_copy_pair = self.rename_section
+                && self
+                    .section_git_header
+                    .as_deref()
+                    .zip(self.copy_from_path.as_deref())
+                    .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
+            if valid_copy_pair {
+                if !self.copy_destination_paths.contains(&path) {
+                    self.copy_destination_paths.push(path.clone());
+                }
+                self.current_path = Some(path.clone());
+                files.entry(path.clone()).or_insert_with(|| ChangedFile {
+                    path,
+                    ..ChangedFile::default()
+                });
+            }
+            true
         }
 
         pub(super) fn handle_submodule_mode(&mut self, raw: &str) -> bool {
@@ -776,8 +873,12 @@ mod parser_state {
         }
 
         fn record_deleted_file_if_ready(&mut self) {
-            if self.deletion_section && !self.deletion_counted && self.section_old_path.is_some() {
+            if self.deletion_section
+                && !self.deletion_counted
+                && let Some(path) = self.section_old_path.clone()
+            {
                 self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                self.deleted_paths.push(path);
                 self.deletion_counted = true;
             }
         }
@@ -786,6 +887,25 @@ mod parser_state {
             if raw.starts_with("Binary files ") && raw.ends_with(" and /dev/null differ") {
                 self.deletion_section = true;
                 self.record_deleted_file_if_ready();
+            }
+        }
+
+        /// #15324: record the section's path for a binary sentinel that is
+        /// not a deletion. A rename or copy destination comes from its
+        /// metadata (`current_path`); otherwise the header names the path,
+        /// already decoded and stripped of its side prefixes.
+        pub(super) fn record_binary_section(&mut self, raw: &str) {
+            if raw.ends_with(" and /dev/null differ") || self.deletion_section {
+                return;
+            }
+            let path = self
+                .current_path
+                .clone()
+                .or_else(|| self.section_old_path.clone());
+            if let Some(path) = path
+                && !self.binary_paths.contains(&path)
+            {
+                self.binary_paths.push(path);
             }
         }
 
@@ -860,6 +980,16 @@ mod parser_state {
                 return true;
             }
 
+            let respelled = self
+                .section_mnemonic_sides
+                .as_ref()
+                .map(|sides| sides.canonical_marker(raw).into_owned());
+            let raw = respelled.as_deref().unwrap_or(raw);
+            // The section's new-path marker ends its marker pair: a later
+            // plain section in the same stream names its own paths.
+            if raw.starts_with("+++ ") {
+                self.section_mnemonic_sides = None;
+            }
             if parse_old_path_marker(raw) {
                 self.saw_old_path_marker = true;
                 self.section_old_path = parse_old_path_for_confinement(raw);
@@ -967,8 +1097,13 @@ mod parser_state {
             self.current_path = None;
             self.in_hunk = false;
             self.saw_old_path_marker = false;
-            self.section_old_path = parse_git_old_path(raw);
-            self.section_git_header = raw.starts_with("diff --git ").then(|| raw.to_owned());
+            self.section_mnemonic_sides = MnemonicSides::of_header(raw);
+            let header = self
+                .section_mnemonic_sides
+                .as_ref()
+                .map_or(raw, MnemonicSides::canonical_header);
+            self.section_old_path = parse_git_old_path(header);
+            self.section_git_header = header.starts_with("diff --git ").then(|| header.to_owned());
             self.deletion_section = false;
             self.deletion_counted = false;
             self.submodule_section = false;
@@ -984,6 +1119,7 @@ mod parser_state {
             self.pure_rename_counted = false;
             self.combined_quarantine = false;
             self.conflict_region = None;
+            self.copy_from_path = None;
             true
         }
 
@@ -1086,6 +1222,23 @@ mod parser_state {
             if !self.in_hunk {
                 self.saw_old_path_marker = false;
                 return;
+            }
+            // A hunk whose declared counts are delivered owes no more body
+            // (#14072). An empty line here is padding after the patch, not a
+            // context line with its space stripped, and git's mail separators
+            // end the patch text: `git format-patch` closes each message with
+            // a `-- ` signature and opens the next with an mbox `From ` line.
+            // Charging those as body refused a valid diff as malformed and
+            // recorded mail text as changed source. Any other `+`/`-`/context
+            // line past the counts is still excess and stays malformed.
+            if self.remaining_hunk_lines == Some((0, 0)) {
+                if raw.is_empty() {
+                    return;
+                }
+                if is_mail_patch_boundary(raw) {
+                    self.close_hunk();
+                    return;
+                }
             }
             self.account_hunk_line(raw);
             if raw.starts_with("\\ No newline at end of file") {
@@ -1511,6 +1664,7 @@ deleted file mode 100644
         let parsed = parse_unified_diff_with_metadata(deleted);
         assert!(parsed.changed_files.is_empty());
         assert_eq!(parsed.deleted_file_count, 1);
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/old.rs")]);
 
         let empty = "diff --git a/src/empty.rs b/src/empty.rs\ndeleted file mode 100644\n";
         let parsed = parse_unified_diff_with_metadata(empty);
@@ -1521,12 +1675,56 @@ deleted file mode 100644
         let parsed = parse_unified_diff_with_metadata(binary);
         assert!(parsed.changed_files.is_empty());
         assert_eq!(parsed.deleted_file_count, 1);
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/blob.bin")]);
 
         let changed = parse_unified_diff_with_metadata(
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n",
         );
         assert_eq!(changed.deleted_file_count, 0);
+        assert!(changed.deleted_paths.is_empty());
         assert_eq!(changed.changed_files.len(), 1);
+    }
+
+    #[test]
+    fn binary_sections_record_their_own_decoded_path() {
+        // #15324: the path comes from the section's header or rename/copy
+        // metadata, through the same quoting and side-prefix rules as every
+        // other section; a deleted binary file is a deletion instead.
+        let diff = concat!(
+            "diff --git a/src/tax.rs b/src/tax.rs\nindex 1..2 100644\n",
+            "Binary files a/src/tax.rs and b/src/tax.rs differ\n",
+            "diff --git a/src/new.rs b/src/new.rs\nnew file mode 100644\nindex 0..2\n",
+            "Binary files /dev/null and b/src/new.rs differ\n",
+            "diff --git a/src/gone.rs b/src/gone.rs\ndeleted file mode 100644\nindex 2..0\n",
+            "Binary files a/src/gone.rs and /dev/null differ\n",
+            "diff --git \"a/src/caf\\303\\251.rs\" \"b/src/caf\\303\\251.rs\"\nindex 1..2 100644\n",
+            "Binary files \"a/src/caf\\303\\251.rs\" and \"b/src/caf\\303\\251.rs\" differ\n",
+            "diff --git a/src/old.rs b/src/two.rs\nsimilarity index 80%\n",
+            "rename from src/old.rs\nrename to src/two.rs\nindex 1..2 100644\n",
+            "Binary files a/src/old.rs and b/src/two.rs differ\n",
+            "diff --git i/src/m.rs w/src/m.rs\nindex 1..2 100644\n",
+            "Binary files i/src/m.rs and w/src/m.rs differ\n",
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n",
+            "@@ -1 +1 @@\n-old\n+new\n",
+        );
+        let parsed = parse_unified_diff_with_metadata(diff);
+        assert_eq!(
+            parsed.binary_paths,
+            [
+                "src/tax.rs",
+                "src/new.rs",
+                "src/café.rs",
+                "src/two.rs",
+                "src/m.rs"
+            ]
+            .map(PathBuf::from)
+            .to_vec()
+        );
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/gone.rs")]);
+        assert!(
+            !parsed.binary_paths.contains(&PathBuf::from("src/lib.rs")),
+            "a text section is not binary"
+        );
     }
 
     #[test]
@@ -1541,6 +1739,11 @@ deleted file mode 100644
         assert_eq!(
             parse_unified_diff_with_metadata(traversal).deleted_file_count,
             0
+        );
+        assert!(
+            parse_unified_diff_with_metadata(traversal)
+                .deleted_paths
+                .is_empty()
         );
     }
 

@@ -67,9 +67,7 @@ queued commit's tree must also equal the live head merged onto the group base
 (`git merge-tree --write-tree <base> <head>`, with the head fetched from the
 PR's own `refs/pull/<n>/head` and required to match the head read from the API).
 A different head, extra content, a merge conflict, a moved PR ref or missing
-history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
-squash commit of the queued PR sitting directly on the group's `base_sha`, or
-admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
+history refuses. Admission is per constituent PR in `merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit must form a linear single-parent squash chain, bind to its live PR head (`git merge-tree --write-tree <prev> <head>`) and `mergeQueueEntry`, pass candidate/cut/review/thread admission, and belong to the base repository before self-hosted runners are selected. The
 `merge-ready` label request below still works until the label request is
 retired in a follow-up, after the repository's merge queue is enabled.
 
@@ -107,15 +105,38 @@ script is covered by the bundle hash check). The admission job refuses at reques
 time; the Result job repeats the read before the eligibility recheck. A trusted
 (OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
 first line is the readiness marker with an allowed tail; a trusted reviewer's later
-negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
-free-prose retraction on later lines is best-effort (#12835). A later line changes the
+negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal.
+An explicit `VERDICT:` field is recognized only at line start after the same list,
+quote, heading, emphasis or code prefix. Its whole value must be `APPROVE`, with an
+optional 7-40 hexadecimal head SHA, to admit; `BLOCK`, `ABSTAIN`, empty and
+unrecognized values refuse. An `APPROVE`-led value that is not exactly that form
+(such as `APPROVE <sha> — no blocking findings`) is neutral: it neither attests nor
+refuses, so it cannot veto the marker, while one that also names a blocking word
+still refuses. A table row whose first cell is `Verdict` uses that same
+grammar: the trailing pipe is optional, a row whose value side carries more than one
+non-empty cell refuses as ambiguous, and a `Verdict` header row above a delimiter
+row states nothing. An APPROVE field is not a readiness carrier: the
+separate first-line readiness marker is still required. A PR description carrying `VERDICT:` or a first-cell
+`Verdict` table row has a competing field and attests nothing, whatever the value.
+Free-prose retraction on later lines is best-effort (#12835). A later line changes the
 disposition only when it states one: it opens, after list (bulleted, numbered or task),
 quote, heading, emphasis or code markers, with a `disposition:` field or a state token;
 it is a state token alone; it carries a `disposition` field label anywhere (such as
 `Final disposition:` or a `| Disposition | ... |` table row); or it is a table row with a
 cell that holds only a state token. Fenced text is still scanned for any state token. A
 PR description that carries any of these field shapes besides its `Source review:` line
-is ambiguous and attests nothing.
+is ambiguous and attests nothing. In a review body only, a field label of up to 61
+characters without backticks, followed by a colon (ASCII or fullwidth), `->`, `=>` or `=`
+and a non-positive state token, also states it (`VERDICT: REPAIR_REQUIRED`,
+`Status (round 2): CHANGES_REQUESTED`, `Status -> REPAIR_REQUIRED`, #14592). A positive
+value under a label (`- **Status:** REVIEW_READY`) is narration, not a refusal.
+A COMMENT whose first line is `VERDICT: APPROVE <full 40-character head SHA>` at
+column zero, with the SHA equal to that review's head and only a blocker-free tail
+after it, is the same attestation in verdict form, and `VERDICT: BLOCK` /
+`VERDICT: BLOCKED <sha>` on that first line is a negative statement; every other
+`VERDICT:` prose is neutral (#8157). This keeps an
+automated verdict review from superseding an earlier marker from the same login as
+neutral chatter.
 A state word inside prose, such as a backticked quotation of a marker or "the earlier
 review is superseded", is narration and is not read, because that scan ejected fully
 green queue entries after the whole run (#11566). The PR author can still
@@ -139,6 +160,19 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+Both carriers screen later lines the same way, so a residual written as plain
+narration (`Residual: the hosted lane on this head has not run.`) admits under
+either, while a retraction word used as narration (`the withdrawn attribution`)
+refuses under either. A `| Verdict | Notes |` column header row above a table
+delimiter states nothing under either carrier (the VERDICT carrier used to refuse
+it). A later refused body from the same login supersedes that
+login's earlier attesting review even at an unchanged head. A refusal therefore
+prints `source review refusal detail:` lines after the generic message, naming
+the review, the refusing line and the phrase it matched (or the short, overlong,
+uppercase or wrong VERDICT SHA), and saying when that review superseded an
+earlier attesting review at the same head. Review text, logins and timestamps
+are folded to one line with `::` split and `%` escaped before they are printed. The details only explain the decision; they never change it
+(#14929).
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
@@ -184,10 +218,9 @@ The source retirement under #4842 removes 41 automatic event roots from 28
 workflow files. Auxiliary PR subscriptions and duplicate auxiliary main-push
 builds are gone. Callable qualification leaves remain available to the existing
 #8082 owner; explicit manual proof and separately purposed security, corpus and
-maintenance schedules retain their declared scope. The existing main-health
-sentinel, including its exact timer and job payload, remains for the dependent
-incident-probe stage under #4842. That stage carries timer retirement, selected
-commit evidence, tracker changes and their tests together.
+maintenance schedules retain their declared scope. #14500 retires main product
+replay and makes the sentinel a native-proof observer; full H/G qualification
+remains. The hosted App, label cutover and #4842 timer retirement remain open.
 
 Native activation remains incomplete; these event edges are bootstrap debt:
 
@@ -195,9 +228,8 @@ Native activation remains incomplete; these event edges are bootstrap debt:
 | --- | --- | --- |
 | `routed-rust.yml` | `pull_request: labeled` requests the current protected qualification; other labels still start its nonrequest wrapper | Truthful H admission and enforced queue-only landing, with actual G proof |
 | `merge-ready-conflict-notice.yml` | `pull_request_target: labeled` reports the legacy request's conflict | Native queue request/refusal replaces the label interface |
-| `routed-rust.yml` | Main/master push retains the current required caller and cache-writer opportunity | Accepted selected-route cache continuity and coherent protected cutover |
 | `hard-cut-watch.yml` | Every main push allocates its release-cut observer, even when it only reports an inactive cut | Transitional debt: retire the automatic trigger after protected G/cut enforcement replaces it, or move its selected release purpose to an explicit operation |
-| `main-health-sentinel.yml` | Existing `9,39 * * * *` timer and manual probe, with unchanged jobs | Dependent incident-probe stage retires this exact timer and replaces the legacy verdict/tracker contract; no renamed or alternate-cadence timer is allowed |
+| `main-health-sentinel.yml` | Existing `9,39 * * * *` timer and manual observation; exact landed native qualification, no build/test | Further timer retirement remains with #4842; no replacement cadence or product warmer is introduced |
 
 Do not convert the protected PR result into a cheap success while a direct merge
 could consume it. #4834/#4838 own the reviewed source/settings delta, readback and
@@ -218,7 +250,7 @@ purposes establishes neither economical cadence nor lifecycle activation.
 
 | Retained scheduled root | Current purpose |
 | --- | --- |
-| `main-health-sentinel.yml` | Exact legacy main-health probe retained until the dependent incident-probe stage |
+| `main-health-sentinel.yml` | Existing timer now reads exact landed native qualification without product execution; further timer retirement remains separate |
 | `droid-security-scan.yml`, `security.yml` | Security/advisory drift observation |
 | `dx-scoreboard.yml` | DX scoreboard measurement |
 | `first-run-install.yml` | Published/default install-surface observation |
@@ -244,7 +276,7 @@ the separate `ci_scratch` policy rejects automatic triggers for this lane.
 | Review or ordinary Conversation comment | No development workflow |
 | Apply a label | The two retained legacy subscribers may start; this is an unresolved cutover edge, not the final zero-label design |
 | Native queue `checks_requested` | Existing composed-candidate qualification route |
-| Ordinary main push | Required-caller cache opportunity and every-main cut observer remain transitional debt |
+| Ordinary main push | No routed product replay; the separate every-main cut observer remains transitional debt |
 | Explicit selected proof | Its named callable/manual authority; no automatic admission or landing |
 
 The required check's source and live enforcement remain separate from this
@@ -350,7 +382,7 @@ lane:
 - hardware/GPU/receipt-only -> syntax/receipt validation only;
 - mixed or unknown -> Rust-small, not full CI.
 
-Full CI is opt-in by policy trigger (label/manual dispatch/main push/release/
+Full CI is opt-in by policy trigger (label/manual dispatch/release/
 schedule/merge queue), not the default PR path.
 
 ### 4) Hosted fallback boundary
@@ -393,7 +425,7 @@ remain in their producing workflows.
 No workflow downloads these four artifacts. Their retrieval window is not a
 retention rule for release or qualification evidence, failure reproducer inputs,
 or reports consumed by later runs. In particular, `dx-scoreboard` feeds the
-outcome page, `outcome-receipts` carries historical trend inputs, and Windows
+outcome page, `outcome-receipts` and `dx-trend-receipts` carry historical trend inputs, and Windows
 Advisory artifacts support retained native dependency receipts. Those artifacts
 keep their existing retention. A diagnostic needed for a longer-lived proof or
 incident must receive its own retention treatment before its copy expires;
@@ -607,7 +639,10 @@ and single-platform CI was the root cause enabling both.
   (#5044). A sidecar from another report cannot qualify changed bytes even when
   both reports have valid coverage rows. Uploading
   the path with `if-no-files-found: ignore` is not admission.
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 4`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. The shards set `CARGO_PROFILE_DEV_DEBUG=0` for every Cargo call, so their test binaries carry no debug info: generating and linking it for about 345 test executables pushed a 16 GB runner deep into swap and past its build limit (#11566). A failing test still reports its panic location; only backtrace frames lose file and line. Each shard writes its partition list (shard 1 also the workspace list) from the prepared binaries before it runs the tests; listing after the run cost shard 4 four to six minutes on every run (#12915). Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): two `cargo nextest run --workspace --profile ci --partition hash:N/2` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 2`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. A single matched download may extract directly into the destination rather than an artifact-named child directory; the verifier discovers that shard from its unique canonical attempt and partition receipt, then applies the same checks. Mixed flat and artifact-named layouts fail closed, and a present shard never substitutes for missing partitions. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, restored opportunistically from compatible existing default-branch entries. A miss rebuilds dependencies and all workspace tests; only an already-selected manual main qualification lets shard 1 save. No recurring cache warmer is retained. The shards set `CARGO_PROFILE_DEV_DEBUG=0` for every Cargo call, so their test binaries carry no debug info: generating and linking it for about 345 test executables pushed a 16 GB runner deep into swap and past its build limit (#11566). A failing test still reports its panic location; only backtrace frames lose file and line. Each shard writes its partition list (shard 1 also the workspace list) from the prepared binaries before it runs the tests; listing after the run cost shard 4 four to six minutes on every run (#12915). Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+  #8194 removes two private workspace builds, preserving complete coverage,
+  profile, retries and doctests. Measure total occupancy and the complete critical
+  path; fewer workers alone does not prove a shorter qualification.
   The existing shard artifact also retains `nextest/ci/build-metrics/` (#12767):
   five-second system-memory samples, sampled minimum available memory and maximum
   swap use, and separate elapsed time, native exit and largest-process RSS for
@@ -1026,8 +1061,11 @@ labeled (any other label):
 unlabeled:
   no Routed Rust Small run
 
-push to main / workflow_dispatch on main or master:
-  launch under their own authorities
+push to main or master:
+  no Routed Rust Small run; observe exact landed native qualification
+
+workflow_dispatch on main or master:
+  launch only for its explicitly selected qualification purpose
 
 workflow_dispatch on another branch or tag:
   diagnostic jobs may run; the required Result explicitly fails
@@ -1038,10 +1076,10 @@ on its retained schedule or explicit dispatch, not on a PR label.
 `cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
 group is qualified by `github.event_name` (and unique per run for a nonrequest
 label), so a repeated `merge-ready` request replaces the prior admission attempt
-while independent main and manual work and ordinary labels cannot replace each
+while independent queue and manual work and ordinary labels cannot replace each
 other. A PR with no request has no required check and blocks rather than
 inheriting stale proof. The result job name is an expression that yields
-`Ripr Rust Small Result` only for main/manual runs and a `merge-ready` request. A manual dispatch on a branch or
+`Ripr Rust Small Result` only for queue/manual runs and a `merge-ready` request. A manual dispatch on a branch or
 tag other than `refs/heads/main` or `refs/heads/master` is diagnostic-only:
 its implementation jobs may run, but Result fails explicitly even if they all
 pass (#5394). The summary names the `merge-ready` request. This preserves
@@ -1085,6 +1123,15 @@ repair, verify the executed reusable-workflow revision and preparation-step
 result; a checked-out workflow blob in the test context alone does not prove
 which controller executed.
 
+The independent user-text judge uses the validated merge-group event `base_sha`
+before all constituents, or the validated PR merge's first parent. Conflicting,
+missing or unavailable identities fail before worktree creation. The base's
+matcher judges the complete candidate tree: `cargo policy check-user-text --tree`
+when that base provides it, otherwise the legacy xtask interface and pinned
+compiler repairs. A modern matcher failure never falls back. The candidate's
+live-output check remains in `ci-policy`; executable history controls cover the
+base-selection rules in `rust_gate_workflow_contract/matcher_replay.rs`.
+
 When a session invokes a proof tool whose offline fixture requires locked
 preparation, prepare that fixture in the same effective Cargo home and preserve
 the native result. Retiring an Actions consumer does not make its historical
@@ -1109,16 +1156,27 @@ The copyable self-hosted proof runbook is in
 Use it to record CX43 primary proof, CPX42/CX53 fallback proof, or the bounded
 runner availability blocker without exposing runner tokens or secrets.
 
-The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e for the exact admitted head on `merge-ready` requests (#12122, #12252). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. The Result lists both in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it (GitHub exposes no per-event identifier shared by two workflows, which is why the earlier cross-workflow correlation was retired). `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Main, manual-dispatch and merge-group results do not require it. That is a remaining integration obligation for #8082, not completed queue acceptance. The `CI` workflow retains manual dispatch and its frozen `subject_sha` callable path; its ordinary PR and main-push triggers are retired.
+The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e on admitted `merge-ready` and native merge-group requests (#12122, #12252, #8082). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted PR diff or the complete merge-group event base-to-head diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. A queue request tests `github.sha`, the admitted composition G, so an earlier constituent's extension change is included even when the tip PR is Rust-only. Admission supplies the union of constituent labels. The Result lists both jobs in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it. `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). Missing merge-group identities never fall back to the tip PR's diff. The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Manual-dispatch results do not require it. This closes the extension prerequisite for #8082; it does not retire the legacy PR qualification trigger or complete the queue-only cutover. The `CI` workflow retains manual dispatch and its frozen `subject_sha` callable path; its ordinary PR and main-push triggers are retired.
 
-The routed lane runs the existing Rust/product command surface without release
-package or publish dry-run steps. Each required lane invokes the shared
-`cargo xtask precommit` gate table after the cargo build/test steps and keeps
-only the lane-only gates enumerated (`check-evidence-promotion-honesty`,
-`check-dependencies`, `check-process-policy`, `check-network-policy`,
-`goldens check`, `fixtures`); the docs-gate job runs the same precommit table
-for docs-only pull requests. It keeps advisory evidence artifacts
-non-blocking and uploads the normal `target/ripr` report packet when present.
+Hosted gates set `CARGO_PROFILE_DEV_DEBUG=0` before cache restore and Cargo,
+matching the test profile. Dev artifacts lose file/line debug metadata; assertions,
+overflow checks, features, commands and scratch execution remain unchanged.
+The environment-key change can make initial qualification cold.
+
+Separate gate/shard caches restore compatible default-branch entries. Only
+selected manual main qualification may save (shard 1 for tests); no PR/G write
+or automatic warmer is added. Missing, incompatible or evicted entries require
+cold recomputation. #7827 pins these domains and mandatory consumers; #7685 owns
+contamination controls. Hit rates, persistence and cold cost require native proof;
+restore errors remain infrastructure failures.
+
+Required Rust qualification runs `cargo xtask ci-policy` before product proof.
+It owns dependency, process and network checks once, retaining their original
+diagnostics and failure propagation; the summary reports the grouped outcome.
+Promotion honesty remains separate. `goldens check-with-fixtures` evaluates once
+and produces both required reports. The [product-gate plan](ci/PRODUCT_GATE_PLAN.md)
+defines these obligations. Docs-only qualification uses local `precommit`;
+advisory artifacts remain non-blocking and release packaging stays separate.
 
 The legacy `CI` workflow (`.github/workflows/ci.yml`) no longer runs the
 workspace test suite; the routed `Ripr Rust Small` lane owns ordinary
@@ -1147,7 +1205,10 @@ cargo xtask release-readiness --version "$release_version"
 ```
 
 `cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
-`ripr-contract`, packages `ripr` against a vendored source tree, then builds
+`ripr-contract`, packages `ripr` from the publish stage (a copy of the
+workspace whose `ripr` source has no inline `#[cfg(test)]` modules, #14198)
+against a vendored source tree, fails when a packaged crate is over the
+crates.io default upload limit, then builds
 the packaged crate the way `cargo install ripr` without `--locked` does: it
 unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
 catches a dependency that only compiles under the committed lock (#3787). A
@@ -1162,7 +1223,10 @@ cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail
 ```
 
 It runs on manual dispatch or a validated frozen-subject call selecting
-`run_rust_only`. It is not a required check. The Windows advisory lane runs the
+`run_rust_only`. It is not a required check. The required run lints the
+Rust-only library with warnings denied (#14263, see
+[Clippy policy](CLIPPY_POLICY.md#required-feature-coverage)); it does not
+run the Rust-only tests. The Windows advisory lane runs the
 same command on Windows. The retained PR diff selector is legacy handling,
 not an active subscription: callable selection comes from explicit admitted
 inputs, and manual dispatch runs the lane unconditionally.
@@ -1243,7 +1307,17 @@ target/sample build residue and shares the same badge endpoint boundary.
 `goldens check` validate the current fixture and
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
-for reviewers. `test-oracle-report` writes an advisory baseline for the strength
+for reviewers. Required Rust CI runs `cargo xtask goldens check-with-fixtures`.
+It evaluates each selected fixture once and writes both `fixtures.md` and the existing golden
+reports from that in-memory result. It retains preparation, assistant-loop corpus,
+expected-class ratchet, drift, line-ending and provenance checks. The fixture
+report retains its fixtures-only verdict; golden-only failures still fail the
+combined command. Early preparation or report-write failures return non-success
+and do not establish both reports. Both obligations remain in the gate plan;
+the workflow reports the actual `goldens_fixtures` step outcome and retains
+both reports instead of claiming two independently executed steps. The command
+does not reuse prior reports or itself establish a hosted timing improvement (#8198).
+`test-oracle-report` writes an advisory baseline for the strength
 of `ripr`'s own Rust test oracles. If no tests are selected, both report formats
 use status `not_run` and explain that oracle evidence was not established; this
 is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a
@@ -1330,7 +1404,7 @@ npm run package
 xvfb-run -a npm run test:e2e
 ```
 
-On a pull request, the extension e2e (`vscode-e2e.yml`) runs as a job of the `merge-ready` routed run when the PR changes `editors/vscode/**`, `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml` (the `vscode surface` job classifies the diff and selects on any classification failure), or when the PR carries the `vscode` or `full-ci` label. Other PRs skip it. The legacy `CI` workflow runs it on manual dispatch or a validated frozen-subject call selecting `run_vscode`; its main-push subscription is retired. A skipped e2e on a PR that touches the extension is therefore a defect, not a pass (#12122).
+The extension e2e (`vscode-e2e.yml`) runs as a job of an admitted `merge-ready` or merge-group routed run when the selected diff changes `editors/vscode/**`, `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, or admission supplies the `vscode` or `full-ci` label. PRs use the admitted PR diff; merge groups use the whole event base-to-group diff and test the queued composition. The `vscode surface` job selects on any classification failure. Other PRs and groups skip it. The legacy `CI` workflow runs it on manual dispatch or a validated frozen-subject call selecting `run_vscode`; its main-push subscription is retired. A skipped selected e2e fails the required routed result (#12122, #8082).
 
 The `test:e2e` step launches a headless VS Code instance via `@vscode/test-electron`, activates the extension in a fixture Rust workspace, and runs the smoke test suite. `xvfb-run` provides the virtual display required on Linux CI runners. The runner pins host user-data at `target/ripr/vscode-test-user-data` (logs under `logs/`). If the host fails — including before Mocha starts — it copies a size-capped, redacted log subset into `target/ripr/vscode-test-host-diagnostics/`. The vscode job uploads that directory only on `failure()`, with 5-day retention. Diagnostic collection cannot change the original test exit status and is not a root-cause fix.
 
@@ -1462,7 +1536,25 @@ minutes), so before calling a head dark the watchdog also lists
 `routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
-`actions: read` only. Drafts and fork heads are
+`actions: read` only. Mergeability is read once per head and never retried
+in-sweep (#14636): `mergeable_state` is not resolved for heads in the merge
+queue, which read `unknown` on repeated polls, and the former in-sweep retry
+spent 10 s of sleep per queued head, which alone exceeded the job cap once most
+eligible heads were queued. A non-queued head that reads `unknown` is the lazy
+first read after a base push and resolves on its own. A head whose
+mergeability is still unreadable is classified `mergeability unreadable` and
+deferred to the next sweep rather than given the re-apply remedy, which cannot
+create a merge ref for a conflicted head; it is counted in the sweep totals and
+re-read by the next sweep, so each sweep defers a head at most once per
+interval; a queued head can stay unresolved for as long as it remains queued,
+because GitHub does not resolve mergeability for a queued head. Conflict
+detection requires `mergeable_state == "dirty"`, so conflict notices are
+unavailable for those heads — and a queued head is the
+worst place to lose that signal, because it is about to merge. The sweep says so
+per head and in its totals rather than implying coverage; the queue's own
+`removed_from_merge_queue` event with `reason=merge_conflict` is the only signal
+that exists for a queued head, and watching it is a separate change. Drafts and
+fork heads are
 not qualified, as are PRs without the `merge-ready` label (no request was made); the sweep still clears their stale conflict status, as described below. The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. A labeled, non-draft, same-repo head that is not conflicting (mergeability computed), has no required check and no merge-ready run in flight was pushed after the label or lost its label event: the sweep comments once per head (marker `merge-ready-dark`) asking the author to remove and re-apply `merge-ready` (#10136). The comment names the cause (no run exists, or a run finished without the check, for example an admission refusal), and the sweep stays quiet for 10 minutes after any PR activity so a label just applied is not mistaken for a dropped one. A draft or unlabeled same-repo PR whose head still carries the actions bot's failing `merge-ready conflict` status gets a success status, so a removed label or a draft conversion does not leave a stale red status (#10136). Each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
@@ -1489,56 +1581,26 @@ fake `gh`.
 
 ### Main Health Sentinel
 
-This auxiliary-event retirement stage retains the existing sentinel workflow,
-tests and run-block budget unchanged. The following describes that legacy
-implementation; the dependent #4842 incident-probe stage retires its timer
-and replaces its evidence and tracker contract together. After auxiliary
-main-push retirement, the latest `ci.yml` result may remain historical. A
-green probe or automatic tracker closure is not full current qualification.
+The sentinel retains its `9,39 * * * *` timer, manual main-only request and
+serialized advisory tracker. It reads prior qualification without product
+execution or merge authority; full H/G qualification remains required.
 
-Main's push gate is frequently cancelled before completing (on busy days most
-`Routed Rust Small` main-push runs cancel before any job starts), and the
-Hard-cut watch stays green on broken main by design: it judges the cut packet,
-not the build. A broken main whose push run cancels can therefore sit with no
-completed red signal anywhere for hours (#10991; incidents #8990, #8989, with
-live repeats through 2026-10-29).
-`.github/workflows/main-health-sentinel.yml` runs twice an hour (`9,39 * * * *`)
-and probes main directly: `cargo check --locked -p ripr` plus one focused
-binary smoke selector (`cli_smoke
-version_is_exact_and_precedes_help_or_output_flags`), cached, on a
-GitHub-hosted runner, with its own serialization group and a 30-minute job
-timeout. It is a probe, not a second build lane and not a required check: it
-holds no branch-protection or ruleset authority and dispatches nothing.
-Probe logs are teed with native `PIPESTATUS` statuses. When the judge executes,
-missing or empty evidence, nonzero statuses and zero executed tests fail it.
-A probe-step timeout can leave missing status files that read as status 124;
-setup failure, cancellation or whole-job timeout can prevent the judge and
-tracker update from running. The summary table is the per-fire audit trail,
-and the `main-red` tracking issue
-(`main-red: scheduled main-health sentinel found a broken main`) is the
-durable findable record — opened once, appended per confirming probe, and
-closed by the first green probe with the recovering run link. The timer and
-probe budget do not establish a worst-case detection latency: queue delay and
-interrupted runs can extend it or prevent a verdict.
-The probe alone misses test-level breaks: a stale generated CLI reference
-(#13793), a Perl unit test (#13639) and the editor smoke (#13783) all sat on
-main under a green sentinel. Each fire still reads the latest completed,
-non-cancelled
-main-push run of `Routed Rust Small` (`routed-rust.yml`) and `CI` (`ci.yml`)
-with `actions: read`. It lists their failed jobs in the summary and the tracker
-and turns the verdict red when either failed. It rebuilds, re-runs and
-dispatches nothing, so it adds no runner time beyond a few API reads. An
-unreadable or absent gate run shows as `unknown` and claims neither red nor
-green, so it never closes an open tracker. Each read is bounded and the read
-step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
-per new piece of evidence (a fingerprint of the probe result and the failing
-gate run ids), not one per fire. Since `CI` no longer runs on main pushes,
-this legacy gate lookup cannot establish current full health. The
-`xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
-shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
-guard, `issues: write` as the only write authority, the exact probe selector,
-zero-executed-test refusal, the read-only push-gate judgement, and the
-tracker lifecycle.
+`tools/ci/main-qualification.py` requires exact G=M, one native routed run,
+current attempt, complete jobs, the authenticated Actions Result and local
+workflow sources at M. Result owns applicability; hosted two-shard and docs-only
+layouts are supported. Ambiguous, missing, stale, unreadable, incomplete or
+unsupported evidence is **unknown**, fails the monitor and cannot open or heal
+the tracker. G≠M is unknown. A failed unlanded G does not diagnose current main.
+
+Green records prior qualification, not fresh execution. Red records an
+authenticated qualification failure, possibly infrastructure rather than product.
+Failures are recorded once per M/run/attempt. Before completion and every issue
+mutation, including closure after a recovery comment, the observer rereads main,
+sole-run selection and attempt/source/job/check facts. Reads are bounded, not an
+atomic write fence or a detection-latency promise.
+
+`main_health_sentinel_contract.rs` runs the real reader and tracker against API
+fixtures, including late competing runs, attempt changes and main movement.
 
 ### Golden Re-bless
 
@@ -1621,7 +1683,7 @@ by routine runner-placement edits.
 The auxiliary placement below reflects current workflow declarations, not the
 older shared-runner migration plan. PR-label predicates left in some jobs do not
 create subscriptions. The protected routed caller above retains its narrow
-bootstrap label/main-push routes and merge-group support; this table does not
+bootstrap label route, explicit manual authority and merge-group support; this table does not
 establish queue activation, installed runner capacity, or execution within a
 20-minute qualification budget.
 
@@ -1743,8 +1805,13 @@ repository has chosen a baseline policy.
 
 A released `ripr` generates a workflow that installs the exact version
 that generated it, because its steps use that version's commands and flags;
-a later release does not change CI behavior until you regenerate. It
-downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
+a later release does not change CI behavior until you regenerate. Its
+`Install ripr` step runs the `ripr-check` composite Action from the same
+release tag (`EffortlessMetrics/ripr/.github/actions/ripr-check@v<version>`,
+`install-only: true`), so the installer lives in one place rather than being
+copied into every generated workflow (#5409). The tag is the same trust root as
+the release archive and checksum the installer downloads. That installer
+downloads the release's prebuilt binary from the `EffortlessMetrics/ripr`
 GitHub Release and checks it against the release's published SHA-256, which
 takes seconds instead of the minutes `cargo install` spends compiling. A
 checksum mismatch, a missing checksum, or a malformed archive fails the step
@@ -1754,9 +1821,10 @@ Windows ARM64 is reported as unsupported. On a runner with no prebuilt archive
 (for example Linux ARM32), or when the download fails, it falls back to
 `cargo install ripr --version <that version> --locked`, which needs a Rust
 toolchain on the runner; on a runner without `cargo` the step fails and says
-to install Rust or add a toolchain step. A development build newer than the
-latest release cannot pin itself — that version has no release archive and
-no crates.io package, so both install routes would fail. Instead it pins the
+to add a toolchain step. A `ripr` already on PATH is reused only when it
+reports exactly the pinned version. A development build newer than the
+latest release cannot pin itself — that version has no release tag, archive
+or crates.io package, so the install would fail. Instead it pins the
 latest release and warns on stderr, naming both versions and the refresh
 command (#5208); the installed release may be older than the generating
 steps, so review the workflow and regenerate with a released `ripr` when one
@@ -1803,7 +1871,7 @@ between two snapshots of one CI checkout, so the workflow writes no after
 snapshot, verify JSON, agent receipt, or targeted-test outcome. The
 `ripr agent repair --root . --seam-id <seam-id> --phase before` command the
 summary leads with starts the repair where the test edit happens; the
-`--attempt ... --phase after` command it prints runs verify and writes the
+`ripr continue ... --attempt` command it prints runs verify and writes the
 receipt. The summary labels the low-level verify and receipt commands as steps
 that run after the test edit.
 
@@ -1863,28 +1931,62 @@ coverage/grip, and receipt artifacts.
 ### Composite Action (`ripr-check`)
 
 For a one-step advisory check without the generated workflow, use the
-composite Action in `.github/actions/ripr-check`:
+composite Action in `.github/actions/ripr-check`. A complete workflow:
 
 ```yaml
-- uses: actions/checkout@v6
-  with:
-    fetch-depth: 0
-- uses: <owner>/<repo>/.github/actions/ripr-check@<ref>
+name: ripr
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  ripr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EffortlessMetrics/ripr/.github/actions/ripr-check@<release tag or commit SHA>
 ```
 
-Inputs: `version` (default: the latest published release; installs that
+Replace the placeholder with a release tag (for example `v0.11.0` once it is
+published) or a commit SHA of `EffortlessMetrics/ripr`, not a branch. The default `actions/checkout` (`fetch-depth: 1`) is enough. On a
+`pull_request` event the Action fetches the base branch and deepens a shallow
+checkout in doubling steps (50, 100, ... 1,600 commits, then the rest) until
+HEAD meets the base, so the diff has a merge base (#14800). A full checkout is
+not touched. On other events, or with an explicit `base`, use
+`fetch-depth: 0`. If history is still missing, `ripr check` names the repair.
+
+Inputs: `install-only` (`true` installs ripr onto PATH and skips `ripr check`
+and the cache step; the generated workflow uses this), `version` (default: the release pinned in the Action at that tag; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
-exists), `mode` (`draft`, `deep`, `ready`), `format` (`human`, `json`, `sarif`)
-and `base`. An empty `base` uses the pull request base branch on
-`pull_request` events (fetching just that branch when the checkout lacks it)
-and ripr's own default-branch detection elsewhere. A checkout without
-`fetch-depth: 0` can still lack history; `ripr check` then names the repair.
-The Action prints the report to the job log. For the summary comment, inline
-comments, SARIF upload and artifacts, use the generated workflow above.
+exists), `mode` (`draft`, `deep`, `ready`), `format` (any `ripr check` format,
+for example `human`, `json`, `sarif` or `github` for file annotations), `base`
+and `cache`. An empty `base` uses the pull request base branch on
+`pull_request` events and ripr's own default-branch detection elsewhere.
+`cache` (default `true`) restores and saves ripr's analysis cache under the
+runner's temp directory with `actions/cache` pinned to a commit SHA, so later
+pushes re-analyze only changed files. ripr checks each entry against file
+contents, configuration and its own version, so a stale entry is a miss.
 
-The Action's `Install ripr` step follows the same contract as the generated
-workflow's (#6245): Windows x64 installs the release `zip` (extracted with the
+Output: the report goes to the job log and to a file. A text report also goes
+to the job summary (cut at 60 KB). Step outputs are `exit-code` and `report`
+(the file's path, for example to pass a SARIF file to an upload step). Findings
+are advisory: a completed check exits 0 whatever it found. A check that could
+not complete (exit 2, or 3 when ripr declines) fails the step. It also emits one
+error annotation and a job-summary line that give the exit meaning and ripr's
+own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report and stderr
+text cannot issue workflow commands, except the report of `format: github`,
+whose annotations are the point. To block on new gaps,
+use the generated workflow's gate modes ([adopting in CI](ADOPTING_IN_CI.md)).
+
+Fork and Dependabot pull requests: the Action needs only `contents: read`. It
+writes nothing to the pull request, so it behaves the same on a fork's
+read-only token. GitHub scopes a cache that a pull request saves to that pull
+request, and the cache lives outside the checkout. Run it on `pull_request`,
+never `pull_request_target`. For the summary comment, inline comments, SARIF
+upload and artifacts, use the generated workflow above.
+
+The Action's `Install ripr` step is the generated workflow's installer
+(#5409, #6245): Windows x64 installs the release `zip` (extracted with the
 `tar.exe` under `%SystemRoot%\System32`, flat-root listing only), Windows ARM64
 stops with an explicit unsupported error, a missing or mismatched checksum, bad
 archive or wrong payload exits 1 with no `cargo install` fallback, and the
@@ -1923,6 +2025,12 @@ ripr review-comments \
   --check-output target/ripr/pr/check.json \
   --out target/ripr/review/comments.json
 ```
+
+To honor a repository suppression policy in the gate, add
+`--suppression-policy .ripr/suppressions.toml` here and to the `ripr check`
+step. The default `.ripr/suppressions.toml` is never applied implicitly;
+matching seams move to the `suppressed` array and `ripr gate evaluate` reads
+them as non-blocking. See [coming from cargo-mutants](FROM_CARGO_MUTANTS.md#suppressing-in-ci).
 
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
 not post to GitHub by itself. Teams replacing a cargo-mutants exit-`2` CI gate
@@ -1986,7 +2094,9 @@ ambient Git configuration cannot change the bytes RIPR analyzes, #4005), the
 PR guidance, the comment plan, SARIF and badge renders, the gate, the ledgers,
 start-here, the report index, and the changed-line annotations, each as a log
 group named after the step it replaced. `ripr help reports` lists its
-failure rules, and `--step NAME` reruns one step locally.
+failure rules, and `--step NAME` reruns one step locally. The packet exits
+`3` when the gate blocked and nothing else required failed, and `2` when a
+required step could not complete ([EXIT_CODES.md](EXIT_CODES.md#ci-integration)).
 
 When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
 loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
@@ -2013,7 +2123,7 @@ A PR whose diff is larger than the per-language changed-line limits
 as a bounded partition instead of refused (#13641). `ripr check` analyzes a
 deterministic subset of whole files within the partial budgets
 (`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`, the line
-budget clamped to the smallest enabled limit) and reports
+budget clamped to the smallest limit among the languages the diff contains) and reports
 `analysis_scope.run_status = limited_partial_scope` with the selected files,
 lower-bound uninspected counts, the stop reason, and
 `gate_eligibility = ineligible`. A file that alone exceeds its language's
@@ -2054,6 +2164,8 @@ partial result's widen instruction names the exact values. See
 
 ```yaml
       - name: Run RIPR
+        env:
+          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
         run: ripr reports ci-packet --root .
 ```
 
@@ -2173,7 +2285,8 @@ Steps:
   that write there still work. ripr's analysis cache lives outside the
   checkout, so the cleanup never discards it.
 - **Install ripr** pins the version whose commands the steps use; an unpinned
-  install takes the newest release, whose CLI may not match. It downloads that
+  install takes the newest release, whose CLI may not match. It runs the
+  `ripr-check` Action of that release tag with `install-only: true`, which downloads that
   release's prebuilt binary (a zip on Windows x64) and checks it against the
   published SHA-256 before extracting it, falls back to `cargo install` only
   where there is no prebuilt binary, and fails with the fix when the runner has
@@ -2584,7 +2697,15 @@ Recommended acknowledgement workflow:
 2. Move to `RIPR_GATE_MODE=acknowledgeable` when the team wants policy-eligible
    gaps to require either a focused test or an explicit PR label.
 3. When the gate reports a policy-eligible gap, review the job summary,
-   `target/ripr/reports/gate-decision.md`, and the PR guidance packet.
+   `target/ripr/reports/gate-decision.md`, and the PR guidance packet. A
+   blocking decision is stated twice where the author looks first: the failing
+   `Run RIPR` step's error annotation, and a `### RIPR gate: blocked` block at
+   the top of the job summary. Both give the mode, the number of blocking
+   gaps and the first blocking reason. A `config_error` decision and an
+   unknown `RIPR_GATE_MODE` value are stated the same way
+   (`### RIPR gate: configuration error`, `### RIPR gate: unknown
+   RIPR_GATE_MODE`), with the gate's own message. A decision that does not
+   fail adds no block.
 4. If the finding is acceptable for this PR, add `ripr-waive`.
 5. The generated workflow triggers on `labeled` and `unlabeled` pull-request
    events, so adding the label reruns it. The next gate decision should say
@@ -2982,7 +3103,7 @@ Those remain separate qualification and rollout obligations.
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
-public-proof metrics, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
+public-proof metrics, the canonical DX scoreboard report `metrics/dx-scoreboard/baseline.json`, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
 declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,
@@ -3068,6 +3189,15 @@ unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
 one docs-only way to break a `proof_refs` entry).
+
+Markdown contract tests (#14986, #14998): the docs-gate always runs the `xtask`
+test binaries that pin agent/public-guide markdown. When a docs-only PR changes
+`README.md`, a top-level `docs/*.md`, `docs/interop/*.md`, `docs/status/*.md`,
+`docs/how-to/first-rust-test.md` or `docs/ci/coverage.md`, it also runs the
+`ripr` binaries `cli_reference_doc`, `troubleshooting_guide`, `user_journeys`,
+`documented_commands` and `generated_review_workflow` (which pins this file's
+`Run RIPR` step) and the `repo-policy` binary `future_clippy`; other docs-only
+PRs skip those test builds.
 
 ## Changelog Fold
 

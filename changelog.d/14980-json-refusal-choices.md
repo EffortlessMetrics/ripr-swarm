@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- JSON refusals: `ripr repair --json` with several eligible seams and `ripr continue --json` with several current attempts now list their choices in the `cli_refusal` document as `error.choices` (`total` plus items with a `label`, the runnable `command`, and a `powershell_command` when PowerShell needs a different line), so a script can pick one without parsing stderr (#14980).

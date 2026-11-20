@@ -12,7 +12,8 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
+    disclose_attached_terminal_stdin_read, expect_path_value, expect_value, parse_format,
+    parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -517,7 +518,16 @@ fn help_request(args: &[String]) -> Option<bool> {
 }
 
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
-    parse_git_timeout_from("--git-timeout", value)
+    parse_seconds_flag("--git-timeout", value)
+}
+
+/// An argv seconds flag (`--git-timeout`, `--timeout`). Only the argv path
+/// notes the typed refusal (#11979): the environment-variable spellings go
+/// through the check refusal envelope instead.
+fn parse_seconds_flag(flag: &str, value: &str) -> Result<Option<std::time::Duration>, String> {
+    parse_git_timeout_from(flag, value).inspect_err(|message| {
+        crate::cli::usage_refusal::note_invalid_value(value, message);
+    })
 }
 
 /// Parse a git timeout in seconds from `source` (the flag or the env var),
@@ -855,7 +865,8 @@ fn stash_timeout_refusal(site: &TimeoutRefusalSite<'_>) {
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
-    check_inner(args, None)
+    // #14700: one run, so each index-level analysis-limit family prints once.
+    crate::analysis::IndexDisclosureRun::default().scope(|| check_inner(args, None))
 }
 
 #[cfg(unix)]
@@ -863,7 +874,7 @@ pub(in crate::cli) fn check_with_interrupt_flags(
     args: &[String],
     flags: crate::cli::interrupt::InterruptFlags,
 ) -> Result<(), String> {
-    check_inner(args, Some(flags))
+    crate::analysis::IndexDisclosureRun::default().scope(|| check_inner(args, Some(flags)))
 }
 
 fn check_inner(
@@ -943,7 +954,7 @@ fn check_inner(
             }
             "--diff" => {
                 i += 1;
-                input.diff_file = Some(PathBuf::from(expect_value(args, i, "--diff")?));
+                input.diff_file = Some(PathBuf::from(expect_path_value(args, i, "--diff")?));
                 scope_explicitly_provided = true;
             }
             // #3237/#3278: immutable Git candidate input. The subject
@@ -1027,7 +1038,7 @@ fn check_inner(
             }
             "--suppression-policy" => {
                 i += 1;
-                input.suppression_policy = Some(PathBuf::from(expect_value(
+                input.suppression_policy = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--suppression-policy",
@@ -1042,7 +1053,11 @@ fn check_inner(
             }
             "--write-artifact" => {
                 i += 1;
-                write_artifact = Some(PathBuf::from(expect_value(args, i, "--write-artifact")?));
+                write_artifact = Some(PathBuf::from(expect_path_value(
+                    args,
+                    i,
+                    "--write-artifact",
+                )?));
             }
             "--git-timeout" => {
                 i += 1;
@@ -1053,7 +1068,7 @@ fn check_inner(
             "--timeout" => {
                 i += 1;
                 let value = expect_value(args, i, "--timeout")?;
-                check_timeout = parse_check_timeout_from("--timeout", value)?;
+                check_timeout = parse_seconds_flag("--timeout", value)?;
                 check_timeout_explicitly_provided = true;
             }
             "--quiet" => {
@@ -1804,7 +1819,11 @@ fn check_inner(
         app::repo_inventory_with_progress(
             progress_sink,
             || analysis::inventory_classified_seams_report_at_with_config(&input.root, &config),
-            |report| {
+            |mut report| {
+                // #14139: the same withholding `render.rs` applies to every
+                // classified `repo-*` format.
+                let owner_opt_outs =
+                    output::render::withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(
                     &input.root,
                     &report.classified,
@@ -1849,6 +1868,7 @@ fn check_inner(
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                     &artifact_context,
                     &mut handle,
                 )?;
@@ -3585,7 +3605,7 @@ mod tests {
                     .filter(|flag| flag.starts_with("--"));
             }
             if let Some(flag) = current
-                && line.contains("expect_value(")
+                && (line.contains("expect_value(") || line.contains("expect_path_value("))
             {
                 parsed.insert(flag.to_string());
             }

@@ -127,9 +127,10 @@ PR-native continuation record's `Validation:` line (see
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
 | Strict all-features RIPR Clippy | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | Lints optional-feature code as well as type-checking it. The default workspace pass below retains disabled-feature branches. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |
+| Strict Rust-only ripr library Clippy | `cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings` | Run when a change adds or gates code used only by a preview language (#14263). The hosted run carries it in shard 2 of `rust-test-shards.yml`; routes that run tests in `rust-gates.yml` run it there. Library only: Rust-only test targets still warn. |
 | Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
 | Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |
-| Golden, fixture, verdict contracts | `cargo xtask goldens check`, `cargo xtask fixtures`, `cargo xtask verdict-corpus check-all` | Run when output, fixtures or analysis change. |
+| Golden, fixture, verdict contracts | `cargo xtask goldens check-with-fixtures`, `cargo xtask verdict-corpus check-all` | The combined command runs both golden and fixture obligations from one evaluation and retains both reports. Run when output, fixtures or analysis change. |
 | User-text plain-language gate | `cargo xtask check-user-text` | Runs inside `precommit` and the hosted gate (`--tree`). Run it with `main` fetched: a red `new path, 0 at the merge-base` on a new fixture golden is a dependency, not a fixture bug — see [PR automation](../PR_AUTOMATION.md#user-text-ordering-rule-for-new-fixture-goldens). |
 
 Do not report a row as passed unless it ran to a zero native exit status on the
@@ -164,7 +165,12 @@ developed on Windows and Linux but continuously validated on Linux only, and
 the advisory Windows lane deliberately runs no golden gate and no blessing —
 a Windows lane that blessed or checked goldens would institutionalize the
 #2337 drift it exists to catch (`docs/CI.md`, "Advisory Windows Lane").
-Never bless or hand-edit golden expected-files from a Windows host.
+Never hand-edit or rewrite golden expected-files from a Windows host.
+`goldens bless` preserves existing bytes when every surface is gate-equivalent,
+including the Windows Python verify projection, and reports no change. If any
+surface genuinely differs (or a required golden is missing), it refuses the
+entire Windows write plan before updating expected files or the changelog.
+Use the Linux route below for the actual blessing.
 
 A Windows-rendered bless fails on the arbiter platform in recorded shapes:
 the same tree produced 43 local Windows drift entries and 35 hosted Linux
@@ -174,8 +180,8 @@ committed Linux goldens do not carry (#8525); and a bless from a CRLF working
 tree embedded `input_identity` hashes that no `eol=lf` checkout reproduces,
 failing hosted qualification on PR #8559 (run 39072364336) until the fixtures
 were re-blessed from an LF tree (#8614; that shape is now refused at bless
-time, `xtask/src/reports/fixtures.rs`). The guard cannot catch every platform
-difference; the route below is the discipline.
+time, `xtask/src/reports/fixtures.rs`). The Windows write guard does not attempt
+to reverse lossy projections; the route below supplies canonical output.
 
 The sanctioned local route on a Windows host:
 
@@ -293,3 +299,28 @@ For secrets, workflows, dependency policy, release scripts or command execution,
 inspect permissions, event triggers, fork behavior, artifact/log exposure and
 whether secrets can be printed or written. Routine PR repair does not need to
 read branch-protection or ruleset settings and never authorizes weakening them.
+
+### Native bless-byte parity qualification (#14509/#14510)
+
+The manual `Windows Advisory Shards` workflow accepts `bless_parity_only=true`.
+Dispatch the reviewed candidate branch; omit `candidate_sha` or set it to that
+same full SHA. This mode uses a separate concurrency group and skips the broad
+workspace shards/doctests. Both jobs check out the workflow's exact SHA and
+refuse a different candidate input.
+
+The Windows job executes the production comparison and bless write functions
+with a controlled Python-verify output fixture, including all five golden
+surfaces and CHANGELOG. Two equivalent blesses must preserve bytes; a changed
+mixed plan and a missing destination must refuse before writes. The job exports
+those preserved files and a candidate-bound SHA-256 receipt. The dependent Linux
+job downloads that run's artifact, independently checks canonical bytes, then
+runs the Linux comparison/bless path and rejects wrong-candidate and tampered
+artifact controls. Each job requires exactly one executed passing proof test.
+
+This qualifies the native write contract and cross-platform artifact transport.
+It does not execute the analyzer's full fixture corpus, reproduce the separate
+Windows batch-cache sharing report (#15018), or replace required integration CI.
+The two transport tests are ignored in ordinary suites because they require
+ordered jobs and a real transferred artifact; they must be explicitly selected
+with `--ignored --exact` by this workflow. A synthetic receipt made on Linux is
+only an instrument control, never native Windows evidence.

@@ -154,6 +154,12 @@ pub struct RustIndex {
     /// composition pass; transient like `execution_module_parents`, and
     /// cleared on any membership change so a stale verdict cannot linger.
     pub(crate) cfg_kani_module_files: BTreeSet<PathBuf>,
+    /// Files whose tests composition withheld because every execution root
+    /// is a target `cargo test` does not run (#14962: `[lib] test = false`
+    /// and kin, from cargo metadata). Transient like
+    /// `cfg_kani_module_files`; the same-run extension reads it to refuse a
+    /// merge that revives those tests (#12947).
+    pub(crate) cargo_test_skipped_files: BTreeSet<PathBuf>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -192,6 +198,12 @@ pub struct RustIndex {
     /// Transient VP3R resource edges; rebuilt during index construction (#5171).
     pub(crate) resource_dependencies: super::resource_dependencies::ResourceDependencyFacts,
     pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
+    /// Tests whose same-file helper asserts after forwarding the test's
+    /// closure to a call the helper-credit pass cannot show runs it (#9981),
+    /// keyed by (file, start line, name). Transient: rebuilt by every run of
+    /// that pass, never serialized.
+    pub(super) forwarded_callback_limits:
+        BTreeMap<(PathBuf, usize, String), super::test_helpers::ForwardedCallbackLimit>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -217,6 +229,11 @@ pub struct FileData {
     pub source: std::sync::Arc<str>,
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    /// See [`FileFacts::external_docs`].
+    pub(crate) external_docs: Option<bool>,
+    /// See [`FileFacts::constant_syntax`].
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 /// A borrowed ordered view; it cannot outlive or retain an index generation.
@@ -392,7 +409,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 13)?;
+        let mut state = serializer.serialize_struct("FileFacts", 15)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -409,6 +426,8 @@ impl serde::Serialize for FileFactsView<'_> {
         state.serialize_field("source", self.source.as_ref())?;
         state.serialize_field("item_scopes", &self.item_scopes)?;
         state.serialize_field("macro_candidates", &self.macro_candidates)?;
+        state.serialize_field("external_docs", &self.external_docs)?;
+        state.serialize_field("constant_syntax", &self.constant_syntax)?;
         state.end()
     }
 }
@@ -556,6 +575,19 @@ impl RustIndex {
 }
 
 impl RustIndex {
+    /// The forwarded-closure limit the helper-credit pass recorded for one
+    /// test (#9981), when its helper asserts after forwarding the test's
+    /// closure to a call that pass cannot show runs it.
+    pub(crate) fn forwarded_callback_limit(
+        &self,
+        file: &Path,
+        start_line: usize,
+        name: &str,
+    ) -> Option<&super::test_helpers::ForwardedCallbackLimit> {
+        self.forwarded_callback_limits
+            .get(&(file.to_path_buf(), start_line, name.to_string()))
+    }
+
     /// Crate names of the workspace's own members: `workspace_crates` when
     /// the build computed it, else `package_names`.
     pub(crate) fn workspace_member_crates(&self) -> &BTreeSet<String> {
@@ -633,6 +665,7 @@ impl RustIndex {
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
         self.execution_module_parents = None;
         self.cfg_kani_module_files.clear();
+        self.cargo_test_skipped_files.clear();
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -650,6 +683,8 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
+            constant_syntax,
         } = facts;
         // Allocate handle storage explicitly: an in-place map collection can retain
         // the much larger FunctionFact source allocation for these small IDs.
@@ -692,6 +727,8 @@ impl RustIndex {
                     source,
                     item_scopes,
                     macro_candidates,
+                    external_docs,
+                    constant_syntax,
                 },
                 functions,
                 tests,
@@ -730,6 +767,7 @@ impl RustIndex {
         self.call_identity_memos.clear();
         self.execution_module_parents = None;
         self.cfg_kani_module_files.clear();
+        self.cargo_test_skipped_files.clear();
         // Purge the flat memberships too: `finalize` keeps every record a
         // flat order names, so a removed file's tests and functions would
         // otherwise survive as evidence (and a changed file would appear
@@ -758,6 +796,8 @@ impl RustIndex {
         self.proptest_metadata_failures
             .retain(|(file, _, _), _| file.as_path() != path);
         self.bolero_receipts
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.forwarded_callback_limits
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.
@@ -1046,6 +1086,8 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
+            constant_syntax,
         } = file.data().clone();
         Some(FileFacts {
             path,
@@ -1062,6 +1104,8 @@ impl RustIndex {
             source,
             item_scopes,
             macro_candidates,
+            external_docs,
+            constant_syntax,
         })
     }
     #[cfg(test)]

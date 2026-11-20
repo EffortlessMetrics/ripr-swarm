@@ -1140,10 +1140,18 @@ pub(super) fn push_suppressed_items(lines: &mut Vec<String>, value: Option<&Valu
             .or_else(|| string_field(item, "gap_id"))
             .unwrap_or("unknown");
         let reason = string_field(item, "reason").unwrap_or("unknown");
+        // A policy suppression names its entry in `message`; show it so the
+        // reader can see which entry silenced the seam (#13895).
+        let detail = match string_field(item, "message") {
+            Some(message) if reason == super::SUPPRESSED_BY_POLICY_REASON => {
+                format!("{reason} ({message})")
+            }
+            _ => reason.to_string(),
+        };
         lines.push(format!(
             "- {}: {}",
             code_span(seam_id),
-            inline_prose(reason)
+            inline_prose(&detail)
         ));
     }
 }

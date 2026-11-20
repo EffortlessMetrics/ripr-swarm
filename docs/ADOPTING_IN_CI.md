@@ -14,14 +14,33 @@ restate their contracts.
 All findings use static vocabulary. A baseline checkpoints reviewed static
 findings; it is not a suppression and not runtime mutation evidence.
 
+## Quickest start: the Action
+
+For an advisory check before adopting the generated workflow, two steps are enough:
+
+```yaml
+- uses: actions/checkout@v6
+- uses: EffortlessMetrics/ripr/.github/actions/ripr-check@<release tag or commit SHA>
+```
+
+It handles the default shallow checkout, caches analysis, prints the report to
+the job log and summary, and fails only when ripr could not complete. Details:
+[CI strategy](CI.md#composite-action-ripr-check).
+
 ## 1. Generate the workflow
 
 ```bash
 ripr init --ci github
 ```
 
+Run it at the repository root. GitHub reads workflows only from the
+repository's top-level `.github/workflows`, and the generated workflow
+analyzes the checkout root, so `ripr init --ci <provider> --root <subdir>`
+with a subdirectory of the repository refuses (exit 2) and names the command
+to run at the root (`--ci gitlab` has the same rule for `.gitlab-ci.yml`).
+
 Add `--dry-run` to print the workflow without writing it. The generated
-workflow reads two repository variables and leaves both unset, so it is
+workflow reads two gate repository variables and leaves both unset, so it is
 advisory only: it summarizes findings and uploads reports, and the job never
 fails.
 
@@ -123,6 +142,12 @@ message names the way out: use `visible-only` to start without blocking, then
 run `ripr baseline create --from target/ripr/reports/gate-decision.json --out .ripr/gate-baseline.json`,
 commit the result and pass it with `--baseline` (`RIPR_GATE_BASELINE`). A
 `blocked` decision, by contrast, exits 3.
+
+A `RIPR_GATE_MODE` value that is not a gate mode (`visible_only`, say) also
+fails the job: the workflow treats any value other than empty or
+`visible-only` as blocking, and the gate refuses the value. In all three
+cases the failing `Run RIPR` step's error annotation and the first block of
+the job summary state the cause and, for a setup problem, the way out.
 
 ## GitLab merge requests
 

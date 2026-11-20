@@ -137,9 +137,15 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         read_crate_version(Path::new("crates/ripr/Cargo.toml"), Path::new("Cargo.toml"));
     let clean_tree = git_worktree_is_clean();
     let installed_binary = installed_ripr_binary();
+    // Evaluated in report order; the size check reads what the rehearsal wrote.
+    let package_list = package_list_check(version, crate_version.as_deref(), clean_tree.clone());
+    let publish_dry_run =
+        publish_dry_run_check(version, crate_version.as_deref(), clean_tree.clone());
+    let package_upload_size = package_upload_size_check(version, publish_dry_run.status == "pass");
     let checks = vec![
-        package_list_check(version, crate_version.as_deref(), clean_tree.clone()),
-        publish_dry_run_check(version, crate_version.as_deref(), clean_tree.clone()),
+        package_list,
+        publish_dry_run,
+        package_upload_size,
         package_install_check(version, crate_version.as_deref()),
         packaged_cli_journey_check(&installed_binary, crate_version.as_deref()),
         installed_command_surface_check(&installed_binary),
@@ -193,6 +199,142 @@ fn publish_dry_run_check(
         crate_version,
         clean_tree,
         || run_command("cargo", &["xtask", "publish-dry-run"]),
+    )
+}
+
+/// crates.io's default maximum `.crate` upload size. The registry rejects a
+/// larger upload unless its team has granted the crate a higher limit, and
+/// neither `cargo package` nor `cargo publish --dry-run` applies the limit, so
+/// the rehearsal passes on a crate the real publish would refuse (#14071).
+pub(crate) const CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES: u64 = 10 * 1024 * 1024;
+
+/// One line per packaged crate whose size exceeds `limit`.
+pub(crate) fn upload_size_problems(sizes: &[(String, u64)], limit: u64) -> Vec<String> {
+    sizes
+        .iter()
+        .filter(|(_, bytes)| *bytes > limit)
+        .map(|(name, bytes)| {
+            format!(
+                "{name} is {bytes} bytes, {} bytes over the {limit}-byte crates.io default upload limit",
+                bytes - limit
+            )
+        })
+        .collect()
+}
+
+/// A packaged crate within this many bytes of the limit is reported as `warn`:
+/// it still uploads, but the next growth in source will not.
+pub(crate) const UPLOAD_HEADROOM_WARN_BYTES: u64 = CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES / 10;
+
+/// Measure the crates the publish rehearsal just packaged against the
+/// crates.io default upload limit. Only a rehearsal that passed in this run
+/// is measured: an archive left in `target/package` by an earlier run is not
+/// this candidate. A crate over the limit fails; one within
+/// `UPLOAD_HEADROOM_WARN_BYTES` of it warns; an unreadable archive after a
+/// passing rehearsal fails, because the measurement itself did not happen.
+fn package_upload_size_check(version: &str, rehearsed: bool) -> ReleaseReadinessCheck {
+    package_upload_size_check_in(Path::new("target/package"), version, rehearsed)
+}
+
+fn package_upload_size_check_in(
+    package_dir: &Path,
+    version: &str,
+    rehearsed: bool,
+) -> ReleaseReadinessCheck {
+    let id = "package-upload-size";
+    let command = "cargo xtask publish-dry-run";
+    if !rehearsed {
+        return readiness_check(
+            id,
+            "not_run",
+            false,
+            command,
+            "publish dry-run did not pass in this run, so no freshly packaged crate was measured",
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let mut artifacts = Vec::new();
+    let mut sizes = Vec::new();
+    for package in ["ripr-contract", "ripr"] {
+        let name = format!("{package}-{version}.crate");
+        let archive = package_dir.join(&name);
+        artifacts.push(crate::normalize_path(&archive));
+        match fs::metadata(&archive) {
+            Ok(metadata) if metadata.is_file() => sizes.push((name, metadata.len())),
+            Ok(_) => {
+                return readiness_check(
+                    id,
+                    "fail",
+                    true,
+                    command,
+                    "a packaged crate is not a regular file, so its upload size was not measured",
+                    artifacts,
+                    vec![format!("not a regular file: {name}")],
+                );
+            }
+            Err(err) => {
+                return readiness_check(
+                    id,
+                    "fail",
+                    true,
+                    command,
+                    "a packaged crate could not be read, so its upload size was not measured",
+                    artifacts,
+                    vec![format!("cannot read {name}: {err}")],
+                );
+            }
+        }
+    }
+    let mut details = sizes
+        .iter()
+        .map(|(name, bytes)| format!("{name}: {bytes} bytes"))
+        .collect::<Vec<_>>();
+    let problems = upload_size_problems(&sizes, CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES);
+    if problems.is_empty() {
+        let near = sizes
+            .iter()
+            .filter(|(_, bytes)| {
+                CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES - *bytes < UPLOAD_HEADROOM_WARN_BYTES
+            })
+            .map(|(name, bytes)| {
+                format!(
+                    "{name} has {} bytes of headroom under the {CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES}-byte crates.io default upload limit",
+                    CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES - *bytes
+                )
+            })
+            .collect::<Vec<_>>();
+        if near.is_empty() {
+            return readiness_check(
+                id,
+                "pass",
+                true,
+                command,
+                "every packaged crate fits the crates.io default upload limit",
+                artifacts,
+                details,
+            );
+        }
+        details.extend(near);
+        return readiness_check(
+            id,
+            "warn",
+            false,
+            command,
+            "every packaged crate fits the crates.io default upload limit, but one is within 10% of it (#14071)",
+            artifacts,
+            details,
+        );
+    }
+    details.extend(problems);
+    readiness_check(
+        id,
+        "fail",
+        true,
+        command,
+        "a packaged crate is over the crates.io default upload limit; cargo publish is expected to be refused. Trim the package `include` list in the crate manifest or what the publish stage strips (#14071, #14198)",
+        artifacts,
+        details,
     )
 }
 
@@ -922,12 +1064,15 @@ fn full_packaged_commit_id(commit: &str) -> bool {
 /// Reload the retained archive because the install proof removes its extraction
 /// before the external journey. Never substitute the controller checkout's HEAD.
 fn packaged_archive_commit(archive: &Path, version: &str) -> Result<String, String> {
+    use std::io::Read as _;
     let file = fs::File::open(archive)
         .map_err(|err| format!("open package archive for version identity failed: {err}"))?;
     let mut tar = Archive::new(GzDecoder::new(file));
     let root = PathBuf::from(format!("ripr-{version}"));
     let identity_path = root.join(".cargo_vcs_info.json");
+    let marker_path = root.join(crate::publish_stage::PUBLISH_STAGE_MARKER);
     let mut identity = None;
+    let mut marker = None;
     for entry in tar
         .entries()
         .map_err(|err| format!("read package identity entries failed: {err}"))?
@@ -939,6 +1084,20 @@ fn packaged_archive_commit(archive: &Path, version: &str) -> Result<String, Stri
             .map_err(|err| format!("read package identity path failed: {err}"))?
             .into_owned();
         validate_package_entry(&path, entry.header().entry_type(), &root)?;
+        if path == marker_path {
+            if marker.is_some() || !entry.header().entry_type().is_file() || entry.size() > 4096 {
+                return Err(
+                    "publish-stage marker must be one regular file of at most 4096 bytes"
+                        .to_string(),
+                );
+            }
+            let mut text = String::new();
+            entry
+                .read_to_string(&mut text)
+                .map_err(|err| format!("read publish-stage marker failed: {err}"))?;
+            marker = Some(text);
+            continue;
+        }
         if path != identity_path {
             continue;
         }
@@ -958,15 +1117,23 @@ fn packaged_archive_commit(archive: &Path, version: &str) -> Result<String, Stri
             .and_then(Value::as_str)
             .filter(|commit| full_packaged_commit_id(commit))
             .ok_or_else(|| "package VCS identity has no full lowercase Git commit".to_string())?;
-        if git
-            .get("dirty")
-            .is_some_and(|dirty| dirty.as_bool() != Some(false))
-        {
-            return Err("package VCS identity is dirty or has an invalid dirty flag".to_string());
-        }
-        identity = Some(commit.to_string());
+        let dirty = match git.get("dirty") {
+            None => false,
+            Some(dirty) => dirty
+                .as_bool()
+                .ok_or_else(|| "package VCS identity has an invalid dirty flag".to_string())?,
+        };
+        identity = Some((commit.to_string(), dirty));
     }
-    identity.ok_or_else(|| "package archive has no VCS identity record".to_string())
+    let (commit, dirty) =
+        identity.ok_or_else(|| "package archive has no VCS identity record".to_string())?;
+    // A publish-stage package (#14198) is recorded dirty by the strip; its
+    // marker naming the same commit identifies it as that commit.
+    let staged = marker.as_deref().map(str::trim) == Some(commit.as_str());
+    if dirty && !staged {
+        return Err("package VCS identity is dirty".to_string());
+    }
+    Ok(commit)
 }
 
 pub(crate) fn validate_doctor_result(success: bool, doctor_json: &Value) -> Result<(), String> {
@@ -3006,16 +3173,20 @@ pub(crate) fn init_generator_self_pin_problems(
             "generated workflow must not carry an unreleased-generator pin comment".to_string(),
         );
     }
-    let cargo_pin = format!("cargo install ripr --version {version} --locked");
-    if !stdout.contains(&cargo_pin) {
+    // #5409: the workflow installs through the release's ripr-check action;
+    // the tag and the `version` input both carry the pin.
+    let action_pin =
+        format!("uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n");
+    if !stdout.contains(&action_pin) {
         problems.push(format!(
-            "generated workflow must include `{cargo_pin}` on the fallback install route"
+            "generated workflow must install through `{}`",
+            action_pin.trim_end()
         ));
     }
-    let prebuilt_pin = format!("version={version}");
-    if !stdout.contains(&prebuilt_pin) {
+    let input_pin = format!("          version: {version}\n");
+    if !stdout.contains(&input_pin) {
         problems.push(format!(
-            "generated workflow must pin `{prebuilt_pin}` on the prebuilt install route"
+            "generated workflow must pass `version: {version}` to the install action"
         ));
     }
     problems
@@ -3178,8 +3349,8 @@ fn init_generator_self_pin_check(
 const CI_SUMMARY_FIRST_RUN_NEEDLES: &[&str] = &[
     "#### First-run status",
     "missing_start_here",
-    // The summary names the packet by its artifact, not a repo path (#11322).
-    "`start-here.md` in the `ripr-reports` artifact",
+    // The summary names the packet by its artifact, not a repo path (#11322, #14356).
+    "`ripr/reports/start-here.md` in the `ripr-reports` artifact",
     "Safe next action: run `ripr first-pr",
 ];
 
@@ -4774,6 +4945,71 @@ mod tests {
     }
 
     #[test]
+    fn a_dirty_record_is_the_commit_only_with_a_publish_stage_marker_naming_it()
+    -> Result<(), String> {
+        let name = "ripr-0.11.0/.cargo_vcs_info.json";
+        let marker_name = "ripr-0.11.0/.ripr-publish-stage";
+        let dirty = format!(
+            "{{\"git\":{{\"sha1\":\"{VERSION_COMMIT}\",\"dirty\":true}},\"path_in_vcs\":\"crates/ripr\"}}"
+        );
+        let marker = format!("{VERSION_COMMIT}\n");
+        let archive = version_identity_archive(&[
+            (marker_name, &marker, tar::EntryType::Regular),
+            (name, &dirty, tar::EntryType::Regular),
+        ])?;
+        let result = packaged_archive_commit(&archive, "0.11.0");
+        fs::remove_file(&archive).map_err(|err| format!("remove staged archive: {err}"))?;
+        if result? != VERSION_COMMIT {
+            return Err("publish-stage archive did not yield its commit".to_string());
+        }
+        // The marker may follow the record: the decision is order-independent.
+        let archive = version_identity_archive(&[
+            (name, &dirty, tar::EntryType::Regular),
+            (marker_name, &marker, tar::EntryType::Regular),
+        ])?;
+        let result = packaged_archive_commit(&archive, "0.11.0");
+        fs::remove_file(&archive).map_err(|err| format!("remove reordered archive: {err}"))?;
+        if result? != VERSION_COMMIT {
+            return Err("marker after the record did not yield its commit".to_string());
+        }
+        let other = "b".repeat(40);
+        // The right commit padded past the byte budget: only the budget refuses it.
+        let oversized = format!("{VERSION_COMMIT}{}", " ".repeat(4097));
+        for (case, entries) in [
+            (
+                "another commit",
+                vec![(marker_name, other.as_str(), tar::EntryType::Regular)],
+            ),
+            ("empty", vec![(marker_name, "", tar::EntryType::Regular)]),
+            (
+                "oversized",
+                vec![(marker_name, oversized.as_str(), tar::EntryType::Regular)],
+            ),
+            (
+                "duplicate",
+                vec![
+                    (marker_name, marker.as_str(), tar::EntryType::Regular),
+                    (marker_name, marker.as_str(), tar::EntryType::Regular),
+                ],
+            ),
+            (
+                "nonregular",
+                vec![(marker_name, "", tar::EntryType::Directory)],
+            ),
+        ] {
+            let mut entries = entries;
+            entries.push((name, &dirty, tar::EntryType::Regular));
+            let archive = version_identity_archive(&entries)?;
+            let result = packaged_archive_commit(&archive, "0.11.0");
+            fs::remove_file(&archive).map_err(|err| format!("remove {case} archive: {err}"))?;
+            if result.is_ok() {
+                return Err(format!("dirty archive accepted with a {case} marker"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn packaged_version_commit_requires_unique_bounded_regular_record() -> Result<(), String> {
         let name = "ripr-0.11.0/.cargo_vcs_info.json";
         let record = format!("{{\"git\":{{\"sha1\":\"{VERSION_COMMIT}\"}}}}");
@@ -5202,7 +5438,7 @@ mod tests {
     fn init_generator_self_pin_problems_passes_quiet_self_pin_output() -> Result<(), String> {
         let version = "0.11.0";
         let stdout = format!(
-            "Would write .github/workflows/ripr.yml\n          version={version}\n            cargo install ripr --version {version} --locked\n"
+            "Would write .github/workflows/ripr.yml\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n        with:\n          version: {version}\n          install-only: true\n"
         );
         let problems = init_generator_self_pin_problems(version, &stdout, "");
         if !problems.is_empty() {
@@ -5219,7 +5455,7 @@ mod tests {
             "ripr: note: this build of ripr ({version}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release.\n"
         );
         let stdout = format!(
-            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n          version={pinned}\n            cargo install ripr --version {pinned} --locked\n"
+            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{pinned}\n        with:\n          version: {pinned}\n          install-only: true\n"
         );
         let problems = init_generator_self_pin_problems(version, &stdout, &stderr);
         if problems.len() < 3 {
@@ -5792,6 +6028,117 @@ mod tests {
         }
     }
 
+    fn upload_size_fixture(
+        case: &str,
+        ripr_bytes: Option<u64>,
+    ) -> Result<std::path::PathBuf, String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-upload-size-{case}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        fs::write(dir.join("ripr-contract-9.9.9.crate"), b"contract")
+            .map_err(|err| err.to_string())?;
+        if let Some(bytes) = ripr_bytes {
+            // A sparse file: the check reads the length, not the content.
+            let file =
+                fs::File::create(dir.join("ripr-9.9.9.crate")).map_err(|err| err.to_string())?;
+            file.set_len(bytes).map_err(|err| err.to_string())?;
+        }
+        Ok(dir)
+    }
+
+    #[test]
+    fn package_upload_size_passes_with_headroom_warns_near_and_fails_over() -> Result<(), String> {
+        let limit = super::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES;
+        let headroom = super::UPLOAD_HEADROOM_WARN_BYTES;
+        assert_eq!((limit, headroom), (10_485_760, 1_048_576));
+
+        // Exactly the warning headroom left: still a plain pass.
+        let roomy = upload_size_fixture("roomy", Some(limit - headroom))?;
+        let check = super::package_upload_size_check_in(&roomy, "9.9.9", true);
+        assert_eq!(
+            (check.id, check.status.as_str(), check.required),
+            ("package-upload-size", "pass", true)
+        );
+        assert_eq!(
+            check.details,
+            vec![
+                "ripr-contract-9.9.9.crate: 8 bytes".to_string(),
+                "ripr-9.9.9.crate: 9437184 bytes".to_string(),
+            ]
+        );
+
+        // One byte less headroom warns, and so does a crate exactly at the limit.
+        let near = upload_size_fixture("near", Some(limit - headroom + 1))?;
+        let check = super::package_upload_size_check_in(&near, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("warn", false));
+        assert!(check.details.contains(
+            &"ripr-9.9.9.crate has 1048575 bytes of headroom under the 10485760-byte crates.io default upload limit"
+                .to_string()
+        ));
+        assert_eq!(super::release_readiness_status(&[check]), "warn");
+        let at_limit = upload_size_fixture("at-limit", Some(limit))?;
+        let check = super::package_upload_size_check_in(&at_limit, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("warn", false));
+
+        // One byte over the limit is a required failure.
+        let over = upload_size_fixture("over-limit", Some(limit + 1))?;
+        let check = super::package_upload_size_check_in(&over, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("fail", true));
+        assert!(check.summary.contains("#14071"));
+        assert!(check.details.contains(
+            &"ripr-9.9.9.crate is 10485761 bytes, 1 bytes over the 10485760-byte crates.io default upload limit"
+                .to_string()
+        ));
+        assert_eq!(super::release_readiness_status(&[check]), "fail");
+
+        for dir in [roomy, near, at_limit, over] {
+            let _ = fs::remove_dir_all(dir);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn package_upload_size_ignores_a_stale_archive_and_fails_on_a_missing_one() -> Result<(), String>
+    {
+        let limit = super::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES;
+        // An over-limit archive from an earlier run is not this candidate.
+        let stale = upload_size_fixture("stale", Some(limit + 1))?;
+        let check = super::package_upload_size_check_in(&stale, "9.9.9", false);
+        assert_eq!((check.status.as_str(), check.required), ("not_run", false));
+        assert!(check.artifacts.is_empty());
+
+        // A passing rehearsal that left no ripr archive measured nothing.
+        let missing = upload_size_fixture("missing", None)?;
+        let check = super::package_upload_size_check_in(&missing, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("fail", true));
+        assert!(
+            check
+                .details
+                .iter()
+                .any(|detail| detail.starts_with("cannot read ripr-9.9.9.crate:"))
+        );
+        assert_eq!(super::release_readiness_status(&[check]), "fail");
+
+        // An archive path that exists but is not a regular file measured nothing.
+        let non_regular = upload_size_fixture("non-regular", None)?;
+        fs::create_dir(non_regular.join("ripr-9.9.9.crate")).map_err(|err| err.to_string())?;
+        let check = super::package_upload_size_check_in(&non_regular, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("fail", true));
+        assert!(check.summary.contains("not a regular file"));
+        assert!(
+            check
+                .details
+                .contains(&"not a regular file: ripr-9.9.9.crate".to_string())
+        );
+        assert_eq!(super::release_readiness_status(&[check]), "fail");
+
+        let _ = fs::remove_dir_all(stale);
+        let _ = fs::remove_dir_all(missing);
+        let _ = fs::remove_dir_all(non_regular);
+        Ok(())
+    }
+
     #[test]
     fn release_readiness_status_warns_for_not_run_but_fails_required_failures() -> Result<(), String>
     {
@@ -6013,7 +6360,7 @@ mod tests {
             "good",
             "[ \"$1 $2\" = 'reports ci-summary' ] || exit 9\n\
              printf '#### First-run status\\n- Status: `missing_start_here`\\n\
-             - Open `start-here.md` in the `ripr-reports` artifact first.\\n\
+             - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact first.\\n\
              - Safe next action: run `ripr first-pr --root .`.\\n'",
         )?;
         // First-run block present but the packet is no longer named.
@@ -6068,7 +6415,10 @@ mod tests {
                 "complete summary reported missing: {good_missing:?}"
             ));
         }
-        if unnamed_missing.len() != 1 || !unnamed_missing[0].contains("start-here.md") {
+        if unnamed_missing.len() != 1
+            || !unnamed_missing[0]
+                .contains("`ripr/reports/start-here.md` in the `ripr-reports` artifact")
+        {
             return Err(format!(
                 "summary that no longer names start-here: {unnamed_missing:?}"
             ));
@@ -6090,5 +6440,37 @@ mod tests {
             return Err(format!("failing binary not named: {failing_missing:?}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn ci_summary_first_run_needles_match_artifact_relative_start_here_path() {
+        let current_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_current =
+            super::missing_required_needles(current_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert!(
+            missing_current.is_empty(),
+            "current ci-summary output should satisfy all needles, missing: {missing_current:?}"
+        );
+
+        let pre_14356_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_stale =
+            super::missing_required_needles(pre_14356_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert_eq!(
+            missing_stale,
+            vec!["`ripr/reports/start-here.md` in the `ripr-reports` artifact".to_string()],
+            "pre-#14356 path should be rejected"
+        );
     }
 }

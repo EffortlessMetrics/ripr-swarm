@@ -125,6 +125,10 @@ removed: 0
 closed gaps: 1
 ```
 
+These counts are for the checked corpus snapshots, which hold only this seam.
+The scratch copy's full-repo snapshots also list its two strongly gripped
+`return_value` seams, so its receipt reports `unchanged: 2`.
+
 The canonical seam moves with concrete evidence:
 
 ```text
