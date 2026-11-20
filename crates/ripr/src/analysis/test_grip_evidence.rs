@@ -5495,7 +5495,7 @@ fn boundary_oracle_paired(
                                         |args| {
                                             compared_helper_arguments(helper, oracle, &args).any(|arg| {
                                                 super::classify::helper_argument_is_boundary_call(
-                                                    &probe, owner, test, arg, call.line, index,
+                                                    &probe, owner, test, arg, call, &activation.activation, index,
                                                 )
                                             })
                                         },

@@ -28,6 +28,38 @@ fn only_an_exact_boundary_result_closes_the_predicate_gap() -> Result<(), String
             "check(discount(10), discount(10), 0);",
             SeamGripClass::WeaklyGripped,
         ),
+        (
+            "let d = discount(10);\ncheck(d, 5, 0);",
+            SeamGripClass::StronglyGripped,
+        ),
+        (
+            "let d = discount(10);\ncheck(d.clone(), 5, 0);",
+            SeamGripClass::StronglyGripped,
+        ),
+        (
+            "let d = discount(10); let d = discount(1);\ncheck(d, 0, 0);",
+            SeamGripClass::WeaklyGripped,
+        ),
+        (
+            "let mut d = discount(10);\nd = discount(1);\ncheck(d, 0, 0);",
+            SeamGripClass::WeaklyGripped,
+        ),
+        (
+            "let mut d = discount(10);\nd = discount(1); check(d, 0, 0);",
+            SeamGripClass::WeaklyGripped,
+        ),
+        (
+            "let mut d = discount(10);\ncheck(d, 5, 0); d = discount(1);",
+            SeamGripClass::StronglyGripped,
+        ),
+        (
+            "let d = discount(1); discount(10);\ncheck(d, 0, 0);",
+            SeamGripClass::WeaklyGripped,
+        ),
+        (
+            "let d = discount(10) * 0;\ncheck(d, 0, 0);",
+            SeamGripClass::WeaklyGripped,
+        ),
         ("assert!(discount(10) >= 0);", SeamGripClass::WeaklyGripped),
         (
             "assert!(discount(10).checked_add(1).is_some());",
