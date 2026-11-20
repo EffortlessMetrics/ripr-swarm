@@ -2425,7 +2425,17 @@ pub(crate) fn owner_call_relation(
     if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return None;
     }
-    if contains_call_name(&test.body_text, &owner.name)
+    let observes_generic_call = || {
+        test.assertions.iter().any(|assertion| {
+            assertion
+                .observed_expression
+                .as_deref()
+                .is_some_and(|observed| {
+                    super::classifier::generic_owner_argument_list(observed, &owner.name).is_some()
+                })
+        })
+    };
+    if (contains_call_name(&test.body_text, &owner.name) || observes_generic_call())
         && !owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root)
         // Shadow guard (#4102): a test body that declares its own
         // `function <owner>(...)` / `const <owner> = ...` (or a destructured
