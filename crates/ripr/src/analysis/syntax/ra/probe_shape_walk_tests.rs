@@ -720,6 +720,12 @@ fn unit_plain(buf: &mut Vec<u8>) {
         buf.push(2);
     }
 }
+async fn unit_async_labelled(buf: &mut Vec<u8>) {
+    'done: {
+        buf.push(3);
+        break 'done;
+    }
+}
 fn value_unsafe(p: *const u8) {
     unsafe { *p }
 }
@@ -750,11 +756,22 @@ fn typed_owner(buf: &mut Vec<u8>) -> () {
         !returned.iter().any(|t| t.contains("buf.push(2)")),
         "{returned:?}"
     );
-    let side_effects = facts
+    assert!(
+        !returned.iter().any(|t| t.contains("buf.push(3)")),
+        "{returned:?}"
+    );
+    let statement_kinds: Vec<ProbeShapeKind> = facts
         .probe_shapes
         .iter()
         .filter(|shape| shape.text.as_str().contains("buf[0].write"))
-        .count();
-    assert!(side_effects > 0, "statements keep their own probes");
+        .map(|shape| shape.kind)
+        .collect();
+    assert!(
+        statement_kinds.iter().any(|kind| matches!(
+            kind,
+            ProbeShapeKind::SideEffect | ProbeShapeKind::CallDeletion
+        )),
+        "statements keep their own probes: {statement_kinds:?}"
+    );
     Ok(())
 }
