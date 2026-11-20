@@ -1,0 +1,18 @@
+# #15317: the managed server download honors http.proxy / HTTPS_PROXY / NO_PROXY.
+[[extend]]
+id = "RIPR-SPEC-0049"
+tests = [
+  "editors/vscode/test/suite/download_proxy.test.ts::http.proxy wins over HTTPS_PROXY, which wins over https_proxy",
+  "editors/vscode/test/suite/download_proxy.test.ts::NO_PROXY exempts hosts, suffixes, ports and wildcards, and only those",
+  "editors/vscode/test/suite/download_proxy.test.ts::basic auth is carried but never rendered; unsupported schemes fail closed naming the workaround",
+  "editors/vscode/test/suite/download_proxy.test.ts::the transport-failure hint names the proxy settings and a tunnel failure is a network failure",
+  "editors/vscode/test/suite/download_proxy.test.ts::the request, including a redirect hop, is tunnelled and credentials are sent only as Proxy-Authorization",
+  "editors/vscode/test/suite/download_proxy.test.ts::NO_PROXY sends the request direct without touching the proxy",
+  "editors/vscode/test/suite/download_proxy.test.ts::a refused CONNECT fails closed with a redacted network-class message and never goes direct",
+  "editors/vscode/test/suite/download_proxy.test.ts::an unsupported proxy scheme fails closed before any connection",
+]
+code = [
+  "editors/vscode/src/downloadProxy.ts",
+  "editors/vscode/src/downloader.ts",
+  "editors/vscode/src/serverResolver.ts",
+]

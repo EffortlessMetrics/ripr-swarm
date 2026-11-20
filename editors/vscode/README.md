@@ -71,6 +71,18 @@ describes that release. A development extension needs a compatible local server
 until matching release assets are available. Do not assume an unreleased server
 can be downloaded.
 
+### Behind a proxy
+
+The managed server download honors VS Code `http.proxy`, then the
+`HTTPS_PROXY` / `https_proxy` environment variables, and skips hosts listed in
+`NO_PROXY` / `no_proxy` (loopback is always direct). Redirects follow the same
+rule. Only `http://host:port` proxies are supported, with optional
+`http://user:password@host:port` basic auth; credentials are sent only to the
+proxy and never logged. A `socks://` or `https://` proxy fails the download
+with a message naming the workaround: set `ripr.server.path` or install `ripr`
+on `PATH`. The download still verifies the archive checksum and the host
+certificate, so `http.proxyStrictSSL` is not used to relax them.
+
 ## What ripr Does
 
 A test can execute the changed code without checking the behavior that changed.
