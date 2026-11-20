@@ -1379,4 +1379,49 @@ mod tests {
             other.describe()
         );
     }
+
+    #[test]
+    fn every_language_wire_token_round_trips_and_others_are_unknown() {
+        for language in LanguageId::ALL {
+            assert_eq!(LanguageId::from_wire(language.as_str()), Some(language));
+        }
+        for token in ["", "Rust", "ts", "js", "python3", "perl "] {
+            assert_eq!(LanguageId::from_wire(token), None, "{token:?}");
+        }
+    }
+
+    #[test]
+    fn only_perl_has_an_enable_prerequisite_and_it_names_the_fact_packet() {
+        assert_eq!(
+            LanguageId::Perl.enable_prerequisite(),
+            Some(format!(
+                "Perl also needs a fact packet: pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`, not yet published)"
+            ))
+        );
+        for language in LanguageId::ALL {
+            if language != LanguageId::Perl {
+                assert_eq!(language.enable_prerequisite(), None, "{language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_match_arm_reads_the_assertion_context_limit_as_assert() {
+        use crate::domain::ProbeFamily;
+        let unresolved = StaticLimitKind::RustAssertionContextUnresolved;
+        let base = unresolved.describe();
+        assert!(base.contains("`assert_eq!`"), "{base}");
+        let arm = unresolved.describe_for_family(&ProbeFamily::MatchArm);
+        assert_eq!(arm, base.replace("`assert_eq!`", "`assert!`"));
+        assert!(!arm.contains("`assert_eq!`"));
+        assert_eq!(
+            unresolved.describe_for_family(&ProbeFamily::Predicate),
+            base
+        );
+        let other = StaticLimitKind::DynamicDispatch;
+        assert_eq!(
+            other.describe_for_family(&ProbeFamily::MatchArm),
+            other.describe()
+        );
+    }
 }

@@ -166,10 +166,27 @@ fn the_same_file_compiled_through_a_path_module_is_related_and_disclosed() -> Re
 
 #[test]
 fn a_bench_target_naming_the_file_keeps_it_compiled() -> Result<(), String> {
-    let manifest = format!("\n[[bench]]\nname = \"hay\"\npath = \"{HAY}\"\nharness = false\n");
+    // `test = true` makes plain `cargo test` build the bench with libtest and
+    // run the file's `#[test]`; a default (`test = false`) bench is never
+    // built by `cargo test`, so its tests are withheld (#15262).
+    let manifest = format!("\n[[bench]]\nname = \"hay\"\npath = \"{HAY}\"\ntest = true\n");
     let run = run("", &manifest, Some(HAY_SOURCE))?;
     assert!(
         run.related_files.contains(&HAY.to_string()),
+        "{:?}",
+        run.related_files
+    );
+    Ok(())
+}
+
+#[test]
+fn a_default_bench_target_naming_the_file_runs_no_test_under_cargo_test() -> Result<(), String> {
+    // #15262: a bench defaults to `test = false`, so plain `cargo test` never
+    // builds it and the file's `#[test]` is no related test.
+    let manifest = format!("\n[[bench]]\nname = \"hay\"\npath = \"{HAY}\"\nharness = false\n");
+    let run = run("", &manifest, Some(HAY_SOURCE))?;
+    assert!(
+        !run.related_files.contains(&HAY.to_string()),
         "{:?}",
         run.related_files
     );

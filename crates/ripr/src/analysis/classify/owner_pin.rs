@@ -1641,7 +1641,7 @@ impl OwnerPinSyntax {
             let Some(parent) = index.files().get(&edge.parent) else {
                 return false;
             };
-            self.module_parent_assertions(&edge.parent, &parent.source)
+            self.module_parent_assertions(&edge.parent, &parent.source, index)
                 .admits_targeted_module_declaration(edge.line, &edge.declaration)
         })
     }
@@ -2243,7 +2243,7 @@ impl OwnerPinSyntax {
                 return Some(AssertionRefusal::LexicalFallback);
             };
             if !self
-                .module_parent_assertions(&edge.parent, &parent.source)
+                .module_parent_assertions(&edge.parent, &parent.source, index)
                 .admits_module_declaration(edge.line, &edge.declaration)
             {
                 return Some(AssertionRefusal::ModuleDeclaration {
@@ -2262,10 +2262,23 @@ impl OwnerPinSyntax {
     }
 
     /// A module-parent file's declaration admissions, read once per run with
-    /// the plain trusted-macro list (see `module_parents`).
-    fn module_parent_assertions(&self, file: &PathBuf, source: &str) -> Arc<OwnerPinAssertions> {
-        self.module_parents
-            .get_or_build(file, || owner_pin_assertions(source, NON_RETURNING_MACROS))
+    /// the plain trusted-macro list (see `module_parents`) and the default
+    /// features of the parent's own package, so a declaration gate those
+    /// features settle on admits its module (#14116).
+    fn module_parent_assertions(
+        &self,
+        file: &PathBuf,
+        source: &str,
+        index: &RustIndex,
+    ) -> Arc<OwnerPinAssertions> {
+        self.module_parents.get_or_build(file, || {
+            owner_pin_assertions_with_default_features(
+                source,
+                NON_RETURNING_MACROS,
+                false,
+                index.member_crates.default_test_features(file).as_ref(),
+            )
+        })
     }
 
     /// The gates every assertion of `test` shares, whatever its macro: a
