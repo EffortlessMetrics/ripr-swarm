@@ -143,6 +143,11 @@ fn replace_row(
 }
 
 fn create_source_fixture() -> Result<SourceFixture, String> {
+    create_source_fixture_with(&[])
+}
+
+/// The standard fixture plus `extra` committed files (path, contents).
+fn create_source_fixture_with(extra: &[(&str, &str)]) -> Result<SourceFixture, String> {
     // Explicit local proof custody only. The root's compiler-bound driver owns
     // namespace/identity, readers, archive/restore and final removal after exit.
     // Ordinary CI retains the existing finish/drop cleanup.
@@ -195,6 +200,15 @@ version = '0.11.0'
     fs::create_dir_all(&fixture_input).map_err(|error| error.to_string())?;
     fs::write(fixture_input.join("Cargo.toml"), "selected fixture A\n")
         .map_err(|error| error.to_string())?;
+    for (path, contents) in extra {
+        let destination = source.join(path);
+        let parent = destination
+            .parent()
+            .ok_or_else(|| "extra fixture path has no parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::write(&destination, contents).map_err(|error| error.to_string())?;
+        git(&source, &["add", "--", path])?;
+    }
     git(
         &source,
         &[
@@ -2148,3 +2162,97 @@ fn real_compiler_invocation_custody_pins_selected_command_against_overrides() ->
     fixture.guard.finish()
 }
 // 4510 independent proof: install compiler invocation controls end.
+
+/// A minimal rendered-help harness: one case runs the bound executable, one
+/// reaches each helper. The spawn path is assembled so this file names no
+/// process constructor of its own.
+fn fixture_help_harness() -> [(&'static str, String); 3] {
+    let spawn = ["std::process::", "Command", "::new"].concat();
+    [
+        (
+            "tests/cli_help_hierarchy.rs",
+            format!(
+                "#[path = \"common/help_contract.rs\"]\nmod help_contract;\n\
+                 #[path = \"common/help_workspace.rs\"]\nmod help_workspace;\n\
+                 #[test]\nfn installed_candidate_prints_source_a() -> Result<(), String> {{\n\
+                 \x20   let output = {spawn}(env!(\"CARGO_BIN_EXE_ripr\")).output().map_err(|error| error.to_string())?;\n\
+                 \x20   help_contract::exact(&String::from_utf8_lossy(&output.stdout), \"fixture source A\")\n}}\n\
+                 #[test]\nfn helpers_are_compiled() -> Result<(), String> {{\n\
+                 \x20   help_workspace::present()\n}}\n"
+            ),
+        ),
+        (
+            "tests/common/help_contract.rs",
+            "pub fn exact(text: &str, line: &str) -> Result<(), String> {\n    if text.trim() == line { Ok(()) } else { Err(format!(\"got {text:?}\")) }\n}\n".to_string(),
+        ),
+        (
+            "tests/common/help_workspace.rs",
+            "pub fn present() -> Result<(), String> {\n    Ok(())\n}\n".to_string(),
+        ),
+    ]
+}
+
+#[test]
+fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, QualificationInput,
+    };
+    let harness = fixture_help_harness();
+    let extra = harness
+        .iter()
+        .map(|(path, text)| (*path, text.as_str()))
+        .collect::<Vec<_>>();
+    let fixture = create_source_fixture_with(&extra)?;
+    let input = QualificationInput::new(
+        fixture.controller.clone(),
+        fixture.source.clone(),
+        PathBuf::from(PINNED_JSON),
+    )?;
+    let owned = fixture.guard.root.join("help harness producer");
+    fs::create_dir(&owned).map_err(|error| error.to_string())?;
+    let archive = AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?;
+    // The fixture manifest includes only src/**, so the harness is committed
+    // but not packaged: qualification reads it from the admitted source.
+    let packaged = fs::read(archive.archive_path()).map_err(|error| error.to_string())?;
+    let mut members = tar::Archive::new(flate2::read::GzDecoder::new(packaged.as_slice()));
+    for entry in members.entries().map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path().map_err(|error| error.to_string())?;
+        if path.components().any(|part| part.as_os_str() == "tests") {
+            return Err(format!("fixture package carries {}", path.display()));
+        }
+    }
+    let installed = archive.install(&owned)?;
+    let receipt = installed.run_help_contract(&owned.join("help-contract"))?;
+    if receipt["cases_declared"] != 2
+        || receipt["cases_listed"] != 2
+        || receipt["cases_passed"] != 2
+        || receipt["executable"].as_str() != installed.binary().to_str()
+        || receipt["harness_sources"].as_array().map(Vec::len) != Some(3)
+    {
+        return Err(format!("unexpected help contract receipt: {receipt}"));
+    }
+    // A second run cannot reuse the first run's owned root.
+    require_refusal(
+        installed.run_help_contract(&owned.join("help-contract")),
+        "create owned help harness root",
+    )?;
+    fixture.guard.finish()?;
+
+    // Without the harness in the admitted commit, qualification refuses.
+    let fixture = create_source_fixture()?;
+    let input = QualificationInput::new(
+        fixture.controller.clone(),
+        fixture.source.clone(),
+        PathBuf::from(PINNED_JSON),
+    )?;
+    let owned = fixture.guard.root.join("help harness producer");
+    fs::create_dir(&owned).map_err(|error| error.to_string())?;
+    let installed = AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+        .install(&owned)?;
+    require_refusal(
+        installed.run_help_contract(&owned.join("help-contract")),
+        "admitted source lacks help harness tests/cli_help_hierarchy.rs",
+    )?;
+    fixture.guard.finish()
+}
