@@ -178,7 +178,8 @@ never suggest a Rust test for a TypeScript gap
 ### Supported runner inference
 
 A `verify_command` is emitted only when repo evidence supports it
-(package manifests, lockfiles, declared scripts, workspace layout):
+(package manifests, lockfiles, declared scripts, workspace layout, or runtime
+imports in the selected related test):
 
 ```bash
 bun test <file>
@@ -199,6 +200,10 @@ resolved runner), `pnpm exec` (pnpm), `yarn` (Yarn), or `bun run` (Bun). A bare
 the package root. Each launcher runs only the installed binary: `npx` without
 `--no-install` and `bunx` fetch a missing package from the registry (npx skips
 its prompt in a non-interactive shell), which would run an unlocked version.
+
+If the package has no framework hint, a runtime import from `node:test` in
+the selected test supports `node --test <file>` from the package root, even
+when the package's test script is a wrapper.
 
 An unresolved or ambiguous runner becomes the named limitation
 `typescript_test_runner_unresolved`. No command is ever synthesized from

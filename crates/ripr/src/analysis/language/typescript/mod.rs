@@ -667,6 +667,7 @@ impl TypeScriptAdapter {
             .collect::<Vec<_>>();
         let mut all_owners: Vec<TypeScriptOwner> = Vec::new();
         let mut all_tests: Vec<TypeScriptTest> = Vec::new();
+        let mut node_test_files = std::collections::HashSet::new();
         let mut parse_limits: Vec<TypeScriptParseLimit> = Vec::new();
         let mut read_failures: Vec<TypeScriptReadFailure> = Vec::new();
         let mut extraction_gaps: Vec<TypeScriptTestExtractionGap> = Vec::new();
@@ -1072,6 +1073,13 @@ impl TypeScriptAdapter {
                         condition: test.conditional_registration.clone().unwrap_or_default(),
                         sites: Vec::new(),
                     });
+                }
+                if tests.first().is_some_and(|test| {
+                    test.imports_in_file
+                        .iter()
+                        .any(|import| import.source == "node:test")
+                }) {
+                    node_test_files.insert(relative.as_path());
                 }
                 all_tests.extend(tests);
             } else {
@@ -1609,7 +1617,20 @@ impl TypeScriptAdapter {
                         &finding,
                     )
                     .and_then(|best_test| {
-                        verify_command_for_discovery(&pkg_discovery, &best_test.file)
+                        // The selected suite's runtime imports can identify Node even
+                        // when its package script is an opaque wrapper.
+                        if pkg_discovery.framework_hint.is_none()
+                            && node_test_files.contains(best_test.file.as_path())
+                            && pkg_discovery.package_root.as_deref().is_some_and(|root| {
+                                root == Path::new(".") || best_test.file.starts_with(root)
+                            })
+                        {
+                            let mut test_discovery = pkg_discovery.clone();
+                            test_discovery.framework_hint = Some(TsFramework::NodeTest);
+                            verify_command_for_discovery(&test_discovery, &best_test.file)
+                        } else {
+                            verify_command_for_discovery(&pkg_discovery, &best_test.file)
+                        }
                     });
                     if let Some(cmd) = inferred_cmd {
                         finding

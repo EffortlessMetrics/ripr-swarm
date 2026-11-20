@@ -15267,6 +15267,89 @@ fn node_direct_file_script_resolves_framework_hint_and_verify_command() -> Resul
     Ok(())
 }
 
+#[test]
+fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Result<(), String> {
+    let root = ts_unique_tempdir("node-test-import-verify")?;
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"workspace","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    ts_write_file(&root.join("package-lock.json"), "{}")?;
+    for (name, script, import, expected_command) in [
+        (
+            "node",
+            "node suite.mjs",
+            "import { test } from 'node:test';",
+            Some("node --test test/pricing.test.mjs"),
+        ),
+        (
+            "angular",
+            "ng test app --code-coverage",
+            "// import { test } from 'node:test';",
+            None,
+        ),
+        (
+            "mocha",
+            "mocha",
+            "import { it as test } from 'mocha';",
+            None,
+        ),
+    ] {
+        let package = root.join("packages").join(name);
+        ts_write_file(
+            &package.join("package.json"),
+            &serde_json::json!({"name": name, "scripts": {"test": script}}).to_string(),
+        )?;
+        ts_write_file(
+            &package.join("src/pricing.ts"),
+            "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+        )?;
+        ts_write_file(
+            &package.join("test/pricing.test.mjs"),
+            &format!(
+                "{import}\nimport assert from 'node:assert';\nimport {{ applyDiscount }} from '../src/pricing.ts';\ntest('applies discount', () => {{ assert.equal(applyDiscount(100, 50), 90); }});\n"
+            ),
+        )?;
+
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[ChangedFile {
+                path: PathBuf::from(format!("packages/{name}/src/pricing.ts")),
+                added_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "  if (amount >= threshold) {".to_string(),
+                }],
+                removed_lines: Vec::new(),
+            }],
+        )?;
+        let expected_test = PathBuf::from(format!("packages/{name}/test/pricing.test.mjs"));
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                crate::domain::typescript_script_preview_related_test(finding)
+                    .is_some_and(|related| related.file == expected_test)
+            })
+            .ok_or_else(|| format!("expected a finding targeting {expected_test:?}"))?;
+        let verify = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix("typescript_verify_command: "));
+        if expected_command.is_some() {
+            assert_eq!(verify, expected_command, "{name} verification evidence");
+        } else {
+            assert!(
+                verify.is_none_or(|command| !command.starts_with("node --test ")),
+                "{name} must retain its own verification route, got {verify:?}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// Control 2 (cockpit delta #5, issue #1245 — fail-closed):
 /// When the test runner is NOT resolved (no package.json, no framework), the
 /// emitted evidence MUST NOT carry `typescript_verify_command` and MUST still
