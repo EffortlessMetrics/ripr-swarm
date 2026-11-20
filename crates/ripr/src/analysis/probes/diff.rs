@@ -235,7 +235,32 @@ pub(crate) fn probes_for_file_with_relations(
                 ),
                 (None, _) => false,
             };
-        if respelling || whitespace_only || unchanged_code {
+        // The same code with a block comment inside the line added, removed
+        // or reworded (`if x > 1 /* old */ {`). Both lines must read alone
+        // as they do in their files, and position macros on either line
+        // (`column!`) keep their probes.
+        let inline_comment_only = super::unchanged_code_line::is_inline_block_comment_only_change(
+            added_text,
+            removed_text,
+        ) && !added_position.contains(&new_side_line)
+            && !removed_position.contains(&removed.line)
+            && !added_string_continuations.contains(&new_side_line)
+            && !removed_string_continuations.contains(&removed.line)
+            && lexical_lines
+                .get_or_init(read_lexical_lines)
+                .as_ref()
+                .is_some_and(|(new, old)| {
+                    super::unchanged_code_line::reads_alone_as_in_file(
+                        new,
+                        new_side_line,
+                        added_text,
+                    ) && super::unchanged_code_line::reads_alone_as_in_file(
+                        old,
+                        removed.line,
+                        removed_text,
+                    )
+                });
+        if respelling || whitespace_only || unchanged_code || inline_comment_only {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
