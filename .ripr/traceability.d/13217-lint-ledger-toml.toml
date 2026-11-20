@@ -1,7 +1,6 @@
-[[behavior]]
-id = "RIPR-SPEC-0451"
-name = "Lint ledger TOML decoding"
-spec = "docs/specs/RIPR-SPEC-0451-lint-ledger-toml-decoding.md"
+# Lint ledger TOML decoding inside the local collect-all policy leaves (#13217).
+[[extend]]
+id = "RIPR-SPEC-0253"
 tests = [
   "xtask/src/policy/lint_ledger.rs::tests::commented_planned_header_keeps_overdue_msrv_obligation",
   "xtask/src/policy/lint_ledger.rs::tests::inline_planned_array_keeps_overdue_msrv_obligation",
@@ -27,4 +26,3 @@ code = [
 outputs = [
   "docs/CLIPPY_POLICY.md",
 ]
-metrics = ["unit_test_pass_rate"]
