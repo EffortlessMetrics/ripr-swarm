@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import { cachedServerInstallation, downloadServer } from './downloader';
+import { knownExtensionVersion } from './extensionVersion';
 import { hasUnsafeShellMetacharacter } from './packetJson';
 import {
   combineActiveManagedServerIdentity,
@@ -34,6 +35,43 @@ const START_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
  */
 const CONFIGURED_PATH_REMEDY =
   'Fix or clear ripr.server.path so it points at an existing ripr server executable.';
+
+/**
+ * Why a non-empty `ripr.server.downloadBaseUrl` cannot serve a download, or
+ * undefined when it can. The downloader appends the manifest file name to
+ * this value, so it must be the https address of the folder holding the
+ * release files. Checking it here names the setting and the mistake instead
+ * of surfacing "Invalid URL" or a non-HTTPS refusal for a composed manifest
+ * URL, with advice to set the very setting that is wrong (#15163).
+ */
+export function downloadBaseUrlProblem(value: string): string | undefined {
+  const base = value.trim();
+  if (base.length === 0) {
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    return 'is not a full URL; it needs to start with https://';
+  }
+  if (parsed.protocol !== 'https:') {
+    return `uses ${parsed.protocol.replace(/:$/, '')}; only https:// downloads are allowed`;
+  }
+  // A bare trailing `?` or `#` leaves `search`/`hash` empty but still turns
+  // the appended manifest name into a query or fragment, so check the text.
+  if (/[?#]/.test(base)) {
+    return 'carries a query or fragment; ripr appends the manifest file name, so it needs a plain folder address';
+  }
+  if (/\.json$/i.test(parsed.pathname)) {
+    return 'names a file; it needs the folder that holds the manifest, without the file name';
+  }
+  return undefined;
+}
+
+export const DOWNLOAD_BASE_URL_REMEDY =
+  'Set ripr.server.downloadBaseUrl to the https:// address of the folder that holds the ripr release files, ' +
+  'or clear it to download from GitHub Releases.';
 
 /**
  * `ripr.server.path` as the process launcher will see it. Settings are not
@@ -211,9 +249,14 @@ export async function resolveServer(
     version = requestedServerVersion(context, config);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { message: 'ripr.server.version is invalid.', detail, kind: 'other' };
+    const message =
+      config.serverVersion.trim().length > 0
+        ? 'ripr.server.version is invalid.'
+        : 'The matching ripr server version is unknown.';
+    return { message, detail, kind: 'other' };
   }
   let downloadFailure: string | undefined;
+  let downloadRemedy: string | undefined;
   let earlyPathResult: ResolvedServer | ResolveFailure | undefined;
 
   if (platform) {
@@ -270,7 +313,13 @@ export async function resolveServer(
       }
     }
 
-    if (config.autoDownload) {
+    const mirrorProblem = config.autoDownload ? downloadBaseUrlProblem(config.downloadBaseUrl) : undefined;
+    if (mirrorProblem) {
+      downloadFailure =
+        `ripr.server.downloadBaseUrl ${JSON.stringify(config.downloadBaseUrl.trim())} ${mirrorProblem}.`;
+      downloadRemedy = DOWNLOAD_BASE_URL_REMEDY;
+      output.appendLine(`Skipping the managed server download: ${downloadFailure}`);
+    } else if (config.autoDownload) {
       try {
         const downloaded = await downloadServer(context, config, platform, version, output);
         const downloadedResult = await runtime.probeCandidate(
@@ -309,19 +358,22 @@ export async function resolveServer(
   // A PATH probe of an installed-but-unusable binary is `other`, not a
   // missing executable. Copy Install Command is only honest for a binary
   // that was not found (#8588 CodeRabbit).
-  const kind = downloadFailure
-    ? classifyDownloadFailureKind(downloadFailure)
-    : pathResult.kind;
+  const kind = downloadRemedy
+    ? 'other'
+    : downloadFailure
+      ? classifyDownloadFailureKind(downloadFailure)
+      : pathResult.kind;
   return {
     message: 'ripr server is not available.',
     detail: [
       downloadFailure,
       pathResult.detail,
-      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload)}`
+      `${autoDownloadHint} ${resolutionFailureRecovery(kind, config.autoDownload, downloadRemedy)}`
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n'),
-    kind
+    kind,
+    ...(downloadRemedy ? { remedy: downloadRemedy } : {})
   };
 }
 
@@ -443,8 +495,14 @@ export function requestedServerVersion(context: vscode.ExtensionContext, config:
   if (configured.length > 0) {
     return validateManagedServerVersion(configured.replace(/^v/, ''));
   }
-  const version = context.extension?.packageJSON?.version;
-  return validateManagedServerVersion(typeof version === 'string' ? version.replace(/^v/, '') : '0.8.0');
+  const version = knownExtensionVersion(context);
+  if (version === undefined) {
+    throw new Error(
+      "The extension's own version could not be read, so the matching server version is unknown. " +
+        'Set ripr.server.version to the ripr release to use, or reinstall the extension.'
+    );
+  }
+  return validateManagedServerVersion(version);
 }
 
 function bundledServerPath(context: vscode.ExtensionContext, platform: RiprPlatform): string {

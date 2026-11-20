@@ -9,6 +9,7 @@ one says nothing about workloads it does not measure (#12906).
 | --- | --- | --- | --- | --- |
 | Startup | `cli_smoke::startup_budget` | `--version`, `--help`, `check --help`, `capabilities` | the process's own CPU time and peak resident memory (#5213 receipt); best-of-five wall time against a loose ceiling; identical output from an unparsable working directory | with the `ripr` test suite |
 | Output size | `cli_smoke::agent_output_budget` | one five-gap Rust diff through the outputs an agent reads | bytes and lines per output (#13673) | with the `ripr` test suite |
+| Run time, classifier work | `cli_smoke::check_work_budget` | the same five-gap Rust diff, one worker | indexed reads the classifier reports per probe (`RIPR_PROBE_READ_TRACE`), summed (#15049) | with the `ripr` test suite |
 | Run time, growth | [Size scaling gate](SIZE_SCALING.md) | generated Rust, Python and TypeScript files at 1x, 2x, 4x | cost ratio per doubling | nightly `size-scaling.yml` |
 | Run time, this repository | [warm-ab](SIZE_SCALING.md#warm-check-ab-on-riprs-own-diffs-10639) | pinned diffs, baseline build against candidate build on one runner | candidate over baseline ratio | nightly `size-scaling.yml` |
 | Run time, consumers | [dx-scoreboard](METRICS.md) | pinned external repositories | warm-check ceilings | nightly `dx-scoreboard.yml` |
@@ -56,3 +57,44 @@ Limits:
 A change that needs more startup cost raises the ceiling in the same change and
 says why. `cargo test -p ripr --test cli_smoke -- startup_ --nocapture` prints
 one `startup-budget` line per command.
+
+## Classifier work budget
+
+Wall time cannot be judged per change without flaking, so this guard counts
+work. The test checks the five-gap diff once with `RIPR_PROBE_READ_TRACE` set
+and `RAYON_NUM_THREADS=1`, reads the `ripr_probe_read_trace` row of each
+classifier call, and sums `observed_read_events`, the number of indexed reads
+that call made. It fails when:
+
+- there are not exactly 8 rows, or a row reports an interrupted or unreturned
+  classification;
+- the sum is over 1,150 reads;
+- the sum is under 500 reads, which would mean the trace stopped counting or
+  the subject shrank;
+- a row does not parse or lacks a field.
+
+Measured on 2026-11-18 (Linux x86_64, dev profile): 996 reads in 44 of 44
+one-worker runs, with a cold and with a warm cache. With four workers the sum
+was 1,002 to 1,011 over 50 runs, because workers race to fill the shared run
+memo; that is why the test pins one worker. With eight redundant index reads
+per related test added to the classifier the test failed at 1,316 reads; the
+judge and the row reader have their own refusal tests.
+
+The ceiling has about 15% headroom on purpose. Analyzer changes add a few reads
+for good reasons, and a pin that every such change must bump would stop meaning
+anything. The regressions this guard is for (reading the index again per probe,
+per test or per oracle) multiply the count.
+
+Limits:
+
+- It counts indexed reads by the Rust classifier. Time spent inside one read,
+  index construction, parsing, rendering and every other language are not
+  counted, so a quadratic scan inside a single read passes.
+- One small diff. A cost that only appears with many files or many related
+  tests is left to the nightly lanes.
+- A row's `dropped_read_events` is not judged: it counts reads missing from the
+  row's per-site detail (64 distinct reads per row), not reads missing from the
+  total.
+
+`cargo test -p ripr --test cli_smoke -- check_work_budget --nocapture` prints
+the `check-work-budget` line.

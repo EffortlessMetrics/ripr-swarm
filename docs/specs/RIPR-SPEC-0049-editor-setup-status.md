@@ -157,6 +157,16 @@ Setup ok:
   default, and fresh artifacts exist, status shows the binary, workspace,
   enabled languages, artifact state, and next safe action.
 
+Activation and expected version:
+
+- Given a workspace folder whose root holds any project marker the extension
+  checks before analysis (Rust, `ripr.toml`, Python or TypeScript markers),
+  the manifest activates the extension for it; the `workspaceContains`
+  activation list and that marker set are the same.
+- Given `ripr.server.version` is empty, the expected server version and the
+  extension version shown in status come from the extension's own manifest,
+  never from a fixed release number.
+
 Named commands:
 
 - Given a status message, setup report or setting description tells the user
@@ -183,6 +193,17 @@ Server download unreachable:
   guidance and does not suggest that the machine is offline.
 - This spec owns only how the unavailable state is explained; the download
   itself stays outside it (see Non-Goals).
+
+Mirror address:
+
+- Given `ripr.server.autoDownload` is on and `ripr.server.downloadBaseUrl`
+  is set to something that is not a plain `https://` folder address (not a
+  URL, another scheme, a query or fragment, or the manifest file itself), the
+  extension skips the managed download instead of trying it, a usable `ripr`
+  on `PATH` still starts as before, and otherwise the unavailable-server
+  message names the setting, quotes the value, says what is wrong with it,
+  and asks for the `https://` folder address or an empty value. It does not
+  suggest that the machine is offline.
 
 First-run walkthrough setup check:
 
