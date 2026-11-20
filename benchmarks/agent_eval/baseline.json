@@ -1,8 +1,8 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (332729ac4c4f44227351df1f9b07a14b759a801e)",
+  "ripr_version": "ripr 0.11.0 (a0bede4409e280e0d3c7b2d477ac85ea501967af)",
   "routes": [
-    {"answered":16,"route":"cli-agent-loop","scenarios":18,"tokens_to_answer":5084,"total_tokens":15465},
+    {"answered":17,"route":"cli-agent-loop","scenarios":18,"tokens_to_answer":4522,"total_tokens":12574},
     {"answered":13,"route":"cli-agent-find","scenarios":18,"tokens_to_answer":2815,"total_tokens":3852},
     {"answered":17,"route":"cli-human","scenarios":18,"tokens_to_answer":19660,"total_tokens":20764},
     {"answered":18,"route":"cli-json-terse","scenarios":18,"tokens_to_answer":65911,"total_tokens":65911},
@@ -253,12 +253,11 @@
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":600,"exit":0,"step":"find","tokens":222},
-            {"bytes":588,"exit":0,"step":"detail:explain","tokens":210},
-            {"bytes":2566,"exit":0,"step":"detail:context","tokens":897}
+            {"bytes":525,"exit":0,"step":"detail:explain","tokens":185}
           ],
           "tokens_to_answer": 222,
-          "total_bytes": 3754,
-          "total_tokens": 1329
+          "total_bytes": 1125,
+          "total_tokens": 407
         },
         {
           "answer_reached": true,
@@ -797,12 +796,11 @@
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":553,"exit":0,"step":"find","tokens":215},
-            {"bytes":541,"exit":0,"step":"detail:explain","tokens":203},
-            {"bytes":2788,"exit":0,"step":"detail:context","tokens":1000}
+            {"bytes":514,"exit":0,"step":"detail:explain","tokens":192}
           ],
-          "tokens_to_answer": 1418,
-          "total_bytes": 3882,
-          "total_tokens": 1418
+          "tokens_to_answer": 407,
+          "total_bytes": 1067,
+          "total_tokens": 407
         },
         {
           "answer_reached": false,
@@ -907,12 +905,11 @@
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":530,"exit":0,"step":"find","tokens":213},
-            {"bytes":518,"exit":0,"step":"detail:explain","tokens":201},
-            {"bytes":2759,"exit":0,"step":"detail:context","tokens":1025}
+            {"bytes":506,"exit":0,"step":"detail:explain","tokens":203}
           ],
           "tokens_to_answer": 213,
-          "total_bytes": 3807,
-          "total_tokens": 1439
+          "total_bytes": 1036,
+          "total_tokens": 416
         },
         {
           "answer_reached": true,
@@ -1017,12 +1014,12 @@
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":516,"exit":0,"step":"find","tokens":170},
-            {"bytes":553,"exit":0,"step":"detail:explain","tokens":193},
+            {"bytes":601,"exit":0,"step":"detail:explain","tokens":211},
             {"bytes":2973,"exit":0,"step":"detail:context","tokens":1079}
           ],
           "tokens_to_answer": 170,
-          "total_bytes": 4042,
-          "total_tokens": 1442
+          "total_bytes": 4090,
+          "total_tokens": 1460
         },
         {
           "answer_reached": true,
@@ -1231,17 +1228,17 @@
       },
       "routes": [
         {
-          "answer_reached": false,
+          "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":518,"exit":0,"step":"find","tokens":171},
-            {"bytes":737,"exit":0,"step":"detail:explain","tokens":259},
+            {"bytes":757,"exit":0,"step":"detail:explain","tokens":266},
             {"bytes":3259,"exit":0,"step":"detail:context","tokens":1137}
           ],
-          "tokens_to_answer": null,
-          "total_bytes": 4514,
-          "total_tokens": 1567
+          "tokens_to_answer": 437,
+          "total_bytes": 4534,
+          "total_tokens": 1574
         },
         {
           "answer_reached": false,
@@ -1346,12 +1343,12 @@
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":536,"exit":0,"step":"find","tokens":177},
-            {"bytes":705,"exit":0,"step":"detail:explain","tokens":256},
+            {"bytes":727,"exit":0,"step":"detail:explain","tokens":263},
             {"bytes":3524,"exit":0,"step":"detail:context","tokens":1269}
           ],
-          "tokens_to_answer": 433,
-          "total_bytes": 4765,
-          "total_tokens": 1702
+          "tokens_to_answer": 440,
+          "total_bytes": 4787,
+          "total_tokens": 1709
         },
         {
           "answer_reached": false,
@@ -1670,12 +1667,12 @@
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":531,"exit":0,"step":"find","tokens":174},
-            {"bytes":703,"exit":0,"step":"detail:explain","tokens":244},
+            {"bytes":717,"exit":0,"step":"detail:explain","tokens":249},
             {"bytes":4169,"exit":0,"step":"detail:context","tokens":1408}
           ],
-          "tokens_to_answer": 418,
-          "total_bytes": 5403,
-          "total_tokens": 1826
+          "tokens_to_answer": 423,
+          "total_bytes": 5417,
+          "total_tokens": 1831
         },
         {
           "answer_reached": false,
@@ -1886,12 +1883,12 @@
           "route": "cli-agent-loop",
           "steps": [
             {"bytes":685,"exit":0,"step":"find","tokens":264},
-            {"bytes":673,"exit":0,"step":"detail:explain","tokens":252},
+            {"bytes":722,"exit":0,"step":"detail:explain","tokens":280},
             {"bytes":3590,"exit":0,"step":"detail:context","tokens":1379}
           ],
           "tokens_to_answer": 264,
-          "total_bytes": 4948,
-          "total_tokens": 1895
+          "total_bytes": 4997,
+          "total_tokens": 1923
         },
         {
           "answer_reached": true,

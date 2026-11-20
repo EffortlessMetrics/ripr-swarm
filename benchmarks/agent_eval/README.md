@@ -236,14 +236,19 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   #14453 folded them, so it now reads `extra_gaps: 0`. `struct_field` no
   longer has an extra gap row.
 - Cross-language and real-shape scenarios (`py_*`, `ts_*`, `rs_*`, added for
-  #14298). Every key holds with its own runner (pytest, `node --test`,
-  cargo), and the two new controls (`py_refactor_control`, `ts_tested_control`)
-  are silent. Of the six gaps:
+  #14298). The route rows in `baseline.json` sum all eighteen scenarios; the
+  original ten alone, at the same binary, read `cli-agent-loop` 2,413 tokens to
+  answer and 4,091 total (the eight new ones: 2,109 and 8,483, 7 of 8
+  answered). Compare the original ten against older figures, not the sums.
+  Every key holds with its own runner (pytest, `node --test`, cargo), and the
+  two new controls (`py_refactor_control`, `ts_tested_control`) are silent. Of the six gaps:
   - `py_retry_backoff` works end to end: the row names `missing=attempt == 1`
     and offers a repair start, and the reference test closes it.
   - `py_invalid_version`: a raise changed to an imported `ValueError`
     subclass reads `static_unknown` (`limit=missing_import_graph`) with no
-    row, and `pytest.raises(InvalidVersion)` does not close it (#15356).
+    FIND row, and `pytest.raises(InvalidVersion)` does not close it (#15356).
+    The loop still learns the gap from explain, which names the owner and
+    the before-text since #15502.
   - `py_default_headers` and `ts_slugify_default`: a changed dict value and
     a changed option default get `missing=-`, so FIND prints only the header
     count; the loop finds the fact in explain/context. The reference closes
