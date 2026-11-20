@@ -234,6 +234,9 @@ fn ts_negated_tobe_pins_no_identity() {
     );
 }
 
+const CUSTOM_MATCHER_LIMITATION: &str =
+    "typescript_limitation: typescript_custom_matcher_unresolved";
+
 /// Jasmine `toBeTrue()` / `toBeFalse()` are exact boolean matchers: they read
 /// the same `exact_value` / strong credit and expected value as
 /// `toBe(true)` / `toBe(false)`, instead of `unknown` (first-run finding).
@@ -268,10 +271,25 @@ fn ts_jasmine_boolean_matchers_read_like_tobe_boolean() -> Result<(), String> {
         let want_finding = finding_for_body(&format!("  expect(price(150)).{jest};"))?;
         assert_eq!(got_finding.class, want_finding.class, "{jasmine}");
         assert!(
-            !format!("{got_finding:?}").contains("custom_matcher"),
-            "{jasmine} must not read as an unrecognised matcher: {got_finding:?}"
+            got_finding
+                .evidence
+                .iter()
+                .all(|line| !line.contains(CUSTOM_MATCHER_LIMITATION)),
+            "{jasmine} must not read as an unrecognised matcher: {:?}",
+            got_finding.evidence
         );
     }
+    // Control: the same fixture with a matcher the adapter does not know
+    // emits the limitation, so the absence above is discriminating.
+    let control = finding_for_body("  expect(price(150)).toBeWithinRange(1, 2);")?;
+    assert!(
+        control
+            .evidence
+            .iter()
+            .any(|line| line.contains(CUSTOM_MATCHER_LIMITATION)),
+        "an unrecognised matcher must emit the limitation: {:?}",
+        control.evidence
+    );
     Ok(())
 }
 

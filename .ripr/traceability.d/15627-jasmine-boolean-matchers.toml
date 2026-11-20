@@ -1,0 +1,12 @@
+# Registers the Jasmine toBeTrue/toBeFalse/toHaveSize oracle tests (#15627)
+# under RIPR-SPEC-0243 (TypeScript assertion oracle strength).
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_jasmine_boolean_matchers_read_like_tobe_boolean",
+  "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_negated_jasmine_boolean_matchers_match_negated_tobe",
+  "crates/ripr/src/analysis/language/typescript/negated_jest_assertion_tests.rs::ts_jasmine_tohavesize_reads_like_tohavelength",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
