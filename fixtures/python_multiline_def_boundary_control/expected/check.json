@@ -1,0 +1,168 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_multiline_def_boundary_control/input",
+  "config_path": "<cwd>/fixtures/python_multiline_def_boundary_control/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:feb3f46e8e6f78985957019956a635cbcf443c2eb15e1ffa43dcc8894da2510c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_fx_core.py:python_preview:9e50cd52",
+      "canonical_gap_id": "gap:python:src/fx/core.py:over:predicate_boundary:predicate:age>=max_age",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/fx/core.py:over:predicate_boundary:predicate:age>=max_age",
+        "language": "python",
+        "file": "src/fx/core.py",
+        "owner": "over",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "age>=max_age"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_fx_core.py:python_preview:9e50cd52",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/fx/core.py",
+        "line": 5,
+        "expression": "    if age >= max_age:",
+        "owner": "python:src/fx/core.py::over"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `over`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if age >= max_age:`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `over`", "infection yes: Changed Python predicate can alter branch selection: `if age >= max_age:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if age >= max_age: (line 5)", "related test tests/test_t.py:4 test_over uses strong exact value oracle: assert over(11, max_age=10) == 1", "source function argument value age = 10 at line 5", "source function argument value age == max_age at line 5", "source function argument value max_age = 10 at line 5", "source function argument value age = 11 at line 6", "source function argument value max_age = 10 at line 6"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if age >= max_age:","line":5}
+      ],
+      "evidence": ["owner: over", "owner_kind: function", "test_framework: pytest (test_over)", "test_verify_command: python -m pytest tests/test_t.py::test_over (test_over)", "related_test_relation: syntactic_call (test_over)", "test_oracle: exact_value strong (test_over)"],
+      "missing": ["Related Python test reaches `over` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
+      "assertion_texts": {
+        "5": "assert over(10, max_age=10) == 0",
+        "6": "assert over(11, max_age=10) == 1"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "age = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "age == max_age",
+            "context": "function_argument",
+            "provenance": "assert over(10, max_age=10) == 0 | age = 10; max_age = 10"
+          },
+          {
+            "line": 5,
+            "value": "max_age = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "age = 11",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "max_age = 10",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "age = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "age == max_age",
+          "context": "function_argument",
+          "provenance": "assert over(10, max_age=10) == 0 | age = 10; max_age = 10"
+        },
+        {
+          "line": 5,
+          "value": "max_age = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "age = 11",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "max_age = 10",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_over",
+          "file": "tests/test_t.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert over(11, max_age=10) == 1"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "age, max_age",
+      "observed_sink": "assert over(10, max_age=10) == 0",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/fx/core.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/fx/core.py","digest":"sha256:0b169c288fae9b651e485b5f54ad79dbb13aece2fc471a3caf49fc3df68e42a6"}]}
+}
