@@ -9701,10 +9701,12 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
     };
     for path in &scan.files {
         let relative = path.strip_prefix(root).unwrap_or(path);
-        if test_files.iter().any(|file| *file == relative) {
+        if test_files.contains(&relative) {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(path) else {
+        // Scanned paths are root-relative: read them under the root, not the
+        // process's working directory.
+        let Ok(text) = std::fs::read_to_string(root.join(relative)) else {
             return None;
         };
         if relative == owner.file.as_path() {

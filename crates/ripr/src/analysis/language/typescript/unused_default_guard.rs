@@ -218,8 +218,8 @@ fn signature(file: &Path, source: &str) -> Option<Signature> {
                         default_span: param.default_span.and_then(|(start, end)| {
                             Some((start.checked_sub(prefix_len)?, end.checked_sub(prefix_len)?))
                         }),
-                        first_line: param.first_line.checked_sub(prefix_lines).unwrap_or(0),
-                        last_line: param.last_line.checked_sub(prefix_lines).unwrap_or(0),
+                        first_line: param.first_line.saturating_sub(prefix_lines),
+                        last_line: param.last_line.saturating_sub(prefix_lines),
                         ..param
                     })
                     .collect(),
