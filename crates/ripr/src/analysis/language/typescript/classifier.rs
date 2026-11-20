@@ -910,6 +910,47 @@ fn ts_value_observed_reads_untouched_field(
 /// comparison (`a < b`) and a type-argument list that does not open a call
 /// do not: `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
 pub(super) fn ts_chain_is_plain_projection(base: &str) -> bool {
+    // Review of #15607: the grammar alone would drop bases the earlier
+    // operator check already guarded (`void f()`, `~f()`, `delete f()`,
+    // `[f()][0]`, `this.#impl()`), turning their reads back into `exposed`.
+    // The guard is fail-closed, so a base qualifies when EITHER reading
+    // calls it plain; neither can grant credit.
+    ts_chain_has_no_top_level_operator(base) || ts_chain_matches_plain_grammar(base)
+}
+
+/// #14857: whether `base` holds no top-level operator, the original reading
+/// of a plain member-access chain (`f()`, `a.f()`, `this.g()`, `f()?.n`). A
+/// top-level operator means the assertion subject is not the owner's field
+/// projection: `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
+fn ts_chain_has_no_top_level_operator(base: &str) -> bool {
+    let chars: Vec<char> = base.chars().collect();
+    let mut depth = 0i32;
+    for (i, ch) in chars.iter().copied().enumerate() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if depth == 0 => {
+                let next = chars.get(i + 1).copied();
+                // `?.` and a trailing `?` (the split point of `f()?.field`)
+                // are member access, not a ternary.
+                let optional_chain = ch == '?' && matches!(next, None | Some('.'));
+                let compound = matches!(
+                    ch,
+                    ',' | '=' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '|' | '&' | '!' | ':'
+                ) || (ch == '?' && !optional_chain);
+                if compound {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// #14928: the plain-chain grammar that admits what the operator check
+/// refuses (see [`ts_chain_is_plain_projection`]).
+fn ts_chain_matches_plain_grammar(base: &str) -> bool {
     fn is_ident_start(ch: char) -> bool {
         ch.is_alphabetic() || ch == '_' || ch == '$'
     }

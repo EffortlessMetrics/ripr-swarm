@@ -12447,6 +12447,13 @@ fn ts_fieldconstruction_multi_value_change_untouched_field_through_plain_chain_d
         ("f()!.timeout", "toBe(30)"),
         ("!f().enabled", "toBe(false)"),
         ("!f()?.enabled", "toBe(false)"),
+        // Review of #15607: bases the earlier operator check already guarded
+        // stay guarded under the grammar.
+        ("void f().timeout", "toBeUndefined()"),
+        ("~f().timeout", "toBe(-31)"),
+        ("delete f().timeout", "toBe(true)"),
+        ("[f()][0].timeout", "toBe(30)"),
+        ("[f()][0]?.timeout", "toBe(30)"),
     ] {
         let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
         assert!(
@@ -12474,7 +12481,10 @@ fn ts_fieldconstruction_multi_value_change_plain_chain_changed_or_compound_stays
             "f()! ?? defaults.config",
             "toEqual({ retries: 5, verbose: true, timeout: 30, enabled: true })",
         ),
-        ("limit < f().retries", "toBe(true)"),
+        // A comparison and a ternary over an UNTOUCHED field: the base is
+        // compound, so the guard does not apply.
+        ("limit < f().timeout", "toBe(true)"),
+        ("cond ? f().timeout : 0", "toBe(30)"),
     ] {
         let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
         assert!(
@@ -12507,6 +12517,13 @@ fn ts_chain_is_plain_projection_accepts_chains_and_rejects_compounds() {
         "(f())",
         "new F()",
         "await f()",
+        // Admitted by the original operator check, kept by the union.
+        "void f()",
+        "~f()",
+        "delete f()",
+        "typeof f()",
+        "[f()][0]",
+        "this.#impl()",
     ] {
         assert!(plain(base), "`{base}` is a plain chain");
     }
