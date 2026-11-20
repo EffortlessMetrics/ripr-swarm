@@ -98,6 +98,7 @@ fn check_tree(root: &Path, tree: &str) -> Result<(), String> {
         &[
             "ls-tree",
             "--full-tree",
+            "--long",
             "-r",
             "-t",
             "-z",
@@ -108,9 +109,9 @@ fn check_tree(root: &Path, tree: &str) -> Result<(), String> {
             &directory,
         ],
     )?;
-    let mut reports = Vec::new();
-    let mut corpus = None;
-    let mut current = None;
+    let mut input = String::new();
+    let mut entries = Vec::new();
+    let mut expected_bytes = 0usize;
     for record in listing.split('\0').filter(|s| !s.is_empty()) {
         let (meta, path) = record.split_once('\t').ok_or("malformed Git tree entry")?;
         let direct_report = path
@@ -127,24 +128,68 @@ fn check_tree(root: &Path, tree: &str) -> Result<(), String> {
         {
             continue;
         }
-        let fields: Vec<_> = meta.split(' ').collect();
-        let [mode, "blob", oid] = fields.as_slice() else {
+        let fields: Vec<_> = meta.split_whitespace().collect();
+        let [mode, "blob", oid, size] = fields.as_slice() else {
             return Err(format!("{path} must be a regular file"));
         };
         if !matches!(*mode, "100644" | "100755") {
             return Err(format!("{path} must be a regular file"));
         }
-        let text = git(root, &["cat-file", "blob", oid])?;
+        let size = size.parse::<usize>().map_err(|e| format!("{path}: {e}"))?;
+        let header = format!("{oid} blob {size}\n");
+        expected_bytes = expected_bytes
+            .checked_add(header.len() + 1)
+            .and_then(|bytes| bytes.checked_add(size))
+            .ok_or("Git batch size overflow")?;
+        input.push_str(oid);
+        input.push('\n');
+        entries.push((path, header, size));
+    }
+    // No checkout or per-report process. Validate each raw response against
+    // the OID and byte length from the immutable tree, including repeated OIDs.
+    let output = crate::run::capture_bytes_in_dir_with_budget(
+        Path::new("git"),
+        &[
+            "--no-replace-objects".into(),
+            "cat-file".into(),
+            "--batch".into(),
+        ],
+        (root, Some(input.as_bytes())),
+        &[],
+        crate::run::ByteCaptureBudget {
+            timeout: std::time::Duration::from_secs(60),
+            stdout_bytes: expected_bytes,
+            stderr_bytes: 64 * 1024,
+        },
+        "pre-label report blobs",
+    )?;
+    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+        return Err(format!(
+            "Git report batch failed or timed out: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let mut remaining = output.stdout.as_slice();
+    let mut reports = Vec::new();
+    let mut corpus = None;
+    let mut current = None;
+    for (path, header, size) in entries {
+        let bytes =
+            take_blob(&mut remaining, &header, size).map_err(|error| format!("{path}: {error}"))?;
+        let text = std::str::from_utf8(bytes).map_err(|error| format!("{path}: {error}"))?;
         match path {
-            SEAM_CACHE_SOURCE => current = Some(current_cache_schema_version(&text)?),
+            SEAM_CACHE_SOURCE => current = Some(current_cache_schema_version(text)?),
             EVIDENCE_PROMOTION_HONESTY_CORPUS => {
-                corpus = Some(parse_json_rejecting_duplicate_keys(&text)?)
+                corpus = Some(parse_json_rejecting_duplicate_keys(text)?)
             }
             _ => reports.push((
                 path.to_string(),
-                serde_json::from_str::<Value>(&text).map_err(|e| format!("{path}: {e}"))?,
+                serde_json::from_str::<Value>(text).map_err(|e| format!("{path}: {e}"))?,
             )),
         }
+    }
+    if !remaining.is_empty() {
+        return Err("unexpected trailing Git batch output".into());
     }
     let current = current.ok_or_else(|| format!("composition lacks {SEAM_CACHE_SOURCE}"))?;
     let corpus =
@@ -170,9 +215,40 @@ fn check_tree(root: &Path, tree: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn take_blob<'a>(remaining: &mut &'a [u8], header: &str, size: usize) -> Result<&'a [u8], String> {
+    let body = remaining
+        .strip_prefix(header.as_bytes())
+        .ok_or("Git batch object identity, type or size mismatch")?;
+    let (bytes, tail) = body.split_at_checked(size).ok_or("truncated Git blob")?;
+    *remaining = tail
+        .strip_prefix(b"\n")
+        .ok_or("missing Git batch terminator")?;
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_binds_each_record_even_for_repeated_oids_and_embedded_newlines() -> Result<(), String>
+    {
+        let header = "abc blob 3\n";
+        let mut data = b"abc blob 3\na\nb\nabc blob 3\na\nb\n".as_slice();
+        for _ in 0..2 {
+            assert_eq!(take_blob(&mut data, header, 3)?, b"a\nb");
+        }
+        assert!(data.is_empty());
+        for mut bad in [
+            b"xyz blob 3\na\nb\n".as_slice(),
+            b"abc blob 2\na\n",
+            b"abc blob 3\na",
+            b"abc blob 3\na\nb!",
+        ] {
+            assert!(take_blob(&mut bad, header, 3).is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn pre_label_requires_exact_ordered_published_parents() {
@@ -300,6 +376,9 @@ mod tests {
         let repaired = commit(&[&unrelated])?;
         publish(&stale, &repaired)?;
         check()?;
+        let nested = local.join("subdirectory");
+        fs::create_dir(&nested)?;
+        super::check(&nested, &["7".into(), "main".into()])?;
         for (path, reason, diagnostic) in [
             ("missing.json", "historical", "not a committed"),
             ("pinned.json", " ", "non-empty"),
@@ -309,6 +388,10 @@ mod tests {
             publish(&stale, &bad)?;
             assert!(check().is_err_and(|e| e.contains(diagnostic)));
         }
+        fs::write(remote.join(corpus), r#"{"report_cache_schema_pins":false}"#)?;
+        let malformed = commit(&[&repaired])?;
+        publish(&stale, &malformed)?;
+        assert!(check().is_err_and(|e| e.contains("report_cache_schema_pins array")));
         run(&["update-ref", "-d", "refs/pull/7/merge"])?;
         assert!(check().is_err_and(|e| e.contains("does not advertise refs/pull/7/merge")));
         fs::remove_dir_all(&remote)?;
