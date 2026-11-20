@@ -636,3 +636,58 @@ let _ = $f(Size::Medium);\n    };\n}\n",
     }
     Ok(())
 }
+
+/// #15359 review: a selecting input keeps an arm's activation only when the
+/// call reaches the owner. `use foreign::score;` makes `score(1)` a call to a
+/// dependency, so it selects nothing in production `score`; the same call
+/// through the owning crate's import does select `1 =>`.
+#[test]
+fn a_selecting_input_to_a_foreign_callee_leaves_the_arm_activation_unknown() -> Result<(), String> {
+    const SCORE: &str = "pub fn score(x: u32) -> u32 {\n    match x {\n        0 => 10,\n        1 => 20,\n        _ => 30,\n    }\n}\n";
+    for (import, selected) in [("use foreign::score;", false), ("use scorer::score;", true)] {
+        let tests =
+            format!("{import}\n\n#[test]\nfn scores() {{\n    assert_eq!(score(1), 20);\n}}\n");
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), SCORE),
+            (PathBuf::from("tests/foreign.rs"), tests.as_str()),
+        ];
+        let mut index = index_from_files(&files)?;
+        index.package_names = ["scorer".to_string()].into_iter().collect();
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::MatchArm && seam.expression().starts_with("1 =>"))
+            .ok_or_else(|| format!("expected the `1 =>` match-arm seam: {seams:?}"))?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam(seam, &index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        let expected = if selected {
+            StageState::Yes
+        } else {
+            StageState::Unknown
+        };
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, expected, "{import}: {evidence:?}");
+        }
+    }
+    Ok(())
+}
+
+/// #15359 review: a trait method runs from calls that never name it, and a
+/// call naming it may reach another impl, so a selecting input to
+/// `u32::from` does not show this impl's arm runs.
+#[test]
+fn a_selecting_input_to_a_trait_method_owner_leaves_the_arm_activation_unknown()
+-> Result<(), String> {
+    let (full, compact, class) = arm_evidence_in(
+        TRAIT_IMPL,
+        "    assert_eq!(u32::from(Size::Medium), 450);",
+        "Size::Medium",
+    )?;
+    assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+    }
+    Ok(())
+}

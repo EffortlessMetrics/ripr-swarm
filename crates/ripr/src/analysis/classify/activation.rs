@@ -4676,12 +4676,32 @@ pub(in crate::analysis) fn repo_seam_arm_selected(
     let Some(selector) = super::arm_selection::ArmSelector::establish(&probe, owner) else {
         return false;
     };
+    // A selecting input names the owner only when a bare call reaches it:
+    // a trait method runs from calls that never name it, a same-named
+    // function elsewhere makes the call ambiguous, and a test file that
+    // imports the name from a foreign path may call that item instead
+    // (#15359 review; the same identity refusals as the unselected reading).
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) || !super::helper_transfer::callee_is_unique(&owner.name, index)
+    {
+        return false;
+    }
     let selector =
         selector.in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    let context =
+        super::context::ProbeContext::new(&probe, Some(owner), Vec::new(), false, index, true);
     related_tests.iter().any(|test| {
-        selector.observed_inputs(test).is_some_and(|observed| {
-            observed.selection == super::arm_selection::ArmSelection::Selects
-        })
+        let imports_foreign = index.files().get(&test.file).is_some_and(|facts| {
+            context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
+        });
+        !imports_foreign
+            && selector.observed_inputs(test).is_some_and(|observed| {
+                observed.selection == super::arm_selection::ArmSelection::Selects
+            })
     })
 }
 

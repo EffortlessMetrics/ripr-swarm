@@ -3525,13 +3525,15 @@ fn weaken_unselected_arm(
         return;
     }
     // The `match` header seam (`match (a, b) {`) runs whenever the owner
-    // reaches it; only an arm (`pattern =>`) needs a selecting input.
+    // reaches it; only an arm head (`pattern =>`, the seam's normalized
+    // expression) needs a selecting input. A header whose scrutinee holds a
+    // closure with its own `match` does not end in `=>`.
     let first_line = seam
         .expression()
         .lines()
         .next()
         .unwrap_or(seam.expression());
-    if first_line.contains("=>")
+    if seam.expression().trim_end().ends_with("=>")
         && !super::classify::repo_seam_arm_selected(
             seam.file(),
             seam.display_line(),
