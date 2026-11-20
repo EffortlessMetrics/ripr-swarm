@@ -341,6 +341,17 @@ mod tests {
         );
     }
     #[test]
+    fn script_import_affinity_needs_a_row_owned_assertion() {
+        let mut imported = row("observes", "test/owner.ts", 8, OracleStrength::Strong);
+        imported.relation_reason = Some(crate::domain::RelationReason::ImportPathAffinity);
+        imported.oracle = Some("expect(admitted(10)).toBe(true)".to_string());
+        let mut finding = finding(Some(LanguageId::TypeScript), vec![imported], &[]);
+        assert!(finding.headline_related_test().is_some());
+        finding.related_tests[0].oracle = None;
+        assert!(finding.headline_related_test().is_none());
+    }
+
+    #[test]
     fn headline_prefers_the_observer_in_either_position() {
         let mut unrelated = row(
             "misses_boundary",

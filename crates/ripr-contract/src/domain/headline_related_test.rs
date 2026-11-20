@@ -18,9 +18,21 @@ impl RelatedTest {
     pub(super) fn headline_has_path(&self, finding: &Finding) -> bool {
         // A missing relation is the legacy representation, including Python's
         // adapter. Its alignment and row grade can supply independent evidence.
+        if self.miss == Some(RelatedTestMiss::NoCallPath) {
+            return false;
+        }
+        if self.relation_reason == Some(super::RelationReason::ImportPathAffinity)
+            && matches!(
+                finding.language,
+                Some(LanguageId::TypeScript | LanguageId::JavaScript)
+            )
+        {
+            // TS projects ImportedOwnerCall onto this broader relation. Its
+            // row carries an assertion only after its owner-path check passes.
+            return self.oracle.is_some();
+        }
         self.relation_reason
             .is_none_or(|reason| reason.establishes_reach(finding.probe.owner.is_some()))
-            && self.miss != Some(RelatedTestMiss::NoCallPath)
     }
 
     /// Order the remaining rows by the producer's miss, whether they carry a
