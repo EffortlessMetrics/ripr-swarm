@@ -1504,15 +1504,21 @@ fn bounded_single_line(text: &str, max_chars: usize) -> String {
         .chars()
         .take(max_chars.saturating_sub(3))
         .collect();
-    bounded.truncate(bounded.trim_end().len());
+    // Drop trailing dots and joining punctuation too, so a cut after `self.`
+    // or `etc.` reads `self...`, never `self....`.
+    let kept = bounded
+        .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | ':' | ';'))
+        .len();
+    bounded.truncate(kept);
     bounded.push_str("...");
     bounded
 }
 
 /// Ends `text` with exactly one sentence terminator: a text already ending in
-/// `.`, `!`, `?` or a `...` cut is kept, so a cut never reads `....`.
+/// `.`, `!`, `?` or a `...` cut is kept, so a cut never reads `....`; a
+/// trailing `,`, `:` or `;` is dropped first, so it never reads `:.`.
 fn sentence(text: &str) -> String {
-    let text = text.trim_end();
+    let text = text.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ':' | ';'));
     if text.ends_with(['.', '!', '?']) {
         text.to_string()
     } else {
@@ -3601,6 +3607,23 @@ weakly_gripped = "note"
         assert!(message.contains("...` "), "{message}");
         assert!(message.starts_with("Missing check: word"), "{message}");
         assert!(message.contains("... Changed code"), "{message}");
+
+        // A cut landing right after a `.` (method chains, `etc.`) or a reason
+        // ending in joining punctuation still reads as one clean sentence.
+        let mut dotted = sample_finding();
+        dotted.probe.expression = "a.".repeat(100);
+        dotted.activation.missing_discriminators[0].reason = "x.".repeat(100);
+        let message = finding_message(&dotted);
+        assert!(!message.contains("...."), "{message}");
+        assert!(message.contains("a.a...`"), "{message}");
+        assert!(message.starts_with("Missing check: x.x.x"), "{message}");
+        let mut colon = sample_finding();
+        colon.activation.missing_discriminators[0].reason = "observed values:".to_string();
+        let message = finding_message(&colon);
+        assert!(
+            message.starts_with("Missing check: observed values. "),
+            "{message}"
+        );
 
         // Every class reads in plain words; none leaks its wire token.
         for class in all_exposure_classes() {
