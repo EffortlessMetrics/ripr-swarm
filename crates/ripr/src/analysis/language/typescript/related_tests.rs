@@ -4991,6 +4991,42 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     })
 }
 
+/// A JSX element `<Name ...>` / `<Name/>` rendered in a `.tsx`/`.jsx` test is
+/// the call of a React component (#15295). Only a capitalized bare tag counts
+/// (`<div>` is an intrinsic element and `<Ns.Item>` a member tag), and a `<`
+/// that follows an identifier, `>` or `)` is a type argument or comparison.
+/// The render proves reach only; assertion strength is judged separately.
+pub(crate) fn contains_jsx_element_name(test_file: &Path, body_text: &str, name: &str) -> bool {
+    let is_jsx_file = test_file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "tsx" | "jsx"));
+    if !is_jsx_file || !name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+        return false;
+    }
+    let needle = format!("<{name}");
+    body_text.match_indices(&needle).any(|(idx, _)| {
+        let rest = &body_text[idx + needle.len()..];
+        let tag_ends = rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_whitespace() || ch == '/' || ch == '>');
+        let before = body_text[..idx].chars().next_back();
+        let opens_element = before
+            .is_none_or(|ch| !(is_javascript_identifier_char(ch) || matches!(ch, '>' | ')' | '<')));
+        tag_ends
+            && opens_element
+            && !line_prefix_looks_like_comment_or_string(body_text, idx)
+            && !inside_block_comment(body_text, idx)
+    })
+}
+
+/// Call or JSX render of a bare identifier from the test's own file.
+fn contains_call_or_jsx_name(test: &TypeScriptTest, name: &str) -> bool {
+    contains_call_name(&test.body_text, name)
+        || contains_jsx_element_name(&test.file, &test.body_text, name)
+}
+
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
     let prefix = &body_text[..idx];
     let Some(ch) = prefix.chars().next_back() else {
@@ -5222,7 +5258,7 @@ fn import_references_owner_call(
             || (imported == "default"
                 && owner.exported_as_default
                 && !owner.commonjs_whole_function)
-    }) && contains_call_name(body_text, &import.local)
+    }) && contains_call_or_jsx_name(test, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the
         // shadow, not the owner.
