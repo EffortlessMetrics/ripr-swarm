@@ -1377,8 +1377,9 @@ fn cache_status_json_conforms_to_the_published_schema_in_every_portable_state() 
     conforms_to_cache_status_schema(&missing, &schema)
         .map_err(|error| format!("not_found: {error}"))?;
 
-    let cache = populated_cache(&base)?;
-    let ok = cache_status_json(&base, &cache)?;
+    populated_cache(&base)?;
+    let ok = cache_status_json(&base, Path::new("cache"))?;
+    assert_eq!(ok["cache_dir"], "cache");
     conforms_to_cache_status_schema(&ok, &schema).map_err(|error| format!("ok: {error}"))?;
 
     let file = base.join("cache-is-a-file");
