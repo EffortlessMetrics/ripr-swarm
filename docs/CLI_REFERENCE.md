@@ -2466,7 +2466,7 @@ Options:
   --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
   --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
-  --output-dir <path>           Output directory. Defaults to target/ripr/reports.
+  --output-dir <path>        Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here page is up to date; write nothing.
   --run-chain                Run the commands for missing reports first, each only when its
                              report is missing and each exactly the command first-pr prints,
@@ -3429,7 +3429,7 @@ Summary options:
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
   --run-url URL               https link to the workflow run, shown as the full-report link.
-  --output-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+  --output-dir PATH           Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
 
 `summary` renders one short digest of the changed-behavior findings and writes
 summary.tsv (method, endpoint, payload file, message; empty when there is
@@ -3447,7 +3447,7 @@ Requests options:
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
-  --output-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
+  --output-dir PATH           Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
 `existing` keeps only marked comments that github-actions[bot] posted. It
 does not call GitHub or read a token.
@@ -3544,7 +3544,7 @@ Requests options:
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
-  --output-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
+  --output-dir PATH           Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
 `requests` writes one JSON payload per call and requests.tsv, one line per
 call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
@@ -3575,7 +3575,7 @@ Summary options:
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
   --run-url URL               https link to the workflow run, shown as the full-report link.
-  --output-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+  --output-dir PATH           Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
 
 `summary` renders one short digest of the changed-behavior findings and writes
 summary.tsv (method, endpoint, payload file, message; empty when there is
