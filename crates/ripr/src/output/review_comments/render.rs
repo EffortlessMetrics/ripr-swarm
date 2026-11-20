@@ -511,17 +511,22 @@ pub(super) fn review_recommendation_json(
     let seam = &entry.seam;
     let missing = missing_records_for(entry);
     let recommended = agent_seam_packets::recommended_test_for(entry);
-    // A ranked candidate can carry a strong assertion on a different function.
-    // Such a row is navigation context, not this seam's oracle (#15805).
+    // A strong assertion in another function can be ranked as navigation
+    // context. The producer's reach rule also has to admit this row (#15805).
     let mut oracle_candidates = entry
         .evidence
         .related_tests
         .iter()
         .map(AsRef::as_ref)
         .filter(|test| {
-            entry.evidence.reach.state != crate::domain::StageState::No
-                && entry.evidence.observe.state != crate::domain::StageState::No
-                && !test.relation_reason.is_proximity_only()
+            entry.evidence.reach.state == crate::domain::StageState::Yes
+                && matches!(
+                    entry.evidence.observe.state,
+                    crate::domain::StageState::Yes | crate::domain::StageState::Weak
+                )
+                && test
+                    .relation_reason
+                    .establishes_reach(test.assertion_targets_non_function != Some(true))
         });
     let nearest =
         agent_seam_packets::first_strong_test_to_imitate(seam.kind(), oracle_candidates.clone());

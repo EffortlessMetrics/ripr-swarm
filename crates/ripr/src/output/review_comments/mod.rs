@@ -705,6 +705,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "above_threshold_gets_discount".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -799,6 +800,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "blob copies resizable buffers".to_string(),
                     file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
                     line: 41,
@@ -843,6 +845,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "markdown snapshots resizable ArrayBuffer input".to_string(),
                     file: PathBuf::from("test/js/bun/md/md-edge-cases.test.ts"),
                     line: 42,
@@ -4115,36 +4118,104 @@ mod tests {
         unrelated.test_name = "unrelated_exact_value".to_string();
         unrelated.relation_reason = RelationReason::SameTestFile;
         direct.oracle_strength = OracleStrength::Weak;
+        let mut smoke = direct.clone();
+        smoke.oracle_kind = OracleKind::SmokeOnly;
+        smoke.oracle_strength = OracleStrength::Smoke;
         let working_set = AgentBriefResolvedWorkingSet::base(
             "main",
             vec![AgentBriefLine::new("src/pricing.rs", 88)],
         );
-        for (reach, observe, rows, kind, strength) in [
+        let mut cases = vec![
             (
                 StageState::No,
                 StageState::Yes,
-                vec![unrelated.clone()],
-                "unknown",
-                "none",
-            ),
-            (
-                StageState::Yes,
-                StageState::No,
+                false,
                 vec![direct.clone()],
                 "unknown",
                 "none",
             ),
             (
                 StageState::Yes,
+                StageState::No,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
                 StageState::Yes,
-                vec![unrelated, direct],
+                StageState::Opaque,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Unknown,
+                StageState::Yes,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Weak,
+                StageState::Yes,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Yes,
+                StageState::Weak,
+                false,
+                vec![smoke],
+                "smoke_only",
+                "smoke",
+            ),
+        ];
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::SeamCalleeCall,
+            RelationReason::AssertionTargetAffinity,
+        ] {
+            unrelated.relation_reason = reason;
+            cases.push((
+                StageState::Yes,
+                StageState::Yes,
+                false,
+                vec![unrelated.clone(), direct.clone()],
                 "exact_value",
                 "weak",
-            ),
-        ] {
+            ));
+        }
+        direct.relation_reason = RelationReason::AssertionTargetAffinity;
+        cases.push((
+            StageState::Yes,
+            StageState::Yes,
+            true,
+            vec![direct],
+            "exact_value",
+            "weak",
+        ));
+        for (reach, observe, non_function_owner, rows, kind, strength) in cases {
             seam.evidence.reach = stage(reach);
             seam.evidence.observe = stage(observe);
-            seam.evidence.related_tests = rows.into_iter().map(std::sync::Arc::new).collect();
+            seam.evidence.related_tests = rows
+                .into_iter()
+                .map(|mut row| {
+                    row.assertion_targets_non_function = (row.relation_reason
+                        == RelationReason::AssertionTargetAffinity)
+                        .then_some(non_function_owner);
+                    std::sync::Arc::new(row)
+                })
+                .collect();
             let report = render_value(&working_set, std::slice::from_ref(&seam))?;
             let card = all_cards(&report)
                 .into_iter()

@@ -499,6 +499,16 @@ fn expand_table<E: serde::de::Error>(table: TableOwned) -> Result<Vec<Classified
         related_tests: table,
         seams,
     } = table;
+    // Older affinity rows cannot distinguish function owners from module-level
+    // assertion targets. Recompute only entries whose old rows lack that fact.
+    if table.iter().any(|row| {
+        row.relation_reason == crate::domain::RelationReason::AssertionTargetAffinity
+            && row.assertion_targets_non_function.is_none()
+    }) {
+        return Err(E::custom(
+            "cached assertion-target relation lacks owner evidence",
+        ));
+    }
     let mut classified = Vec::with_capacity(seams.len());
     for SeamOwned {
         seam,
@@ -575,6 +585,7 @@ pub(super) mod tests {
         reason: RelationReason,
     ) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_owned(),
             file: PathBuf::from("tests/it.rs"),
             line: 7,
@@ -867,6 +878,46 @@ pub(super) mod tests {
         evidence.remove("statically_contradicted_related_tests");
         assert!(serde_json::from_value::<Body>(stale).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn affinity_owner_survives_cache_and_only_legacy_affinity_requires_rebuild()
+    -> Result<(), String> {
+        let mut function = related("candidate", RelationReason::AssertionTargetAffinity);
+        function.assertion_targets_non_function = Some(false);
+        let mut module = function.clone();
+        module.assertion_targets_non_function = Some(true);
+        let direct = related("direct", RelationReason::DirectOwnerCall);
+        let mut encoded = serde_json::to_value(Body {
+            seams: vec![seam(1, vec![direct, module, function])],
+        })
+        .map_err(|err| err.to_string())?;
+        let decoded: Body =
+            serde_json::from_value(encoded.clone()).map_err(|err| err.to_string())?;
+        let flags: Vec<_> = decoded
+            .seams
+            .iter()
+            .flat_map(|s| &s.evidence.related_tests)
+            .map(|row| row.assertion_targets_non_function)
+            .collect();
+        if flags != [None, Some(true), Some(false)] {
+            return Err(format!("warm owner facts differ: {flags:?}"));
+        }
+        if encoded
+            .pointer("/seams/related_tests/0/assertion_targets_non_function")
+            .is_some()
+        {
+            return Err("direct row unexpectedly changed wire shape".into());
+        }
+        encoded
+            .pointer_mut("/seams/related_tests/1")
+            .and_then(|row| row.as_object_mut())
+            .ok_or("missing module affinity row")?
+            .remove("assertion_targets_non_function");
+        match serde_json::from_value::<Body>(encoded) {
+            Err(err) if err.to_string().contains("lacks owner evidence") => Ok(()),
+            _ => Err("legacy affinity row must invalidate the cached entry".into()),
+        }
     }
 
     #[test]

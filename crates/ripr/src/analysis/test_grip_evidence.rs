@@ -161,6 +161,10 @@ const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 /// Per-related-test grip facts attached to a `TestGripEvidence`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RelatedTestGrip {
+    /// The full evidence pass confirmed this assertion-target relation belongs
+    /// to an indexed, non-function owner. Older records lack that authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) assertion_targets_non_function: Option<bool>,
     pub(crate) test_name: String,
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
@@ -1183,6 +1187,9 @@ fn evidence_for_seam_with_context(
     // One admission per test file for this seam: the verdict depends only on
     // the (test file, seam file) pair, and a file's tests share it (#5361).
     let mut validated_targets: HashMap<&Path, bool> = HashMap::new();
+    let indexed_non_function_owner = owner_fn.is_none()
+        && super::rust_index::find_file_facts(context.index, seam.file())
+            .is_some_and(|facts| !facts.used_lexical_fallback);
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
         .zip(best_oracles)
@@ -1191,6 +1198,7 @@ fn evidence_for_seam_with_context(
                 seam,
                 indexed.test,
                 *reason,
+                indexed_non_function_owner,
                 context,
                 oracle,
                 &mut validated_targets,
@@ -6512,6 +6520,7 @@ fn related_test_grip<'a>(
     seam: &RepoSeam,
     test: &'a TestSummary,
     reason: RelationReason,
+    indexed_non_function_owner: bool,
     context: &CompactGripContext<'_>,
     (kind, strength, contradiction): related_tests::BestOracle,
     validated_targets: &mut HashMap<&'a Path, bool>,
@@ -6539,6 +6548,8 @@ fn related_test_grip<'a>(
     };
     let confidence = reason.confidence();
     RelatedTestGrip {
+        assertion_targets_non_function: (reason == RelationReason::AssertionTargetAffinity)
+            .then_some(indexed_non_function_owner),
         test_name: test.name.clone(),
         file: test.file.clone(),
         line: test.start_line,

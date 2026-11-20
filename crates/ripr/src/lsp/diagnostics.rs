@@ -4991,6 +4991,7 @@ mod seam_diagnostic_tests {
 
     fn related_grip(name: &str, file: &str, line: usize) -> std::sync::Arc<RelatedTestGrip> {
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from(file),
             line,

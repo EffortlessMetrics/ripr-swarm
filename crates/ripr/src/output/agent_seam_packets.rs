@@ -4484,6 +4484,7 @@ mod tests {
         relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence,
     ) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from("tests/service.rs"),
             line: 21,
@@ -4531,6 +4532,7 @@ mod tests {
     /// oracle: the shape that projects a navigation-only external target.
     fn external_observer_test() -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "blob copies resizable buffers".to_string(),
             file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
             line: 41,
@@ -4587,6 +4589,7 @@ mod tests {
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -5006,6 +5009,7 @@ mod tests {
         use crate::analysis::test_grip_evidence::{RelationConfidence, RelationReason};
         let mut entry = weakly_gripped_classified();
         let high = RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "z_high_confidence".to_string(),
             file: PathBuf::from("tests/zeta.rs"),
             line: 1,
@@ -5023,6 +5027,7 @@ mod tests {
             relation_confidence: RelationConfidence::High,
         };
         let low = RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "a_low_confidence".to_string(),
             file: PathBuf::from("tests/alpha.rs"),
             line: 1,
@@ -6911,6 +6916,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: expected_base.clone(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 40,
@@ -6933,6 +6939,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: format!("{expected_base}_2"),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 41,

@@ -3051,6 +3051,7 @@ fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |file: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from(file),
         line: 3,
@@ -3083,6 +3084,7 @@ fn window_boundaries_release_only_unheld_shared_grips() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |test_name: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: test_name.to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3114,6 +3116,7 @@ fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let base = RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3245,6 +3248,7 @@ fn shared_grips_retain_one_record_per_distinct_grip_at_high_fan_out() -> Result<
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |test_name: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: test_name.to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3279,6 +3283,7 @@ fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> 
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |file: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from(file),
         line: 3,
@@ -3319,6 +3324,7 @@ fn cancelled_evidence_pass_releases_provisional_shared_grips() -> Result<(), Str
         .ok_or("fixture must build a context")?;
     let provisional: Weak<RelatedTestGrip> = {
         let shared = context.share_grip(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing_tests.rs"),
             line: 12,
@@ -13158,6 +13164,42 @@ fn given_assertion_target_token_in_test_assertion_when_related_tests_are_ranked_
         grip.relation_reason,
         RelationReason::AssertionTargetAffinity
     );
+    if grip.assertion_targets_non_function != Some(false) {
+        return Err(format!(
+            "function affinity acquired module authority: {grip:?}"
+        ));
+    }
+    // Exercise the same full producer on a supplied non-function seam. The
+    // Rust inventory does not currently emit predicate seams for const items.
+    let path = PathBuf::from("src/pricing.rs");
+    let expression = "6 >= discount_threshold";
+    let source = "const discount_threshold: i32 = 5;
+pub const DISCOUNTED: bool = 6 >= discount_threshold;";
+    let index = index_from_files(&[(path.clone(), source), (PathBuf::from(test.0), test.1)])?;
+    let seam = RepoSeam::new(
+        path,
+        "DISCOUNTED",
+        SeamKind::PredicateBoundary,
+        source.find(expression).ok_or("missing const expression")?,
+        2,
+        expression,
+        RequiredDiscriminator::BoundaryValue {
+            description: expression.into(),
+        },
+        ExpectedSink::ReturnValue,
+    );
+    let evidence = evidence_for_seam(&seam, &index);
+    let module = evidence
+        .related_tests
+        .first()
+        .ok_or("missing module assertion-target row")?;
+    if module.relation_reason != RelationReason::AssertionTargetAffinity
+        || module.assertion_targets_non_function != Some(true)
+    {
+        return Err(format!(
+            "indexed module assertion target lost owner authority: {module:?}"
+        ));
+    }
     assert_eq!(grip.relation_confidence, RelationConfidence::Medium);
     Ok(())
 }

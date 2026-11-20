@@ -5728,6 +5728,7 @@ fn seam_repair_card_binds_only_through_the_complete_raw_candidates() -> Result<(
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -6432,6 +6433,7 @@ fn route_ready_seam_with_external_language_related_test() -> crate::analysis::Cl
     seam.evidence
         .related_tests
         .push(std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "discounted total at threshold".to_string(),
             file: PathBuf::from("tests/pricing.test.ts"),
             line: 4,
@@ -9233,6 +9235,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "nearby_smoke_reaches_owner".to_string(),
             file: PathBuf::from("tests/smoke.rs"),
             line: 7,
@@ -9244,6 +9247,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
             relation_confidence: RelationConfidence::High,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -9297,6 +9301,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "opaque_fixture_hint".to_string(),
             file: PathBuf::from("tests/opaque.rs"),
             line: 3,
@@ -9308,6 +9313,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Opaque,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "low_confidence_smoke".to_string(),
             file: PathBuf::from("tests/low.rs"),
             line: 5,
@@ -9319,6 +9325,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Low,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "medium_confidence_property".to_string(),
             file: PathBuf::from("tests/medium.rs"),
             line: 9,
@@ -9330,6 +9337,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Medium,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "high_confidence_weak_assertion".to_string(),
             file: PathBuf::from("tests/high.rs"),
             line: 11,
@@ -9383,6 +9391,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     };
 
     let same_file_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "same_file_strong_neighbour".to_string(),
         file: PathBuf::from("tests/neighbour.rs"),
         line: 4,
@@ -9394,6 +9403,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let token_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "token_substring_strong".to_string(),
         file: PathBuf::from("tests/token.rs"),
         line: 6,
@@ -9405,6 +9415,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let calling_weak = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "calls_owner_weakly".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -9457,6 +9468,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     // A strong test that only carries the owner's name ranks after the weak
     // test that calls the owner.
     let name_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "owner_named_strong".to_string(),
         file: PathBuf::from("tests/named.rs"),
         line: 2,
@@ -9468,6 +9480,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let calling = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "calls_owner_weakly".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -9676,6 +9689,7 @@ fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result
 
     let mut seam = sample_side_effect_seam_without_related_tests();
     seam.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "publish_event_emits_bus_message".to_string(),
         file: PathBuf::from("tests/service.rs"),
         line: 21,
@@ -17524,6 +17538,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id,
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,

@@ -63,6 +63,7 @@ fn missing() -> MissingDiscriminatorFact {
 
 fn related_test() -> RelatedTestGrip {
     RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "below_threshold_has_no_discount".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
