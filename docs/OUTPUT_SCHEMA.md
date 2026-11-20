@@ -2964,8 +2964,9 @@ The evidence-first fields are additive in schema `0.2`:
   context all use it, and first-pr withholds its verify forms when that
   directory cannot be resolved under the selected root. Pilot cards and
   gap-bound agent packets carry the raw `verify_command` with `verify_cwd`,
-  and their prose, copyable verification and queue rows show it as
-  `(cd -- <dir> && <command>)`.
+  and their prose, copyable verification, queue rows, `agent status` and
+  gap-ledger review-comment guidance show it as `(cd -- <dir> && <command>)`.
+  On Windows the route stays root-relative and no `verify_cwd` is emitted.
   In raw `ripr check` output, `receipt.command` may still be `null` because the
   renderer does not know where the caller will save before/after check
   snapshots. Raw check cards include `receipt.guidance`, and pilot projections
