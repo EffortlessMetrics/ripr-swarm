@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-14087-raw-use-leaf",
+  "origin": "authored",
+  "version_label": "authored 2026-11-19 for a raw-identifier use leaf shadowing a glob namesake (#14087)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "afd1f79a8b0a8cca413f151ad78dbea1165adc8a86b78b683613e142d478fe97"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "6db074a526f58c88a66a27a8efe1636d79fac11bb6004833ed83edd5372dc170"
+    }
+  ]
+}

@@ -3341,9 +3341,14 @@ fn owner_pin_assertions_with_matches(
             lines.line(token.text_range().start()),
             format!("mod {};", name.text()),
         );
+        // #14116: a plain `#[cfg(..)]` on the declaration that the package's
+        // default features settle on mounts the module in a plain
+        // `cargo test`, the rule #8780 applies to a test's own gate.
+        let context = item_context_refusal(module.syntax(), default_features).is_none();
         let admitted = ModuleDeclarationAdmission {
-            context: supported_item_context(module.syntax()),
-            source_preserved: supported_targeted_item_context(module.syntax()),
+            context,
+            source_preserved: context
+                && item_attributes_preserve_source_items(module.syntax(), default_features),
         };
         result
             .module_declarations
@@ -4367,14 +4372,24 @@ pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
 /// items. The selected function's own harness attributes are outside this
 /// check; its parent and the resolved module declarations supply the context.
 pub(crate) fn supported_targeted_item_context(item: &SyntaxNode) -> bool {
-    supported_item_context(item)
-        && item.ancestors().all(|node| {
-            node.children().filter_map(ast::Attr::cast).all(|attr| {
-                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
-                    &attr.syntax().text().to_string(),
-                )
-            })
+    supported_item_context(item) && item_attributes_preserve_source_items(item, None)
+}
+
+/// Whether every attribute on `item` and its enclosing items keeps the
+/// source items it gates as written. A plain `#[cfg(..)]` that
+/// `default_features` settle on is active in a plain `cargo test`, so it
+/// keeps them too (#14116).
+fn item_attributes_preserve_source_items(
+    item: &SyntaxNode,
+    default_features: Option<&BTreeSet<String>>,
+) -> bool {
+    item.ancestors().all(|node| {
+        node.children().filter_map(ast::Attr::cast).all(|attr| {
+            crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(
+                &attr.syntax().text().to_string(),
+            ) || default_enabled_gate(&attr, default_features)
         })
+    })
 }
 
 /// A plain outer `#[cfg(..)]` that is provably true in a plain `cargo test`
