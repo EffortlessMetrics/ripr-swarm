@@ -69,8 +69,10 @@ The codeLens contains a cached informational advisory and an explicit refresh ac
 
 ### Honesty rules
 
-A refresh row's full title is the cached advisory followed by the
-`· refresh saved workspace` suffix. The cached advisory before that suffix MUST comply with the static-language vocabulary:
+A row's full title is the cached advisory followed by a command suffix
+(`· refresh saved workspace`, or `· open TEST_NAME` on a row with a navigable
+related test; see Click action). The cached advisory MUST comply with the
+static-language vocabulary:
 
 | Condition | Required phrasing |
 |---|---|
@@ -198,8 +200,9 @@ codeLens. Base-deleted findings emit no lens.
 
 ### Command object
 
-Each resolved lens carries the existing advertised server command `ripr.refresh` with no
-arguments. Its title is `{cached advisory} · refresh saved workspace`. Explicit
+A resolved lens without a navigable related test (see Click action) carries the existing
+advertised server command `ripr.refresh` with no arguments. Its title is
+`{cached advisory} · refresh saved workspace`. Explicit
 invocation uses the existing full saved-workspace refresh owner; requesting lenses never
 triggers analysis. No client extension or client-local command handler is required.
 `data: None` (resolve is disabled).
@@ -297,7 +300,7 @@ result:   [] (empty array, not a 0-count lens)
 ### Rust Exposed, 3 related tests
 
 ```
-finding:  class=exposed, related_tests.len()=3, language_status=None
+finding:  class=exposed, related_tests.len()=3, language_status=None, no navigable related test
 title:    "ripr: 3 related tests (exposed) · static, cached · refresh saved workspace"
 ```
 
@@ -311,7 +314,7 @@ title:    "ripr: no static test path found (no path) · static, cached · refres
 ### TypeScript Preview, Exposed, 1 related test
 
 ```
-finding:  class=exposed, related_tests.len()=1, language_status=Some(Preview)
+finding:  class=exposed, related_tests.len()=1, language_status=Some(Preview), no navigable related test
 title:    "preview: 1 related test (exposed) · static, cached · refresh saved workspace"
 ```
 
