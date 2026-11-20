@@ -6,12 +6,12 @@
 //! packet row the mapper selects and of the caller's context at once, starting
 //! from the committed actionable fixture.
 //!
-//! The refusal conditions reachable from these perturbations (31, one per
+//! The refusal conditions reachable from these perturbations (32, one per
 //! `note` in `refusals`), taken from the mapper, the related-evidence filter
 //! and the classifier it reads the selected evidence class from:
 //!
 //! - packet status other than `complete`;
-//! - the requested change is absent;
+//! - the requested change is absent or lacks a concrete discriminator;
 //! - owner confidence, or any confidence folded into the evidence confidence
 //!   (owner, relation, test, oracle, verify command), is `low`/`unknown`;
 //! - a behavior hint without a repair kind (`call_effect`, `unknown`);
@@ -45,8 +45,6 @@
 //!   the same file row;
 //! - an empty raw-evidence-ref list after success: unreachable, eight refs are
 //!   pushed or an earlier check refuses;
-//! - a missing concrete discriminator is not a refusal: the canonical gap id
-//!   falls back to the behavior hint's default label;
 //! - an owner id without the `perl:` prefix: every row keyed by that id would
 //!   have to be renamed together, so it is not perturbed;
 //! - the related-evidence filter that drops another test's oracle is
@@ -74,16 +72,13 @@
 //! longer locally with `PROPTEST_CASES=2000 cargo test -p ripr --features
 //! lang-perl --lib actionability_proptest_tests`.
 
-use super::tests::consume;
+use super::tests::{RETURN_PACKET, concrete_return_packet, consume};
 use super::*;
 use proptest::prelude::*;
 use proptest::test_runner::Config;
 
 const DEFAULT_CASES: u32 = 64;
 
-const FIXTURE: &str = include_str!(
-    "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-);
 const CHANGE_ID: &str = "change:lib/My/App.pm:8:return";
 const OWNER_ID: &str = "perl:lib/My/App.pm::My::App::discount";
 const RELATION_ID: &str = "relation:return:discount-smoke";
@@ -296,6 +291,7 @@ struct Extra {
     packet_path: PacketPath,
     empty_provenance: Option<ProvenanceFact>,
     relation_for_other_owner: bool,
+    missing_discriminator: bool,
 }
 
 impl Default for Extra {
@@ -313,6 +309,7 @@ impl Default for Extra {
             packet_path: PacketPath::Safe,
             empty_provenance: None,
             relation_for_other_owner: false,
+            missing_discriminator: false,
         }
     }
 }
@@ -365,7 +362,7 @@ fn extra_strategy() -> impl Strategy<Value = Extra> {
         any::<bool>(),
         select(&PACKET_PATHS),
         prop::option::of(select(&PROVENANCE_FACTS)),
-        any::<bool>(),
+        (any::<bool>(), any::<bool>()),
     )
         .prop_map(
             |(
@@ -380,7 +377,7 @@ fn extra_strategy() -> impl Strategy<Value = Extra> {
                 owner_kind_unknown,
                 packet_path,
                 empty_provenance,
-                relation_for_other_owner,
+                (relation_for_other_owner, missing_discriminator),
             )| Extra {
                 limitation_kind,
                 limitation_target,
@@ -394,6 +391,7 @@ fn extra_strategy() -> impl Strategy<Value = Extra> {
                 packet_path,
                 empty_provenance,
                 relation_for_other_owner,
+                missing_discriminator,
             },
         )
 }
@@ -656,7 +654,7 @@ fn supporting_extra() -> impl Strategy<Value = Extra> {
 }
 
 /// Number of independently drawn fields in `Draw`; `copy_field` names each.
-const DRAW_FIELDS: usize = 42;
+const DRAW_FIELDS: usize = 43;
 
 /// Overwrite one field of `draw` with the value drawn in `from`.
 fn copy_field(draw: &mut Draw, from: &Draw, field: usize) {
@@ -702,6 +700,7 @@ fn copy_field(draw: &mut Draw, from: &Draw, field: usize) {
         38 => draw.extra.owner_kind_unknown = from.extra.owner_kind_unknown,
         39 => draw.extra.packet_path = from.extra.packet_path,
         40 => draw.extra.empty_provenance = from.extra.empty_provenance,
+        42 => draw.extra.missing_discriminator = from.extra.missing_discriminator,
         41 => draw.extra.relation_for_other_owner = from.extra.relation_for_other_owner,
         _ => {}
     }
@@ -821,6 +820,10 @@ fn refusals(draw: &Draw) -> Vec<&'static str> {
         extra.empty_provenance.is_some(),
         "missing_fact_provenance_refs",
     );
+    note(
+        extra.missing_discriminator,
+        "missing_concrete_discriminator",
+    );
     note(extra.relation_for_other_owner, "relation_for_another_owner");
     note(!draw.test_file_has_test_role, "test_file_not_test_role");
     note(
@@ -852,7 +855,7 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 fn base_packet() -> Result<PerlFactPacket, TestCaseError> {
-    consume(FIXTURE).map_err(TestCaseError::fail)
+    concrete_return_packet().map_err(TestCaseError::fail)
 }
 
 /// Apply `draw` to a fresh copy of the fixture packet and build its context.
@@ -879,6 +882,9 @@ fn build(
         .iter_mut()
         .find(|change| change.change_id == CHANGE_ID)
         .ok_or_else(|| missing("change"))?;
+    if draw.extra.missing_discriminator {
+        change.missing_discriminator = None;
+    }
     change.behavior_hint = draw.behavior_hint;
     change.changed_observable = ObservableField(match draw.extra.observable {
         ObservableVariant::NotCarried => None,
@@ -1169,6 +1175,7 @@ fn change_id(draw: &Draw) -> &'static str {
 /// provenance id, so clearing the rows refuses with `MissingProvenanceRefs`.
 #[derive(Clone, Copy, Debug)]
 enum Removal {
+    ConcreteDiscriminator,
     RelationOracleId,
     OracleRow,
     OracleTargetOwner,
@@ -1192,7 +1199,8 @@ enum Removal {
     OneStopIf,
 }
 
-const REMOVALS: [Removal; 20] = [
+const REMOVALS: [Removal; 21] = [
+    Removal::ConcreteDiscriminator,
     Removal::RelationOracleId,
     Removal::OracleRow,
     Removal::OracleTargetOwner,
@@ -1222,6 +1230,13 @@ impl Removal {
 
     fn apply(self, packet: &mut PerlFactPacket, context: &mut PerlActionabilityContext) {
         match self {
+            Removal::ConcreteDiscriminator => {
+                for change in &mut packet.changes {
+                    if change.change_id == CHANGE_ID {
+                        change.missing_discriminator = None;
+                    }
+                }
+            }
             Removal::RelationOracleId => {
                 for relation in &mut packet.relations {
                     relation.oracle_id = None;
@@ -1299,36 +1314,49 @@ fn actionable_after(
     Ok(result.is_ok())
 }
 
-/// The unperturbed fixture is actionable, so the refusal properties below
-/// are not vacuously satisfied by a fixture that never promotes.
+/// Only the discriminator channel changes across these fixture cases.
 #[test]
 fn perl_actionability_proptest_fixture_is_actionable() -> Result<(), String> {
-    let packet = consume(FIXTURE)?;
-    let result = packet.strict_actionability_for_change(
-        CHANGE_ID,
-        &PerlActionabilityContext {
-            receipt_command: Some(strings(&[
-                "ripr",
-                "agent",
-                "receipt",
-                "--root",
-                ".",
-                "--verify-json",
-                "target/ripr/workflow/agent-verify.json",
-                "--seam-id",
-                "perl-gap",
-                "--json",
-            ])),
-            allowed_edit_boundaries: strings(&[TEST_PATH]),
-            forbidden_edit_boundaries: strings(&[SOURCE_PATH]),
-            stop_if: strings(&["perl-lsp packet status changes"]),
-            must_not_change: strings(&[PRODUCTION_RULE, SUPPRESSION_RULE]),
-        },
-    );
-    match result {
-        Ok(actionable) if actionable.gap_state == PerlGapState::Actionable => Ok(()),
-        other => Err(format!("fixture must be actionable, got {other:?}")),
+    let context = super::tests::complete_perl_actionability_context();
+    for (field, digest, expected) in [
+        (Some("net amount"), "sha256:return", Some("net amount")),
+        (None, "discriminator:net amount", Some("net amount")),
+        (None, "sha256:return", None),
+        (Some(" "), "discriminator:  ", None),
+    ] {
+        let mut packet = consume(RETURN_PACKET)?;
+        let change = packet
+            .changes
+            .iter_mut()
+            .find(|change| change.change_id == CHANGE_ID)
+            .ok_or("missing return change")?;
+        change.missing_discriminator = field.map(str::to_string);
+        change.changed_text_digest = digest.to_string();
+        let result = packet.strict_actionability_for_change(CHANGE_ID, &context);
+        if let Some(value) = expected {
+            let actionable = result.map_err(|err| format!("{err:?}"))?;
+            assert_eq!(actionable.gap_state, PerlGapState::Actionable);
+            assert_eq!(actionable.missing_discriminator, value);
+        } else {
+            assert_eq!(
+                result,
+                Err(PerlActionabilityBlocker::MissingConcreteDiscriminator)
+            );
+            assert_eq!(
+                packet.repair_card_for_change(CHANGE_ID, &context),
+                Err(PerlActionabilityBlocker::MissingConcreteDiscriminator)
+            );
+            assert_eq!(
+                packet.agent_packet_for_change(CHANGE_ID, &context),
+                Err(PerlActionabilityBlocker::MissingConcreteDiscriminator)
+            );
+            let advisory = packet
+                .canonical_gap_identity_for_change(CHANGE_ID)
+                .ok_or("missing advisory identity")?;
+            assert_eq!(advisory.missing_discriminator, "return_value");
+        }
     }
+    Ok(())
 }
 
 /// The fixture's own values as a `Draw`: actionable, no refusal condition.
@@ -1489,6 +1517,7 @@ fn single_field_draws() -> Vec<Draw> {
     push(&|draw| draw.extra.oracle_from_other_test = true);
     push(&|draw| draw.extra.negated_comparison = true);
     push(&|draw| draw.extra.owner_kind_unknown = true);
+    push(&|draw| draw.extra.missing_discriminator = true);
     push(&|draw| draw.extra.relation_for_other_owner = true);
     draws
 }
@@ -1497,7 +1526,7 @@ fn single_field_draws() -> Vec<Draw> {
 /// no refusal stays actionable.
 #[test]
 fn perl_strict_actionability_refuses_each_condition_alone() -> Result<(), String> {
-    let base = consume(FIXTURE)?;
+    let base = concrete_return_packet()?;
     let draws = single_field_draws();
     let mut refused = 0usize;
     let mut disagreements = Vec::new();
