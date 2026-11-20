@@ -2935,8 +2935,11 @@ The evidence-first fields are additive in schema `0.2`:
   (POSIX), else `python`; its confidence is `low` when that venv statically
   lacks pytest and `medium` when the venv cannot be read statically
   (RIPR-SPEC-0028, #13801). When the test file belongs to a Python project
-  nested below the root (the nearest directory holding `pyproject.toml`,
-  `setup.cfg`, `setup.py`, `pytest.ini` or `tox.ini`), the optional
+  nested below the root (the nearest directory that statically declares a
+  project: `setup.py`, a `pyproject.toml` with `[project]`, `[build-system]`
+  or `[tool.poetry]`, or a `setup.cfg` with `[metadata]` or `[options]`;
+  tool-only configuration such as a lint-only `setup.cfg` does not count),
+  the optional
   `verify_cwd` names that directory relative to the root, and the command,
   test path and venv are relative to it; confidence is at most `medium` when
   that project has no venv but the root does (#15302). A command that cannot
@@ -2959,7 +2962,10 @@ The evidence-first fields are additive in schema `0.2`:
   `repair_placement.verify_cwd`, #15302); the human card, SARIF properties,
   GitHub annotation, gap-ledger `verify_cwd` and first-pr verify command
   context all use it, and first-pr withholds its verify forms when that
-  directory cannot be resolved under the selected root.
+  directory cannot be resolved under the selected root. Pilot cards and
+  gap-bound agent packets carry the raw `verify_command` with `verify_cwd`,
+  and their prose, copyable verification and queue rows show it as
+  `(cd -- <dir> && <command>)`.
   In raw `ripr check` output, `receipt.command` may still be `null` because the
   renderer does not know where the caller will save before/after check
   snapshots. Raw check cards include `receipt.guidance`, and pilot projections

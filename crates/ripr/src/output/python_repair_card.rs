@@ -336,6 +336,26 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     })
 }
 
+/// The verify command as a person or agent runs it from the selected root: a
+/// nested project's command (#15302) is wrapped in `(cd -- <dir> && ...)`;
+/// a root-level command is returned unchanged.
+pub(crate) fn rooted_verify_display(cwd: Option<&str>, command: &str) -> String {
+    match cwd {
+        Some(dir) => format!(
+            "(cd -- {} && {command})",
+            crate::agent::loop_commands::shell_arg(dir)
+        ),
+        None => command.to_string(),
+    }
+}
+
+impl PythonRepairCard {
+    /// [`rooted_verify_display`] for this card.
+    pub(crate) fn verify_display(&self) -> String {
+        rooted_verify_display(self.verify_cwd.as_deref(), &self.verify_command)
+    }
+}
+
 pub(crate) fn python_repair_card_json_value(card: &PythonRepairCard) -> Value {
     let mut suggested_location = Map::new();
     suggested_location.insert(

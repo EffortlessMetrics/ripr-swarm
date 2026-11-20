@@ -354,3 +354,28 @@ fn nested_project_sarif_card_names_the_project_cwd() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// A root-level project whose `tests/` holds a lint-only `setup.cfg`: that
+/// file is tool configuration, not a nested project, so the route stays at
+/// the root where the uninstalled `pkg` is importable.
+#[cfg(not(windows))]
+#[test]
+fn tool_only_setup_cfg_in_tests_does_not_move_the_root_project_cwd() -> Result<(), String> {
+    let (_guard, root) = materialize(
+        "",
+        &[("tests/setup.cfg", "[flake8]\nmax-line-length = 100\n")],
+    )?;
+    let json = check(&root, "json")?;
+    let finding = weak_python_finding(&json)?;
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_command: "),
+        Some("python -m pytest tests/test_price.py::test_discount"),
+        "{json}"
+    );
+    assert_eq!(
+        evidence_line(&finding, "suggested_verify_cwd: "),
+        None,
+        "{json}"
+    );
+    Ok(())
+}

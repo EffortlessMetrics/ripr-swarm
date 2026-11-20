@@ -19,14 +19,15 @@
 //!   `ripr doctor` checks the PATH interpreter instead.
 //!
 //! - A test file under a nested Python project (a directory below the root
-//!   that holds `pyproject.toml`, `setup.cfg`, `setup.py`, `pytest.ini` or
-//!   `tox.ini` and owns the test file, #15302) is verified from that
-//!   directory: the command carries the test path and the venv interpreter
+//!   that owns the test file and statically declares a project: `setup.py`,
+//!   or a `pyproject.toml` / `setup.cfg` with a packaging section, #15302) is
+//!   verified from that directory: the command carries the test path and the venv interpreter
 //!   relative to it, and `suggested_verify_cwd: <dir>` names the directory
 //!   relative to the root. Run from the root, pytest cannot import the
 //!   project's own package. A root-level project carries no cwd line.
 //!
-//! Detection reads directory listings and `pyvenv.cfg` only. It never runs
+//! Detection reads directory listings, `pyvenv.cfg` and the project files
+//! named above only. It never runs
 //! the interpreter or any code from the checkout.
 
 use crate::analysis::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
@@ -45,19 +46,39 @@ pub(super) const VENV_PYTEST: &str = "suggested_verify_venv_pytest: ";
 /// Evidence line naming the root-relative directory a nested project's verify
 /// command runs from. Absent when the command runs from the root.
 pub(crate) const VERIFY_CWD: &str = "suggested_verify_cwd: ";
-/// Files that mark a directory as a Python project (pytest rootdir) root.
-const PROJECT_MARKERS: [&str; 5] = [
-    "pyproject.toml",
-    "setup.cfg",
-    "setup.py",
-    "pytest.ini",
-    "tox.ini",
-];
+/// Whether `dir` statically owns an installable Python project: a
+/// `setup.py`, a `pyproject.toml` declaring `[project]`, `[build-system]` or
+/// `[tool.poetry]`, or a `setup.cfg` declaring `[metadata]` or `[options]`.
+/// A tool-only configuration file (a lint-only `setup.cfg`, a `tox.ini` or
+/// `pytest.ini` inside a test directory) is not ownership evidence: moving
+/// the verify cwd there would drop the enclosing project from the import path.
+fn owns_python_project(dir: &Path) -> bool {
+    let declares = |file: &str, sections: &[&str]| {
+        std::fs::read_to_string(dir.join(file)).is_ok_and(|text| {
+            text.lines().any(|line| {
+                let line = line.trim();
+                sections.iter().any(|section| {
+                    // `[project]` or a subtable such as `[project.scripts]`.
+                    line == *section
+                        || section
+                            .strip_suffix(']')
+                            .is_some_and(|open| line.starts_with(&format!("{open}.")))
+                })
+            })
+        })
+    };
+    dir.join("setup.py").is_file()
+        || declares(
+            "pyproject.toml",
+            &["[project]", "[build-system]", "[tool.poetry]"],
+        )
+        || declares("setup.cfg", &["[metadata]", "[options]"])
+}
 
-/// The nearest directory strictly below `root` that holds a Python project
-/// marker and contains `test_file`, as a root-relative POSIX path. `None` when
-/// the owning project is the root (or no marker exists), so the command stays
-/// root-relative exactly as before.
+/// The nearest directory strictly below `root` that owns a Python project
+/// ([`owns_python_project`]) and contains `test_file`, as a root-relative
+/// POSIX path. `None` when the owning project is the root (or no directory
+/// below it owns one), so the command stays root-relative exactly as before.
 fn nested_project_dir(root: &Path, test_file: &str) -> Option<String> {
     let path = Path::new(test_file);
     let parts: Vec<&str> = path
@@ -70,10 +91,7 @@ fn nested_project_dir(root: &Path, test_file: &str) -> Option<String> {
     let dirs = parts.split_last()?.1;
     (1..=dirs.len()).rev().find_map(|depth| {
         let dir = dirs[..depth].join("/");
-        let marked = PROJECT_MARKERS
-            .iter()
-            .any(|marker| root.join(&dir).join(marker).is_file());
-        marked.then_some(dir)
+        owns_python_project(&root.join(&dir)).then_some(dir)
     })
 }
 

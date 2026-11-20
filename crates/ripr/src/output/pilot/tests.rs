@@ -5631,3 +5631,42 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
     assert!(terminal.contains("perl:"), "{terminal}");
     assert!(!terminal.contains("  python:"), "{terminal}");
 }
+
+/// #15302: a nested Python project's project-relative verify command is shown
+/// with its directory on every pilot surface, so it runs from the root.
+#[cfg(not(windows))]
+#[test]
+fn pilot_surfaces_run_a_nested_python_verify_command_from_its_project() {
+    let artifacts = pilot_artifacts();
+    let mut python = python_first_use();
+    if let Some(card) = python.top_repair_card.as_mut() {
+        card.verify_command = "python -m pytest tests/test_price.py::test_discount".to_string();
+        card.verify_cwd = Some("py".to_string());
+    }
+    let context = pilot_context_with_python(&artifacts, &python);
+    let json = render_pilot_summary_json(&[], context);
+    let md = render_pilot_summary_md(&[], context);
+    let terminal = render_pilot_terminal(&[], context);
+    let rooted = "(cd -- py && python -m pytest tests/test_price.py::test_discount)";
+    assert!(json.contains(r#""verify_cwd": "py""#), "{json}");
+    assert!(
+        json.contains(r#""verify_command": "python -m pytest tests/test_price.py::test_discount""#),
+        "{json}"
+    );
+    assert!(md.contains(&format!("Verify: `{rooted}`")), "{md}");
+    assert!(
+        terminal.contains(&format!("verify: {rooted}")),
+        "{terminal}"
+    );
+    for (surface, text) in [("markdown", &md), ("terminal", &terminal)] {
+        for line in text
+            .lines()
+            .filter(|line| line.contains("pytest tests/test_price.py"))
+        {
+            assert!(
+                line.contains("cd -- py &&"),
+                "{surface} line without the project directory: {line}"
+            );
+        }
+    }
+}
