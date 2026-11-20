@@ -19,6 +19,7 @@
 //! disabled-capable client. Missing snapshots and blocked roots stay
 //! omit-only; retained presentation does not grant execution authority.
 
+use super::capabilities::ADVERTISED_CODE_ACTION_KINDS;
 use serde_json::Value;
 use tower_lsp_server::ls_types::{Diagnostic, NumberOrString};
 
@@ -418,6 +419,12 @@ pub(super) fn parse_validated_action_data(
     let action_id = required_payload_string(object, "action_id")?;
     let action_class = required_payload_string(object, "action_class")?;
     let action_kind = required_payload_string(object, "action_kind")?;
+    if !ADVERTISED_CODE_ACTION_KINDS.contains(&action_kind.as_str()) {
+        return Err(
+            "code action data has an unsupported action_kind; ask the client to request code actions again"
+                .to_string(),
+        );
+    }
     if action_class_for_kind(&action_kind) != action_class {
         return Err(format!(
             "code action data action_class `{action_class}` disagrees with action_kind `{action_kind}`"
@@ -858,5 +865,34 @@ mod tests {
             Err(error) if error.contains("does not recompute") => Ok(()),
             Err(error) => Err(format!("unexpected parse rejection: {error}")),
         }
+    }
+
+    #[test]
+    fn parse_rejects_unadvertised_action_kinds() -> Result<(), String> {
+        let diagnostic = gap_diagnostic();
+        let mut inputs = inputs_for(Some(&diagnostic));
+        let payload = action_data(&inputs);
+        parse_validated_action_data(&payload, inputs.command_id)?;
+
+        // These substitutions preserve the inspect fingerprint. A filter
+        // prefix may match emitted kinds without being emitted itself.
+        for kind in ["quickfix.ripr", "quickfix.ripr.inspect.unknown"] {
+            let mut tampered = payload.clone();
+            tampered["action_kind"] = Value::String(kind.to_string());
+            let error = parse_validated_action_data(&tampered, inputs.command_id)
+                .err()
+                .ok_or_else(|| format!("unadvertised action kind `{kind}` was accepted"))?;
+            assert!(error.contains("unsupported action_kind"), "{error}");
+        }
+
+        // Verify already has a class mapping. A payload with a matching
+        // verify fingerprint must still fail until the kind is advertised.
+        inputs.action_kind = "quickfix.ripr.verify";
+        let reserved = action_data(&inputs);
+        let error = parse_validated_action_data(&reserved, inputs.command_id)
+            .err()
+            .ok_or_else(|| "reserved verify kind was accepted".to_string())?;
+        assert!(error.contains("unsupported action_kind"), "{error}");
+        Ok(())
     }
 }
