@@ -1701,9 +1701,16 @@ fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string)
     };
+    // #15302: a nested project's command is relative to its `verify_cwd`.
+    let verify_cwd = text_at("/verify_cwd");
     Some(PilotPythonCard {
         missing_discriminator: text_at("/missing_discriminator"),
-        verify_command: text_at("/verify_command"),
+        verify_command: text_at("/verify_command").map(|command| {
+            crate::output::python_repair_card::rooted_verify_display(
+                verify_cwd.as_deref(),
+                &command,
+            )
+        }),
     })
 }
 
@@ -7921,6 +7928,29 @@ mod tests {
             !rendered.contains("```bash\nripr pilot --root"),
             "{rendered}"
         );
+
+        // #15302: a nested project's card names its directory.
+        #[cfg(not(windows))]
+        {
+            let nested = r#"{"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "qty >= 5", "verify_command": "python -m pytest tests/test_price.py::test_discount", "verify_cwd": "py"}}"#;
+            write_file(
+                &root.join(PILOT_SUMMARY_ARTIFACT),
+                &summary("complete", "[]", nested, "null"),
+            )?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let warning = report
+                .warnings
+                .iter()
+                .find(|warning| warning.kind == "pilot_python_repair_card_no_agent_repair")
+                .ok_or_else(|| format!("expected a nested card warning: {:?}", report.warnings))?;
+            assert!(
+                warning.message.contains(
+                    "(`(cd -- py && python -m pytest tests/test_price.py::test_discount)`)"
+                ),
+                "{}",
+                warning.message
+            );
+        }
 
         // Controls: a ranked seam, a recorded repair start, an incomplete run,
         // or a ready status without cards keeps status on `select_seam`.

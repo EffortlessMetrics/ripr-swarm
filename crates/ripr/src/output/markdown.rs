@@ -503,13 +503,21 @@ pub(crate) fn command_context_directory(
     }
 }
 
-/// Resolve a ledger `typescript_package_root` to a directory under `workspace_root`.
+/// Resolve a ledger `typescript_package_root` (or a Python record's
+/// `verify_cwd`, #15302) to a directory under `workspace_root`.
 fn confined_typescript_package_directory(
     workspace_root: &std::path::Path,
     record: &serde_json::Value,
 ) -> Option<std::path::PathBuf> {
     use std::path::Component;
-    let rel = typescript_package_root_from_gap_record(record)?;
+    let rel = typescript_package_root_from_gap_record(record).or_else(|| {
+        record
+            .get("verify_cwd")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })?;
     if rel == "." {
         return None;
     }
@@ -528,6 +536,21 @@ fn confined_typescript_package_directory(
         return None;
     }
     Some(resolved)
+}
+
+/// True when a Python record names a nonblank `verify_cwd` (and no TypeScript
+/// package root) that does not resolve to a directory under `workspace_root`.
+fn python_verify_cwd_unconfined(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> bool {
+    let declared = record
+        .get("verify_cwd")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    declared
+        && typescript_package_root_from_gap_record(record).is_none()
+        && confined_typescript_package_directory(workspace_root, record).is_none()
 }
 
 /// Clipboard verify command for nested TypeScript packages when a rooted Bash
@@ -559,6 +582,23 @@ pub(crate) fn selected_nested_verify_command_context(
 ) -> serde_json::Value {
     let verify_root = command_context_directory(workspace_root, record);
     let mut context = selected_command_context(&verify_root, verify, verify);
+    // A Python record's verify command is spelled relative to its nested
+    // project (#15302). When that directory cannot be confined under the
+    // selected root, a root-rooted form would print a command that cannot
+    // find its test: withhold the verify forms instead. `cwd` stays the
+    // selected root so the packet still validates and the receipt form holds.
+    if python_verify_cwd_unconfined(workspace_root, record)
+        && let Some(object) = context.as_object_mut()
+    {
+        object.insert(
+            "verify".to_string(),
+            serde_json::json!({
+                "bash": null,
+                "powershell": null,
+                "recovery": "The nested Python project directory named by verify_cwd is missing or outside the selected root; rerun ripr check from this checkout and regenerate the packet.",
+            }),
+        );
+    }
     let receipt_context = selected_command_context(workspace_root, receipt, receipt);
     if let Some(object) = context.as_object_mut() {
         object.insert(
@@ -1356,6 +1396,72 @@ pub(crate) fn powershell_text_variant(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #15302: a Python record's project-relative verify command runs from
+    /// its confined `verify_cwd`; an unconfinable one withholds the verify
+    /// forms instead of rooting a command that cannot find its test.
+    #[cfg(not(windows))]
+    #[test]
+    fn python_verify_cwd_roots_verify_or_withholds_it() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-md-verify-cwd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("py")).map_err(|e| e.to_string())?;
+        let verify = "python -m pytest tests/test_price.py::test_discount";
+        let nested = serde_json::json!({"verify_cwd": "py"});
+        let context =
+            selected_nested_verify_command_context(&root, &nested, verify, "ripr receipt write");
+        let bash = context["verify"]["bash"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let receipt = context["receipt"]["bash"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let withheld: Vec<serde_json::Value> = ["missing", "../py", "/py", "."]
+            .iter()
+            .map(|cwd| {
+                selected_nested_verify_command_context(
+                    &root,
+                    &serde_json::json!({"verify_cwd": cwd}),
+                    verify,
+                    "ripr receipt write",
+                )
+            })
+            .collect();
+        let rooted = selected_nested_verify_command_context(
+            &root,
+            &serde_json::json!({}),
+            verify,
+            "ripr receipt write",
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            bash.contains("ripr-md-verify-cwd-")
+                && bash.contains("/py")
+                && bash.ends_with("&& python -m pytest tests/test_price.py::test_discount)"),
+            "{bash}"
+        );
+        assert!(
+            receipt.contains("ripr-md-verify-cwd-") && !receipt.contains("/py"),
+            "receipt stays rooted at the workspace: {receipt}"
+        );
+        for context in withheld {
+            assert!(context["verify"]["bash"].is_null(), "{context}");
+            assert!(context["cwd"].is_string(), "{context}");
+            assert!(
+                context["verify"]["recovery"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("verify_cwd")),
+                "{context}"
+            );
+        }
+        assert!(
+            rooted["verify"]["bash"].as_str().is_some(),
+            "no cwd keeps the root form: {rooted}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn rooted_bash_accepts_literal_argument_equals_without_powershell_translation() {
