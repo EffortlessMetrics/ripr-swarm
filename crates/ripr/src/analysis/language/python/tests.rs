@@ -8816,7 +8816,7 @@ fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no(
     assert_eq!(reach.state, StageState::Unknown, "{}", reach.summary);
     assert!(!reach.summary.contains("0 related"), "{}", reach.summary);
 
-    // Negative control: an ordinary untested function keeps `reach no`.
+    // Negative control: an ordinary unexercised function keeps `reach no`.
     let finding = classify_change(owner_file, 7, "    return x + 1", &owners, &tests)
         .ok_or("plain edit must produce a finding")?;
     assert_eq!(finding.ripr.reach.state, StageState::No);
