@@ -296,7 +296,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
                                 .or_else(|| string_field(entry.pointer("/placement/path")))
                                 .as_deref(),
                             seam_id: identity.seam_id.as_deref(),
-                            changed_owner: entry.get("changed_owner").and_then(Value::as_str),
+                            changed_owner: string_field(entry.get("changed_owner")).as_deref(),
                         },
                     )
                 {

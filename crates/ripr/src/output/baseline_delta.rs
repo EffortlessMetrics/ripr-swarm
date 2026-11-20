@@ -1666,14 +1666,17 @@ pub(super) fn owner_opt_out_absence(
         )));
     }
     let base = |owner: &'_ str| -> String {
-        crate::output::outcome::duplicate_owner_base(owner)
-            .unwrap_or(owner)
-            .to_string()
+        comparable_owner(crate::output::outcome::duplicate_owner_base(owner).unwrap_or(owner))
     };
     match entry.changed_owner {
         Some(owner) => {
             let suffixed = crate::output::outcome::duplicate_owner_base(owner).is_some();
-            if !suffixed && opt_outs.owners.contains(owner) {
+            if !suffixed
+                && opt_outs
+                    .owners
+                    .iter()
+                    .any(|withheld| comparable_owner(withheld) == comparable_owner(owner))
+            {
                 return Some(OwnerOptOutAbsence::Withheld(format!(
                     "the current analysis withholds its owner `{owner}` by an owner opt-out (owner_mutants_skip)"
                 )));
@@ -1712,6 +1715,15 @@ pub(super) fn owner_opt_out_absence(
                     ))
                 })
         }
+    }
+}
+
+/// An owner key `file::item` with its file half in [`comparable_path`]'s
+/// spelling, so `./src\\g.rs::f` compares equal to `src/g.rs::f`.
+fn comparable_owner(owner: &str) -> String {
+    match owner.split_once("::") {
+        Some((file, item)) => format!("{}::{item}", comparable_path(file)),
+        None => comparable_path(owner),
     }
 }
 
@@ -4209,6 +4221,47 @@ mod tests {
             .flatten()
             .filter_map(|entry| entry["identity"]["seam_id"].as_str().map(String::from))
             .collect())
+    }
+
+    #[test]
+    fn spelled_and_empty_owners_are_kept_by_delta_and_update() -> Result<(), String> {
+        // `spelled` names the withheld owner with `./` and a backslash;
+        // `empty` records a blank changed_owner in the withheld owner's file,
+        // which both consumers read as no owner. `plain` resolves.
+        let baseline = owner_baseline(&[
+            ("spelled", Some(".\\src\\g.rs::skipped")),
+            ("empty", Some("  ")),
+            ("plain", Some("src/g.rs::fixed")),
+        ]);
+        let current = opted_out_gate_decision(serde_json::json!({
+            "withheld": 1,
+            "reason": "owner_mutants_skip",
+            "seam_ids": ["fresh0001"],
+            "owners": ["src/g.rs::skipped"],
+        }));
+        let items = owner_delta(&baseline, &current)?;
+        assert_eq!(
+            items.get("spelled").map(|item| item.1.clone()),
+            Some(serde_json::json!("owner_mutants_skip")),
+            "{items:?}"
+        );
+        assert_eq!(
+            items.get("empty").map(|item| item.2.clone()),
+            Some(serde_json::json!("not_evaluated")),
+            "{items:?}"
+        );
+        assert_eq!(
+            items.get("plain").map(|item| item.0.as_str()),
+            Some("resolved"),
+            "{items:?}"
+        );
+        let kept = owner_update_keeps(&baseline, &current)?;
+        assert!(
+            kept.contains("spelled") && kept.contains("empty"),
+            "{kept:?}"
+        );
+        assert!(!kept.contains("plain"), "{kept:?}");
+        Ok(())
     }
 
     #[test]
