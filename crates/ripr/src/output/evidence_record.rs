@@ -1025,7 +1025,8 @@ fn alignment_confidence_for(
 /// test reaches the seam. Eligibility and the limitation projection share
 /// this one decision.
 fn activation_follows_absent_reach(entry: &ClassifiedSeam) -> bool {
-    matches!(entry.evidence.reach.state, StageState::No)
+    entry.evidence.activate.static_limit_kind.is_none()
+        && matches!(entry.evidence.reach.state, StageState::No)
         && matches!(entry.evidence.activate.state, StageState::Unknown)
         && (entry
             .evidence
@@ -3586,6 +3587,30 @@ mod tests {
                 json["static_limitations"][0]["repair_route"],
                 CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE
             );
+        }
+    }
+
+    #[test]
+    fn typed_activation_survives_absent_reach_even_with_legacy_absence_wording() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.reach.state = StageState::No;
+        entry.evidence.activate.summary =
+            "No concrete activation values observed for seam `x`".into();
+        for (kind, expected) in [
+            (None, None),
+            (
+                Some(StaticLimitKind::ActivationBoundaryInputUnresolved),
+                Some("activation_boundary_input_unresolved"),
+            ),
+        ] {
+            entry.evidence.activate.static_limit_kind = kind;
+            let rows = static_limitations_for(&entry);
+            let categories: Vec<_> = rows
+                .iter()
+                .filter(|row| row.stage == "activate")
+                .map(|row| row.category.as_str())
+                .collect();
+            assert_eq!(categories, expected.into_iter().collect::<Vec<_>>());
         }
     }
 
