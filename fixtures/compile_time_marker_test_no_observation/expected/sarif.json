@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Changed code `{ let v = self.inner.get(); v }` is reached by tests, but no assertion appears to notice a change. Next step: The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap."
+            "text": "Changed code `{ let v = self.inner.get(); v }` has no assertion that appears to notice a change, and test reach to it is not established. Next step: The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_lib.rs:return_value:d2732503|probe:src_lib.rs:return_value:d2732503|fixtures/compile_time_marker_test_no_observation/input/src/lib.rs"
