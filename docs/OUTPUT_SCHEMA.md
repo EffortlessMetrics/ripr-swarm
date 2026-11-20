@@ -134,7 +134,7 @@ map is:
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.3` |
-| `ripr cache export` success stdout | `schema_version` | `0.1` |
+| `ripr cache export` success stdout (published as `schemas/ripr/cache-export.schema.json`) | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
@@ -167,6 +167,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
+| `schemas/ripr/cache-export.schema.json` | `0.1` | `crates/ripr/src/analysis/seam_cache/export.rs`; cache export success report (`ripr cache export`) |
 | `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
@@ -1017,6 +1018,11 @@ exit zero before consuming the directory. Failures after output creation name th
 retained owned partial output; preflight refusals, including unavailable Cargo
 input identity, occur before the output directory exists and create no output.
 The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-cache-export.md).
+The success object is published as
+[`schemas/ripr/cache-export.schema.json`](../schemas/ripr/cache-export.schema.json);
+`crates/ripr/tests/cache_export_json_schema.rs` validates the bytes the real
+command writes and holds `copied_files` and `logical_file_bytes` to the files
+in the directory `cache_dir` names.
 
 ## Matched intervention-study preregistration
 
@@ -1316,6 +1322,9 @@ CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
 stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 limit=STATIC_LIMIT_KIND
+owner=OWNER_NAME
+before=BASE EXPRESSION
+seen=VALUE (CONTEXT); VALUE (CONTEXT) (+N more)
 done=... | open=... | stop=...
 next=ripr context ... --at SELECTOR
 ```
@@ -1340,7 +1349,22 @@ next=ripr context ... --at SELECTOR
   currentness. A policy-suppressed finding prints a suppression `stop=`; a
   `--from` replay with `--suppression-policy` is refused for this format. All
   are static advisory, never runtime mutation outcomes.
-- `next=` is the scope-bound `ripr context` command for this finding.
+- `owner=` is the function the changed line belongs to (the producer's probe
+  owner, without the file prefix) and `before=` the changed expression as it
+  read on the base side; each is omitted when the producer recorded none, and
+  `before=` when it equals the record's expression. They carry the two facts a
+  `missing=-` row lacks, so an agent does not fetch the JSON packet for them.
+- `seen=` lists up to six values the related tests already use (the packet's
+  `observed_values`), each with its producer context in parentheses
+  (`function_argument` for an exercised input, `assertion_argument` for an
+  expected value, and so on), then `(+N more)`. It prints only when `next=`
+  is omitted, so no packet fact is dropped; absent when none were observed.
+- `next=` is the scope-bound `ripr context` command for this finding. It is
+  omitted for an `open=` test-side gap that names no concrete missing
+  discriminator and has at most one related test: the packet then adds nothing
+  the record, `owner=` and `before=` did not print. Any other finding keeps it,
+  because the discriminator's reason, observed inputs, flow sink and further
+  related tests live only in the packet.
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
@@ -4929,8 +4953,8 @@ ripr check --format repo-sarif-compact
 `sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
 minified: parsed values are identical to `sarif`/`repo-sarif`, including the
 `RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
-bytes; `0` removes the cap; an unparseable value fails the run) and its
-in-band disclosure (`limited_results_bound`, `document_complete: false`,
+bytes; `0` removes the cap; results are kept by level, errors then warnings
+then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
 `results_rendered`/`results_total`/`results_omitted`). A bounded document
 stays valid SARIF 2.1.0 and is incomplete, never a clean run.
 The pretty `sarif` and `repo-sarif` bytes are unchanged.
@@ -15786,7 +15810,7 @@ ripr first-pr \
   --agent-packet target/ripr/agent/gap-packet.md \
   --gate-decision target/ripr/reports/gate-decision.json \
   --receipts-dir target/ripr/receipts \
-  --out-dir target/ripr/reports
+  --output-dir target/ripr/reports
 ```
 
 The command writes:

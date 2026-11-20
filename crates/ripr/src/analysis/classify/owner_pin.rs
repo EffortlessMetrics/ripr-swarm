@@ -5682,6 +5682,23 @@ pub(in crate::analysis) fn returned_closure_pin_required(
 }
 
 impl OwnerReturnPin {
+    /// #15345: the call text the closed owner subset evaluates. An admitted
+    /// associated `T::name(..)` call is read as the bare `name(..)` it
+    /// resolves to, so a value neither version computes is refused for an
+    /// associated owner as it is for a free function; a trailing `.unwrap()`
+    /// is dropped as before.
+    fn closed_call_text<'a>(&self, call: &'a str) -> &'a str {
+        let call = call.trim();
+        match &self.call {
+            PinCall::Associated { type_name } => call
+                .strip_prefix(type_name.as_str())
+                .and_then(|rest| rest.trim_start().strip_prefix("::"))
+                .map_or(call, str::trim_start),
+            _ => call,
+        }
+        .trim_end_matches(".unwrap()")
+    }
+
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
     /// short-circuit and adaptor paths require their own pinned-input gates.
@@ -6185,11 +6202,10 @@ impl OwnerReturnPin {
                     .map(Box::new)
                 });
         let call = pin_call(owner, index)?;
-        // #6617 keeps the associated-function pin to a return value: a
-        // `T::new()` whole-value field pin is a separate claim.
-        if matches!(call, PinCall::Associated { .. })
-            || other_definition_competes(owner, index, call.kind(), None)
-        {
+        // #15345: an associated constructor (`Cfg::new()`) pins its fields
+        // through the same `T::name(..)` call identity a return value uses
+        // (#6617, RIPR-SPEC-0172).
+        if other_definition_competes(owner, index, call.kind(), None) {
             return None;
         }
         Some(Self {
@@ -7372,7 +7388,7 @@ impl OwnerReturnPin {
             // #15397 review: an awaited call evaluates like its bare call.
             && closed.provably_unpinned(
                 &self.name,
-                call.trim_end_matches(".unwrap()").trim_end_matches(".await"),
+                self.closed_call_text(&call).trim_end_matches(".await"),
                 expected,
             )
         {
@@ -7414,7 +7430,7 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && let Some(pinned) = gate.pinned_field_text(expected)
-            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), &pinned)
+            && closed.provably_unpinned(&self.name, self.closed_call_text(&call), &pinned)
         {
             return false;
         }

@@ -35,6 +35,7 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/config/ripr-toml.schema.json`](../../schemas/config/ripr-toml.schema.json) | Repository `ripr.toml` input, for editor validation and completion (not a ripr output). |
 | [`schemas/ripr/pr-evidence.schema.json`](../../schemas/ripr/pr-evidence.schema.json) | Canonical PR evidence summary packet. |
 | [`schemas/ripr/review-comments.schema.json`](../../schemas/ripr/review-comments.schema.json) | `ripr review-comments` guidance output. |
+| [`schemas/ripr/cache-export.schema.json`](../../schemas/ripr/cache-export.schema.json) | `ripr cache export` success report: the export directory and the entry, file and byte counts it copied. |
 | [`schemas/ripr/cache-status.schema.json`](../../schemas/ripr/cache-status.schema.json) | `ripr cache status --json` report: cache location, readability, and owned versus foreign file counts. |
 | [`schemas/ripr/capabilities.schema.json`](../../schemas/ripr/capabilities.schema.json) | `ripr capabilities --json` language capability registry: build availability per language and the support cells per language, framework and mode. |
 | [`schemas/ripr/cli-refusal.schema.json`](../../schemas/ripr/cli-refusal.schema.json) | Minimal `cli_refusal` document for argv usage errors and selector misses under an explicit JSON request (#11584). |

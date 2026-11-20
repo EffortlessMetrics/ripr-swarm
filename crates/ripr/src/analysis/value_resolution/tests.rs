@@ -1020,6 +1020,64 @@ fn extract_rstest_cases_maps_case_rows_to_case_marked_parameters_only() {
 }
 
 #[test]
+fn extract_rstest_cases_reads_named_case_rows() {
+    // rstest's `#[case::description(..)]` form carries the same positional
+    // row as `#[case(..)]`; only the generated test name differs.
+    let test = TestSummary {
+        name: "t".to_string(),
+        file: std::path::PathBuf::from("tests/t.rs"),
+        start_line: 1,
+        end_line: 1,
+        body: "fn t(#[case] amount: u32, #[case] expected: u32) { assert_eq!(discount(amount), expected); }".into(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
+        assertions: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: vec![
+            "#[rstest]".to_string(),
+            "#[case::below(50, 0)]".to_string(),
+            "#[case(100, 0)]".to_string(),
+            "#[case::r#above (200, 20)]".to_string(),
+            "#[case :: égal(100, 0)]".to_string(),
+            "#[case::two::parts(7, 7)]".to_string(),
+            "#[cases(9, 9)]".to_string(),
+        ]
+        .into(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
+    };
+
+    let (cases, params) = extract_rstest_cases(&test);
+
+    assert_eq!(params, vec!["amount", "expected"]);
+    assert_eq!(
+        cases,
+        vec![
+            vec!["50".to_string(), "0".to_string()],
+            vec!["100".to_string(), "0".to_string()],
+            vec!["200".to_string(), "20".to_string()],
+            vec!["100".to_string(), "0".to_string()],
+        ],
+        "named rows bind like plain rows; a multi-segment path or another attribute binds nothing"
+    );
+
+    // A bare `#[case::name]` carries no row.
+    let mut bare = test.clone();
+    bare.attrs = vec!["#[rstest]".to_string(), "#[case::name]".to_string()].into();
+    assert!(extract_rstest_cases(&bare).0.is_empty());
+
+    // A named rstest row beside `test_case` rows has no single binding rule,
+    // so the function binds nothing, as with a plain `#[case(..)]` row.
+    let mut mixed = test.clone();
+    mixed.attrs = vec![
+        "#[test_case(100, 0)]".to_string(),
+        "#[case::equal(100, 0)]".to_string(),
+    ]
+    .into();
+    assert_eq!(extract_rstest_cases(&mixed), (Vec::new(), Vec::new()));
+}
+
+#[test]
 fn case_columns_stay_aligned_past_a_pattern_parameter() {
     // Review of #4715: a `ref` case parameter was dropped from the list, so
     // `amount` took the first column (10, 9) instead of its own (100, 200).
