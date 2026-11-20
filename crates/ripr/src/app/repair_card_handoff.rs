@@ -540,12 +540,11 @@ pub(crate) fn assemble_repair_card(
         stop_conditions.push(inline_test_module_edit_statement(&recommended.file, module));
     }
 
-    let changed_behavior = facts
+    let expression = facts
         .witness
         .map(|witness| witness.changed_expression.trim())
         .filter(|expression| !expression.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| entry.seam.expression().to_string());
+        .unwrap_or_else(|| entry.seam.expression());
     let exact_blocker = facts
         .witness
         .and_then(|witness| witness.missing_discriminators.first())
@@ -584,6 +583,10 @@ pub(crate) fn assemble_repair_card(
     let seam_id = entry.seam.id().as_str().to_string();
     let packet_route = format!("ripr agent packet --seam-id {} --json", shell_arg(&seam_id));
     let detail_sources = detail_sources_for(facts, &packet_route, &done_when)
+        .map_err(AgentCardError::operational)?;
+
+    let budget = RepairCardBudget::default();
+    let changed_behavior = card_expression_summary(expression, &seam_id, &detail_sources, &budget)
         .map_err(AgentCardError::operational)?;
 
     // #5007: a builder, route-gate, or budget refusal is a deliberate named
@@ -628,7 +631,7 @@ pub(crate) fn assemble_repair_card(
         attempt: facts.attempt,
         limitations,
         detail_sources,
-        budget: RepairCardBudget::default(),
+        budget,
     })
     .map_err(AgentCardError::budget_overflow)
 }
@@ -656,18 +659,41 @@ fn attach_fix_instruction_identities(
     instruction.attach_identities(&context);
 }
 
-/// Whether the rendered packet envelope actually surfaces this seam. The
-/// envelope's `packets` array honors the shared queue policy; an entry whose
-/// `seam_id` names this seam is the only current-surface proof.
-fn packet_surfaces_seam(packet_content: &serde_json::Value, seam_id: &str) -> bool {
-    packet_content
-        .get("packets")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|packets| {
-            packets.iter().any(|packet| {
-                packet.get("seam_id").and_then(serde_json::Value::as_str) == Some(seam_id)
-            })
+/// The packet queue may omit the selected seam even when the inventory names it.
+fn packet_for_seam<'a>(
+    content: &'a serde_json::Value,
+    seam_id: &str,
+) -> Option<&'a serde_json::Value> {
+    content
+        .get("packets")?
+        .as_array()?
+        .iter()
+        .find(|packet| packet.get("seam_id").and_then(serde_json::Value::as_str) == Some(seam_id))
+}
+
+/// Refer oversized prose to a detail route only when the packet actually carries
+/// the exact expression for this seam. Otherwise the card budget refuses it.
+fn card_expression_summary(
+    expression: &str,
+    seam_id: &str,
+    sources: &[RepairCardDetailSource],
+    budget: &RepairCardBudget,
+) -> Result<String, String> {
+    let wire_bytes = serde_json::to_string(expression)
+        .map_err(|error| error.to_string())?
+        .len();
+    if wire_bytes > budget.max_inline_detail_bytes
+        && sources.iter().any(|source| {
+            source.family == RepairCardDetailFamily::CanonicalPacket
+                && source.state == RepairCardDetailState::Current
+                && packet_for_seam(&source.content, seam_id)
+                    .and_then(|packet| packet["changed_expression"].as_str())
+                    == Some(expression)
         })
+    {
+        return Ok("See changed_expression in the canonical packet for this seam.".to_string());
+    }
+    Ok(expression.to_string())
 }
 
 /// Every load-bearing evidence family rides behind a typed reference. The
@@ -690,7 +716,7 @@ fn detail_sources_for(
     // would overstate the evidence, so the family records an exact unavailable
     // reason instead (fail-closed, like every other omitted family).
     let mut sources = Vec::new();
-    if packet_surfaces_seam(&packet_content, facts.entry.seam.id().as_str()) {
+    if packet_for_seam(&packet_content, facts.entry.seam.id().as_str()).is_some() {
         sources.push(RepairCardDetailSource::current(
             RepairCardDetailFamily::CanonicalPacket,
             packet_route,
@@ -2593,6 +2619,35 @@ pub(crate) mod tests {
         if route != expected {
             return Err(format!("expected `{expected}`, got `{route}`"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_card_expression_needs_the_exact_current_packet() -> Result<(), String> {
+        let budget = RepairCardBudget::default();
+        // Escapes exceed the JSON wire budget even though the source fits.
+        let expression = "\\".repeat(budget.max_inline_detail_bytes / 2);
+        let mut source = RepairCardDetailSource::current(
+            RepairCardDetailFamily::CanonicalPacket,
+            "ripr agent packet --seam-id selected --json",
+            serde_json::json!({"packets": [
+                {"seam_id": "sibling", "changed_expression": expression},
+                {"seam_id": "selected", "changed_expression": "other"}
+            ]}),
+        );
+        let summary = |source: &RepairCardDetailSource| {
+            card_expression_summary(
+                &expression,
+                "selected",
+                std::slice::from_ref(source),
+                &budget,
+            )
+        };
+        assert_eq!(summary(&source)?, expression);
+        source.content["packets"][1]["changed_expression"] = serde_json::json!(expression);
+        assert!(summary(&source)?.contains("canonical packet"));
+        source.state = RepairCardDetailState::Stale;
+        assert_eq!(summary(&source)?, expression);
         Ok(())
     }
 
