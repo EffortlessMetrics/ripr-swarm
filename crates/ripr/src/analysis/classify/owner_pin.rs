@@ -42,6 +42,7 @@
 //! names the method is not detected.
 
 mod call_term_fold;
+pub(super) mod closed_dispatch;
 pub(super) mod closure_adaptor;
 pub(super) mod dyn_box;
 mod expected_binding;
@@ -480,10 +481,14 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     glob_chain_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
     /// Files that may import from an ancestor beyond their immediate parent.
     glob_jump_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
-    /// #15277: per trait name, whether the workspace leaves a
-    /// `Box<dyn Trait>` receiver only the boxed value's vtable (see
+    /// #15277: per (trait name, method name), whether the workspace leaves
+    /// a `Box<dyn Trait>` receiver only the boxed value's vtable (see
     /// `dyn_box`). Each verdict scans every file, once per run.
-    dyn_box_traits: SyncMemo<BTreeMap<String, bool>>,
+    dyn_box_traits: SyncMemo<BTreeMap<(String, String), bool>>,
+    /// #15277: whether the indexed sources are the whole program a wrapper
+    /// receiver's call can resolve against (see `closed_dispatch`), a
+    /// whole-workspace verdict computed once per run.
+    receiver_dispatch_closed: OnceLock<bool>,
     /// #8255 test witness: full-index macro-site passes this run paid.
     #[cfg(test)]
     workspace_scan_passes: SyncMemo<u32>,
@@ -863,6 +868,14 @@ impl OwnerPinSyntax {
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
+    }
+
+    /// #15277: the run's memo of [`closed_dispatch::sources_closed`].
+    pub(in crate::analysis) fn receiver_dispatch_closed(
+        &self,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        *self.receiver_dispatch_closed.get_or_init(compute)
     }
 
     pub(in crate::analysis) fn field_projection_workspace_closed(

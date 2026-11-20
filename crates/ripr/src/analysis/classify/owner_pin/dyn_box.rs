@@ -23,15 +23,19 @@
 //!   is found before the boxed value's vtable;
 //! - a `mut` binding may be reassigned to another boxed type, so it is not
 //!   read;
-//! - `Box` must be the std type: no workspace file declares or rebinds it.
+//! - `Box` must be the std type: no workspace file declares or rebinds it;
+//! - the indexed sources are the whole program and define the method only
+//!   in the trait and the one impl ([`closed_dispatch`]): a blanket or other
+//!   trait's `method` covering `Box`, from any source, answers the call at
+//!   the `Box` autoref step, before the vtable.
 //!
 //! Every other gate of the plain receiver reading still applies to the
 //! boxed value: its type must be one of the owner's receivers, competing
 //! same-name methods refuse, and the trait must be in the test's scope.
 
 use super::{
-    OwnerPinSyntax, RustIndex, TestSummary, builtin_type_unshadowed, is_ident_byte,
-    is_plain_identifier, matching_close, receiver_let_bindings, whole_word_offsets,
+    OwnerPinSyntax, RustIndex, TestSummary, builtin_type_unshadowed, closed_dispatch,
+    is_ident_byte, is_plain_identifier, matching_close, receiver_let_bindings, whole_word_offsets,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 
@@ -82,7 +86,7 @@ pub(super) fn dyn_box_trait<'t>(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<&'t str> {
-    (!BOX_RECEIVER_METHODS.contains(&method) && workspace_admits(trait_name, index, syntax))
+    (!BOX_RECEIVER_METHODS.contains(&method) && workspace_admits(trait_name, method, index, syntax))
         .then_some(trait_name)
 }
 
@@ -133,25 +137,34 @@ pub(in crate::analysis::classify) fn boxed_receiver_calls_impl(
     found
         && workspace_admits(
             trait_name,
+            method,
             index,
             &index.call_identity_memos.receiver_pin_syntax,
         )
 }
 
-/// The workspace-wide gates for `trait_name`, memoized per run in
-/// `syntax`: one bare declaration, nothing that extends the trait object or
-/// the box, and the std `Box`.
-fn workspace_admits(trait_name: &str, index: &RustIndex, syntax: &OwnerPinSyntax) -> bool {
-    if let Some(known) = syntax.dyn_box_traits.borrow().get(trait_name) {
+/// The workspace-wide gates for `trait_name` and `method`, memoized per run
+/// in `syntax`: the indexed sources are the whole program
+/// ([`closed_dispatch::sources_closed`], once per run), the method is
+/// defined only by the trait and at most one impl of it, one bare
+/// declaration, nothing that extends the trait object or the box, and the
+/// std `Box`.
+fn workspace_admits(
+    trait_name: &str,
+    method: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let key = (trait_name.to_string(), method.to_string());
+    if let Some(known) = syntax.dyn_box_traits.borrow().get(&key) {
         return *known;
     }
-    let admits = trait_declared_once_bare(trait_name, index)
+    let admits = closed_dispatch::sources_closed(index, syntax)
+        && closed_dispatch::method_defined_only_by_trait(trait_name, method, index)
+        && trait_declared_once_bare(trait_name, index)
         && !workspace_may_extend_dyn_or_box(trait_name, index)
         && builtin_type_unshadowed("Box", index, syntax);
-    syntax
-        .dyn_box_traits
-        .borrow_mut()
-        .insert(trait_name.to_string(), admits);
+    syntax.dyn_box_traits.borrow_mut().insert(key, admits);
     admits
 }
 
