@@ -816,7 +816,7 @@ pub(crate) fn probes_for_file_with_relations(
                     {
                         return with_old_arm_body(&line, changed, old_source);
                     }
-                    match removed_span_of_shape(text, &canonical_text, &line) {
+                    match removed_before_span(&shape.family, text, &canonical_text, &line) {
                         // A cut that is the whole old head line (`1..=9 =>`
                         // for `1..=8 =>`, maybe with a trailing comment) cut
                         // nothing: its body is on the next old line, so it
@@ -2948,7 +2948,7 @@ fn represented_short_replacements(
         let old_span = if after == added.text.trim() {
             Some(removed.text.trim().to_string())
         } else {
-            removed_span_of_shape(added.text.trim(), after, removed.text.trim())
+            removed_before_span(&probe.family, added.text.trim(), after, removed.text.trim())
         };
         if old_span.as_deref() == Some(before.as_str()) {
             represented.insert((removed.line, probe.family.as_str()));
@@ -3121,15 +3121,8 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
     // the line and no common suffix reaches into it (`if a != b` from
     // `if a == b {`), the old line's tail cannot be split from the shape.
     let tail = added_line.len() - end;
-    if prefix < start {
-        return None;
-    }
-    if suffix < tail {
-        // The body after the shape changed too, so no common suffix reaches
-        // it (#15420: `if total >= 100 { a }` -> `if total > 200 { b }`).
-        return removed_head_span(added_line, start, end, removed_line);
-    }
-    if (start == 0 && prefix == 0) || (tail == 0 && suffix == 0) {
+    if prefix < start || suffix < tail || (start == 0 && prefix == 0) || (tail == 0 && suffix == 0)
+    {
         return None;
     }
     let removed_end = removed_line.len().checked_sub(added_line.len() - end)?;
@@ -3137,23 +3130,56 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
     (!span.is_empty()).then(|| span.to_string())
 }
 
-/// The old condition when the shape is the head of a `{` block on the added
-/// line, the text before it is unchanged, and the block body changed too: the
-/// old text from the shape's start up to its own opening `{`. A cut equal to
-/// the shape means the edit is in the body only, so it keeps the whole line.
-fn removed_head_span(
+/// The old side's `before` text for a shape: the in-shape cut of
+/// [`removed_span_of_shape`], else the old block head when the body after
+/// the shape changed too ([`removed_head_span`]). Only `before` display text
+/// uses the head cut; the yes/no gates that ask whether an edit stayed inside
+/// the shape keep calling [`removed_span_of_shape`] (#15420 review).
+fn removed_before_span(
+    family: &ProbeFamily,
     added_line: &str,
-    start: usize,
-    end: usize,
+    shape_text: &str,
     removed_line: &str,
 ) -> Option<String> {
-    if !added_line.get(end..)?.trim_start().starts_with('{') {
+    removed_span_of_shape(added_line, shape_text, removed_line).or_else(|| {
+        (*family != ProbeFamily::MatchArm)
+            .then(|| removed_head_span(added_line, shape_text, removed_line))
+            .flatten()
+    })
+}
+
+/// The old condition when the shape is the head of a `{` block on the added
+/// line, the unchanged text before it reaches the shape's start, and the text
+/// after it changed too (#15420: `if total >= 100 { a }` to
+/// `if total > 200 { b }`): the old text from the shape's start up to its
+/// own opening `{`. The `{` is found in masked text, so a brace inside a
+/// string, char or comment never ends the cut, and a cut whose brackets do
+/// not balance (a parenthesized struct literal or closure body in the
+/// condition) keeps the whole line. A cut equal to the shape means only the body changed, so it
+/// keeps the whole line too.
+fn removed_head_span(added_line: &str, shape_text: &str, removed_line: &str) -> Option<String> {
+    if shape_text.is_empty() || added_line.matches(shape_text).count() != 1 {
         return None;
     }
-    let old_tail = removed_line.get(start..)?;
-    let span = old_tail.get(..old_tail.find('{')?)?.trim();
-    let shape = added_line.get(start..end)?.trim();
-    (!span.is_empty() && span != shape).then(|| span.to_string())
+    let start = added_line.find(shape_text)?;
+    let end = start + shape_text.len();
+    let (prefix, _) = common_prefix_suffix(added_line, removed_line);
+    if start == 0 || prefix < start {
+        return None;
+    }
+    let masked_added = crate::analysis::extract::mask_comments_and_strings(added_line);
+    if !masked_added.get(end..)?.trim_start().starts_with('{') {
+        return None;
+    }
+    let masked_removed = crate::analysis::extract::mask_comments_and_strings(removed_line);
+    let open = start + masked_removed.get(start..)?.find('{')?;
+    // Rust needs a struct literal or a closure body in a condition to sit
+    // inside parentheses, so a `{` that opens one leaves the cut unbalanced.
+    if !crate::analysis::extract::delimiters_balance(masked_removed.get(start..open)?) {
+        return None;
+    }
+    let span = removed_line.get(start..open)?.trim();
+    (!span.is_empty() && span != shape_text.trim()).then(|| span.to_string())
 }
 
 /// Byte lengths of the text the two lines share at the start and at the
@@ -6224,42 +6250,127 @@ mod tests {
     }
 
     #[test]
-    fn removed_span_of_shape_matches_granularity_when_operator_literal_and_body_change() {
-        // #15420: the issue's exact pair.
+    fn removed_before_span_matches_granularity_when_operator_literal_and_body_change() {
+        let predicate = ProbeFamily::Predicate;
+        let issue_added = "if total > 200 { total - 25 } else { total }";
+        let issue_removed = "if total >= 100 { total - 10 } else { total }";
+        // #15420: the issue's exact pair reads the old condition.
         assert_eq!(
-            removed_span_of_shape(
-                "if total > 200 { total - 25 } else { total }",
-                "total > 200",
-                "if total >= 100 { total - 10 } else { total }"
-            )
-            .as_deref(),
+            removed_before_span(&predicate, issue_added, "total > 200", issue_removed).as_deref(),
             Some("total >= 100")
         );
-        // Operator-only and literal-only edits keep their cut.
+        // The in-shape gate is unchanged: the edit left the shape, so the
+        // yes/no callers still see no in-shape cut.
         assert_eq!(
-            removed_span_of_shape(
+            removed_span_of_shape(issue_added, "total > 200", issue_removed),
+            None
+        );
+        // Operator-only and literal-only edits keep their in-shape cut.
+        assert_eq!(
+            removed_before_span(
+                &predicate,
                 "if total > 100 { total - 10 } else { total }",
                 "total > 100",
-                "if total >= 100 { total - 10 } else { total }"
+                issue_removed
             )
             .as_deref(),
             Some("total >= 100")
         );
         assert_eq!(
-            removed_span_of_shape(
+            removed_before_span(
+                &predicate,
                 "if total >= 200 { total - 10 } else { total }",
                 "total >= 200",
-                "if total >= 100 { total - 10 } else { total }"
+                issue_removed
             )
             .as_deref(),
             Some("total >= 100")
         );
+        // `while` and non-ASCII text before the shape cut the same way.
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "while n > 2 { n -= 2 }",
+                "n > 2",
+                "while n >= 1 { n -= 1 }"
+            )
+            .as_deref(),
+            Some("n >= 1")
+        );
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "/* é */ if n > 2 { b }",
+                "n > 2",
+                "/* é */ if n >= 1 { a }"
+            )
+            .as_deref(),
+            Some("n >= 1")
+        );
+    }
+
+    #[test]
+    fn removed_before_span_keeps_the_whole_line_without_a_faithful_head_cut() {
+        let predicate = ProbeFamily::Predicate;
         // A body-only edit never cuts the old line.
         assert_eq!(
-            removed_span_of_shape(
+            removed_before_span(
+                &predicate,
                 "if total >= 100 { total - 25 }",
                 "total >= 100",
                 "if total >= 100 { total - 10 }"
+            ),
+            None
+        );
+        // A `{` inside a string in the old condition does not end the cut,
+        // and the old condition is then read up to its real block brace.
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "if s == \"x\" { b }",
+                "s == \"x\"",
+                "if s == \"{}\" { a }"
+            )
+            .as_deref(),
+            Some("s == \"{}\"")
+        );
+        // A closure body inside the old condition leaves the cut unbalanced.
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "if v.is_empty() { b }",
+                "v.is_empty()",
+                "if v.iter().any(|x| { *x > 1 }) { a }"
+            ),
+            None
+        );
+        // The shape does not head a block.
+        assert_eq!(
+            removed_before_span(
+                &predicate,
+                "let ok = n > 2; b",
+                "n > 2",
+                "let ok = n >= 1; a"
+            ),
+            None
+        );
+        // Nothing before the shape is shared.
+        assert_eq!(
+            removed_before_span(&predicate, "x > 1 { 2 }", "x > 1", "foo(y) { 3 }"),
+            None
+        );
+        // The old line has no block brace.
+        assert_eq!(
+            removed_before_span(&predicate, "if n > 2 { b }", "n > 2", "if n >= 1"),
+            None
+        );
+        // Match arms keep their own head/body handling.
+        assert_eq!(
+            removed_before_span(
+                &ProbeFamily::MatchArm,
+                "if n > 2 { b }",
+                "n > 2",
+                "if n >= 1 { a }"
             ),
             None
         );
