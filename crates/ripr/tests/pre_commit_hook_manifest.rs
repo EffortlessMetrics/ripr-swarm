@@ -285,6 +285,18 @@ fn fresh_repo_with_staged(files: &[(&str, String)]) -> Result<Scratch, String> {
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let scratch = Scratch(root.clone());
     git(&root, &["init", "-q", "-b", "main"])?;
+    // Hermetic like `project()`: an ambient global excludes file must not
+    // drop a fixture file from `git add .`.
+    let excludes = root.join(".git").join("empty-excludes");
+    std::fs::write(&excludes, "").map_err(|error| error.to_string())?;
+    git(
+        &root,
+        &[
+            "config",
+            "core.excludesFile",
+            excludes.to_str().ok_or("non-utf8 excludes path")?,
+        ],
+    )?;
     std::fs::create_dir(root.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("Cargo.toml"),

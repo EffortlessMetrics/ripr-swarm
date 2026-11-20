@@ -1548,8 +1548,8 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
     match probe_head_ref_state(root, git_timeout) {
         HeadRefState::Unreadable(message) => return format!(" {message}"),
         HeadRefState::Unborn => {
-            return " This repository has no commits yet; commit once, then analyze \
-                uncommitted edits with `--base HEAD --worktree`."
+            return " This repository has no commits yet; analyze the staged first \
+                commit with `--base HEAD --worktree`, or commit once to get a default base."
                 .to_string();
         }
         HeadRefState::Unknown => return String::new(),
