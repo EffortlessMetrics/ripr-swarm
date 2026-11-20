@@ -261,6 +261,11 @@ impl StopReason {
         }
     }
 
+    /// The generic stop reason for an unknown class: `infection_evidence_unknown`,
+    /// `propagation_evidence_unknown` or `static_probe_unknown` for the
+    /// matching `*_unknown` class, and `None` for every other class. The
+    /// classifier adds it when an unknown finding has no more specific stop
+    /// reason.
     pub fn for_unknown_class(class: &ExposureClass) -> Option<Self> {
         match class {
             ExposureClass::InfectionUnknown => Some(StopReason::InfectionEvidenceUnknown),
@@ -271,17 +276,43 @@ impl StopReason {
     }
 }
 
+/// One changed behavior that ripr checks the tests against: a single changed
+/// line, the family of change it is, and what a test would need to observe
+/// to notice the change.
+///
+/// A probe is static evidence about the diff. It names where the change is
+/// and what kind of oracle could discriminate it; it does not claim that any
+/// mutant of the line survives or is killed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probe {
+    /// Identifier for this probe within one run. A [`Finding`] built from the
+    /// probe reuses it as the finding id.
     pub id: ProbeId,
+    /// Where the changed line is. For a diff probe the line is the new-file
+    /// (head-side) coordinate, also for a removed line.
     pub location: SourceLocation,
+    /// The function or other owner that contains the changed line, when one
+    /// was found. `None` for a change outside any owner and for a line of a
+    /// function the diff removed entirely.
     pub owner: Option<SymbolId>,
+    /// What kind of change this is.
     pub family: ProbeFamily,
+    /// What kind of program delta the family implies.
     pub delta: DeltaKind,
+    /// Base-side text of the changed line, when the diff removed or replaced
+    /// one. `None` for a purely added line.
     pub before: Option<String>,
+    /// Head-side text of the changed line, when the diff added or replaced
+    /// one. `None` for a removed-only line.
     pub after: Option<String>,
+    /// The changed source text, trimmed, as the analysis read it.
     pub expression: String,
+    /// Places a test could observe this change, such as `return value` or
+    /// `field:<name>`. Sorted and deduplicated; empty when none are named.
     pub expected_sinks: Vec<String>,
+    /// Oracle shapes that would discriminate this change, such as
+    /// `exact error variant assertion`. Sorted and deduplicated; empty when
+    /// none are named.
     pub required_oracles: Vec<String>,
 }
 
@@ -873,23 +904,49 @@ impl RelatedTestMiss {
     }
 }
 
+/// ripr's static verdict on one [`Probe`]: whether the related tests appear
+/// to contain a discriminator that would notice the changed behavior, with
+/// the evidence and gaps behind that verdict.
+///
+/// The class is static exposure evidence. It is not a runtime mutation
+/// outcome and does not establish that the tests are sufficient.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
+    /// Finding identifier. The classifiers set it to the probe id.
     pub id: String,
+    /// Identity parts of the canonical gap this finding belongs to, when a
+    /// producer assigned one. `None` means no canonical gap identity was
+    /// assigned.
     pub canonical_gap: Option<FindingCanonicalGap>,
+    /// The changed behavior this finding is about.
     pub probe: Probe,
+    /// The exposure classification, such as `exposed` or
+    /// `reachable_unrevealed`.
     pub class: ExposureClass,
+    /// Per-stage evidence for reach, infect, propagate and reveal.
     pub ripr: RiprEvidence,
+    /// Headline confidence in the classification, between 0 and 1. For Rust
+    /// it is derived from the stage evidence and capped by the weakest stage;
+    /// preview adapters use a per-class constant that is not on the same
+    /// scale (see `confidence_basis`).
     pub confidence: f32,
     /// Why `confidence` is held at its value, for preview-adapter findings
     /// (#10700). Empty for Rust, whose score is not a per-class constant.
     /// Explains the number only; no decision helper reads it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
+    /// Human-readable lines naming the evidence the analysis found.
     pub evidence: Vec<String>,
+    /// Human-readable lines naming evidence the analysis looked for and did
+    /// not find.
     pub missing: Vec<String>,
+    /// Where the changed value appears to flow, such as a return value.
     pub flow_sinks: Vec<FlowSinkFact>,
+    /// Values related tests were seen to use, and discriminating values no
+    /// related test was seen to use.
     pub activation: ActivationEvidence,
+    /// Why the static analysis stopped short of a firmer verdict. Empty when
+    /// nothing stopped it.
     pub stop_reasons: Vec<StopReason>,
     /// Number of matched related-test/oracle rows after the existing dedup,
     /// before bounded unique-first packing. Metadata only: the retained
@@ -898,7 +955,12 @@ pub struct Finding {
     /// vector count; absence cannot establish how many rows were discarded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related_tests_matched_total: Option<usize>,
+    /// Tests ripr related to this change, with the oracle each one uses.
+    /// Bounded: see `related_tests_matched_total` for the count before
+    /// packing.
     pub related_tests: Vec<RelatedTest>,
+    /// One suggested next action for a person or agent, when the producer
+    /// named one.
     pub recommended_next_step: Option<String>,
     /// Source language the adapter that produced this finding identifies as.
     /// Additive optional per RIPR-SPEC-0026; populated by the per-language
