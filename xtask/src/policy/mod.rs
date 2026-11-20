@@ -72,6 +72,7 @@ pub(crate) use positioning_language::check_positioning_language;
 pub(crate) use process::check_process_policy;
 pub(crate) use product_copy::check_product_copy;
 pub(crate) use proof_packs::check_proof_packs;
+pub(crate) use release_targets::milestone_parity::check_fixture as check_release_milestone_fixture;
 pub(crate) use static_language::check_static_language;
 pub(crate) use text_encoding::check_text_encoding;
 pub(crate) use user_text::{check_user_text, check_user_text_full, check_user_text_with_args};
