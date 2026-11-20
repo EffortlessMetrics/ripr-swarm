@@ -10,7 +10,7 @@ Issue: #13373
 
 The owner changes its above-boundary return value. A test asserts the above-boundary
 call followed by the boundary call on one source line. These intentionally analyzed
-assertions are fixture input; the first expected result represents the prior behavior.
+assertions are fixture input. The condition `weight > 100` is unchanged.
 
 ## When
 
