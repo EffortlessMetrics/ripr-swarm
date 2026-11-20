@@ -539,12 +539,17 @@ fn mention_is_value(
 
 /// #14941: the text after the `>` that closes a generic argument list whose
 /// opening `<` was already consumed, or None when the list does not close.
-/// A `->` inside a function type (`fn() -> u8`) does not close it.
+/// A `->` inside a function type (`fn() -> u8`) does not close it, and an
+/// array type or const block (`[u8; 4]`, `{ N + 1 }`) is skipped whole.
 fn after_generic_arguments(text: &str) -> Option<&str> {
     let mut depth = 1usize;
+    let mut nest = 0usize;
     let mut previous = '<';
     for (offset, character) in text.char_indices() {
         match character {
+            '(' | '[' | '{' => nest += 1,
+            ')' | ']' | '}' => nest = nest.checked_sub(1)?,
+            _ if nest > 0 => {}
             '<' => depth += 1,
             '>' if previous != '-' => {
                 depth -= 1;
@@ -552,7 +557,7 @@ fn after_generic_arguments(text: &str) -> Option<&str> {
                     return text.get(offset + 1..);
                 }
             }
-            ';' | '{' | '}' => return None,
+            ';' => return None,
             _ => {}
         }
         previous = character;
@@ -1414,6 +1419,12 @@ mod tests {
         assert!(!value("assert!(thr::<fn() -> u8>(f));", "thr"));
         assert!(value("let g = thr::<fn() -> u8>;", "thr"));
         assert!(!value("assert!(thr::<Vec<u8>>(v));", "thr"));
+        // Graphite review: an array type or a const block inside the
+        // arguments is skipped whole, so these stay calls.
+        assert!(!value("assert!(thr::<[u8; 4]>(x));", "thr"));
+        assert!(!value("assert!(thr::<{ N + 1 }>(x));", "thr"));
+        assert!(!value("assert!(thr::<{ N > 1 }>(x));", "thr"));
+        assert!(value("let g = thr::<[u8; 4]>;", "thr"));
     }
 
     /// Review round 1 (Devin): excluding the qualifier must not eat the value
