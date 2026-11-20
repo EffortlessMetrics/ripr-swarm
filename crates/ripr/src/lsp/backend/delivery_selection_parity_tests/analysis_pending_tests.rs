@@ -221,6 +221,31 @@ fn analysis_pending_marker_names_the_recorded_failure_after_a_failed_attempt() -
     Ok(())
 }
 
+/// #15461 review: a push-client save that starts a retry after a failed
+/// attempt re-sends "running", not the failure's "fix that cause" route,
+/// while a blocked route still wins and nothing changes when no attempt is
+/// starting.
+#[test]
+fn push_marker_recovery_shows_running_when_a_retry_starts_after_a_failure() {
+    let failed = AnalysisPendingRecovery::AnalysisFailed {
+        kind: AnalysisFailureKind::AnalysisError,
+        detail: "workspace analysis failed: not a Git work tree.".to_string(),
+    };
+    assert_eq!(
+        Backend::push_marker_recovery(failed.clone(), true),
+        AnalysisPendingRecovery::AnalysisRunning
+    );
+    assert_eq!(Backend::push_marker_recovery(failed.clone(), false), failed);
+    assert_eq!(
+        Backend::push_marker_recovery(AnalysisPendingRecovery::SaveOrRefresh, true),
+        AnalysisPendingRecovery::AnalysisRunning
+    );
+    assert_eq!(
+        Backend::push_marker_recovery(AnalysisPendingRecovery::FixConfiguration, true),
+        AnalysisPendingRecovery::FixConfiguration
+    );
+}
+
 /// #14447 review: a queued or running attempt never hides a blocked route.
 /// While the root authority or a latched configuration failure blocks the
 /// next refresh, the marker keeps naming that block, not "in progress".

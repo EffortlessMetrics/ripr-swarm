@@ -194,10 +194,12 @@ pub(super) struct Backend {
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
-    /// Recovery id of the pre-snapshot pull marker last served to the pull
-    /// client (#14447 review): an attempt transition that leaves the served
-    /// route unchanged sends no `workspace/diagnostic/refresh`.
-    pending_pull_marker_served_recovery: Mutex<Option<&'static str>>,
+    /// Payload identity of the pre-snapshot pull marker last served to the
+    /// pull client (#14447 review): an attempt transition that leaves the
+    /// served marker unchanged sends no `workspace/diagnostic/refresh`. It
+    /// folds the failure digest, so a different recorded failure re-pulls
+    /// (#15461 review).
+    pending_pull_marker_served_recovery: Mutex<Option<String>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -1648,12 +1650,8 @@ impl Backend {
         if failure.is_none() && has_snapshot {
             return;
         }
-        let recovery = match self.analysis_pending_recovery() {
-            AnalysisPendingRecovery::SaveOrRefresh if analysis_starting => {
-                AnalysisPendingRecovery::AnalysisRunning
-            }
-            recovery => recovery,
-        };
+        let recovery =
+            Self::push_marker_recovery(self.analysis_pending_recovery(), analysis_starting);
         let withdrawn = has_snapshot;
         let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let items = if withdrawn {
@@ -1706,11 +1704,11 @@ impl Backend {
         if !(self.pull_diagnostics_enabled() && self.diagnostic_refresh_support_enabled()) {
             return;
         }
-        let recovery_id = self.analysis_pending_recovery().recovery_id();
+        let identity = self.analysis_pending_recovery().payload_identity();
         let route_unchanged = self
             .pending_pull_marker_served_recovery
             .lock()
-            .is_ok_and(|served| *served == Some(recovery_id));
+            .is_ok_and(|served| served.as_deref() == Some(identity.as_str()));
         if route_unchanged {
             return;
         }
@@ -1730,7 +1728,7 @@ impl Backend {
     /// Record the pre-snapshot pull marker route just served (#14447 review).
     fn note_pending_pull_marker_served(&self, recovery: &AnalysisPendingRecovery) {
         if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
-            *served = Some(recovery.recovery_id());
+            *served = Some(recovery.payload_identity());
         }
     }
 
@@ -1757,6 +1755,25 @@ impl Backend {
     /// effect. The signature folds in the recovery route and the withdrawn
     /// flag so a genuinely changed marker (for example configuration breaking
     /// after a snapshot committed) still republishes.
+    /// The route a push marker serves when the caller knows an attempt is
+    /// starting: the cold-start route and a recorded failure's route both
+    /// give way to "running" (#14447; #15461 review), so a save that retries
+    /// a failed attempt never re-sends "fix that cause". Blocked routes win.
+    pub(super) fn push_marker_recovery(
+        recovery: AnalysisPendingRecovery,
+        analysis_starting: bool,
+    ) -> AnalysisPendingRecovery {
+        match recovery {
+            AnalysisPendingRecovery::SaveOrRefresh
+            | AnalysisPendingRecovery::AnalysisFailed { .. }
+                if analysis_starting =>
+            {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        }
+    }
+
     fn pending_push_marker_signature(
         recovery: &AnalysisPendingRecovery,
         withdrawn: bool,
