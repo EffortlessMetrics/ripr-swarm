@@ -46,6 +46,8 @@ mod method_hop_tests;
 #[cfg(test)]
 mod multi_caller_tests;
 #[cfg(test)]
+mod receiver_shape_tests;
+#[cfg(test)]
 mod multi_site_tests;
 mod receiver_value;
 pub(in crate::analysis::classify) use receiver_value::{
@@ -784,6 +786,93 @@ enum MethodReceiver {
     Constructed(String),
 }
 
+/// Whether `receiver` ends in the whole word `self` (#15301): the word
+/// may follow any character that cannot continue a path or identifier
+/// (`=self`, `{self`, `,self`, `!self`, `&self`, `(self`, a space), so
+/// `self.unit()` binds in `let r=self.unit()?;`. `self.field.m()`
+/// (receiver `self.field`), `x.self` and `myself` never match.
+fn receiver_ends_with_self(receiver: &str) -> bool {
+    let Some(before) = receiver.strip_suffix("self") else {
+        return false;
+    };
+    before
+        .chars()
+        .next_back()
+        .is_none_or(|c| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '$' | '#')))
+}
+
+/// A receiver expression that is exactly a constructed value of an
+/// upper-case type: its text ends with the constructor's closing bracket
+/// (`Parser::new(1)`, `Parser { .. }`). A receiver ending in a variable
+/// (`check(Parser::new(1), p.parse())`, where `p` is the actual
+/// receiver) never binds to an earlier constructed argument.
+fn constructed_receiver(receiver: &str) -> Option<MethodReceiver> {
+    let (open_char, close_char) = match receiver.as_bytes().last() {
+        Some(b'}') => ('{', '}'),
+        Some(b')') => ('(', ')'),
+        _ => return None,
+    };
+    // Scan backward from that closing bracket only. An opener with no
+    // matching closer aborts the scan (fail closed) instead of
+    // underflowing `depth`.
+    let mut depth = 0usize;
+    let mut start = None;
+    for (at, ch) in receiver.char_indices().rev() {
+        if ch == close_char {
+            depth += 1;
+        } else if ch == open_char {
+            let next = depth.checked_sub(1)?;
+            depth = next;
+            if depth == 0 {
+                start = Some(at);
+                break;
+            }
+        }
+    }
+    let head = receiver[..start?].trim_end();
+    let ty = head
+        .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+        .next()
+        .unwrap_or("")
+        .split("::")
+        .next()
+        .unwrap_or("");
+    (!ty.is_empty()
+        && ty
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_uppercase() || c == '_'))
+    .then(|| MethodReceiver::Constructed(ty.to_string()))
+}
+
+/// The receiver of a rustfmt-chained method call whose line starts with
+/// `.callee(` (#15301): `Parser {\n    n,\n}\n.parse()`. The receiver text
+/// is the caller body before the call line, and only a constructed value
+/// binds (a variable or call-result receiver stays unbound). `None` when
+/// the line is not exactly that shape or the body does not line up with
+/// the call fact.
+fn own_line_method_site(
+    caller: &FunctionSummary,
+    call: &crate::analysis::facts::CallFact,
+    callee_name: &str,
+) -> Option<(usize, MethodReceiver)> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&call.text);
+    let dot = masked.find(&format!(".{callee_name}("))?;
+    if !masked[..dot].trim().is_empty() {
+        return None;
+    }
+    let paren = dot + callee_name.len() + 1;
+    let index = call.line.checked_sub(caller.start_line)?;
+    let lines: Vec<&str> = caller.body.lines().collect();
+    if lines.get(index)?.trim() != call.text.trim() {
+        return None;
+    }
+    let before = lines[..index].join("\n");
+    let receiver = crate::analysis::extract::mask_comments_and_strings(&before);
+    let constructed = constructed_receiver(receiver.trim_end())?;
+    Some((paren, constructed))
+}
+
 /// The receiver of the first `.<callee>(` occurrence in `text`, with the
 /// byte index of its argument-list paren.
 fn method_call_site(text: &str, callee_name: &str) -> Option<(usize, MethodReceiver)> {
@@ -794,58 +883,11 @@ fn method_call_site(text: &str, callee_name: &str) -> Option<(usize, MethodRecei
         let dot = search + relative;
         let paren = dot + needle.len() - 1;
         let receiver = masked[..dot].trim_end();
-        if receiver == "self" || receiver.ends_with(" self") || receiver.ends_with("(self") {
+        if receiver_ends_with_self(receiver) {
             return Some((paren, MethodReceiver::SelfReceiver));
         }
-        // A constructed receiver is only the expression the method is
-        // called on, so the trimmed receiver text must end with that
-        // expression's closing bracket (`Parser::new(1).parse()`,
-        // `Parser { .. }.parse()`). A receiver ending in a variable
-        // (`check(Parser::new(1), p.parse())`, where `p` is the actual
-        // receiver) never binds to an earlier constructed argument.
-        let brackets = match receiver.as_bytes().last() {
-            Some(b'}') => Some(('{', '}')),
-            Some(b')') => Some(('(', ')')),
-            _ => None,
-        };
-        if let Some((open_char, close_char)) = brackets {
-            // Scan backward from that closing bracket only. An opener
-            // with no matching closer aborts the scan (fail closed)
-            // instead of underflowing `depth`.
-            let mut depth = 0usize;
-            let mut start = None;
-            for (at, ch) in receiver.char_indices().rev() {
-                if ch == close_char {
-                    depth += 1;
-                } else if ch == open_char {
-                    let Some(next) = depth.checked_sub(1) else {
-                        break;
-                    };
-                    depth = next;
-                    if depth == 0 {
-                        start = Some(at);
-                        break;
-                    }
-                }
-            }
-            if let Some(start) = start {
-                let head = receiver[..start].trim_end();
-                let ty = head
-                    .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
-                    .next()
-                    .unwrap_or("")
-                    .split("::")
-                    .next()
-                    .unwrap_or("");
-                if !ty.is_empty()
-                    && ty
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
-                {
-                    return Some((paren, MethodReceiver::Constructed(ty.to_string())));
-                }
-            }
+        if let Some(constructed) = constructed_receiver(receiver) {
+            return Some((paren, constructed));
         }
         search = dot + 1;
     }
@@ -909,7 +951,9 @@ pub(crate) fn call_sites(
         // on a value constructed from the callee's type, binds by impl
         // identity. Any other receiver stays unbound (fail closed).
         let Some(callee) = callee else { continue };
-        let Some((paren, receiver)) = method_call_site(&call.text, callee_name) else {
+        let Some((paren, receiver)) = method_call_site(&call.text, callee_name)
+            .or_else(|| own_line_method_site(caller, call, callee_name))
+        else {
             continue;
         };
         if !method_site_binds(caller, callee, &receiver) {
