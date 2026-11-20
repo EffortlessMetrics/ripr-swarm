@@ -16,21 +16,42 @@ fn finding_for(
     added: &str,
     test: &str,
 ) -> Result<Finding, String> {
+    finding_for_replacement_hunk(label, source, line, &[removed], &[added], line, test)
+}
+
+fn finding_for_replacement_hunk(
+    label: &str,
+    source: &str,
+    start: usize,
+    removed: &[&str],
+    added: &[&str],
+    line: usize,
+    test: &str,
+) -> Result<Finding, String> {
+    use crate::analysis::diff::ChangedLine;
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/price.ts"), source)?;
     ts_write_file(&root.join("tests/price.test.ts"), test)?;
     let changed = ChangedFile {
         path: PathBuf::from("src/price.ts"),
-        added_lines: vec![crate::analysis::diff::ChangedLine {
-            line,
-            text: added.to_string(),
-            new_side_line: line,
-        }],
-        removed_lines: vec![crate::analysis::diff::ChangedLine {
-            line,
-            text: removed.to_string(),
-            new_side_line: line,
-        }],
+        added_lines: added
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: start + offset,
+                new_side_line: start + offset,
+                text: (*text).to_owned(),
+            })
+            .collect(),
+        removed_lines: removed
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: start + offset,
+                new_side_line: start,
+                text: (*text).to_owned(),
+            })
+            .collect(),
     };
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -144,12 +165,24 @@ fn isolated_throw_message_after_a_nonzero_return() -> Result<(), String> {
     assert_ne!(broad.ripr.infect.state, StageState::No);
 
     for assertion in [
-        "expect(price(input)).toBe(2);",
+        "const input = Number(2); expect(price(input)).toBe(2);",
         "expect(price(2)).toBe(2); expect(() => price(0)).toThrow();",
     ] {
         let uncertain = classify("throw-after-return-control", assertion)?;
         assert_ne!(uncertain.ripr.infect.state, StageState::No);
     }
+    // With the old guard, price(2) fell through and threw. Its return on the
+    // new side cannot establish that the same call missed the old throw.
+    let guard_changed = finding_for_replacement_hunk(
+        "throw-after-changed-return",
+        source,
+        2,
+        &["  if (b === 0) return b;", "  throw new Error(\"zero\");"],
+        &["  if (b !== 0) return b;", "  throw new Error(\"nope\");"],
+        3,
+        &weak_test("price(2)"),
+    )?;
+    assert_ne!(guard_changed.ripr.infect.state, StageState::No);
     Ok(())
 }
 
