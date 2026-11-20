@@ -251,7 +251,7 @@ fn compared_literal(test: &Expr) -> Option<(String, bool)> {
             (Some(_), Some(_)) | (None, None) => None,
             (Some(text), None) | (None, Some(text)) => Some((text, true)),
         },
-        ast::CmpOp::In if !matches!(right, Expr::Constant(_)) => {
+        ast::CmpOp::In if !is_literal_value(right) => {
             str_constant(&compare.left).map(|text| (text, false))
         }
         _ => None,
@@ -272,7 +272,7 @@ fn assert_equal_literal(value: &Expr) -> Option<(String, bool)> {
         return None;
     };
     if callee.ends_with("assertIn") {
-        if matches!(second, Expr::Constant(_)) {
+        if is_literal_value(second) {
             return None;
         }
         return str_constant(first).map(|text| (text, false));
@@ -281,6 +281,15 @@ fn assert_equal_literal(value: &Expr) -> Option<(String, bool)> {
         (Some(_), Some(_)) | (None, None) => None,
         (Some(text), None) | (None, Some(text)) => Some((text, true)),
     }
+}
+
+/// A constant or a literal container: membership in it compares nothing the
+/// owner made.
+fn is_literal_value(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Constant(_) | Expr::Tuple(_) | Expr::List(_) | Expr::Set(_) | Expr::Dict(_)
+    )
 }
 
 fn str_constant(expr: &Expr) -> Option<String> {

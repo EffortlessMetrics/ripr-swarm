@@ -5869,6 +5869,8 @@ fn class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals() 
         "from src.subject import Limit\n\ndef test_ne():\n    assert Limit().check(\"abc\") != \"too long.\"\n",
         // An equality must name the whole text; a fragment of it does not.
         "from src.subject import Limit\n\ndef test_eq_fragment():\n    assert Limit().check(\"abc\") == \"too long.\"\n",
+        // Membership in a literal container compares nothing the owner made.
+        "from src.subject import Limit\n\ndef test_in_tuple():\n    Limit().check(\"abc\")\n    assert \"too long.\" in (\"too long.\", \"x\")\n",
         // Two constants compare nothing the owner made.
         "from src.subject import Limit\n\ndef test_self():\n    Limit().check(\"abc\")\n    assert \"Value too long.\" == \"Value too long.\"\n",
     ] {
