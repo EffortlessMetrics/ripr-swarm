@@ -331,7 +331,7 @@ fn guarded_collect_ignore_withholds_only_the_paths_it_could_ignore() -> Result<(
 /// top-level assignment runs on every path and replaces them (#15631).
 #[test]
 fn guarded_collect_ignore_keeps_the_union_across_branches() -> Result<(), String> {
-    let chain = "collect_ignore = ['test_other.py']\nif A:\n    collect_ignore.append('test_a.py')\nelif B:\n    collect_ignore.append('test_b.py')\nelse:\n    collect_ignore = []\n";
+    let chain = "collect_ignore = ['test_other.py']\nif SLOW:\n    collect_ignore.append('test_a.py')\nelif NIGHTLY:\n    collect_ignore.append('test_b.py')\nelse:\n    collect_ignore = []\n";
     let files = [
         ("tests/conftest.py", chain),
         ("tests/test_calc.py", TEST_BODY),
@@ -346,7 +346,7 @@ fn guarded_collect_ignore_keeps_the_union_across_branches() -> Result<(), String
             return Err(format!("{ignored}: expected collect_ignore, got {got:?}"));
         }
     }
-    let replaced = "if A:\n    collect_ignore = ['test_other.py']\ncollect_ignore = []\n";
+    let replaced = "if SLOW:\n    collect_ignore = ['test_other.py']\ncollect_ignore = []\n";
     let files = [
         ("tests/conftest.py", replaced),
         ("tests/test_other.py", TEST_BODY),
