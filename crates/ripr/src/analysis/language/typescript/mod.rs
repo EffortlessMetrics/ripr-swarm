@@ -122,6 +122,7 @@ mod infection_shape;
 mod infection_shape_tests;
 mod instance_class_guard;
 mod instance_factories;
+mod jsx_render;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_eval;

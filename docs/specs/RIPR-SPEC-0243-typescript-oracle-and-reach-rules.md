@@ -1149,6 +1149,20 @@ or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
 
+JSX render reach (#15295): in a `.tsx` or `.jsx` test, a JSX element
+`<Local .../>` or `<Local>` whose tag is a capitalized bare import local
+counts as a call of that import for `ImportedOwnerCall`, through the same
+import-source, shadow and mock guards as `Local(`. Intrinsic tags (`<div>`),
+member tags (`<Ns.Item>`), type arguments (`Array<Local>`, `useState<Local>`),
+type parameter lists (`<Local extends X>`, `<Local = X>`), comments and
+same-line strings do not count. A render proves reach only; oracle strength
+still comes from the test's assertions, and a render beside an unrelated
+assertion is not `exposed`. Known limits, all fail-closed: same-file
+components, re-export chains, member tags, explicit type arguments on the tag
+(`<Local<T> />`) and a tag directly after JSX text (`Count<Local />`) are not
+credited. A component owner with only heuristic links is advised to render
+`<Local .../>`, not to add a direct owner call.
+
 ### Observation guard
 
 The guard runs at ladder step 4. Predicate, MatchArm, ErrorPath and
