@@ -1,0 +1,18 @@
+# Registers the `.into()` through `From::from` reading (#15277) under
+# RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::an_annotated_into_statement_is_a_site",
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::other_targets_and_spellings_are_not_sites",
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::a_receiver_is_one_path_and_one_group",
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::only_a_standard_from_of_a_plain_type_is_read",
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::a_binding_has_one_let_and_a_unit_struct_is_declared_with_a_semicolon",
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::any_written_fn_into_is_found",
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::a_receiver_that_may_leave_the_test_early_is_refused",
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs::tests::the_impl_and_its_types_must_be_plain_and_unconditional",
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::a_value_item_of_the_type_name_shadows_its_constructor",
+]
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/into_dispatch.rs",
+]

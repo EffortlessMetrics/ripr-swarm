@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,6 +5,6 @@
+ 
+ impl From<Boiling> for Fahrenheit {
+     fn from(_: Boiling) -> Self {
+-        Fahrenheit(180 + 30)
++        Fahrenheit(180 + 32)
+     }
+ }
