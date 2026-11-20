@@ -658,6 +658,16 @@ impl GapItem {
         &self.class
     }
 
+    /// The gap is closed: an `exposed` item the shared seam gate refused as
+    /// `seam_already_gripped` (existing tests already check the seam). The one
+    /// predicate behind the default list exclusion and every "nothing to do"
+    /// wording.
+    pub(crate) fn is_closed_gap(&self) -> bool {
+        self.class == crate::domain::ExposureClass::Exposed.as_str()
+            && self.repair_readiness.ineligibility
+                == Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED)
+    }
+
     /// Whether this item is reached only by a proof harness ripr does not
     /// evaluate (#12921); the same fact as `Finding::is_proof_harness_only`.
     pub(crate) fn is_proof_harness_only(&self) -> bool {
@@ -739,9 +749,7 @@ impl GapItem {
                     "{}; keep the snapshot's explicit `base`, if any, in the refresh request, then re-read this limitation against the new snapshot",
                     self.repair_readiness.detail()
                 )
-            } else if code == crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
-                && self.class == "exposed"
-            {
+            } else if self.is_closed_gap() {
                 // The gap is closed: the same decision `ripr_prepare_repair`
                 // words as `nothing_to_do`. "Make the test change it implies"
                 // would contradict it.

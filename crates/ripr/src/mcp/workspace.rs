@@ -157,10 +157,7 @@ impl GapListFilter {
     }
 
     fn excludes_exposed_by_default(&self, item: &GapItem) -> bool {
-        self.class.is_none()
-            && item.class() == crate::domain::ExposureClass::Exposed.as_str()
-            && item.repair_readiness.ineligibility
-                == Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED)
+        self.class.is_none() && item.is_closed_gap()
     }
 
     /// Items the default exposure exclusion removed: they satisfy every
@@ -3771,9 +3768,10 @@ mod tests {
     /// below"; one open (non-exposed) item keeps the original label.
     #[test]
     fn closed_gap_list_label_says_no_test_gap_found() -> Result<(), String> {
-        let list = |all_exposed: bool,
-                    budget_omission: bool,
-                    filter: GapListFilter|
+        let list_with = |all_exposed: bool,
+                         budget_omission: bool,
+                         ineligibility: &'static str,
+                         filter: GapListFilter|
          -> Result<Value, String> {
             let mut session = session_with_findings(2)?;
             let snapshot = session
@@ -3784,8 +3782,7 @@ mod tests {
             for (index, item) in snapshot.items.iter_mut().enumerate() {
                 if all_exposed || index == 0 {
                     item.class = crate::domain::ExposureClass::Exposed.as_str().to_string();
-                    item.repair_readiness.ineligibility =
-                        Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED);
+                    item.repair_readiness.ineligibility = Some(ineligibility);
                 }
             }
             if budget_omission {
@@ -3807,6 +3804,14 @@ mod tests {
                 )
                 .map_err(|failure| failure.detail)
         };
+        let list = |all_exposed: bool, budget_omission: bool, filter: GapListFilter| {
+            list_with(
+                all_exposed,
+                budget_omission,
+                crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+                filter,
+            )
+        };
         let closed = list(true, false, GapListFilter::default())?;
         assert_eq!(closed["items"], json!([]), "{closed}");
         assert_eq!(closed["exposed_omitted"], json!(2), "{closed}");
@@ -3822,6 +3827,19 @@ mod tests {
         let open = list(false, false, GapListFilter::default())?;
         assert_eq!(open["exposed_omitted"], json!(1), "{open}");
         assert!(keeps_label(&open), "{open}");
+        // Exposed but refused for another cause: listed as open, never closed.
+        let truncated = list_with(
+            true,
+            false,
+            crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+            GapListFilter::default(),
+        )?;
+        assert!(keeps_label(&truncated), "{truncated}");
+        assert_eq!(
+            truncated["items"].as_array().map(Vec::len),
+            Some(2),
+            "{truncated}"
+        );
         // Budget-omitted items are unseen and may be open: never an all-clear.
         let overflow = list(true, true, GapListFilter::default())?;
         assert_eq!(overflow["exposed_omitted"], json!(2), "{overflow}");
@@ -3837,6 +3855,31 @@ mod tests {
         )?;
         assert_eq!(by_file["exposed_omitted"], json!(1), "{by_file}");
         assert!(keeps_label(&by_file), "{by_file}");
+        let by_language = list(
+            true,
+            false,
+            GapListFilter {
+                language: Some("rust".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert!(
+            by_language["exposed_omitted"]
+                .as_u64()
+                .is_some_and(|n| n > 0),
+            "{by_language}"
+        );
+        assert!(keeps_label(&by_language), "{by_language}");
+        // An explicit class lists the exposed items and omits none.
+        let by_class = list(
+            true,
+            false,
+            GapListFilter {
+                class: Some("exposed".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert!(keeps_label(&by_class), "{by_class}");
         let by_ready = list(
             true,
             false,

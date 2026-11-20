@@ -377,17 +377,17 @@ fn retain_unambiguous_item_bindings(bindings: &mut Vec<SeamCardBinding>) {
 /// the CLI's words (`agent card seam_id <id> <reason>`) minus the root-bound
 /// remedy command, which this root-relative adapter words as a repository
 /// command instead (#10718).
-fn policy_omitted_failure(seam_id: &str, reason: &str, item_exposed: bool) -> AttemptFailure {
+fn policy_omitted_failure(seam_id: &str, reason: &str, closed_gap: bool) -> AttemptFailure {
     // The default policy omits `strongly_gripped` seams because the existing
     // tests already pin the change: a closed gap, not a configuration problem.
     // The typed code stays `policy_omitted` (pinned); only the words change.
     // Closed only when the ITEM's own finding is `exposed`: a weaker finding
     // bound to a strongly gripped seam is still open (typed check on the item).
-    if item_exposed && reason.contains("strongly_gripped") {
+    if closed_gap {
         return AttemptFailure::new(
             AgentCardRefusalKind::PolicyOmitted.as_str(),
             format!(
-                "agent card seam_id {seam_id} is already gripped by existing tests (strongly_gripped): the change is already pinned and there is no repair card to read; nothing to do. The agent policy {reason}."
+                "agent card seam_id {seam_id} is already gripped by existing tests: the change is already pinned and there is no repair card to read; nothing to do. The agent policy {reason}."
             ),
             "none: the gap is closed; ripr_refresh only after further edits. Change the agent policy (`ripr agent brief --seam-id <seam> --json` shows it) only to list gripped seams anyway",
         );
@@ -434,11 +434,7 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
                     policy.omission_reason_for_class(entry.class, Some(entry.seam.file()))
                 })
                 .map_or_else(unbound, |reason| {
-                    policy_omitted_failure(
-                        &seam_id,
-                        &reason,
-                        item.class() == crate::domain::ExposureClass::Exposed.as_str(),
-                    )
+                    policy_omitted_failure(&seam_id, &reason, item.is_closed_gap())
                 })
         }
         RepairSubjectOutcome::Unknown => agent_card_failure(AgentCardError::refusal(
@@ -579,7 +575,7 @@ impl WorkspaceSession {
             return Err(policy_omitted_failure(
                 entry.seam.id().as_str(),
                 &reason,
-                item.class() == crate::domain::ExposureClass::Exposed.as_str(),
+                item.is_closed_gap(),
             ));
         }
         // The bind-time join is re-verified against the committed findings on
@@ -802,40 +798,58 @@ fn mcp_detail_routes(card: &Value, canonical_id: &str) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
-    /// Closed gap: a strongly_gripped omission reads as already pinned, with
-    /// the pinned `policy_omitted` code; any other omission keeps the policy
-    /// wording.
+    /// Closed gap: the card says "nothing to do" only when the caller's typed
+    /// `GapItem::is_closed_gap` holds; the pinned `policy_omitted` code never
+    /// changes and every other case keeps the policy wording.
     #[test]
-    fn policy_omitted_for_strongly_gripped_says_nothing_to_do() {
-        let gripped = policy_omitted_failure(
-            "seam-a",
-            "is configured off for strongly_gripped seams and is not included in agent results",
-            true,
-        );
-        assert_eq!(gripped.code, "policy_omitted");
+    fn policy_omitted_says_nothing_to_do_only_for_a_closed_gap() {
+        let reason =
+            "is configured off for strongly_gripped seams and is not included in agent results";
+        let closed = policy_omitted_failure("seam-a", reason, true);
+        assert_eq!(closed.code, "policy_omitted");
         assert!(
-            gripped.detail.contains("already gripped"),
+            closed.detail.contains("already gripped"),
             "{}",
-            gripped.detail
+            closed.detail
         );
+        assert!(closed.detail.contains("nothing to do"), "{}", closed.detail);
+        assert!(closed.recovery.starts_with("none: the gap is closed"));
+        // Negative control: the same strongly_gripped reason for an item that
+        // is not a closed gap (weaker class, or exposed but refused for
+        // another cause) keeps the policy wording.
+        let open = policy_omitted_failure("seam-a", reason, false);
+        assert_eq!(open.code, "policy_omitted");
+        assert!(!open.detail.contains("nothing to do"), "{}", open.detail);
         assert!(
-            gripped.detail.contains("nothing to do"),
+            open.recovery.contains("inspect it with"),
             "{}",
-            gripped.detail
+            open.recovery
         );
-        assert!(gripped.recovery.starts_with("none: the gap is closed"));
-        let weak = policy_omitted_failure(
-            "seam-a",
-            "is configured off for weakly_gripped seams and is not included in agent results",
-            true,
-        );
-        assert_eq!(weak.code, "policy_omitted");
-        assert!(!weak.detail.contains("already gripped"), "{}", weak.detail);
-        assert!(
-            weak.recovery.contains("inspect it with"),
-            "{}",
-            weak.recovery
-        );
+    }
+
+    /// The card's gate is the list's gate: `exposed` AND already gripped.
+    #[test]
+    fn closed_gap_needs_exposed_and_seam_already_gripped() -> Result<(), String> {
+        let gap = |class: &str, code: Option<&'static str>| -> Result<bool, String> {
+            let mut item =
+                GapItem::from_finding(&crate::mcp::gaps::test_finding()?, Path::new("."))?;
+            item.class = class.to_string();
+            item.repair_readiness.ineligibility = code;
+            Ok(item.is_closed_gap())
+        };
+        let gripped = Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED);
+        assert!(gap("exposed", gripped)?);
+        assert!(!gap("weakly_exposed", gripped)?);
+        assert!(!gap(
+            "exposed",
+            Some(crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+        )?);
+        assert!(!gap(
+            "exposed",
+            Some(crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE)
+        )?);
+        assert!(!gap("exposed", None)?);
+        Ok(())
     }
 
     use super::*;
