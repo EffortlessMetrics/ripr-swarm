@@ -2,7 +2,7 @@
 //! This is presentation only; the legacy library route never builds a catalogue.
 
 use super::evidence_lines::evidence_path_entries;
-use super::sections::{push_evidence_line, trim_field_period};
+use super::sections::{name_finding_language, push_evidence_line, trim_field_period};
 use crate::domain::Finding;
 use crate::output::next_step::reconcile_next_step;
 use std::collections::BTreeMap;
@@ -174,7 +174,11 @@ impl SharedReport {
         self.entries.iter().any(|entry| entry.label.is_some())
     }
 
-    pub fn render_catalogue(&self, out: &mut String) {
+    /// `findings` are the visible findings this report was built from, in
+    /// the same order. Every member of one entry shares its language (the
+    /// share context includes it), so the first member names the language
+    /// of a hoisted adapter phrase (#15325).
+    pub fn render_catalogue(&self, out: &mut String, findings: &[&Finding]) {
         if !self.is_shared() {
             return;
         }
@@ -194,6 +198,13 @@ impl SharedReport {
                 payload.push_str(&format!("  {}\n", trim_field_period(&entry.text)));
             } else {
                 push_evidence_line(&mut payload, &entry.text);
+            }
+            if let Some(finding) = entry
+                .members
+                .first()
+                .and_then(|ordinal| findings.get(*ordinal))
+            {
+                payload = name_finding_language(finding, payload);
             }
             let prefix = if entry.guidance { "  " } else { "  - " };
             out.push_str(&format!(

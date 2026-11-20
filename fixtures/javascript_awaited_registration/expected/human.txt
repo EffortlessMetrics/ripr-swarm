@@ -23,7 +23,7 @@ Start here:
     evidence suggests the changed behavior is observed under an exact-value or exact-error-variant
     check
   Related test: test/nanoid.test.js:5 default id length
-  Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
+  Next step — JavaScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -36,7 +36,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `nanoid`
-    - infection unknown: TypeScript preview adapter does not yet model infection
+    - infection unknown: JavaScript preview adapter does not yet model infection
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

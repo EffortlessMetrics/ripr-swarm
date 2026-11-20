@@ -75,7 +75,11 @@
         "changed_files_by_language"
       ],
       "properties": {
-        "changed_rust_files": { "type": "integer", "minimum": 0 },
+        "changed_rust_files": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of changed files admitted by the Rust adapter only. It is 0 for a diff with no Rust files, by design; read changed_files_by_language for the per-language changed-file counts."
+        },
         "probes": { "type": "integer", "minimum": 0 },
         "findings": { "type": "integer", "minimum": 0 },
         "exposed": { "type": "integer", "minimum": 0 },

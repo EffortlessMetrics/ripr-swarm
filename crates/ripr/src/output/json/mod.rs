@@ -2919,4 +2919,37 @@ mod tests {
             "json why must NOT recommend --mode fast; got:\n{rendered}"
         );
     }
+
+    /// #15325: `summary.changed_rust_files` counts Rust-adapter files only, so
+    /// a JavaScript-only diff reports 0 there while the language-neutral
+    /// `changed_files_by_language` carries the real count.
+    #[test]
+    fn non_rust_diff_pins_rust_only_count_next_to_language_counts() -> Result<(), String> {
+        let mut output = sample_output(None);
+        output.summary.changed_rust_files = 0;
+        output.summary.changed_files_by_language = vec![
+            crate::domain::LanguageFileCount {
+                language: "javascript".to_string(),
+                files: 1,
+            },
+            crate::domain::LanguageFileCount {
+                language: "rust".to_string(),
+                files: 0,
+            },
+        ];
+        let rendered = render(&output);
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+        let summary = &value["summary"];
+        assert_eq!(summary["changed_rust_files"], 0, "{rendered}");
+        assert_eq!(
+            summary["changed_files_by_language"],
+            serde_json::json!([
+                {"language": "javascript", "files": 1},
+                {"language": "rust", "files": 0}
+            ]),
+            "{rendered}"
+        );
+        Ok(())
+    }
 }

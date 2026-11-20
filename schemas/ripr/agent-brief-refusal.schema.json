@@ -142,7 +142,8 @@
       "properties": {
         "changed_rust_files": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Count of changed files admitted by the Rust adapter only. It is 0 for a diff with no Rust files, by design; read changed_files_by_language for the per-language changed-file counts."
         },
         "probes": {
           "type": "integer",

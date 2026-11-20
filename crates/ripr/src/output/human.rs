@@ -517,7 +517,7 @@ pub(crate) fn render_full_with_config_and_navigation(
         .map(|_| shared::SharedReport::build_with_origins(&visible, Some(&output.value_origins)))
         .filter(shared::SharedReport::is_shared);
     if let Some(shared) = &shared {
-        shared.render_catalogue(&mut out);
+        shared.render_catalogue(&mut out, &visible);
     }
     let findings_rendered = visible.len();
     for (ordinal, finding) in visible.iter().enumerate() {
@@ -1717,9 +1717,9 @@ pub(crate) fn render_finding_with_context_command_and_files(
         }
         _ => None,
     };
-    out.push_str(&explain::render_verdict_explanation(
+    out.push_str(&sections::name_finding_language(
         finding,
-        owner_signature.as_deref(),
+        explain::render_verdict_explanation(finding, owner_signature.as_deref()),
     ));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
@@ -6717,9 +6717,16 @@ mod tests {
                 "{rendered}"
             );
             // The `limitation:` row uses the same scope-qualified reason.
+            // #15325: a JavaScript finding's human text names JavaScript; the
+            // producer string (checked above) stays TypeScript-worded.
+            let shown = if language == LanguageId::JavaScript {
+                specific.replace("TypeScript", "JavaScript")
+            } else {
+                specific.to_string()
+            };
             let card = render_finding(&repo);
             assert!(
-                card.contains(&format!("limitation: {scope_reason}; {specific}")),
+                card.contains(&format!("limitation: {scope_reason}; {shown}")),
                 "{card}"
             );
             assert!(!render_finding(&diff).contains("repo-mode findings"));
@@ -6735,6 +6742,139 @@ mod tests {
                 "typed scope, not the evidence line, selects the reason"
             );
         }
+    }
+
+    /// #15325: a JavaScript finding is analyzed by the shared TypeScript
+    /// adapter, whose producer strings say "TypeScript preview". The human
+    /// block (digest and full) names the finding's own language; a TypeScript
+    /// finding keeps its label.
+    #[test]
+    fn javascript_finding_human_text_names_javascript_not_typescript() {
+        for complete_packet in [false, true] {
+            let mut js = typescript_preview_finding(complete_packet);
+            js.language = Some(LanguageId::JavaScript);
+            js.probe.location = SourceLocation::new("lib/price.js", 12, 1);
+            let ts = typescript_preview_finding(complete_packet);
+
+            let js_outputs = [
+                render(&single_finding_output(js.clone())),
+                render_full_with_config(&single_finding_output(js.clone()), &RiprConfig::default()),
+                render_finding(&js),
+            ];
+            for rendered in js_outputs {
+                if !complete_packet {
+                    assert!(rendered.contains("JavaScript preview"), "{rendered}");
+                }
+                // The shared-adapter note names both languages once; it is the
+                // only permitted TypeScript mention for a JavaScript finding.
+                let rest = rendered.replace("TypeScript/JavaScript", "");
+                assert!(!rest.contains("TypeScript"), "{rendered}");
+            }
+
+            // Negative control: the same adapter text for a TypeScript finding
+            // keeps the TypeScript label.
+            let ts_rendered = render(&single_finding_output(ts.clone()));
+            assert!(
+                !ts_rendered
+                    .replace("TypeScript/JavaScript", "")
+                    .contains("JavaScript"),
+                "{ts_rendered}"
+            );
+            let ts_block = render_finding(&ts);
+            assert!(ts_block.contains("TypeScript"), "{ts_block}");
+            assert!(
+                !ts_block
+                    .replace("TypeScript/JavaScript", "")
+                    .contains("JavaScript"),
+                "{ts_block}"
+            );
+            if !complete_packet {
+                assert!(ts_rendered.contains("TypeScript preview"), "{ts_rendered}");
+            }
+        }
+    }
+
+    /// #15325: the JavaScript projection renames only adapter-phrase
+    /// `TypeScript` words, including one split from its phrase word by a wrap
+    /// break, and leaves shared-adapter names, other words and TypeScript
+    /// findings unchanged.
+    #[test]
+    fn javascript_projection_renames_only_adapter_phrases() {
+        let mut js = typescript_preview_finding(false);
+        js.language = Some(LanguageId::JavaScript);
+        let block = "Next step \u{2014} TypeScript preview advisory: x\n\
+            Missing check: Only heuristic TypeScript test links; see the TypeScript\n    preview card\n\
+            limitation: changed TypeScript equality-boundary\n\
+            note: TypeScript/JavaScript preview evidence only; runtime Bun/TypeScript execution\n\
+            Related test: parses TypeScript files; TypeScriptFileFacts\n";
+        let named = super::sections::name_finding_language(&js, block.to_string());
+        assert_eq!(
+            named,
+            "Next step \u{2014} JavaScript preview advisory: x\n\
+            Missing check: Only heuristic JavaScript test links; see the JavaScript\n    preview card\n\
+            limitation: changed JavaScript equality-boundary\n\
+            note: TypeScript/JavaScript preview evidence only; runtime Bun/TypeScript execution\n\
+            Related test: parses TypeScript files; TypeScriptFileFacts\n"
+        );
+        assert_eq!(named.len(), block.len(), "wrap layout keeps its width");
+
+        let ts = typescript_preview_finding(false);
+        assert_eq!(
+            super::sections::name_finding_language(&ts, block.to_string()),
+            block
+        );
+    }
+
+    /// #15325: the project's own text keeps its words. A JavaScript literal or
+    /// test name that reads like an adapter phrase is quoted as written, in
+    /// the full block and the digest, while the adapter's own prose is renamed.
+    #[test]
+    fn javascript_projection_keeps_project_text_that_reads_like_adapter_phrases() {
+        let mut js = typescript_preview_finding(false);
+        js.language = Some(LanguageId::JavaScript);
+        js.probe.location = SourceLocation::new("lib/mode.js", 3, 1);
+        js.probe.before = Some("return \"TypeScript preview disabled\";".to_string());
+        js.probe.after = Some("return \"TypeScript preview enabled\";".to_string());
+        js.probe.expression = "return \"TypeScript preview enabled\";".to_string();
+        js.related_tests.push(RelatedTest {
+            name: "accepts TypeScript test files".to_string(),
+            file: PathBuf::from("test/mode.test.js"),
+            line: 5,
+            oracle_strength: OracleStrength::Weak,
+            oracle_kind: OracleKind::ExactValue,
+            oracle: Some("expect(mode()).toBe(\"TypeScript preview enabled\")".to_string()),
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        });
+        for rendered in [
+            render_finding(&js),
+            render(&single_finding_output(js.clone())),
+        ] {
+            assert!(
+                rendered.contains("\"TypeScript preview enabled\""),
+                "{rendered}"
+            );
+            assert!(
+                !rendered.contains("JavaScript preview enabled"),
+                "{rendered}"
+            );
+            assert!(
+                !rendered.contains("JavaScript preview disabled"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("accepts JavaScript test"), "{rendered}");
+            assert!(rendered.contains("JavaScript preview"), "{rendered}");
+        }
+        let block = "  Related test: test/a.js:1 accepts TypeScript test files\n\
+            Next step \u{2014} TypeScript preview advisory: check `TypeScript preview` stays\n";
+        assert_eq!(
+            super::sections::name_finding_language(&js, block.to_string()),
+            "  Related test: test/a.js:1 accepts TypeScript test files\n\
+            Next step \u{2014} JavaScript preview advisory: check `TypeScript preview` stays\n"
+        );
     }
 
     fn single_finding_output(finding: Finding) -> CheckOutput {

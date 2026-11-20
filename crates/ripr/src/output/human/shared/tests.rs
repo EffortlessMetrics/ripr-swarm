@@ -345,3 +345,29 @@ fn identical_value_and_flow_captions_keep_distinct_raw_provenance_local() {
         2
     );
 }
+
+/// #15325: a hoisted adapter phrase names the members' own language. The
+/// share context includes the language, so a JavaScript entry never spans a
+/// TypeScript finding; a TypeScript run keeps the producer wording.
+#[test]
+fn hoisted_adapter_phrase_names_the_members_language() {
+    for (language, shown) in [
+        (crate::domain::LanguageId::JavaScript, "JavaScript"),
+        (crate::domain::LanguageId::TypeScript, "TypeScript"),
+    ] {
+        let mut input = findings();
+        for finding in &mut input {
+            finding.language = Some(language);
+            finding.ripr.reach.summary = "TypeScript preview adapter reaches test".to_string();
+        }
+        let report = render(input);
+        let definitions = definitions_for(
+            &report,
+            &format!("reach yes: {shown} preview adapter reaches test"),
+        );
+        assert_eq!(definitions.len(), 1, "{report}");
+        if language == crate::domain::LanguageId::JavaScript {
+            assert!(!report.contains("TypeScript preview adapter"), "{report}");
+        }
+    }
+}

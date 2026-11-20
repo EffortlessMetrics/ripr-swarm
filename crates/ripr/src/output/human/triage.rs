@@ -479,6 +479,7 @@ pub(crate) fn render_human_triage(
                     Some(finding)
                         if let Some(blocker) = typescript_dynamic_blocker_for(finding) =>
                     {
+                        let blocker = super::sections::name_finding_language(finding, blocker);
                         out.push_str(&format!(
                             "  Safe next action: {blocker}; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
                         ));
@@ -497,6 +498,7 @@ pub(crate) fn render_human_triage(
                         ) && typescript_named_limitation_why(finding).is_some() =>
                     {
                         if let Some(why) = typescript_named_limitation_why(finding) {
+                            let why = super::sections::name_finding_language(finding, why);
                             // #8630: named limitations refuse projection before
                             // packet validation. Internal missing fields are
                             // diagnostics, not inputs the operator can fill.
@@ -2112,7 +2114,10 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     let specific = specific
         .strip_prefix("is not agent-packet eligible: ")
         .unwrap_or(specific);
-    let reason = one_line(&super::evidence_lines::plain_internal_wording(specific));
+    let reason = super::sections::name_finding_language(
+        finding,
+        one_line(&super::evidence_lines::plain_internal_wording(specific)),
+    );
     format!(
         "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`\n"
     )
