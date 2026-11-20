@@ -103,6 +103,34 @@ A receipt saying static evidence improved does not, by itself, say the focused
 test ran or passed. Preserve failed, not-run and unsupported states rather than
 rewriting them as successful verification.
 
+### Update scripts that read exit codes, JSON or text
+
+A CI step, hook or agent wrapper written against 0.10 can need a change even
+when the repository itself does not. Check these in order; the
+[release notes' upgrade notes](releases/0.11.0-release-notes.md#upgrade-notes)
+list every case with its old and new value:
+
+- **Exit codes.** 0.10 exited `0` or `2`; 0.11 adds `3` for a completed run
+  that reached a blocking decision or typed refusal (`ripr gate evaluate`,
+  `ripr doctor` with a failed check, `ripr reports ci-packet` on a blocked
+  gate). An oversized diff in which at least one changed file fits its
+  language's changed-line limit now degrades to a partial run that exits `0`
+  instead of refusing with `2`; a diff with no file that fits, or one past the
+  language-neutral parse or index guards, still refuses with `2`. Branch on `0`/`3` for completed runs and keep
+  `2` for runs that could not complete; `docs/EXIT_CODES.md` is the contract.
+- **Schema versions.** Several JSON documents moved (for example
+  repo-exposure 0.3 to 0.5 and agent receipt 0.3 to 0.5). A consumer that pins
+  an exact `schema_version` must accept the new value; `ripr check` JSON stays
+  0.2 with additive keys.
+- **Identities.** A compound Rust predicate's gap id now names its one changed
+  comparison, and `ripr baseline create` no longer uses `path:line:class` as
+  primary identity. Re-create or migrate baselines
+  (`ripr baseline update --migrate-legacy-identities`) and re-check
+  suppressions keyed on gap ids.
+- **Text.** Human output says "check" where it said "discriminator", and
+  `ripr -v` prints `mode = draft; scope = worktree`. Prefer `--format json`,
+  `--format agent` or `--format missed-txt` over matching human text.
+
 ### Let incompatible caches miss; check editor overrides
 
 The first analysis after a build/cache identity change can be cold. Let RIPR

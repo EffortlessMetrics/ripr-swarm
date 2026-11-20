@@ -9,6 +9,13 @@ are scoped or reviewed.
 
 ## Unreleased
 
+Upgrading from 0.10? Start with the 0.11 release notes
+(`docs/releases/0.11.0-release-notes.md`): their upgrade notes list every
+exit-code, schema, identity and output-text change that can need action, and
+the [upgrade guide](docs/INSTALL_CHANNELS.md#upgrading-from-010-to-011) walks
+through refreshing generated CI, baselines, suppressions and caches. The
+entries below are the complete record.
+
 ### Changed
 
 - `ripr cache status|export|clear --help` now open with the command's catalog
@@ -99,7 +106,8 @@ are scoped or reviewed.
   with `source_report: null` and resolves to the RIPR-SPEC-0066 `unknown`
   state instead of claiming an unwritten report.
 
-- **Breaking (JSON output).** `ripr doctor --json` schema `0.3` -> `0.4` removes
+- `ripr doctor --json` schema `0.3` -> `0.4` (both inside 0.11 development;
+  0.10.0 had no JSON doctor, so no 0.10 consumer is affected) removes
   the top-level `sections` array. Its only mutator and only reader were
   `#[cfg(test)]`, so every released document carried `"sections": []` and no
   consumer could have read data from it; a client that reads `sections` (or

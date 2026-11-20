@@ -3174,6 +3174,15 @@ already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
 one docs-only way to break a `proof_refs` entry).
 
+Markdown contract tests (#14986, #14998): the docs-gate always runs the `xtask`
+test binaries that pin agent/public-guide markdown. When a docs-only PR changes
+`README.md`, a top-level `docs/*.md`, `docs/interop/*.md`, `docs/status/*.md`,
+`docs/how-to/first-rust-test.md` or `docs/ci/coverage.md`, it also runs the
+`ripr` binaries `cli_reference_doc`, `troubleshooting_guide`, `user_journeys`,
+`documented_commands` and `generated_review_workflow` (which pins this file's
+`Run RIPR` step) and the `repo-policy` binary `future_clippy`; other docs-only
+PRs skip those test builds.
+
 ## Changelog Fold
 
 `cargo xtask fold-changelog [--dry-run | --write] [--limit <N>]
