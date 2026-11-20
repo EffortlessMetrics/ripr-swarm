@@ -18,7 +18,7 @@ surfaces where a developer would feel ripr in the inner loop.
 | Muse | Guided setup and one bounded test repair | [Native package guide](../plugins/muse/ripr/README.md): two skills and an explicitly approved MCP server; requires an MCP-capable RIPR build |
 | pre-commit framework | Catches the gap before the push | Commit and push hooks ship in `.pre-commit-hooks.yaml`; local form below |
 | lefthook, husky, plain Git hooks | Teams that do not use pre-commit | Snippets below |
-| GitLab CI and other hosted CI | Not everyone is on GitHub | Snippet below; no generator |
+| GitLab CI and other hosted CI | Not everyone is on GitHub | `ripr init --ci gitlab` writes an advisory merge-request job ([guide](ADOPTING_IN_CI.md#gitlab-merge-requests)); hand-written snippet below |
 | cargo-nextest | The standard Rust test runner | Ordering guidance below; ripr never runs tests |
 | cargo-mutants | The runtime authority ripr is the cheap pre-filter for | Advisory import of existing results; external execution |
 | Dev containers and Docker | Reproducible onboarding | Snippet below |
@@ -227,6 +227,8 @@ mode so the branch gets the fuller check before it leaves your machine.
 
 ## GitLab CI and other hosted CI
 
+`ripr init --ci gitlab` generates an advisory `.gitlab-ci.yml` job for merge
+requests. The hand-written alternative below also keeps a SARIF file.
 Install the prebuilt archive, verify its checksum, run, keep the report.
 Replace `0.11.0` with the release you pin. The archive name is the one the
 release workflow publishes; 0.11.0 assets must exist first (see

@@ -125,7 +125,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), .base.ref, .updated_at] | @tsv')"
+          # A transient 502 or non-JSON body must not read as a verdict (#14721): retry, then say no sweep happened.
+          for attempt in 1 2 3; do
+            prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), .base.ref, .updated_at] | @tsv')" && break
+            [ "$attempt" = 3 ] && { echo "::error title=Open-PR list unreadable::the pulls list failed 3 times; no sweep was possible"; echo "Open PR list unreadable after 3 attempts (#14721): no head was swept." >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+            sleep $((attempt * 5))
+          done
 
           {
             echo "### PR Staleness Watchdog (alert-only)"
@@ -214,7 +219,14 @@ jobs:
           \`merge-ready\` is set, but $cause. 1. Remove and re-apply \`merge-ready\` to request admission and qualification only. 2. After qualification is green, enqueue the PR through the native queue route; re-applying the label does not enqueue it." > /dev/null
           }
 
-          scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0 unreadable=0
+          # A failed read of one head defers it to the next sweep instead of aborting the sweep (#14721).
+          api_failed() {
+            api_failures=$((api_failures + 1))
+            echo "::warning title=API read failed::PR #$1 head ${2:0:8}: $3 failed; the head is deferred to the next sweep."
+            echo "| #$1 | \`${2:0:8}\` | \`${4:-n/a}\` | API read failed ($3); deferred to the next sweep |" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0 unreadable=0 api_failures=0
           while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref updated_at; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
@@ -231,7 +243,7 @@ jobs:
               # mergeable_state is not resolved for queued heads and resets when the base moves, so a
               # head can read "unknown". Read once and defer: an in-sweep retry cost 10 s per
               # unreadable head, which alone exceeded the job cap once 63 heads stayed unknown (#14636).
-              live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
+              live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')" || { api_failed "$number" "$head_sha" "pull read"; continue; }
               read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
               # Eligibility can be withdrawn after the list snapshot; use the same live read as mergeability.
               if [ "$live_state" != "open" ] || [ "$live_draft" != "false" ] || [ "$live_requested" != "true" ] || [ "$live_repo" != "$REPOSITORY" ]; then
@@ -240,11 +252,11 @@ jobs:
               fi
               # Counted only for heads this sweep defers, not an ineligible one that read unknown.
               [ "$mergeable_state" = "unknown" ] && { unreadable=$((unreadable + 1)); unreadable_note="; mergeability unreadable, conflict status unavailable"; }
-              count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
+              count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')" || { api_failed "$number" "$head_sha" "check-runs read" "$mergeable_state"; continue; }
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)$unreadable_note"
               else
-                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed") | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')"
+                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed") | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')" || { api_failed "$number" "$head_sha" "workflow-runs read" "$mergeable_state"; continue; }
                 if [ "$in_flight" != "0" ]; then
                   in_progress=$((in_progress + 1)); in_flight_counted=1
                   disposition="in flight ($in_flight merge-ready run(s) not yet at result; do not re-apply the label)$unreadable_note"
@@ -262,8 +274,12 @@ jobs:
                   echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."
                 fi
               fi
-              ours="$(ours_state "$head_sha")"
-              if [ "$live_head" != "$head_sha" ] || [ "$live_base" != "$base_ref" ]; then
+              ours="$(ours_state "$head_sha")" || ours="unreadable"
+              if [ "$ours" = "unreadable" ]; then
+                # Neither report nor clear a conflict on a status this sweep could not read.
+                dark_kind=""; api_failures=$((api_failures + 1)); disposition="$disposition; conflict status unreadable, left for the next sweep"
+                echo "::warning title=API read failed::PR #$number head ${head_sha:0:8}: commit status read failed; conflict handling is deferred to the next sweep."
+              elif [ "$live_head" != "$head_sha" ] || [ "$live_base" != "$base_ref" ]; then
                 # Pushed or retargeted since the list call: the next sweep reads the new head.
                 dark_kind=""
                 disposition="$disposition; head or base moved, left for the next sweep"
@@ -309,4 +325,5 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark merge-ready heads reported: $dark; conflicts reported on the PR: $reported; conflict statuses cleared: $cleared; re-apply notices: $told." >> "$GITHUB_STEP_SUMMARY"
           echo "Unreadable mergeability: $unreadable head(s) deferred to the next sweep; conflict notices are unavailable for them (#14636)." >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Watchdog sweep totals::scanned=$scanned in_flight=$in_progress dark=$dark unreadable=$unreadable conflicts_reported=$reported cleared=$cleared reapply_notices=$told"
+          echo "API reads failed: $api_failures (each deferred to the next sweep, #14721)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Watchdog sweep totals::scanned=$scanned in_flight=$in_progress dark=$dark unreadable=$unreadable api_failures=$api_failures conflicts_reported=$reported cleared=$cleared reapply_notices=$told"

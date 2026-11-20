@@ -33,8 +33,14 @@ the job log and summary, and fails only when ripr could not complete. Details:
 ripr init --ci github
 ```
 
+Run it at the repository root. GitHub reads workflows only from the
+repository's top-level `.github/workflows`, and the generated workflow
+analyzes the checkout root, so `ripr init --ci <provider> --root <subdir>`
+with a subdirectory of the repository refuses (exit 2) and names the command
+to run at the root (`--ci gitlab` has the same rule for `.gitlab-ci.yml`).
+
 Add `--dry-run` to print the workflow without writing it. The generated
-workflow reads two repository variables and leaves both unset, so it is
+workflow reads two gate repository variables and leaves both unset, so it is
 advisory only: it summarizes findings and uploads reports, and the job never
 fails.
 
