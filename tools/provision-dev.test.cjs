@@ -1128,8 +1128,8 @@ test('Given an updated stable release, Copilot bootstrap refreshes it and checko
     f.put('rust-toolchain.toml', '[toolchain]\nprofile = "minimal"\nchannel = "' + checkoutPin
       + '"\ncomponents = ["rustfmt", "clippy"]\n');
     fs.symlinkSync('/usr/bin/mkdir', path.join(f.bin, 'mkdir'));
-    const shell = body => cp.spawnSync('/bin/bash', ['--noprofile', '--norc', '-ec', body],
-      { cwd: f.root, env: f.env, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024 });
+    const shell = body => f.deps.run('/bin/bash', ['--noprofile', '--norc', '-ec', body],
+      { cwd: f.root, env: f.env });
 
     const bootstrap = shell(commands('Prepare a GitHub Actions environment'));
     assert.equal(bootstrap.status, 0, bootstrap.stdout + bootstrap.stderr);
