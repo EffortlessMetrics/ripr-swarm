@@ -24,3 +24,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — wildcard_owner_discard (3)
+
+Reason:
+RIPR-SPEC-0094: human.txt regenerated after merging main (check-screen wording)
+
+Command:
+`cargo xtask goldens bless wildcard_owner_discard --reason "..."`
+
+Updated:
+- `expected/human.txt`
