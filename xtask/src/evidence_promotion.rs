@@ -11,6 +11,7 @@
 use super::*;
 
 mod partial_analysis;
+mod pre_label;
 #[cfg(test)]
 mod python_coarse_tests;
 mod repo_seam_reports;
@@ -4295,6 +4296,11 @@ fn write_evidence_promotion_corpus_summary_report(
 }
 
 pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), String> {
+    if let Some((flag, rest)) = args.split_first()
+        && flag == "--pre-label"
+    {
+        return pre_label::check(Path::new("."), rest);
+    }
     let options = parse_evidence_promotion_honesty_args(args)?;
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let mut pure_violations = Vec::new();
