@@ -155,6 +155,35 @@ new dependency or finding, and record material reads in the existing inspection
 record. Context selection changes the reading scope, not the review standard,
 required checks, source attestation, or final-review authority.
 
+# Contribution and evidence review
+
+Establish the destination and requested operation before choosing public output.
+Keep this repository's structured inspection record and merge gates intact. A
+fork candidate, external submission and review of another author's work need
+appropriate prose, not automatic export of the internal record. Review, summary
+editing, repair, publication and merge remain separately authorized actions.
+Existing authority should be reused, not requested again.
+
+Review implementation, evidence and explanation together. Check the completed
+behavior and preserved useful workflow, not only the new rejection path. Ask
+what the title/body/docs lead a reader to believe and whether the candidate
+establishes it. An overclaim needs correction; an incomplete accepted requirement
+needs repair or an authorized scope decision, not merely weaker wording.
+
+Inspectable worker or CI results can support direct verification claims after
+checking subject, command, environment, result and applicability. Do not require
+personal reexecution solely because work was delegated. A bare 'tests passed'
+note remains reported evidence. Verify capabilities before declaring execution
+unavailable; never claim a reproduction, experiment or write without its result.
+Keep source reasoning, OS probes, helper tests and application execution distinct.
+Reviewer-specific limits belong in the review where material, not repeated as
+qualifiers on supported author claims.
+
+Use [PR-body guidance](../../../docs/templates/pr-body.md) for human-facing
+explanations. Preserve effective author wording; do not rewrite another person
+into a house voice or add personality, career framing or process narration.
+This adds no reviewer identity, handoff or mandatory formatting gate.
+
 # Procedure
 
 1. **Bind the review subject.** Record:
@@ -179,8 +208,8 @@ required checks, source attestation, or final-review authority.
    - **Contract parity:** runtime validation, schemas, docs, help, generated artifacts, compatibility history, output contracts, and support claims must agree. One layer accepting a state another rejects is a finding.
    - **Platform, packaging, process, and security:** inspect platform-specific branches, filesystem/process semantics, package contents, permissions, trust boundaries, and secret/network behavior when the diff engages them.
    - **Exact-head CI and receipts:** inspect required and advisory checks, actual jobs, denominators, skipped lanes, failures, workflow artifacts, and head identity. Read the failing step or retained report; do not use an aggregate status as the explanation.
-5. **Challenge every load-bearing claim.** Use at least one counterexample, mutation/removal experiment, deliberately wrong implementation, alternate case, or explicit reason why such an experiment is impractical. A test that cannot distinguish the old or wrong behavior is a test-oracle finding even when it is green.
-6. **Classify findings.** Keep these separate:
+5. **Challenge every load-bearing claim.** Use at least one counterexample, mutation/removal experiment, deliberately wrong implementation, alternate case, or explicit reason why such an experiment is impractical. First identify the proof obligation. A regression test offered as evidence of repair must distinguish that defect. Preservation checks may pass on the base by design; safety claims may need source reasoning. Test-only changes must establish intended-case selection and discrimination. Do not invent red/green results or require one experiment type for every claim.
+6. **Classify findings.** Establish whether the candidate introduces or worsens the defect, a pre-existing defect defeats its claimed behavior, or this is an independent discovery or preference. Pre-existence does not excuse a claim-defeating defect; adjacency does not force unrelated work into the PR. Explain impact and reachability. Keep these results separate:
    - blocking source or contract defect;
    - blocking test/oracle defect;
    - blocking missing platform/integration proof;
@@ -226,6 +255,20 @@ disposition:
 ```
 
 When findings exist, lead with them in severity order and include file/symbol or contract locations plus the failure mode. Summaries follow the findings; they do not hide them.
+
+Retain the record above for this repository's agent consumers. Human-facing
+comments need the trigger, relevant path, consequence and correction, not a
+mandatory labelled form. A clean external review can state the inspected
+behavior, conclusion and material limit briefly; it must not imply unrun proof.
+Check existing threads before posting, consolidate duplicates and acknowledge
+repairs. A prior clean review does not suppress a newly requested substantive
+pass or a later valid finding. Judge findings on their merits; do not invent
+activity or repeatedly rewrite already effective text.
+
+A source-clear recommendation to submit is not merge readiness. Preserve this
+repository's `REVIEW_READY` prerequisites and state which stage is established;
+missing upstream-only checks need not prevent an otherwise authorized submission.
+
 
 # Review currentness
 
