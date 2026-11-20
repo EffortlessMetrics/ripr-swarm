@@ -33,6 +33,7 @@
 
 mod cross_crate_hop;
 mod cross_crate_path;
+pub(super) use cross_crate_path::public_path;
 mod macro_argument;
 mod own_crate_test_hop;
 mod qualified_hop;

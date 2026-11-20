@@ -9450,7 +9450,7 @@ fn unwrapped_err_call(operand: &str) -> Option<&str> {
 /// #6974: whether `test`'s crate (or the workspace) may bind `root` before
 /// the extern prelude does: a rename to it, a raw twin, or a `mod`, `use`,
 /// type or glob in the test's crate. An unplaced test crate binds.
-fn test_crate_binds_root(
+pub(super) fn test_crate_binds_root(
     test: &TestSummary,
     root: &str,
     index: &RustIndex,
