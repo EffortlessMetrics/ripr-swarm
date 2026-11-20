@@ -425,6 +425,22 @@ pub(crate) fn target_manifest_directories(workspace_root: &Path) -> Option<Vec<P
         .then_some(listing.manifest_dirs)
 }
 
+/// Whether the existing bounded path inventory leaves any Rust source outside
+/// the caller's index. A symlink can hide a source or give it another spelling.
+pub(crate) fn rust_source_listing_is_covered(
+    workspace_root: &Path,
+    indexed: impl Fn(&Path) -> bool,
+) -> bool {
+    let root = lexical(&normalize(workspace_root));
+    list_workspace(workspace_root).is_some_and(|listing| {
+        listing.symlink_targets.is_empty()
+            && listing
+                .rust_files
+                .iter()
+                .all(|file| file.strip_prefix(&root).is_ok_and(&indexed))
+    })
+}
+
 /// Lists the workspace, or `None` when the listing is cut short or cannot
 /// describe the tree the analysis reads: under a committed-source overlay,
 /// a Rust file or manifest that exists only at `HEAD` is missing from the

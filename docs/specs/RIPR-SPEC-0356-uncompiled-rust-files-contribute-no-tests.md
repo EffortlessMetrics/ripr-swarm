@@ -70,6 +70,8 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    declares a `mod` of its stem, and the file is not a `mod.rs`.
 4. The Rust mount-token scan finds no uncertain mount operand in another
    indexed source, such as a macro-generated module or a computed `include!`.
+   A literal `mod` inside a macro invocation may be forwarded into an
+   out-of-line declaration.
    A macro binding named `$mod` is an ordinary metavariable. An uncertain
    operand inside the candidate still counts when judging other files.
    Escaped mount operands in other sources and escaped manifest paths
@@ -77,6 +79,13 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
 5. The workspace has no unresolved `include!`, and every lexical-fallback file
    or unknown `#[path]` is itself unlinked: a file no root reaches never
    compiles its own declarations either.
+6. Manifest reads establish the Cargo context. A missing root manifest is
+   allowed for a standalone nested package. An unreadable or malformed
+   manifest preserves uncertainty. At a declared workspace root, the bounded
+   path inventory must be covered by the index before the pass withholds
+   evidence. A member can use `#[path]` into another member without a Cargo
+   dependency, so a package-scoped source selection alone cannot establish
+   absence.
 
 The executable tests registered in such a file are withheld from the index, so
 they are neither related tests nor oracles, and a parser refusal of the file
@@ -215,6 +224,9 @@ running test; no named stop reason is added on this issue.
 - A benchmark input with module-generating syntax in its own text stays out
   of related tests and assertion refusals. A declared `[[test]]`
   target and a `#[path]` module keep the same unusual path as related evidence.
+- A sibling member outside Draft selection, a literal `mod` forwarded by a
+  declared target's macro, and an unreadable or malformed root Cargo manifest
+  each preserve the potential test in the shared source-role pass.
 - Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
   child module, and `[[bin]] test = false` unit tests do not credit a
   discriminator (nor, as before, a `[[test]] test = false` target), while

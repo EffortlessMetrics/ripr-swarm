@@ -54,7 +54,13 @@ pub(super) fn never_compiled(
     candidates: &[PathBuf],
 ) -> BTreeSet<PathBuf> {
     let mut out = BTreeSet::new();
-    if candidates.is_empty() {
+    if candidates.is_empty()
+        || crate::analysis::committed_source::current_overlay().is_some_and(|overlay| {
+            overlay
+                .dirty_paths()
+                .any(|path| Path::new(path).ends_with("Cargo.toml"))
+        })
+    {
         return out;
     }
     // Names compare ASCII-case-insensitively: a case-insensitive filesystem
@@ -82,21 +88,38 @@ pub(super) fn never_compiled(
         );
         collect_declared_modules(source, &mut declared_modules);
     }
-    let mut manifests: BTreeSet<PathBuf> = manifest_dirs
+    let root_manifest = workspace_root.join("Cargo.toml");
+    let mut has_workspace = false;
+    let manifests = manifest_dirs
         .iter()
-        .map(|dir| dir.join("Cargo.toml"))
-        .collect();
-    manifests.insert(workspace_root.join("Cargo.toml"));
-    for manifest in &manifests {
-        let path = if manifest.is_absolute() {
-            manifest.clone()
-        } else {
-            workspace_root.join(manifest)
-        };
-        match std::fs::read_to_string(&path) {
+        .map(|dir| workspace_root.join(dir).join("Cargo.toml"))
+        .chain(std::iter::once(root_manifest.clone()))
+        .collect::<BTreeSet<_>>();
+    for path in manifests {
+        match crate::bounded_input::read_metadata_toml(&path) {
             Ok(text) => {
-                if spells_a_path_with_escapes(&text) {
+                let Ok(manifest) = text.parse::<toml::Table>() else {
                     return BTreeSet::new();
+                };
+                if spells_a_path_with_escapes(&text)
+                    || manifest
+                        .get("package")
+                        .and_then(|package| package.get("workspace"))
+                        .is_some()
+                {
+                    return BTreeSet::new();
+                }
+                if path == root_manifest
+                    && let Some(workspace) = manifest.get("workspace")
+                {
+                    if !workspace.is_table()
+                        || workspace
+                            .get("members")
+                            .is_some_and(|members| !local_member_patterns(members))
+                    {
+                        return BTreeSet::new();
+                    }
+                    has_workspace = true;
                 }
                 collect_referenced_file_names(
                     &text.to_ascii_lowercase(),
@@ -106,7 +129,11 @@ pub(super) fn never_compiled(
             }
             // A workspace without a root manifest is fine; any other
             // unreadable manifest is doubt.
-            Err(_) if path == workspace_root.join("Cargo.toml") => {}
+            Err(error)
+                if path == root_manifest
+                    && error.kind() == std::io::ErrorKind::NotFound
+                    && std::fs::symlink_metadata(&path)
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
             Err(_) => return BTreeSet::new(),
         }
     }
@@ -136,7 +163,38 @@ pub(super) fn never_compiled(
             out.insert(file.clone());
         }
     }
+    // A workspace member can mount another member's file without a Cargo
+    // dependency. Check path coverage only when the indexed evidence would
+    // otherwise exclude a file. This reads directory entries, not source text.
+    if has_workspace
+        && !out.is_empty()
+        && !crate::analysis::workspace::rust_source_listing_is_covered(workspace_root, |path| {
+            index.files().get(path).is_some()
+        })
+    {
+        out.clear();
+    }
     out
+}
+
+/// The indexed-member inventory handles literals and a trailing `/*`.
+/// Other patterns, external paths and Cargo's skipped output directories
+/// cannot support a negative reachability verdict here.
+fn local_member_patterns(members: &toml::Value) -> bool {
+    members.as_array().is_some_and(|members| {
+        members.iter().all(|member| {
+            member.as_str().is_some_and(|member| {
+                let member = member.trim_end_matches('/');
+                let directory = member.strip_suffix("/*").unwrap_or(member);
+                !directory.is_empty()
+                    && !directory.contains(['*', '?', '['])
+                    && Path::new(directory).components().all(|component| {
+                        matches!(component, Component::CurDir | Component::Normal(_))
+                            && component.as_os_str() != "target"
+                    })
+            })
+        })
+    })
 }
 
 /// `source` with every block and line comment replaced by one space; block

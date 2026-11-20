@@ -384,7 +384,8 @@ fn files_in_skipped_unit_test_targets(
 ///   `use std::include as inc;` whose `inc!` no rule could follow;
 /// - a `path` attribute whose value is a metavariable or a string literal
 ///   that does not name a `.rs` file (`#[path = "m.txt"]`);
-/// - `mod $name` anywhere.
+/// - `mod $name` anywhere or a literal `mod` inside a macro invocation's
+///   token tree, where the macro may forward it into a declaration.
 pub(super) fn may_build_mount_operands(source: &str) -> bool {
     let tokens = mount_tokens(source);
     let ident = |at: usize, name: &str| matches!(tokens.get(at), Some(MountToken::Ident(word)) if word == name);
@@ -396,7 +397,22 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
         matches!(tokens.get(at), Some(MountToken::Str(text))
             if text.ends_with(".rs") && !text.contains('\\'))
     };
+    let mut invocation_depth = 0usize;
     for at in 0..tokens.len() {
+        match tokens[at] {
+            MountToken::Punct('(' | '[' | '{')
+                if invocation_depth > 0
+                    || (at >= 2
+                        && punct(at - 1, '!')
+                        && matches!(tokens[at - 2], MountToken::Ident(_))) =>
+            {
+                invocation_depth += 1;
+            }
+            MountToken::Punct(')' | ']' | '}') => {
+                invocation_depth = invocation_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
         if ident(at, "macro_rules") && punct(at + 1, '!') {
             if macro_body_may_mount(&tokens, at + 2, true) {
                 return true;
@@ -424,7 +440,11 @@ pub(super) fn may_build_mount_operands(source: &str) -> bool {
         {
             return true;
         }
-        if ident(at, "mod") && punct(at + 1, '$') {
+        if ident(at, "mod")
+            && (punct(at + 1, '$')
+                || (invocation_depth > 0
+                    && !at.checked_sub(1).is_some_and(|prev| punct(prev, '$'))))
+        {
             return true;
         }
     }
@@ -955,7 +975,11 @@ fn files_outside_module_tree(
                 manifest_dirs.insert(dir);
             }
         }
-        manifest_dirs.extend(index.workspace_member_dirs.iter().cloned());
+        manifest_dirs.extend(index.workspace_member_dirs.iter().map(|dir| {
+            dir.strip_prefix(workspace_root)
+                .unwrap_or(dir)
+                .to_path_buf()
+        }));
         outside.extend(stray_files::never_compiled(
             index,
             workspace_root,
