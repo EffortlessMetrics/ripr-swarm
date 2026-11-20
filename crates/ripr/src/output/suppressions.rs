@@ -715,37 +715,15 @@ pub fn is_iso_date(value: &str) -> bool {
 /// `policy suppression-health`). `Ok(None)` when nothing is there.
 ///
 /// A link inside the checkout can point anywhere, and the parser echoes the
-/// keys of whatever it reads, so a manifest that resolves outside the root
-/// (through the file or any parent directory) is refused before reading,
-/// naming only the configured path (#15546). The canonical path is what is
-/// read, and only as a regular file under the repository metadata TOML cap,
-/// so a FIFO cannot block the run.
+/// keys of whatever it reads, so the manifest goes through the root-contained
+/// reader: a manifest that resolves outside the root (through the file or any
+/// parent directory) is refused before reading, naming only the configured
+/// path, and a FIFO cannot block the run (#15546).
 pub(crate) fn read_root_manifest(
     root: &Path,
     relative_path: &Path,
 ) -> Result<Option<String>, String> {
-    let path = root.join(relative_path);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let display = relative_path.display();
-    let (root, path) = match (root.canonicalize(), path.canonicalize()) {
-        (Ok(root), Ok(path)) => (root, path),
-        (Err(err), _) | (_, Err(err)) => {
-            return Err(format!(
-                "refusing to read suppressions manifest {display}: its location cannot be resolved ({})",
-                err.kind()
-            ));
-        }
-    };
-    if !path.starts_with(&root) {
-        return Err(format!(
-            "refusing to read suppressions manifest {display}: it resolves outside the repository root; replace the link with a regular file inside the repository"
-        ));
-    }
-    crate::bounded_input::read_metadata_toml(&path)
-        .map(Some)
-        .map_err(|err| format!("failed to read suppressions manifest {display}: {err}"))
+    crate::bounded_input::read_root_metadata_toml(root, relative_path, "suppressions manifest")
 }
 
 /// Loads suppressions relative to the analyzed workspace root. Returns
