@@ -82,7 +82,8 @@ proxy and never logged. A `socks://` or `https://` proxy fails the download
 with a message naming the workaround: set `ripr.server.path` or install `ripr`
 on `PATH`. CIDR ranges in `NO_PROXY` are not supported (they do not exempt a
 host, so it goes through the proxy); a bare IP entry matches only that exact
-address. The download still verifies the archive checksum and the host
+address. `HTTP_PROXY` / `http_proxy` and `http.proxyAuthorization` are not
+read, because the download is always https. The download still verifies the archive checksum and the host
 certificate, so `http.proxyStrictSSL` is not used to relax them.
 
 ## What ripr Does

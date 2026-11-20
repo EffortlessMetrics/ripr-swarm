@@ -19,6 +19,8 @@ function proxyUrl(scheme: string, user: string, pass: string, hostPort: string):
 const FAKE_USER = 'alice';
 const FAKE_PASS = ['s3', 'cret'].join('');
 
+const TLS_VERIFY_FAILURE = /certificate|altname|self[- ]signed|unable to verify|ERR_TLS_CERT/i;
+
 const TARGET = 'https://github.com/EffortlessMetrics/ripr/releases/download/v1/m.json';
 
 suite('VS Code download proxy support (#15317)', () => {
@@ -53,6 +55,8 @@ suite('VS Code download proxy support (#15317)', () => {
     const auth = resolveProxy(TARGET, { httpProxy: proxyUrl('http', 'us%40er', 'p%3Aw', 'proxy.corp:3128'), env: {} });
     assert.ok(auth.kind === 'proxy');
     assert.strictEqual(auth.kind === 'proxy' && auth.auth, 'us@er:p:w');
+    const passwordOnly = resolveProxy(TARGET, { httpProxy: proxyUrl('http', '', 'pwfixture', 'proxy.corp:3128'), env: {} });
+    assert.strictEqual(passwordOnly.kind === 'proxy' && passwordOnly.auth, ':pwfixture');
     assert.ok(!JSON.stringify(auth.kind === 'proxy' && auth.display).includes('p%3Aw'));
     assert.strictEqual(auth.kind === 'proxy' && auth.display, 'http://proxy.corp:3128');
     for (const bad of [proxyUrl('socks5', 'user', 'pwfixture', 'proxy.corp:1080'), proxyUrl('https', 'user', 'pwfixture', 'proxy.corp:443')]) {
@@ -100,7 +104,14 @@ suite('VS Code download proxy support (#15317)', () => {
     try {
       await new Promise<void>((resolve, reject) => {
         const req = https.get('https://127.0.0.1:9/x', { agent }, () => reject(new Error('unexpected response')));
-        req.on('error', () => resolve());
+        req.on('error', (error) => {
+          // The injected TLS option must be what fails, not the tunnel.
+          if (/Proxy tunnel failed/.test(error.message)) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
         setTimeout(() => reject(new Error('request never settled')), 3000).unref();
       });
     } finally {
@@ -231,6 +242,7 @@ suite('VS Code download proxy support (#15317)', () => {
         assert.deepStrictEqual(seen, []);
         const message = outcome.kind === 'transport_failure' ? outcome.message : '';
         assert.ok(!message.includes(FAKE_PASS), message);
+        assert.ok(TLS_VERIFY_FAILURE.test(message), `expected a certificate failure, got: ${message}`);
       } finally {
         rogue.closeAllConnections();
         rogue.close();
@@ -255,6 +267,8 @@ suite('VS Code download proxy support (#15317)', () => {
         assert.strictEqual(outcome.kind, 'transport_failure');
         assert.deepStrictEqual(connects.map((c) => c.target), [`127.0.0.2:${port2}`]);
         assert.deepStrictEqual(seen, []);
+        const message = outcome.kind === 'transport_failure' ? outcome.message : '';
+        assert.ok(TLS_VERIFY_FAILURE.test(message), `expected a hostname failure, got: ${message}`);
       } finally {
         origin2.closeAllConnections();
         origin2.close();

@@ -157,7 +157,7 @@ export function resolveProxy(targetUrl: string, settings: ProxySettings): ProxyR
   }
   let auth: string | undefined;
   try {
-    auth = proxy.username
+    auth = proxy.username || proxy.password
       ? `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`
       : undefined;
   } catch {
