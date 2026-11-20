@@ -104,7 +104,9 @@ pub(crate) fn argument_is_definitely_defined(argument: &str) -> bool {
         return false;
     }
     let masked = ts_mask_literals_and_comments(argument);
-    if masked.len() != argument.len() {
+    // The mask blanks each character to one space; compare by character so
+    // a non-ASCII literal (`{ level: 'é' }`) still reads (#15581 review).
+    if masked.chars().count() != argument.chars().count() {
         return false;
     }
     let first = argument.chars().next();

@@ -2685,8 +2685,10 @@ keys); do not take the next number.
   spread argument; a relation through a wrapper or entry; another caller; a
   default export or renaming re-export; an import that renames a binding or
   has code after it on its line; a namespace import, `require`, dynamic
-  `import()`, `requireActual` or `importActual` of the owner's module
-  (its file stem, or its directory for an `index` file) in another file; a loader or computed
+  `import()`, `requireActual` or `importActual` of the owner's module or
+  of a barrel that re-exports it (its file stem, or its directory for an
+  `index` file) in another file; an import or re-export line with code after
+  its specifier; a loader or computed
   key; an owner reference whose call arguments the reader cannot parse (a
   comment before the parenthesis, an unbalanced argument); and a truncated
   scan or a skipped symlink. The advice asks for a test call that omits the

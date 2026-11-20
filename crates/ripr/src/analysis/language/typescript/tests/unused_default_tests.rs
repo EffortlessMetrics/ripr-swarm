@@ -90,7 +90,7 @@ fn a_default_every_call_fills_is_not_exposed() -> Result<(), String> {
         finding.missing
     );
     // Non-ASCII text in a comment or string keeps the reader aligned.
-    let unicode_test = "import { it, expect } from 'vitest';\nimport { pick } from '../src/def';\n\n// café — contraste\nit('picks →', () => {\n  expect(pick('é', { level: 'B' })).toBe('éB');\n});\n";
+    let unicode_test = "import { it, expect } from 'vitest';\nimport { pick } from '../src/def';\n\n// café — contraste\nit('picks →', () => {\n  expect(pick('é', { level: 'É' })).toBe('éÉ');\n});\n";
     let unicode = finding_at(
         "default-filled-unicode",
         PICK,
@@ -226,8 +226,9 @@ type Case<'a> = (&'a str, &'a str, Vec<(&'a str, &'a str)>);
 
 /// Callers the scan cannot name or skip: a recursive call in the owner's
 /// own body, a sibling test without an assertion, an aliased re-export, a
-/// default export, a computed-key reference, and a CommonJS `require` of the
-/// owner's module in another file each keep the verdict.
+/// default export, a computed-key reference, a CommonJS `require` of the
+/// owner's module or of a barrel over it in another file, and an import or
+/// re-export line with a call after it each keep the verdict.
 #[test]
 fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
     let filled = pick_test("pick('x', { level: 'B' })", "'xB'");
@@ -239,9 +240,14 @@ fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
     let sibling = format!("{filled}\nit('smoke', () => {{\n  pick('y');\n}});\n");
     let default_export = format!("{PICK}export default pick;\n");
     let computed = "import { it, expect } from 'vitest';\nimport * as m from '../src/def';\n\nit('picks', () => {\n  expect(m.pick('x', { level: 'B' })).toBe('xB');\n  m['pick']('y');\n});\n";
+    let import_tail = "import { it, expect } from 'vitest';\nimport { pick } from '../src/def'; const initial = pick('y'); const label = 'ready';\n\nit('picks', () => {\n  expect(pick('x', { level: 'B' })).toBe('xB');\n  expect(initial + label).toBe('yAAready');\n});\n";
+    let reexport_tail_owner =
+        format!("{PICK}export {{ x }} from './other'; export const initial = pick('y');\n");
+    let reexport_tail_other = "export { x } from './other'; export const initial = pick('y');\n";
+    let barrel_loader = "const m = require('./index');\nexport const runAll = () => Object.values(m).map((f: any) => f('y'));\n";
     let split_require = "const m = require(\n  './def',\n);\nexport const runAll = () => Object.values(m).forEach((f) => f('y'));\n";
     let commonjs = "const m = require('./def');\nexport const runAll = () => Object.values(m).forEach((f) => f('y'));\n";
-    let cases: [Case<'_>; 7] = [
+    let cases: [Case<'_>; 11] = [
         (
             "default-recursive",
             &recursive,
@@ -278,6 +284,37 @@ fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
             "default-commonjs-namespace",
             PICK,
             vec![("tests/def.test.ts", &filled), ("src/all.ts", commonjs)],
+        ),
+        (
+            "default-import-tail",
+            PICK,
+            vec![("tests/def.test.ts", import_tail)],
+        ),
+        (
+            "default-reexport-tail-owner",
+            &reexport_tail_owner,
+            vec![
+                ("tests/def.test.ts", &filled),
+                ("src/other.ts", "export const x = 1;\n"),
+            ],
+        ),
+        (
+            "default-reexport-tail-other",
+            PICK,
+            vec![
+                ("tests/def.test.ts", &filled),
+                ("src/other.ts", "export const x = 1;\n"),
+                ("src/tail.ts", reexport_tail_other),
+            ],
+        ),
+        (
+            "default-barrel-loader",
+            PICK,
+            vec![
+                ("tests/def.test.ts", &filled),
+                ("src/index.ts", "export * from './def';\n"),
+                ("src/all.ts", barrel_loader),
+            ],
         ),
         (
             "default-split-require",

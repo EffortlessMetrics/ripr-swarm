@@ -9735,32 +9735,43 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
     // that names the owner (outside a pure `export { .. } from` re-export)
     // could be a caller this reader does not resolve.
     let scan = super::collect_workspace_typescript_files_with_handwritten(root, &[], &[]);
-    // The names a loader can use for the owner's module: its file stem, and
-    // its directory for an `index` file (`require('./colors')`).
-    let stem = owner
-        .file
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())?
-        .to_string();
-    let mut owner_stems = vec![stem];
-    if owner_stems[0] == "index" {
-        let directory = owner
-            .file
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())?;
-        owner_stems.push(directory.to_string());
-    }
     // A truncated scan or a skipped symlink may hide a caller.
     if scan.truncated || scan.skipped_links > 0 {
         return None;
     }
+    // A whole-line re-export: nothing but the specifier follows `from`, so
+    // blanking or skipping the line drops no code (#15581 review).
     let is_reexport = |line: &str| {
         let line = line.trim_start();
-        line.starts_with("export {") && line.contains("} from ") || line.starts_with("export *")
+        (line.starts_with("export {") && line.contains("} from ") || line.starts_with("export *"))
+            && ts_statement_ends_at_specifier(&ts_mask_literals_and_comments(line), "from")
     };
+    let mut texts: Vec<(&Path, String)> = Vec::with_capacity(scan.files.len());
+    for path in &scan.files {
+        let relative = path.strip_prefix(root).unwrap_or(path);
+        // Scanned paths are root-relative: read them under the root, not the
+        // process's working directory.
+        let Ok(text) = std::fs::read_to_string(root.join(relative)) else {
+            return None;
+        };
+        texts.push((relative, text));
+    }
+    // The names a loader can use for the owner's module, or for a barrel
+    // that re-exports it (`require('./index')` then a computed call): each
+    // such file's stem, and its directory for an `index` file.
+    let mut owner_stems = ts_module_stems(&owner.file)?;
+    for (relative, text) in &texts {
+        let barrel = text.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("export *")
+                || line.starts_with("export")
+                    && line.contains(" from ")
+                    && word_occurrences(line, &owner.name) > 0
+        });
+        if barrel {
+            owner_stems.extend(ts_module_stems(relative)?);
+        }
+    }
     // Every plain call in `text` (with the lines `blank` names emptied) must
     // fill the position; any other reference refuses.
     let calls_all_fill = |text: &str, blank: &dyn Fn(usize, &str) -> bool| {
@@ -9776,13 +9787,9 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
                 && ts_calls_at_code_references(&rest, &masked, &owner.name)
                     .is_some_and(|calls| calls.iter().all(|arguments| fills(arguments))))
     };
-    for path in &scan.files {
-        let relative = path.strip_prefix(root).unwrap_or(path);
-        // Scanned paths are root-relative: read them under the root, not the
-        // process's working directory.
-        let Ok(text) = std::fs::read_to_string(root.join(relative)) else {
-            return None;
-        };
+    for (relative, text) in &texts {
+        let relative = *relative;
+        let text = text.as_str();
         if test_files.contains(&relative) {
             // A sibling test, hook or helper in a related test file may call
             // the owner without being a related candidate: every call in the
@@ -9881,6 +9888,42 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
     })
 }
 
+/// `true` when, on a masked line, the text after the last `keyword` is one
+/// string literal and an optional `;`: masking blanks a literal's contents,
+/// so a quote inside it never ends the check early.
+fn ts_statement_ends_at_specifier(masked_line: &str, keyword: &str) -> bool {
+    let Some(at) = masked_line.rfind(keyword) else {
+        return false;
+    };
+    let rest = masked_line[at + keyword.len()..].trim();
+    let rest = rest.strip_suffix(';').unwrap_or(rest).trim_end();
+    let mut chars = rest.chars();
+    let (Some(open), Some(close)) = (chars.next(), chars.next_back()) else {
+        return false;
+    };
+    matches!(open, '\'' | '"') && open == close && !chars.as_str().contains(['\'', '"', '`'])
+}
+
+/// The names a module specifier can use for `file`: its stem, and its
+/// directory for an `index` file. `None` when either is unreadable.
+fn ts_module_stems(file: &Path) -> Option<Vec<String>> {
+    let stem = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())?
+        .to_string();
+    let mut stems = vec![stem];
+    if stems[0] == "index" {
+        let directory = file
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())?;
+        stems.push(directory.to_string());
+    }
+    Some(stems)
+}
+
 /// The 1-based lines of the file's static `import ... from '...'`
 /// statements, each gathered whole across lines. `None` when a statement
 /// renames a binding (`as`, which also covers `* as ns`) or never closes:
@@ -9894,7 +9937,7 @@ fn static_import_lines(text: &str) -> Option<Vec<usize>> {
     }
     let mut lines = Vec::new();
     let mut statement: Option<String> = None;
-    for (index, (line, masked_line)) in text.lines().zip(masked_text.lines()).enumerate() {
+    for (index, masked_line) in masked_text.lines().enumerate() {
         let starts = statement.is_none()
             && masked_line
                 .trim_start()
@@ -9917,9 +9960,15 @@ fn static_import_lines(text: &str) -> Option<Vec<usize>> {
         }
         // The statement must end on this line at its specifier: code after
         // it would be blanked with the import.
-        let trimmed = line.trim_end();
-        let tail = trimmed.strip_suffix(';').unwrap_or(trimmed);
-        if !tail.ends_with(['\'', '"']) {
+        // Only the specifier may follow `from` (or `import` for a
+        // side-effect import): `...'./def'; const x = pick('y');` would hide
+        // a call behind a closing quote (#15581 review).
+        let keyword = if masked_line.contains("from") {
+            "from"
+        } else {
+            "import"
+        };
+        if !ts_statement_ends_at_specifier(masked_line, keyword) {
             return None;
         }
         if word_occurrences(&gathered, "as") > 0 {
