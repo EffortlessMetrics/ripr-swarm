@@ -234,6 +234,82 @@ fn a_changed_line_that_may_not_reach_the_read_keeps_the_limit() -> Result<(), St
 }
 
 #[test]
+fn a_getter_whose_return_may_branch_keeps_the_limit() -> Result<(), String> {
+    let getter = |body: &str| format!("{HEAD}    @property\n    def total(self):\n{body}");
+    for (case, body, new_line, old_line) in [
+        (
+            "conditional expression",
+            "        return self.items[0] if self.items else 1\n",
+            "        return self.items[0] if self.items else 1",
+            "        return self.items[0] if self.items else 0",
+        ),
+        (
+            "or chain",
+            "        return self.items or 1\n",
+            "        return self.items or 1",
+            "        return self.items or 0",
+        ),
+        (
+            "and chain",
+            "        return self.items and 1\n",
+            "        return self.items and 1",
+            "        return self.items and 0",
+        ),
+        (
+            "conditional comprehension",
+            "        return sum([i for i in self.items if i > 1])\n",
+            "        return sum([i for i in self.items if i > 1])",
+            "        return sum([i for i in self.items if i > 0])",
+        ),
+        (
+            "branch in an assignment before the return",
+            "        n = 1 if self.items else 0\n        return sum(self.items) + n\n",
+            "        return sum(self.items) + n",
+            "        return sum(self.items) - n",
+        ),
+    ] {
+        assert_kept(
+            case,
+            &classify_at(&getter(body), new_line, old_line, INLINE_TEST)?,
+            PROPERTY_LIMIT,
+            true,
+        )?;
+    }
+    // Regression pins: slots naming the property, and a dynamic read in the
+    // getter, keep their limits.
+    let slots = format!(
+        "class Box:\n    __slots__ = ('total',)\n\n    def __init__(self, items):\n        self.items = items\n\n{GETTER}"
+    );
+    // A dunder class attribute makes the class non-plain: no relation.
+    assert_kept(
+        "slots",
+        &classify(&slots, INLINE_TEST)?,
+        PROPERTY_LIMIT,
+        false,
+    )?;
+    let dynamic = getter("        return getattr(self, 'total')\n");
+    let finding = classify_at(
+        &dynamic,
+        "        return getattr(self, 'total')",
+        "        return getattr(self, 'items')",
+        INLINE_TEST,
+    )?;
+    if finding.class != ExposureClass::StaticUnknown
+        || finding.alignment_reason.as_deref() == Some(CREDIT)
+        || !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("static_limit dynamic_dispatch"))
+    {
+        return Err(format!(
+            "getattr getter: must stay dynamic_dispatch: {:?} {:?}",
+            finding.class, finding.evidence
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn an_assertion_that_is_not_an_exact_literal_read_keeps_the_limit() -> Result<(), String> {
     for (case, body) in [
         ("not-equal", "    assert Box([1, 2, 3]).total != 5\n"),

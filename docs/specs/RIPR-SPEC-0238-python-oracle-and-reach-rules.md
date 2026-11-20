@@ -1956,8 +1956,10 @@ rejected alternative. Any can be reversed later without touching the rest.
     same-name setter, deleter or getter sibling, or any decorator naming
     the property, keeps the limit. The getter is an optional docstring and
     simple assignments followed by its one `return`, and the changed line
-    is that return: a branching getter, a changed return under an `if` or
-    a changed line before the return keeps the limit. A
+    is that return, with no conditional expression, `and`/`or`,
+    comprehension, lambda or walrus anywhere in the getter: a branching
+    getter, a changed return under an `if` or a changed line before the
+    return keeps the limit. A
     related pytest test relates as `property_read` (R5a) when it reads
     `Cls(...).<name>` or `v.<name>` with `v` bound once to `Cls(...)`, `Cls`
     imported once under its own name from the owner's module; every use of

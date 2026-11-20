@@ -18990,6 +18990,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/property_read_tests.rs::a_test_that_does_not_read_the_property_directly_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/property_read_tests.rs::a_changed_line_that_may_not_reach_the_read_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/property_read_tests.rs::an_assertion_that_is_not_an_exact_literal_read_keeps_the_limit",
+  "crates/ripr/src/analysis/language/python/property_read_tests.rs::a_getter_whose_return_may_branch_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/property_read_tests.rs::the_property_read_relation_names_its_own_kind",
   "crates/ripr/src/analysis/language/python/approx_band_tests.rs::only_pytests_own_approx_band_is_read",
   "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_positional_band_outside_the_read_shape_keeps_abstaining",

@@ -301,6 +301,28 @@ fn straight_line_getter_returns(
     if !before.iter().all(simple) {
         return false;
     }
+    // One straight path through the getter: a conditional expression,
+    // `and`/`or`, a comprehension, a lambda or a walrus can pick the changed
+    // operand only on inputs the test's read never takes.
+    let mut branching = 0usize;
+    visit_exprs_in_statements(&getter.body, &mut |expr| {
+        if matches!(
+            expr,
+            Expr::IfExp(_)
+                | Expr::BoolOp(_)
+                | Expr::ListComp(_)
+                | Expr::SetComp(_)
+                | Expr::DictComp(_)
+                | Expr::GeneratorExp(_)
+                | Expr::Lambda(_)
+                | Expr::NamedExpr(_)
+        ) {
+            branching += 1;
+        }
+    });
+    if branching != 0 {
+        return false;
+    }
     let (Some(return_text), Some(getter_text)) =
         (text_of(source, ret.range), text_of(source, getter.range))
     else {
