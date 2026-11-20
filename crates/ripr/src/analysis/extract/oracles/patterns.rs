@@ -843,7 +843,9 @@ fn has_method_segment(text: &str, name: &str) -> bool {
 }
 
 pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
-    (line.contains("assert_eq!") || line.contains("assert_ne!")) && line.contains('{')
+    (line.contains("assert_eq!") || line.contains("assert_ne!"))
+        && line.contains('{')
+        && mask_comments_and_strings(line).contains('{')
 }
 
 /// RIPR-SPEC-0231 rule 1: `assert_ne!`, `debug_assert_ne!` and any other

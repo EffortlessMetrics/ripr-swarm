@@ -6169,11 +6169,9 @@ fn price_boundary_discriminator() {
             (r#"format!(r"{expected}")"#, true),
             (r#"format!("{}", r"{expected}")"#, false),
             (r#"format!("{}", expected)"#, true),
-            (r#"concat!(r"{expected}")"#, false),
-            (r#"render!("{expected}")"#, true),
         ] {
             let body = format!(
-                "fn t() {{\n use std::format as render;\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
+                "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
             );
             let fact = only_fact(&body)?;
             let wanted = if reads {
@@ -6187,12 +6185,14 @@ fn price_boundary_discriminator() {
     }
 
     #[test]
-    fn write_macro_reads_only_the_template_and_evaluated_values() {
+    fn macro_operands_read_templates_and_evaluated_values() {
         let placeholders = std::collections::BTreeSet::from([String::from("expected")]);
         for (operand, reads) in [
             (r#"write!(sink(), r"{expected}")"#, true),
             (r#"write!(sink(), "{}", r"{expected}")"#, false),
             (r#"write!(sink(), "{}", expected)"#, true),
+            (r#"concat!(r"{expected}")"#, false),
+            (r#"render!("{expected}")"#, true),
         ] {
             let assertion = format!("assert_eq!(result(), {operand})");
             assert_eq!(
