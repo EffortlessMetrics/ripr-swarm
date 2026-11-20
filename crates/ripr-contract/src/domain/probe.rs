@@ -370,23 +370,42 @@ pub fn declared_const_name(expression: &str) -> Option<&str> {
     named_item.then_some(name)
 }
 
+/// Where a changed value appears to become observable. Serialized as the
+/// snake_case token that [`FlowSinkKind::as_str`] returns.
+///
+/// The side-effect kinds (`event_call`, `state_write`, `persistence`,
+/// `log_message`, `config_change`) refine the generic `call_effect` when
+/// syntax-first analysis can name them; `call_effect` stays the fallback for
+/// other observable calls.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowSinkKind {
+    /// `return_value`: the value the owner returns.
     ReturnValue,
+    /// `error_variant`: an error the owner returns or constructs.
     ErrorVariant,
+    /// `struct_field`: a field of a constructed value.
     StructField,
+    /// `event_call`: an event or outbound call.
     EventCall,
+    /// `state_write`: a write to state outside the expression.
     StateWrite,
+    /// `persistence`: a persistence write.
     Persistence,
+    /// `log_message`: a log message.
     LogMessage,
+    /// `config_change`: a configuration change.
     ConfigChange,
+    /// `call_effect`: some other observable call.
     CallEffect,
+    /// `match_arm`: the result of a match arm.
     MatchArm,
+    /// `unknown`: no sink was identified.
     Unknown,
 }
 
 impl FlowSinkKind {
+    /// The snake_case wire token for this kind.
     pub fn as_str(&self) -> &'static str {
         match self {
             FlowSinkKind::ReturnValue => "return_value",
@@ -403,6 +422,7 @@ impl FlowSinkKind {
         }
     }
 
+    /// A short human-readable name for this kind, such as `returned value`.
     pub fn label(&self) -> &'static str {
         match self {
             FlowSinkKind::ReturnValue => "returned value",
@@ -420,30 +440,48 @@ impl FlowSinkKind {
     }
 }
 
+/// One place a changed value appears to flow to, read statically from the
+/// changed source.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlowSinkFact {
+    /// What kind of sink this is.
     pub kind: FlowSinkKind,
+    /// The source text of the sink, such as the returned expression.
     pub text: String,
+    /// The source line of the sink.
     pub line: usize,
+    /// The owner whose sink this is, when the producer named one.
     pub owner: Option<SymbolId>,
 }
 
+/// Where in test source a [`ValueFact`] value was found. Serialized as the
+/// snake_case token that [`ValueContext::as_str`] returns. It records the
+/// value's origin, not an execution state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueContext {
+    /// `function_argument`: an argument to a call.
     FunctionArgument,
+    /// `assertion_argument`: an argument to an assertion.
     AssertionArgument,
+    /// `builder_method`: an argument to a builder-style method.
     BuilderMethod,
+    /// `table_row`: a row of a table-driven test.
     TableRow,
+    /// `enum_variant`: an enum variant path. Ambiguous all-caps paths also
+    /// stay here rather than in `constant`.
     EnumVariant,
     /// A qualified path whose spelling establishes a constant (`u64::MAX`,
     /// `crate::KIB`), not an enum variant (#5357).
     Constant,
+    /// `return_value`: a value in a return position.
     ReturnValue,
+    /// `unknown`: the origin was not identified.
     Unknown,
 }
 
 impl ValueContext {
+    /// The snake_case wire token for this context.
     pub fn as_str(&self) -> &'static str {
         match self {
             ValueContext::FunctionArgument => "function_argument",
@@ -472,9 +510,13 @@ impl ValueContext {
 /// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
+    /// The test source line the value was read from.
     pub line: usize,
+    /// Retained source or value-transfer provenance for the value.
     pub text: String,
+    /// The value itself, such as `amount = 50`.
     pub value: String,
+    /// Where in test source the value was found.
     pub context: ValueContext,
 }
 
@@ -499,10 +541,17 @@ pub enum DiscriminatorShape {
     Other,
 }
 
+/// A discriminating input or check that no related test was seen to supply,
+/// such as an equality boundary value. Static evidence only: it names what
+/// the analysis did not find, not a runtime result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissingDiscriminatorFact {
+    /// The missing discriminator, such as `amount == discount_threshold`.
     pub value: String,
+    /// Why the analysis reports it missing.
     pub reason: String,
+    /// The sink the missing discriminator would be observed through, when
+    /// known.
     pub flow_sink: Option<FlowSinkFact>,
     /// The concrete drafted boundary call for the equality boundary this
     /// fact names, when the analyzer's static model can pin the boundary
@@ -528,7 +577,9 @@ pub struct MissingDiscriminatorFact {
 /// behavior, not an observed or verified result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DraftedBoundaryAssertion {
+    /// The owner-call argument texts, as plain integer literals.
     pub arguments: Vec<String>,
+    /// The statically folded expected value, when the fold derives one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<String>,
 }
