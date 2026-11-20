@@ -443,48 +443,152 @@ fn step_run_block(step_id: &str) -> Result<String, String> {
 }
 
 #[test]
-fn goldens_fresh_merge_switches_to_clean_fresh_base_and_restores_orig_head() -> Result<(), String> {
+fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), String> {
     let (work, _) = admitted_merge("goldens-fresh-move", |w| {
         commit_file(w, "other.txt", "fresh-main\n", "base moved")
     })?;
     if !merge_tree_supported(&work) {
         return Ok(());
     }
+    let root = work.parent().ok_or("test checkout needs a parent")?;
     let orig_head = git(&work, &["rev-parse", "HEAD"])?;
     let pr_head = git(&work, &["rev-parse", "HEAD^2"])?;
-    let gh_out = work.join(".gh-output");
+    let output = root.join("step-output");
+    let workspace = work.to_str().ok_or("non-UTF-8 test workspace")?;
     let prep = step_run_block("id: goldens_fresh_merge")?;
-    let gh_out_str = gh_out.to_string_lossy().to_string();
-    let out = run_bash(
+    let prepared = run_bash(
         &work,
         &prep,
-        &[("BASE_REF", "main"), ("GITHUB_OUTPUT", &gh_out_str)],
+        &[
+            ("BASE_REF", "main"),
+            ("GITHUB_OUTPUT", output.to_str().ok_or("non-UTF-8 output")?),
+            ("GITHUB_WORKSPACE", workspace),
+            ("RUNNER_TEMP", root.to_str().ok_or("non-UTF-8 temp")?),
+        ],
     )?;
-    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
-    let output_text = fs::read_to_string(&gh_out).map_err(|e| e.to_string())?;
-    assert!(
-        output_text.contains(&format!("orig_head={orig_head}")),
-        "{output_text}"
-    );
-    assert!(output_text.contains("switched=true"), "{output_text}");
-    assert_ne!(git(&work, &["rev-parse", "HEAD"])?, orig_head);
-    assert_eq!(
-        git(&work, &["rev-parse", "HEAD^1"])?,
-        git(&work, &["rev-parse", "origin/main"])?
-    );
-    assert_eq!(git(&work, &["rev-parse", "HEAD^2"])?, pr_head);
-    assert_eq!(
-        fs::read_to_string(work.join("other.txt")).map_err(|e| e.to_string())?,
-        "fresh-main\n"
-    );
-    let restore = step_run_block("id: goldens_restore_checkout")?;
-    let restore_out = run_bash(&work, &restore, &[("ORIG_HEAD", &orig_head)])?;
-    assert_eq!(
-        restore_out.status.code(),
-        Some(0),
-        "{}",
-        stdout(&restore_out)
-    );
-    assert_eq!(git(&work, &["rev-parse", "HEAD"])?, orig_head);
-    Ok(())
+    if !prepared.status.success() {
+        return Err(String::from_utf8_lossy(&prepared.stderr).into());
+    }
+    let outputs = fs::read_to_string(output).map_err(|e| e.to_string())?;
+    let fresh = outputs
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree="))
+        .ok_or("missing fresh worktree")?;
+    let fresh_dir = Path::new(fresh);
+    if !outputs
+        .lines()
+        .any(|line| line == format!("orig_head={orig_head}"))
+        || git(&work, &["rev-parse", "HEAD"])? != orig_head
+        || git(fresh_dir, &["rev-parse", "HEAD^1"])? != git(&work, &["rev-parse", "origin/main"])?
+        || git(fresh_dir, &["rev-parse", "HEAD^2"])? != pr_head
+    {
+        return Err("fresh and original merge identities diverged".into());
+    }
+    // Two binaries have the same package identity and differ only in the input
+    // compiled into the executable. Sharing undifferentiated artifacts can
+    // otherwise silently run the first binary on the second tree.
+    let fixture = r#"fn main() -> std::io::Result<()> {
+        std::fs::create_dir_all("target/ripr/reports")?;
+        std::fs::write("target/ripr/reports/sample", include_bytes!("../other.txt"))
+    }"#;
+    for checkout in [work.as_path(), fresh_dir] {
+        fs::create_dir_all(checkout.join(".cargo")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(checkout.join("src")).map_err(|e| e.to_string())?;
+        fs::write(
+            checkout.join("Cargo.toml"),
+            "[package]\nname='golden-probe'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(checkout.join("src/main.rs"), fixture).map_err(|e| e.to_string())?;
+        fs::write(
+            checkout.join(".cargo/config.toml"),
+            "[alias]\nxtask='run --quiet --'\n",
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let gate = step_run_block("id: goldens_fixtures")?;
+    let target = work.join("target");
+    let binary = target.join("debug/golden-probe");
+    let probe = |tree| -> Result<(), String> {
+        let result = run_bash(
+            &work,
+            &gate,
+            &[
+                ("FRESH_TREE", tree),
+                ("GITHUB_WORKSPACE", workspace),
+                (
+                    "CARGO_TARGET_DIR",
+                    target.to_str().ok_or("non-UTF-8 target")?,
+                ),
+                (
+                    "CARGO_BUILD_BUILD_DIR",
+                    target.to_str().ok_or("non-UTF-8 build directory")?,
+                ),
+                ("CARGO_NET_OFFLINE", "true"),
+            ],
+        )?;
+        if result.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&result.stderr).into())
+        }
+    };
+    probe("")?;
+    let bytes = fs::read(&binary).map_err(|e| e.to_string())?;
+    let report = target.join("ripr/reports/sample");
+    if fs::read_to_string(&report).map_err(|e| e.to_string())? != "x\n" {
+        return Err("admitted producer used the wrong source".into());
+    }
+    probe(fresh)?;
+    if fs::read_to_string(&report).map_err(|e| e.to_string())? != "fresh-main\n"
+        || fs::read(&binary).map_err(|e| e.to_string())? != bytes
+    {
+        return Err("fresh golden receipt or admitted executable crossed subjects".into());
+    }
+    if fresh_dir.join("target/debug/deps").exists() {
+        return Err("fresh goldens allocated a second intermediate build directory".into());
+    }
+    let reused = run_bash(
+        &work,
+        "cargo build --locked --offline --message-format=json",
+        &[
+            (
+                "CARGO_TARGET_DIR",
+                target.to_str().ok_or("non-UTF-8 target")?,
+            ),
+            (
+                "CARGO_BUILD_BUILD_DIR",
+                target.to_str().ok_or("non-UTF-8 build directory")?,
+            ),
+        ],
+    )?;
+    if !reused.status.success()
+        || !stdout(&reused).lines().any(|line| {
+            line.contains("\"reason\":\"compiler-artifact\"")
+                && line.contains("\"name\":\"golden-probe\"")
+                && line.contains("\"fresh\":true")
+        })
+    {
+        return Err("Cargo rebuilt the admitted package after fresh goldens".into());
+    }
+    let cleanup = step_run_block("id: goldens_cleanup")?;
+    let removed = run_bash(
+        &work,
+        &cleanup,
+        &[("FRESH_TREE", fresh), ("ORIG_HEAD", &orig_head)],
+    )?;
+    if !removed.status.success()
+        || fresh_dir.exists()
+        || git(&work, &["rev-parse", "HEAD"])? != orig_head
+    {
+        return Err("cleanup lost the admitted checkout or left the fresh tree".into());
+    }
+    if fs::read_to_string(&report).map_err(|e| e.to_string())? != "fresh-main\n" {
+        return Err("cleanup removed the fresh producer report before its upload".into());
+    }
+    probe("")?;
+    if fs::read_to_string(report).map_err(|e| e.to_string())? != "x\n" {
+        return Err("restored producer read the fresh source".into());
+    }
+    fs::remove_dir_all(root).map_err(|e| e.to_string())
 }

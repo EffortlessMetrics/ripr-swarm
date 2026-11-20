@@ -477,7 +477,7 @@ jobs:
       # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
       # `origin/$BASE_REF` for the goldens gate so stale-base golden drift fails PR
       # qualification instead of passing and ejecting in `merge_group` (#14999),
-      # then restore the admitted checkout so downstream steps keep `HEAD`.
+      # while downstream gates retain the admitted checkout and its binaries (#15792).
       - name: Prepare fresh base merge for goldens
         id: goldens_fresh_merge
         if: github.event_name == 'pull_request' && inputs.subject-sha == ''
@@ -509,9 +509,18 @@ jobs:
             echo "::warning title=Fresh base merge unavailable::git merge-tree exited $rc; running goldens on checkout."
             exit 0
           fi
-          git -c user.name=ci -c user.email=ci@invalid checkout --detach "$fresh_base"
-          git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
-          echo "switched=true" >> "$GITHUB_OUTPUT"
+          fresh_tree="$(mktemp -d "$RUNNER_TEMP/ripr-goldens.XXXXXXXX")"
+          git worktree add --detach "$fresh_tree" "$fresh_base"
+          echo "worktree=$fresh_tree" >> "$GITHUB_OUTPUT"
+          git -C "$fresh_tree" -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
+          mkdir -p "$fresh_tree/target" "$GITHUB_WORKSPACE/target/ripr"
+          # Goldens and calibration publish the actual outputs at the usual report paths.
+          ln -s "$GITHUB_WORKSPACE/target/ripr" "$fresh_tree/target/ripr"
+          # Cargo includes rustc-workspace-wrapper in workspace artifact filenames.
+          # A unique pass-through keeps registry artifacts reusable and fresh code distinct.
+          wrapper="${RUSTC_WORKSPACE_WRAPPER:-${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-env}}"
+          wrapper_path="$(command -v "$wrapper")"
+          ln -s "$(realpath "$wrapper_path")" "$fresh_tree/target/rustc-workspace"
 
       # The gates below need only the `ripr` build, not the test run. They run before
       # the ~18-minute nextest step so a main-side drift (goldens, fixtures, capability
@@ -521,14 +530,26 @@ jobs:
       # One evaluation writes both reports and fails for either obligation.
       - name: Golden and fixture contracts
         id: goldens_fixtures
-        run: cargo xtask goldens check-with-fixtures
-
-      - name: Restore admitted checkout after goldens
-        id: goldens_restore_checkout
-        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'
         env:
+          FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}
+        run: |
+          if [ -n "$FRESH_TREE" ]; then
+            export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-${CARGO_TARGET_DIR:-$GITHUB_WORKSPACE/target}}"
+            export CARGO_TARGET_DIR="$FRESH_TREE/target"
+            export RUSTC_WORKSPACE_WRAPPER="$FRESH_TREE/target/rustc-workspace"
+            cd "$FRESH_TREE"
+          fi
+          cargo xtask goldens check-with-fixtures
+
+      - name: Remove fresh goldens worktree
+        id: goldens_cleanup
+        if: always() && steps.goldens_fresh_merge.outputs.worktree != ''
+        env:
+          FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}
           ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}
-        run: git checkout --detach "$ORIG_HEAD"
+        run: |
+          git worktree remove --force "$FRESH_TREE"
+          test "$(git rev-parse HEAD)" = "$ORIG_HEAD"
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.

@@ -1308,6 +1308,12 @@ target/sample build residue and shares the same badge endpoint boundary.
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
 for reviewers. Required Rust CI runs `cargo xtask goldens check-with-fixtures`.
+When the PR's base has advanced, this gate builds the fresh merge in a temporary
+worktree. Cargo gives its workspace packages a distinct artifact identity, reuses
+registry dependencies, and writes the fresh executables under that worktree.
+The original admitted checkout and its binaries remain available for capability,
+verdict and PR evidence checks. The gate writes its golden reports and wildcard
+calibration outputs to the usual upload paths.
 It evaluates each selected fixture once and writes both `fixtures.md` and the existing golden
 reports from that in-memory result. It retains preparation, assistant-loop corpus,
 expected-class ratchet, drift, line-ending and provenance checks. The fixture

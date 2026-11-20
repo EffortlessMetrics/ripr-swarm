@@ -58,13 +58,6 @@ fn step_id(block: &str) -> Option<&str> {
         .find_map(|line| line.strip_prefix("        id: "))
 }
 
-/// The step's single-line `run:` command, or `|` for a block scalar.
-fn step_run(block: &str) -> Option<&str> {
-    block
-        .lines()
-        .find_map(|line| line.strip_prefix("        run: "))
-}
-
 fn contract_violations(workflow: &str) -> Vec<String> {
     let blocks: Vec<_> = workflow.split("\n      - ").skip(1).collect();
     let mut findings = Vec::new();
@@ -1741,53 +1734,26 @@ fn goldens_fresh_base_merge_brackets_goldens_step() -> Result<(), String> {
             .ok_or_else(|| format!("missing step id `{id}`"))
     };
     let prep_idx = idx("goldens_fresh_merge")?;
-    // Anchor on the gate's command, not its step id: the id is renamed as the
-    // gate grows (`goldens` -> `goldens_fixtures`), and a stale id here would
-    // fail on the PR merge ref while passing on the branch.
-    let goldens_matches: Vec<usize> = blocks
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| {
-            step_run(block).is_some_and(|run| run.starts_with("cargo xtask goldens check"))
-        })
-        .map(|(index, _)| index)
-        .collect();
-    let [goldens_idx] = goldens_matches[..] else {
-        return Err(format!(
-            "expected one goldens gate step running `cargo xtask goldens check`, found {}",
-            goldens_matches.len()
-        ));
-    };
-    let restore_idx = idx("goldens_restore_checkout")?;
-    assert!(
-        prep_idx < goldens_idx && goldens_idx < restore_idx,
-        "goldens_fresh_merge ({prep_idx}) < goldens gate ({goldens_idx}) < goldens_restore_checkout ({restore_idx})"
-    );
-    let prep = blocks[prep_idx];
-    assert!(
-        prep.contains(
-            "        if: github.event_name == 'pull_request' && inputs.subject-sha == ''"
-        ),
-        "fresh base merge must run only on pull_request legacy merge-ref checkouts:\n{prep}"
-    );
-    assert!(
-        prep.contains("git merge-tree --write-tree --no-messages"),
-        "fresh base merge must check mergeability before switching:\n{prep}"
-    );
-    assert!(
-        prep.contains("git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit"),
-        "fresh base merge must create a clean merge commit:\n{prep}"
-    );
-    let restore = blocks[restore_idx];
-    assert!(
-        restore.contains(
-            "        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'"
-        ),
-        "restore step must always run when goldens_fresh_merge switched HEAD:\n{restore}"
-    );
-    assert!(
-        restore.contains("git checkout --detach \"$ORIG_HEAD\""),
-        "restore step must restore ORIG_HEAD:\n{restore}"
-    );
+    let goldens_idx = idx("goldens_fixtures")?;
+    let cleanup_idx = idx("goldens_cleanup")?;
+    if !(prep_idx < goldens_idx && goldens_idx < cleanup_idx) {
+        return Err("the fresh worktree must bracket the unconditional golden gate".into());
+    }
+    let prep = blocks
+        .get(prep_idx)
+        .ok_or("missing fresh merge preparation")?;
+    let gate = blocks.get(goldens_idx).ok_or("missing golden gate")?;
+    let cleanup = blocks
+        .get(cleanup_idx)
+        .ok_or("missing fresh worktree cleanup")?;
+    if !prep.contains("if: github.event_name == 'pull_request' && inputs.subject-sha == ''")
+        || !prep.contains("git merge-tree --write-tree --no-messages")
+        || !gate.contains("FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}")
+        || !cleanup.contains("if: always() && steps.goldens_fresh_merge.outputs.worktree != ''")
+        || !cleanup.contains("FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}")
+        || !cleanup.contains("ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}")
+    {
+        return Err("fresh merge, golden producer and cleanup must bind the admitted PR and one disposable worktree".into());
+    }
     Ok(())
 }
