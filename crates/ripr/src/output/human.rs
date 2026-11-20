@@ -6794,6 +6794,37 @@ mod tests {
         }
     }
 
+    /// #15325: the JavaScript projection renames only adapter-phrase
+    /// `TypeScript` words, including one split from its phrase word by a wrap
+    /// break, and leaves shared-adapter names, other words and TypeScript
+    /// findings unchanged.
+    #[test]
+    fn javascript_projection_renames_only_adapter_phrases() {
+        let mut js = typescript_preview_finding(false);
+        js.language = Some(LanguageId::JavaScript);
+        let block = "Next step \u{2014} TypeScript preview advisory: x\n\
+            Missing check: Only heuristic TypeScript test links; see the TypeScript\n    preview card\n\
+            limitation: changed TypeScript equality-boundary\n\
+            note: TypeScript/JavaScript preview evidence only; runtime Bun/TypeScript execution\n\
+            Related test: parses TypeScript files; TypeScriptFileFacts\n";
+        let named = super::sections::name_finding_language(&js, block.to_string());
+        assert_eq!(
+            named,
+            "Next step \u{2014} JavaScript preview advisory: x\n\
+            Missing check: Only heuristic JavaScript test links; see the JavaScript\n    preview card\n\
+            limitation: changed JavaScript equality-boundary\n\
+            note: TypeScript/JavaScript preview evidence only; runtime Bun/TypeScript execution\n\
+            Related test: parses TypeScript files; TypeScriptFileFacts\n"
+        );
+        assert_eq!(named.len(), block.len(), "wrap layout keeps its width");
+
+        let ts = typescript_preview_finding(false);
+        assert_eq!(
+            super::sections::name_finding_language(&ts, block.to_string()),
+            block
+        );
+    }
+
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),

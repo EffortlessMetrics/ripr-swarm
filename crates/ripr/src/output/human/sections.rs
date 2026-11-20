@@ -684,27 +684,66 @@ pub(crate) fn render_finding_with_config(
 /// producers phrase evidence and advice as "TypeScript preview ...". A
 /// finding whose own language is JavaScript names JavaScript in the human
 /// block; TypeScript findings and every other language keep their text. JSON
-/// and agent contracts keep the producer strings byte-identical.
+/// and agent contracts keep the producer strings byte-identical, because the
+/// adapter identity is part of those contracts (consumers match prefixes
+/// such as `TypeScript preview advisory:`).
+///
+/// Only an adapter-phrase `TypeScript` is renamed: a whole word, not part of
+/// `TypeScript/JavaScript` or `Bun/TypeScript`, whose next word or previous
+/// word is one of the adapter's own phrase words. Whitespace between the two
+/// words may include a wrap break, because this runs on the wrapped block;
+/// both names have the same length, so the wrap layout is unchanged.
 pub(super) fn name_finding_language(finding: &Finding, rendered: String) -> String {
-    if finding.language != Some(LanguageId::JavaScript) {
+    if finding.language != Some(LanguageId::JavaScript) || !rendered.contains("TypeScript") {
         return rendered;
     }
-    const LABELS: [(&str, &str); 5] = [
-        ("TypeScript preview", "JavaScript preview"),
-        ("TypeScript repair packet", "JavaScript repair packet"),
-        ("TypeScript evidence:", "JavaScript evidence:"),
-        ("changed TypeScript ", "changed JavaScript "),
-        (
-            "complete-contract TypeScript finding",
-            "complete-contract JavaScript finding",
-        ),
+    const NAME: &str = "TypeScript";
+    const NEXT_WORDS: [&str; 6] = [
+        "preview",
+        "repair",
+        "evidence",
+        "test",
+        "discriminator",
+        "discriminators",
     ];
-    let mut named = rendered;
-    for (typescript, javascript) in LABELS {
-        if named.contains(typescript) {
-            named = named.replace(typescript, javascript);
-        }
+    const PREVIOUS_WORDS: [&str; 6] = [
+        "changed",
+        "complete-contract",
+        "heuristic",
+        "related",
+        "external",
+        "bounded",
+    ];
+    let word_char = |c: char| c.is_alphanumeric() || c == '/' || c == '_';
+    let mut named = String::with_capacity(rendered.len());
+    let mut rest = rendered.as_str();
+    while let Some(at) = rest.find(NAME) {
+        let (before, from) = rest.split_at(at);
+        let after = &from[NAME.len()..];
+        named.push_str(before);
+        let previous_text = named.trim_end();
+        let whole_word = !named.ends_with(word_char) && !after.starts_with(word_char);
+        let next_word = after
+            .trim_start()
+            .split(|c: char| !(c.is_alphanumeric() || c == '-'))
+            .next()
+            .unwrap_or("");
+        let previous_word = previous_text
+            .rsplit(|c: char| !(c.is_alphanumeric() || c == '-'))
+            .next()
+            .unwrap_or("");
+        let separated = after.starts_with(char::is_whitespace);
+        let previous_separated = named.ends_with(char::is_whitespace);
+        let adapter_phrase = (separated && NEXT_WORDS.contains(&next_word))
+            || (previous_separated && PREVIOUS_WORDS.contains(&previous_word));
+        named.push_str(if whole_word && adapter_phrase {
+            "JavaScript"
+        } else {
+            NAME
+        });
+        rest = after;
     }
+    named.push_str(rest);
     named
 }
 
