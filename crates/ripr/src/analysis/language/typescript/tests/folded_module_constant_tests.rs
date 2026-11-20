@@ -166,9 +166,14 @@ const CHAIN: &str = "const s = 1000;\nconst m = s * 60;\nconst h = m * 60;";
 /// parameter, with the literal at that parameter's position (#15358).
 #[test]
 fn an_identity_alias_of_the_parameter_witnesses_at_its_own_position() -> Result<(), String> {
-    for (index, local) in ["const msAbs = ms;", "const msAbs = Math.abs(ms);"]
-        .into_iter()
-        .enumerate()
+    for (index, local) in [
+        "const msAbs = ms;",
+        "const msAbs = Math.abs(ms);",
+        "const msAbs: number = ms;",
+        "const msAbs: number = Math.abs(ms);",
+    ]
+    .into_iter()
+    .enumerate()
     {
         let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);
         let hit = folded_finding(&format!("alias-hit-{index}"), &source, "3_600_000")?;
@@ -207,6 +212,12 @@ fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String
         ("plus", "const msAbs = ms + other;"),
         ("written", "ms = ms / 2;\n  const msAbs = ms;"),
         ("redeclared", "const msAbs = ms;\n  { const msAbs = 1; }"),
+        (
+            "destructured-object",
+            "({ ms } = other);\n  const msAbs = ms;",
+        ),
+        ("destructured-array", "[ms] = other;\n  const msAbs = ms;"),
+        ("typed-transform", "const msAbs: number = ms / 2;"),
     ];
     for (label, local) in cases {
         let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);

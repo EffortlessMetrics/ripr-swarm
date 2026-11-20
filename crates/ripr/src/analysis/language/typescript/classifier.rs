@@ -5751,8 +5751,7 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("const ")
             && let Some(after) = rest.trim_start().strip_prefix(name)
-            && let Some(init) = after.trim_start().strip_prefix('=')
-            && !init.starts_with('=')
+            && let Some(init) = declaration_initializer(after)
             && !after.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '$')
         {
             if initializer.is_some() {
@@ -5771,10 +5770,7 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
     // Every occurrence of the alias name must be the one declaration or a
     // read, and the parameter must not be written.
     let declarations = identifier_occurrences(source, name)
-        .filter(|(_, after)| {
-            let after = after.trim_start();
-            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
-        })
+        .filter(|(_, after)| declaration_initializer(after).is_some())
         .count();
     let parameter_written = identifier_occurrences(source, parameter).any(|(before, after)| {
         let after = after.trim_start();
@@ -5789,9 +5785,47 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
         // The signature's own `p = default` is an assignment-looking token
         // before the body opens; a default never rewrites the argument.
         let in_signature = before.rfind('{').is_none() && before.contains('(');
-        (assign && !in_signature) || compound || prefixed
+        (assign && !in_signature) || compound || prefixed || (!in_signature && destructured(after))
     });
     (declarations == 1 && !parameter_written).then_some(idx)
+}
+
+/// The initializer of a declaration whose binding name was just consumed:
+/// `= init` or a typed `: <type> = init`. A type that holds `=>` (a function
+/// type) or an `==`/`=>` operator is refused.
+fn declaration_initializer(after: &str) -> Option<&str> {
+    let after = after.trim_start();
+    let rest = match after.strip_prefix(':') {
+        Some(typed) => {
+            let at = typed.find('=')?;
+            if typed[..at].contains(['(', ')', '{', '}', '<', '>']) {
+                return None;
+            }
+            &typed[at..]
+        }
+        None => after,
+    };
+    let init = rest.strip_prefix('=')?;
+    (!init.starts_with(['=', '>'])).then_some(init)
+}
+
+/// `true` when the text after an identifier closes a destructuring pattern
+/// that is then assigned (`({ ms } = o)`, `[ms] = arr`).
+fn destructured(after: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, ch) in after.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            '}' | ']' if depth == 0 => {
+                let rest = after[at + 1..].trim_start();
+                return rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>");
+            }
+            '}' | ']' | ')' if depth > 0 => depth -= 1,
+            ')' | ';' => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// `(text before, text after)` of each whole-word occurrence of `name`.
