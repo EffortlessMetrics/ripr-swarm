@@ -13394,6 +13394,7 @@ struct ModuleScope {
     start: u32,
     end: u32,
     uses: Vec<UsePath>,
+    conditional_uses: Vec<UsePath>,
     twins: Vec<String>,
     macro_args: Vec<String>,
     macro_defs: Vec<String>,
@@ -13497,6 +13498,7 @@ impl FileScopes {
             start,
             end,
             uses: Vec::new(),
+            conditional_uses: Vec::new(),
             twins: Vec::new(),
             macro_args: Vec::new(),
             macro_defs: Vec::new(),
@@ -13577,6 +13579,26 @@ impl FileScopes {
             .max_by_key(|scope| scope.stack.len())
     }
 
+    /// Keep the module's own text, including block-local declarations,
+    /// and omit child module bodies which do not contribute bindings here.
+    fn text_without_child_modules(&self, scope: &ModuleScope, source: &str) -> String {
+        let mut start = scope.start as usize;
+        let end = scope.end as usize;
+        let mut text = String::new();
+        for child in &self.scopes {
+            if child.stack.len() == scope.stack.len() + 1
+                && scope.start <= child.start
+                && child.end <= scope.end
+            {
+                text.push_str(&source[start..child.start as usize]);
+                text.push(' ');
+                start = child.end as usize;
+            }
+        }
+        text.push_str(&source[start..end]);
+        text
+    }
+
     /// The scope with exactly `stack`, when the file declares it.
     fn scope_with_stack(&self, stack: &[String]) -> Option<&ModuleScope> {
         self.scopes.iter().find(|scope| scope.stack == stack)
@@ -13593,8 +13615,11 @@ impl ModuleScope {
     fn absorb(&mut self, item: &ast::Item) {
         match item {
             ast::Item::Use(item) => {
-                self.uses
-                    .extend(flattened_use_paths(&item.syntax().text().to_string()));
+                let imports = flattened_use_paths(&item.syntax().text().to_string());
+                if item.attrs().any(is_conditional_variant_attr) {
+                    self.conditional_uses.extend(imports.iter().cloned());
+                }
+                self.uses.extend(imports);
             }
             ast::Item::Static(item) => self.twin_name(item.name()),
             ast::Item::Const(item) => self.twin_name(item.name()),
@@ -17632,16 +17657,17 @@ pub(super) fn unit_struct_value(
     declared_in_test_file == 1
 }
 
-/// Whether bare `name` in `test_file` is a variant of the one workspace enum
+/// Whether bare `name` in the test's module is a variant of the one workspace enum
 /// `enum_name`, brought in by exactly one non-aliased `use` of that enum's
 /// glob or of the variant itself (#9676). Fail-closed: a prelude spelling,
-/// another import of `name`, a same-named local item or a `macro_rules!` in
-/// the file, or an enum that is not the single declaration all refuse.
+/// another import of `name`, a same-named item or local binding in that module,
+/// a `macro_rules!` in the file, or an enum that is not the single declaration all refuse.
 pub(super) fn imported_enum_variant_value(
     name: &str,
     enum_name: &str,
-    test_file: &Path,
+    test: &TestSummary,
     index: &RustIndex,
+    syntax: &OwnerPinSyntax,
 ) -> bool {
     if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
         return false;
@@ -17654,7 +17680,10 @@ pub(super) fn imported_enum_variant_value(
         let first = matching.next()?;
         matching.next().is_none().then(|| first.0.clone())
     });
-    let Some(declaring) = declaring_path.and_then(|path| index.files().get(&path)) else {
+    let Some(declaring) = declaring_path
+        .as_deref()
+        .and_then(|path| index.files().get(path))
+    else {
         return false;
     };
     // Equality facts are not needed (and can be unavailable for an enum with
@@ -17671,19 +17700,25 @@ pub(super) fn imported_enum_variant_value(
     let (Some(item), None) = (enums.next(), enums.next()) else {
         return false;
     };
-    if !item.variant_list().is_some_and(|list| {
-        list.variants().any(|variant| {
+    let Some(variant) = item.variant_list().and_then(|list| {
+        list.variants().find(|variant| {
             variant.name().is_some_and(|ident| ident.text() == name)
                 && variant.field_list().is_none()
         })
-    }) {
+    }) else {
         return false;
-    }
-    let Some(file) = index.files().get(test_file) else {
+    };
+    let Some(file) = index.files().get(&test.file) else {
+        return false;
+    };
+    let Some(scopes) = syntax.file_scopes(index, &test.file) else {
+        return false;
+    };
+    let Some(scope) = scopes.scope_of_test(&file.source, test) else {
         return false;
     };
     let masked = mask_comments_and_strings(&file.source);
-    if masked.contains("macro_rules") {
+    if test.generated.is_some() || masked.contains("macro_rules") {
         return false;
     }
     let enum_glob = format!("{enum_name}::*");
@@ -17698,29 +17733,93 @@ pub(super) fn imported_enum_variant_value(
                 })
         })
     };
-    let mut admitted = 0usize;
-    for import in flattened_use_paths(&file.source) {
-        let last = import.path.rsplit("::").next().unwrap_or("");
-        let binds_name = last == name || import.alias.as_deref() == Some(name);
-        if import.alias.is_none()
+    let matches_variant = |import: &UsePath| {
+        import.alias.is_none()
             && (rooted(&import.path, &enum_glob) || rooted(&import.path, &enum_variant))
-        {
+    };
+    // A sibling module (or a function body) cannot supply a module binding.
+    let mut imports = scope.uses.iter().filter(|import| matches_variant(import));
+    let (Some(import), None) = (imports.next(), imports.next()) else {
+        return false;
+    };
+    // Narrow the rival scan only for an import proved to name this enum
+    // directly. Keep the whole-file guard for the existing re-export and
+    // cross-file cases, where the enum's spelling alone cannot prove that.
+    let scoped = declaring_path.as_deref() == Some(test.file.as_path())
+        && !variant.attrs().any(is_conditional_variant_attr)
+        && !scope.conditional_uses.contains(import)
+        && same_file_root_enum_variant_import(&item, import, scope, index, test);
+    let module_text;
+    let visible = if scoped {
+        module_text = scopes.text_without_child_modules(scope, &masked);
+        module_text.as_str()
+    } else {
+        &masked
+    };
+    let mut admitted = 0;
+    for import in flattened_use_paths(visible) {
+        let last = import.path.rsplit("::").next().unwrap_or("");
+        let binds_name =
+            strip_raw(last) == name || import.alias.as_deref().map(strip_raw) == Some(name);
+        if matches_variant(&import) {
             admitted += 1;
         } else if binds_name || import.path.ends_with("::*") || import.path == "*" {
-            // Another binding of the name, or any other glob that could
-            // supply it: the use items are read file-wide rather than by the
-            // test's lexical scope, so a second glob keeps the spelling
-            // ambiguous (e.g. `std::cmp::Ordering::*` beside a sibling
-            // module's `E::*`).
             return false;
         }
     }
-    if admitted != 1 {
+    if admitted != 1 || scope.has_twin(name) {
         return false;
     }
+    !enum_variant_name_is_rebound(visible, name)
+}
+
+/// The relaxed scan needs the declared enum in the module named by the
+/// import, without assuming an alias, extern crate or re-export is that enum.
+fn same_file_root_enum_variant_import(
+    item: &ast::Enum,
+    import: &UsePath,
+    scope: &ModuleScope,
+    index: &RustIndex,
+    test: &TestSummary,
+) -> bool {
+    if !item
+        .syntax()
+        .parent()
+        .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+        || item.attrs().any(is_conditional_variant_attr)
+    {
+        return false;
+    }
+    let Some((enum_path, _)) = import.path.rsplit_once("::") else {
+        return false;
+    };
+    let prefix = enum_path.rsplit_once("::").map_or("", |(prefix, _)| prefix);
+    match prefix {
+        "" | "self" => scope.stack.is_empty(),
+        "crate" => index
+            .execution_context(&test.file)
+            .is_some_and(|context| context.edges.is_empty() && context.roots.contains(&test.file)),
+        _ => {
+            let mut segments = prefix.split("::");
+            segments.clone().count() == scope.stack.len()
+                && segments.all(|segment| segment == "super")
+        }
+    }
+}
+
+fn is_conditional_variant_attr(attr: ast::Attr) -> bool {
+    attr.path().is_some_and(|path| {
+        matches!(
+            path.syntax().text().to_string().as_str(),
+            "cfg" | "cfg_attr" | "r#cfg" | "r#cfg_attr"
+        )
+    })
+}
+
+fn enum_variant_name_is_rebound(masked: &str, name: &str) -> bool {
     // A same-named item (other than the enum's own variant list) would shadow
     // the glob; refuse any item keyword directly before the spelling.
-    !whole_word_offsets(&masked, name).into_iter().any(|offset| {
+    whole_word_offsets(masked, name).into_iter().any(|offset| {
         // A parameter or closure parameter of the same name shadows the
         // variant: `name:` (a single colon) or a leading `|` binds it.
         let after = masked[offset + name.len()..].trim_start();
@@ -17729,7 +17828,7 @@ pub(super) fn imported_enum_variant_value(
         {
             return true;
         }
-        let before = masked[..offset].trim_end();
+        let before = strip_raw_ident_prefix(&masked[..offset]).trim_end();
         [
             "const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let",
             "mut",
