@@ -45,10 +45,9 @@ impl Subject {
         Ok(Self(root))
     }
 
-    /// Runs `ripr check` and returns the TypeScript preview advisory's
-    /// `(enabled, analyzed)` flags. The advisory is required to exist for the
-    /// changed file, so a failed run or an unparsed report cannot pass.
-    fn typescript_advisory(&self) -> Result<(bool, bool), String> {
+    /// Runs `ripr check --format json` on the subject's diff and parses the
+    /// report. A failed run or an unparsed report is an error.
+    fn check_report(&self) -> Result<serde_json::Value, String> {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--quiet", "--format", "json", "--root"])
             .arg(&self.0)
@@ -62,8 +61,14 @@ impl Subject {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        let report: serde_json::Value =
-            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+    }
+
+    /// Runs `ripr check` and returns the TypeScript preview advisory's
+    /// `(enabled, analyzed)` flags. The advisory is required to exist for the
+    /// changed file, so a failed run or an unparsed report cannot pass.
+    fn typescript_advisory(&self) -> Result<(bool, bool), String> {
+        let report = self.check_report()?;
         let advisory = report["preview_languages"]
             .as_array()
             .and_then(|all| all.iter().find(|entry| entry["language"] == "typescript"))
@@ -152,15 +157,7 @@ const PRICING_DENO_TEST: &str = "import { assertEquals } from \"jsr:@std/assert\
 impl Subject {
     /// The related tests linked to the first finding of `ripr check`.
     fn related_test_names(&self) -> Result<Vec<String>, String> {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .args(["check", "--quiet", "--format", "json", "--root"])
-            .arg(&self.0)
-            .arg("--diff")
-            .arg(self.0.join("change.diff"))
-            .output()
-            .map_err(|e| e.to_string())?;
-        let report: serde_json::Value =
-            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let report = self.check_report()?;
         Ok(report["findings"]
             .as_array()
             .into_iter()
