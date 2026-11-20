@@ -2684,16 +2684,22 @@ keys); do not take the next number.
   The verdict stands on: an omitted argument; `undefined`, an identifier or a
   spread argument; a relation through a wrapper or entry; another caller; a
   default export or renaming re-export; an import that renames a binding or
-  has code after it on its line; a namespace import in another file; a
-  loader or computed key; and a truncated scan or a skipped symlink.
-  Scope limit: the scan reads the TypeScript adapter's handwritten workspace
-  files, so callers in pruned build directories, generated or minified files,
+  has code after it on its line; a namespace import, `require` or dynamic
+  `import()` of the owner's module in another file; a loader or computed
+  key; an owner reference whose call arguments the reader cannot parse (a
+  comment before the parenthesis, an unbalanced argument); and a truncated
+  scan or a skipped symlink. The advice asks for a test call that omits the
+  argument.
+  Scope limit: the scan reads the TypeScript adapter's default handwritten
+  workspace files and ignores configured handwritten overrides, so callers
+  in pruned build directories, generated or minified files,
   non-TS sources (`.vue`, `.svelte`, `.mdx`) or outside the workspace root
   are not seen. `tests/unused_default_tests.rs` pins the reader
   (`only_a_lone_default_value_edit_is_located`,
   `only_arguments_that_cannot_be_undefined_fill_a_default`) and the
   production path (`a_default_every_call_fills_is_not_exposed`,
   `a_call_that_may_use_the_default_keeps_the_verdict`,
+  `a_call_the_argument_reader_drops_keeps_the_verdict`,
   `a_caller_the_scan_cannot_resolve_keeps_the_verdict`,
   `a_describe_titled_with_the_owner_name_is_not_a_caller`,
   `a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses`,

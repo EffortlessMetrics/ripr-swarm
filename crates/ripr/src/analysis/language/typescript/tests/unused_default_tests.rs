@@ -89,6 +89,12 @@ fn a_default_every_call_fills_is_not_exposed() -> Result<(), String> {
         "{:?}",
         finding.missing
     );
+    // The advice names the omitted argument, not an untaken branch.
+    let next_step = finding.recommended_next_step.as_deref().unwrap_or_default();
+    assert!(
+        next_step.contains("omits it") && !next_step.contains("changed branch"),
+        "{next_step}"
+    );
     // The one-line signature form reads the same way.
     let scale_test = "import { it, expect } from 'vitest';\nimport { scale } from '../src/def';\n\nit('scales', () => {\n  expect(scale(3, 4)).toBe(12);\n});\n";
     let finding = finding_at(
@@ -158,12 +164,54 @@ fn a_call_that_may_use_the_default_keeps_the_verdict() -> Result<(), String> {
     Ok(())
 }
 
+/// A call the argument reader cannot parse is still a call that may omit the
+/// argument: a comment before its parenthesis, or an argument holding a
+/// regex literal with a quote, keeps the verdict instead of leaving only the
+/// parsed filled call as the witness (#15393 review). So do an identifier
+/// argument and a spread that may supply `undefined`.
+#[test]
+fn a_call_the_argument_reader_drops_keeps_the_verdict() -> Result<(), String> {
+    let filled = "expect(pick('x', { level: 'B' })).toBe('xB');";
+    for (label, extra) in [
+        ("default-comment-call", "pick /* c */ ('x');"),
+        ("default-regex-call", "pick(/'/.test('x') ? 'a' : 'b');"),
+        (
+            "default-identifier-arg",
+            "const o = undefined;\n  pick('x', o);",
+        ),
+        (
+            "default-spread-arg",
+            "const xs: [string] = ['x'];\n  pick(...xs);",
+        ),
+    ] {
+        let test = format!(
+            "import {{ it, expect }} from 'vitest';\nimport {{ pick }} from '../src/def';\n\nit('picks', () => {{\n  {filled}\n  {extra}\n}});\n"
+        );
+        let finding = finding_at(
+            label,
+            PICK,
+            3,
+            PICK_OLD,
+            PICK_NEW,
+            &[("tests/def.test.ts", &test)],
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{label}: an unread call may omit the argument: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
 /// One scan case: its label, the owner source, and the extra files.
 type Case<'a> = (&'a str, &'a str, Vec<(&'a str, &'a str)>);
 
 /// Callers the scan cannot name or skip: a recursive call in the owner's
 /// own body, a sibling test without an assertion, an aliased re-export, a
-/// default export, and a computed-key reference each keep the verdict.
+/// default export, a computed-key reference, and a CommonJS `require` of the
+/// owner's module in another file each keep the verdict.
 #[test]
 fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
     let filled = pick_test("pick('x', { level: 'B' })", "'xB'");
@@ -175,7 +223,8 @@ fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
     let sibling = format!("{filled}\nit('smoke', () => {{\n  pick('y');\n}});\n");
     let default_export = format!("{PICK}export default pick;\n");
     let computed = "import { it, expect } from 'vitest';\nimport * as m from '../src/def';\n\nit('picks', () => {\n  expect(m.pick('x', { level: 'B' })).toBe('xB');\n  m['pick']('y');\n});\n";
-    let cases: [Case<'_>; 5] = [
+    let commonjs = "const m = require('./def');\nexport const runAll = () => Object.values(m).forEach((f) => f('y'));\n";
+    let cases: [Case<'_>; 6] = [
         (
             "default-recursive",
             &recursive,
@@ -207,6 +256,11 @@ fn a_caller_the_scan_cannot_resolve_keeps_the_verdict() -> Result<(), String> {
             "default-computed-key",
             PICK,
             vec![("tests/def.test.ts", computed)],
+        ),
+        (
+            "default-commonjs-namespace",
+            PICK,
+            vec![("tests/def.test.ts", &filled), ("src/all.ts", commonjs)],
         ),
     ];
     for (label, source, files) in cases {

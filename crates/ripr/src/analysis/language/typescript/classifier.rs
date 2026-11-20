@@ -8778,6 +8778,13 @@ pub(crate) fn classify_resolved_owner(
         ExposureClass::InfectionUnknown if infection.is_some() => {
             "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.".to_string()
         }
+        ExposureClass::ReachableUnrevealed
+            if infection
+                .as_ref()
+                .is_some_and(|infection| infection.shape == "default_not_applied") =>
+        {
+            "TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
         ExposureClass::ReachableUnrevealed if infection.is_some() => {
             "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
         }
@@ -9612,6 +9619,31 @@ struct TsUnusedDefault {
 /// any other workspace file that names the owner, a non-direct relation, a
 /// shadowed or non-call owner reference, a spread, an identifier argument or
 /// an incomplete workspace scan returns `None`, keeping the verdict.
+/// The arguments of the call at every code reference to `name`: each word
+/// occurrence in `masked` (comments and literals blanked) must open a call
+/// whose arguments parse in `text`. `None` when any reference does not, so a
+/// call the argument reader drops (`name /* c */ ()`, an argument it cannot
+/// balance) refuses instead of leaving only the parsed calls to witness the
+/// default (#15393 review). `masked` must keep `text`'s byte offsets.
+fn ts_calls_at_code_references(text: &str, masked: &str, name: &str) -> Option<Vec<Vec<String>>> {
+    if name.is_empty() || masked.len() != text.len() {
+        return None;
+    }
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+    let mut calls = Vec::new();
+    for (idx, _) in masked.match_indices(name) {
+        let before = masked[..idx].chars().next_back();
+        let after = masked[idx + name.len()..].chars().next();
+        if before.is_some_and(is_ident) || after.is_some_and(is_ident) {
+            continue;
+        }
+        let rest = text.get(idx..)?.strip_prefix(name)?;
+        let inner = rest.trim_start().strip_prefix('(')?;
+        calls.push(positional_prefix(balanced_call_arguments(inner)?));
+    }
+    Some(calls)
+}
+
 fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefault> {
     use super::unused_default_guard::{argument_is_definitely_defined, changed_default_parameter};
     let owner = context.owner;
@@ -9675,7 +9707,7 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
             {
                 return None;
             }
-            for arguments in owner_call_arguments(body, name, &receivers) {
+            for arguments in ts_calls_at_code_references(body, &masked_body, name)? {
                 if !fills(&arguments) {
                     return None;
                 }
@@ -9693,6 +9725,12 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
     // that names the owner (outside a pure `export { .. } from` re-export)
     // could be a caller this reader does not resolve.
     let scan = super::collect_workspace_typescript_files_with_handwritten(root, &[], &[]);
+    let owner_stem = owner
+        .file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())?
+        .to_string();
     // A truncated scan or a skipped symlink may hide a caller.
     if scan.truncated || scan.skipped_links > 0 {
         return None;
@@ -9713,9 +9751,8 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
         let masked = ts_mask_literals_and_comments(&rest);
         word_occurrences(&masked, &owner.name) == 0
             || (every_owner_reference_is_a_call(&masked, &owner.name, &[])
-                && owner_call_arguments(&rest, &owner.name, &[])
-                    .iter()
-                    .all(|arguments| fills(arguments)))
+                && ts_calls_at_code_references(&rest, &masked, &owner.name)
+                    .is_some_and(|calls| calls.iter().all(|arguments| fills(arguments))))
     };
     for path in &scan.files {
         let relative = path.strip_prefix(root).unwrap_or(path);
@@ -9767,6 +9804,15 @@ fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefaul
                 return None;
             }
             continue;
+        }
+        // A CommonJS `require` or a dynamic `import()` of the owner's module
+        // binds a namespace whose members this scan cannot follow
+        // (`Object.values(require('./def'))`, #15393 review).
+        if text.lines().any(|line| {
+            (line.contains("require(") || line.contains("import("))
+                && line.contains(owner_stem.as_str())
+        }) {
+            return None;
         }
         // A namespace object can reach the owner under a computed key, and a
         // re-export that renames the owner hides its callers.

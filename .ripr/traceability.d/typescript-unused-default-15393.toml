@@ -3,6 +3,7 @@ id = "RIPR-SPEC-0243"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::a_default_every_call_fills_is_not_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::a_call_that_may_use_the_default_keeps_the_verdict",
+  "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::a_call_the_argument_reader_drops_keeps_the_verdict",
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::only_a_lone_default_value_edit_is_located",
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::only_arguments_that_cannot_be_undefined_fill_a_default",
   "crates/ripr/src/analysis/language/typescript/tests/unused_default_tests.rs::a_caller_the_scan_cannot_resolve_keeps_the_verdict",
