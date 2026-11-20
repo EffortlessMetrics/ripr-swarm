@@ -205,6 +205,7 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-statement-boundaries.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json"
   ],
   "cases": [
@@ -12374,6 +12375,37 @@
           "file": "src/lib.rs",
           "oracle_strength": "strong",
           "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_guarded_statement_boundaries",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-statement-boundaries.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/guarded-statement-boundaries",
+      "vector": "statement_boundary_activation_requires_an_asserted_call_holding_the_guard",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::assigned",
+          "expression": "cents >= LIMIT",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::returned",
+          "expression": "cents >= LIMIT",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::held",
+          "expression": "cents >= LIMIT",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
         }
       ]
     },

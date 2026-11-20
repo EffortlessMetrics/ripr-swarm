@@ -727,6 +727,14 @@ fn statement_predicates_require_a_boundary_row_that_holds_every_guard() -> Resul
             "return\n        order_cents >= FREE_OVER_CENTS\n        && !express;",
             true,
         ),
+        (
+            "let free = order_cents >= FREE_OVER_CENTS && !express; // threshold\n    free",
+            true,
+        ),
+        (
+            "return order_cents >= FREE_OVER_CENTS && !express; /* threshold */",
+            true,
+        ),
         ("return order_cents >= FREE_OVER_CENTS && !express;", true),
         (
             "let free = order_cents >= FREE_OVER_CENTS\n        && !express;\n    free",

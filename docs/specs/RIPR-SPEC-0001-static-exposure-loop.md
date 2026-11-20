@@ -922,7 +922,9 @@ Continuation lines beginning with `&&` belong to that predicate through
 its opening brace or terminating semicolon. Comments do not supply a guard.
 A comparison edit whose old line cannot be read with the wrapped guards is
 declined. Honesty-corpus case
-`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
+`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins the
+conditional form. `rust_repo_exposure_guarded_statement_boundaries` pins
+missed guards in let and return statements alongside an asserted held guard.
 
 ## Test Mapping
 

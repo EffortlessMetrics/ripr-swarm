@@ -1510,7 +1510,7 @@ fn arm_pattern_text(expression: &str) -> Option<String> {
 /// `text` with every comment byte blanked and string and character
 /// literals kept, so a `/* "x" */` beside a pattern never reads as part of
 /// it while `'S' | 'C'` keeps its characters.
-fn without_comments(text: &str) -> Option<String> {
+pub(super) fn without_comments(text: &str) -> Option<String> {
     let (masked, chars) = mask_with_char_literals(text);
     let strings = string_span_ranges(text);
     let bytes = text

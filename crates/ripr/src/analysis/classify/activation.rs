@@ -3183,15 +3183,9 @@ pub(in crate::analysis) fn guarded_comparison(
     owner: &FunctionSummary,
 ) -> Option<GuardedComparison> {
     let continuation = wrapped_guard_continuation(owner, probe.location.line);
-    let with_continuation = |text: &str| match &continuation {
-        Some(rest) => format!(
-            "{} {rest}",
-            crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
-        ),
-        None => text.to_string(),
-    };
+    let with_continuation = |text: &str| guarded_predicate_text(text, continuation.as_deref());
     let (comparison, guards, mut unreadable_guard) = split_guarded(
-        &with_continuation(&probe.expression),
+        &with_continuation(&probe.expression)?,
         owner,
         probe.location.line,
     )?;
@@ -3199,7 +3193,7 @@ pub(in crate::analysis) fn guarded_comparison(
         None => None,
         Some(before) => {
             let Some((old_comparison, old_guards, old_unreadable)) =
-                split_guarded(&with_continuation(before), owner, probe.location.line)
+                split_guarded(&with_continuation(before)?, owner, probe.location.line)
             else {
                 // A wrapped guard the old line cannot be read with (`if a > T {`
                 // becoming `if a >= T` over `&& !x`) is a guard-touching edit:
@@ -3266,22 +3260,26 @@ pub(in crate::analysis) fn predicate_line_bool_guards(
         .or_else(|| text.strip_prefix("else if "))
         .or_else(|| text.strip_prefix("while "))
         .unwrap_or(text);
-    let joined;
-    let text = match wrapped_guard_continuation(owner, line) {
-        // The head's own trailing comment masked, so it cannot swallow the
-        // wrapped guards joined after it (`if a >= T // note` / `&& g`).
-        Some(rest) => {
-            joined = format!(
-                "{} {rest}",
-                crate::analysis::language::mask_rust_comments_and_strings(text).trim_end()
-            );
-            joined.as_str()
-        }
-        None => text,
-    };
-    let (found, guards, rebound) = split_guarded(text, owner, line)?;
+    let continuation = wrapped_guard_continuation(owner, line);
+    let text = guarded_predicate_text(text, continuation.as_deref())?;
+    let (found, guards, rebound) = split_guarded(&text, owner, line)?;
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     (squash(&found) == squash(comparison)).then_some((guards, rebound))
+}
+
+/// Strip comments before interpreting statement terminators or joining
+/// lines. Quoted operands remain available to the comparison reader.
+fn guarded_predicate_text(text: &str, continuation: Option<&str>) -> Option<String> {
+    let mut text = if text.contains("//") || text.contains("/*") {
+        super::arm_selection::without_comments(text)?
+    } else {
+        text.to_owned()
+    };
+    if let Some(rest) = continuation {
+        text.push(' ');
+        text.push_str(rest);
+    }
+    Some(text)
 }
 
 /// Read a continued conjunction through its conditional opening brace or
