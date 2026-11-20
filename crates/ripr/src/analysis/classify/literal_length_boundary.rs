@@ -258,9 +258,19 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
                 .children()
                 .filter_map(ast::Fn::cast)
                 .any(|item| {
-                    item.name()
-                        .is_some_and(|name| name.text() == owner.name.as_str())
-                        && item.syntax().text().to_string().trim() == owner.body.trim()
+                    item.attrs().next().is_none()
+                        && item.async_token().is_none()
+                        && item.const_token().is_none()
+                        && item.unsafe_token().is_none()
+                        && item.abi().is_none()
+                        && item.fn_token().is_some_and(|token| {
+                            let start = usize::from(token.text_range().start());
+                            let end = usize::from(item.syntax().text_range().end());
+                            // The index stores the span starting at fn, after visibility.
+                            source.get(start..end) == Some(owner.body.as_str())
+                                && source[..start].bytes().filter(|b| *b == b'\n').count() + 1
+                                    == owner.start_line
+                        })
                 })
         {
             return None;
