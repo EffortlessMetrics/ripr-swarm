@@ -1519,7 +1519,7 @@ fn supported_numeric_bounds(
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
             }),
-            "allOf" | "anyOf" | "oneOf" => value.as_array().is_none_or(|entries| {
+            "allOf" | "anyOf" | "oneOf" | "prefixItems" => value.as_array().is_none_or(|entries| {
                 entries.iter().all(|entry| {
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
@@ -2118,10 +2118,37 @@ fn validate_array(
         }
     }
 
+    // Draft 2020-12: `prefixItems` binds a schema to each leading position,
+    // and `items` then applies only to the positions after the prefix. A
+    // `prefixItems` that is not an array is reported, never skipped.
+    let prefix = match schema.get("prefixItems") {
+        None => &[][..],
+        Some(prefix) => match prefix.as_array() {
+            Some(prefix) => prefix.as_slice(),
+            None => {
+                violations.push(format!("{location}: unsupported prefixItems value"));
+                return;
+            }
+        },
+    };
+    for (index, (item, item_schema)) in items.iter().zip(prefix).enumerate() {
+        if !charge_validation_work(budget, 1 + location.len() / 1024) {
+            return;
+        }
+        validate_value_against_schema_inner(
+            item,
+            item_schema,
+            root_schema,
+            format!("{location}[{index}]"),
+            violations,
+            budget,
+        );
+    }
+
     let Some(items_schema) = schema.get("items") else {
         return;
     };
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in items.iter().enumerate().skip(prefix.len()) {
         if !charge_validation_work(budget, 1 + location.len() / 1024) {
             return;
         }
@@ -3917,6 +3944,66 @@ mod tests {
         assert!(
             violations.is_empty(),
             "a satisfied conditional must not report violations: {violations:#?}"
+        );
+    }
+
+    /// `prefixItems` binds each leading position to its own schema, and
+    /// `items` then covers only the positions after the prefix (draft
+    /// 2020-12). Before this was evaluated, a positional contract such as the
+    /// agent status artifact order was silently unchecked.
+    #[test]
+    fn prefix_items_bind_positions_and_items_covers_the_rest() {
+        let schema = serde_json::json!({
+            "type": "array",
+            "prefixItems": [{ "const": "first" }, { "const": "second" }],
+            "items": { "type": "integer" }
+        });
+        let violations_for = |value: serde_json::Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "list".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert_eq!(
+            violations_for(serde_json::json!(["first", "second", 3])),
+            Vec::<String>::new()
+        );
+        let swapped = violations_for(serde_json::json!(["second", "first"]));
+        assert!(
+            swapped
+                .iter()
+                .any(|violation| violation.starts_with("list[0]"))
+                && swapped
+                    .iter()
+                    .any(|violation| violation.starts_with("list[1]")),
+            "swapped positions must be rejected: {swapped:#?}"
+        );
+        let trailing = violations_for(serde_json::json!(["first", "second", "third"]));
+        assert!(
+            trailing
+                .iter()
+                .any(|violation| violation.starts_with("list[2]")),
+            "items must apply after the prefix: {trailing:#?}"
+        );
+        let malformed = serde_json::json!({ "prefixItems": { "const": 1 } });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &serde_json::json!([1]),
+            &malformed,
+            &malformed,
+            "list".to_string(),
+            &mut violations,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unsupported prefixItems")),
+            "a non-array prefixItems must be reported: {violations:#?}"
         );
     }
 

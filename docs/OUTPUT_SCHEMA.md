@@ -16498,7 +16498,7 @@ The JSON document is published as
 command writes for a fresh workspace, an attempt awaiting its edit, a finished
 attempt and a failed attempt, so the `repair_attempts` and `missing_commands`
 entries, the receipt reading and `test_run` are all checked against real
-output. The schema holds the seven artifacts to their fixed names and paths,
+output. The schema binds each of the seven artifact positions to its fixed name and path (`prefixItems`),
 `receipt` to `null` outside `ready_to_finish`, and `status` to its rule:
 `complete` has no next command and no warning, `warning` has no next command
 and at least one warning; `test_run` always carries the `attempt_id` it speaks

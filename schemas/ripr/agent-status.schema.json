@@ -50,13 +50,110 @@
       ]
     },
     "artifacts": {
-      "description": "The seven agent-loop artifacts, always all seven, in this order.",
+      "description": "The seven agent-loop artifacts, always all seven, in this order: each position is bound to its own name, label and path.",
       "type": "array",
       "minItems": 7,
       "maxItems": 7,
-      "items": {
-        "$ref": "#/$defs/artifact"
-      }
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/artifact",
+          "properties": {
+            "name": {
+              "const": "before_snapshot"
+            },
+            "label": {
+              "const": "before snapshot"
+            },
+            "path": {
+              "const": "target/ripr/workflow/before.repo-exposure.json"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/artifact",
+          "properties": {
+            "name": {
+              "const": "after_snapshot"
+            },
+            "label": {
+              "const": "after snapshot"
+            },
+            "path": {
+              "const": "target/ripr/workflow/after.repo-exposure.json"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/artifact",
+          "properties": {
+            "name": {
+              "const": "analysis_outcome"
+            },
+            "label": {
+              "const": "analysis outcome"
+            },
+            "path": {
+              "const": "target/ripr/workflow/analysis-outcome.json"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/artifact",
+          "properties": {
+            "name": {
+              "const": "agent_brief"
+            },
+            "label": {
+              "const": "agent brief"
+            },
+            "path": {
+              "const": "target/ripr/workflow/agent-brief.json"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/artifact",
+          "properties": {
+            "name": {
+              "const": "agent_packet"
+            },
+            "label": {
+              "const": "agent packet"
+            },
+            "path": {
+              "const": "target/ripr/workflow/agent-packet.json"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/artifact",
+          "properties": {
+            "name": {
+              "const": "agent_verify"
+            },
+            "label": {
+              "const": "agent verify"
+            },
+            "path": {
+              "const": "target/ripr/workflow/agent-verify.json"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/artifact",
+          "properties": {
+            "name": {
+              "const": "agent_receipt"
+            },
+            "label": {
+              "const": "agent receipt"
+            },
+            "path": {
+              "const": "target/ripr/reports/agent-receipt.json"
+            }
+          }
+        }
+      ]
     },
     "repair_attempts": {
       "type": "array",
@@ -218,99 +315,6 @@
           "minimum": 0
         }
       },
-      "oneOf": [
-        {
-          "properties": {
-            "name": {
-              "const": "before_snapshot"
-            },
-            "label": {
-              "const": "before snapshot"
-            },
-            "path": {
-              "const": "target/ripr/workflow/before.repo-exposure.json"
-            }
-          }
-        },
-        {
-          "properties": {
-            "name": {
-              "const": "after_snapshot"
-            },
-            "label": {
-              "const": "after snapshot"
-            },
-            "path": {
-              "const": "target/ripr/workflow/after.repo-exposure.json"
-            }
-          }
-        },
-        {
-          "properties": {
-            "name": {
-              "const": "analysis_outcome"
-            },
-            "label": {
-              "const": "analysis outcome"
-            },
-            "path": {
-              "const": "target/ripr/workflow/analysis-outcome.json"
-            }
-          }
-        },
-        {
-          "properties": {
-            "name": {
-              "const": "agent_brief"
-            },
-            "label": {
-              "const": "agent brief"
-            },
-            "path": {
-              "const": "target/ripr/workflow/agent-brief.json"
-            }
-          }
-        },
-        {
-          "properties": {
-            "name": {
-              "const": "agent_packet"
-            },
-            "label": {
-              "const": "agent packet"
-            },
-            "path": {
-              "const": "target/ripr/workflow/agent-packet.json"
-            }
-          }
-        },
-        {
-          "properties": {
-            "name": {
-              "const": "agent_verify"
-            },
-            "label": {
-              "const": "agent verify"
-            },
-            "path": {
-              "const": "target/ripr/workflow/agent-verify.json"
-            }
-          }
-        },
-        {
-          "properties": {
-            "name": {
-              "const": "agent_receipt"
-            },
-            "label": {
-              "const": "agent receipt"
-            },
-            "path": {
-              "const": "target/ripr/reports/agent-receipt.json"
-            }
-          }
-        }
-      ],
       "allOf": [
         {
           "if": {

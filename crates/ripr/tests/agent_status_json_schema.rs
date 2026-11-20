@@ -205,8 +205,12 @@ fn loop_documents() -> Result<Vec<(&'static str, Value)>, String> {
             ("failed", failed),
         ])
     })();
-    let _ = std::fs::remove_dir_all(&finishing);
-    let _ = std::fs::remove_dir_all(&failing);
+    // A failing run keeps both fixtures (their names are unique per run) so
+    // the attempt store and artifacts can be inspected.
+    if documents.is_ok() {
+        let _ = std::fs::remove_dir_all(&finishing);
+        let _ = std::fs::remove_dir_all(&failing);
+    }
     documents
 }
 
@@ -302,7 +306,7 @@ fn published_agent_status_schema_rejects_documents_it_forbids() -> Result<(), St
         .map(|(_, document)| document.clone())
         .ok_or("no finished document")?;
     conforms(&finished, &schema, "finished")?;
-    let cases: [(&str, Mutation); 15] = [
+    let cases: [(&str, Mutation); 17] = [
         ("unknown top-level field", |doc| doc["ok"] = json!(true)),
         ("another version", |doc| {
             doc["schema_version"] = json!("0.2")
@@ -326,6 +330,23 @@ fn published_agent_status_schema_rejects_documents_it_forbids() -> Result<(), St
         }),
         ("an artifact path for another name", |doc| {
             doc["artifacts"][0]["path"] = json!("target/ripr/workflow/after.repo-exposure.json")
+        }),
+        ("the first artifact repeated seven times", |doc| {
+            let first = doc["artifacts"][0].clone();
+            doc["artifacts"] = json!([
+                first.clone(),
+                first.clone(),
+                first.clone(),
+                first.clone(),
+                first.clone(),
+                first.clone(),
+                first
+            ]);
+        }),
+        ("the artifacts in reverse order", |doc| {
+            if let Some(artifacts) = doc["artifacts"].as_array_mut() {
+                artifacts.reverse();
+            }
         }),
         ("a missing artifact with a size", |doc| {
             doc["artifacts"][0]["state"] = json!("missing")
