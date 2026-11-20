@@ -1095,6 +1095,11 @@ impl ReExportIndex {
             return false;
         };
         let owner_module = normalized_module_path(&owner.file);
+        // Default imports only gain a barrel relation across distinct modules.
+        // A direct import (including a directory index) keeps its own rules.
+        if imported_name == "default" && self.canonical_module(&import_module) == owner_module {
+            return false;
+        }
         // The import names the owner module directly. A plain same-name
         // import is owned by the direct/imported-call relations (with their
         // own identity guards); only an owner-file RENAME export
@@ -1122,7 +1127,7 @@ impl ReExportIndex {
         // resolves to THIS owner exactly when the owner is the owner module's
         // default export (#4103 under-credit).
         target_module == owner_module
-            && (target_name == owner.name
+            && ((target_name == owner.name && imported_name != "default")
                 || (target_name == "default" && owner.exported_as_default))
     }
 
@@ -2268,8 +2273,10 @@ pub(crate) fn owner_call_relation(
         let Some(imported_name) = import.imported.as_deref() else {
             return false;
         };
-        if imported_name == "default" {
-            return false; // default imports are out of scope for re-export tracing
+        if imported_name == "default"
+            && (!owner.exported_as_default || owner.commonjs_default_export)
+        {
+            return false;
         }
         // The local alias in the test is what gets called; check the call site.
         let local = &import.local;
@@ -2278,7 +2285,10 @@ pub(crate) fn owner_call_relation(
         }
         // Shadow guard (#4102): a test-body declaration of the local name
         // reaches the shadow, not the re-exported owner.
-        if local_identifier_declared_in_test_body(&test.body_text, local) {
+        if local_identifier_declared_in_test_body(&test.body_text, local)
+            || (imported_name == "default"
+                && local_destructured_in_test_body(&test.body_text, local))
+        {
             return false;
         }
         // An enclosing `describe`/`beforeEach` binding of the local name
