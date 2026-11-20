@@ -7,14 +7,15 @@ from pathlib import Path
 import re
 import sys
 import sysconfig
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 def verify(root, scripts, target, version, commit, wheel_tag):
     identities = list((root / "qualified-payload").rglob("payload-identity.json"))
     if len(identities) != 1:
         raise ValueError(f"expected one qualified payload identity, found {len(identities)}")
-    identity = json.loads(identities[0].read_bytes())
+    identity_bytes = identities[0].read_bytes()
+    identity = json.loads(identity_bytes)
     executable = "ripr.exe" if target == "x86_64-pc-windows-msvc" else "ripr"
     if (identity["kind"], identity["schema_version"], identity["source"]["commit_sha"],
         identity["target"], identity["version"], identity["executable"]) != (
@@ -34,11 +35,27 @@ def verify(root, scripts, target, version, commit, wheel_tag):
 
     package, = json.loads((root / "pip-report.json").read_bytes())["install"]
     download = package["download_info"]
-    if not urlsplit(download["url"]).path.endswith(f"-py3-none-{wheel_tag}.whl"):
-        raise ValueError(f"pip chose {download['url']}, expected {wheel_tag} wheel")
+    producer_path = root / "packages" / "wheels" / f"wheel-native-receipt-{target}.json"
+    producer = json.loads(producer_path.read_bytes())
+    if (producer["kind"], producer["schema_version"], producer["target"], producer["version"],
+        producer["source_commit"], producer["source_tree"], producer["platform_tag"],
+        producer["payload_identity_sha256"]) != (
+        "ripr_native_python_wheel", 1, target, version, commit, identity["source"]["tree_sha"],
+        wheel_tag, hashlib.sha256(identity_bytes).hexdigest(),
+    ):
+        raise ValueError("wheel producer receipt does not match the qualified payload")
+    metadata = package["metadata"]
+    python_version = producer["python_version"]
+    if re.sub(r"[-_.]+", "-", metadata["name"]).lower() != "ripr-rs" or metadata["version"] != python_version:
+        raise ValueError("pip distribution name or version differs from the qualified wheel")
+    selected = urlsplit(download["url"])
+    wheel_name = f"ripr_rs-{python_version}-py3-none-{wheel_tag}.whl"
+    if (selected.scheme != "file" or selected.netloc not in ("", "localhost")
+        or Path(unquote(selected.path)).name != wheel_name or producer["wheel"] != wheel_name):
+        raise ValueError(f"pip chose {download['url']}, expected {wheel_tag} wheel {wheel_name}")
     wheel_sha = download["archive_info"]["hashes"]["sha256"]
-    if not re.fullmatch(r"[0-9a-f]{64}", wheel_sha):
-        raise ValueError("pip report has no valid wheel SHA-256")
+    if not re.fullmatch(r"[0-9a-f]{64}", wheel_sha) or wheel_sha != producer["wheel_sha256"]:
+        raise ValueError("pip wheel SHA-256 differs from the producer receipt")
     receipt = {
         "kind": "ripr_installed_wheel_identity",
         "schema_version": 1,
