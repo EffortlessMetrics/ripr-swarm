@@ -328,7 +328,7 @@ pub(super) fn static_limit_for_focused_change(
             evidence:
                 "static_limit unresolved_pytest_fixture: related test uses fixture-sourced values"
                     .to_string(),
-            missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
+            missing: "Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture, and static analysis cannot tell whether it supplies an input that exercises the change or the value the test expects.".to_string(),
         });
     }
     if trimmed.chars().any(|ch| ch.is_ascii_digit())

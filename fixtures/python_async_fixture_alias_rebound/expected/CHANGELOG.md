@@ -22,3 +22,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_async_fixture_alias_rebound (3)
+
+Reason:
+RIPR-SPEC-0238: explain the unresolved fixture input and expected value in plain language (#14846)
+
+Command:
+`cargo xtask goldens bless python_async_fixture_alias_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
