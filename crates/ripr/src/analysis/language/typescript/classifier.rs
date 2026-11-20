@@ -9438,30 +9438,29 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
     if context.candidates.is_empty() {
         return None;
     }
-    let conditions =
-        enclosing_conditions(source, owner.start_line, context.line, context.line_text).or_else(
-            || {
-                let error = context.ladder.error_facts;
-                if !context.single_line_replacement
-                    || !matches!(context.probe_shape.family, ProbeFamily::ErrorPath)
-                    || !error.sole_throw_site
-                    || !error.message_only
-                    || error.old_message.is_none()
-                    || error.new_message.is_none()
-                {
-                    return None;
-                }
-                super::guard_entry_guard::isolated_throw_after_return(
-                    source,
-                    owner.start_line,
-                    context.line,
-                    context.line_text,
-                    &owner.name,
-                    &owner.params,
-                )
-                .map(|condition| vec![condition])
-            },
-        )?;
+    let enclosing = enclosing_conditions(source, owner.start_line, context.line, context.line_text);
+    let after_nonzero_return = enclosing.is_none();
+    let conditions = enclosing.or_else(|| {
+        let error = context.ladder.error_facts;
+        if !context.single_line_replacement
+            || !matches!(context.probe_shape.family, ProbeFamily::ErrorPath)
+            || !error.sole_throw_site
+            || !error.message_only
+            || error.old_message.is_none()
+            || error.new_message.is_none()
+        {
+            return None;
+        }
+        super::guard_entry_guard::isolated_throw_after_return(
+            source,
+            owner.start_line,
+            context.line,
+            context.line_text,
+            &owner.name,
+            &owner.params,
+        )
+        .map(|condition| vec![condition])
+    })?;
     // A destructured options parameter leaves `owner.params` empty (arity is
     // unknown); read the signature itself for it.
     let (params, defaults, options) = if owner.params.is_empty() {
@@ -9553,6 +9552,13 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
                 return None;
             }
             for arguments in owner_call_arguments(callback, name, &receivers) {
+                // An actual argument named `undefined` may also bind a local value.
+                // The early-return witness only admits a direct numeric literal.
+                if after_nonzero_return
+                    && !matches!(arguments.as_slice(), [arg] if signed_numeric_expected_value(arg).is_some())
+                {
+                    return None;
+                }
                 calls += 1;
                 let inputs = CallInputs {
                     owner_source: source,

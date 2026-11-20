@@ -76,7 +76,8 @@ pub(crate) fn isolated_throw_after_return(
     params: &[String],
 ) -> Option<GuardCondition> {
     let [param] = params else { return None };
-    if line.checked_sub(start_line) != Some(2) {
+    // The evaluator reads `undefined` as a literal before looking up bindings.
+    if param == "undefined" || line.checked_sub(start_line) != Some(2) {
         return None;
     }
     let mut lines = source.lines().map(str::trim);
