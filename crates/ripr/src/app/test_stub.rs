@@ -712,15 +712,53 @@ pub(crate) fn stub_selector(
     }
 }
 
-/// The seam id a finding's stub route must name with `--seam-id` because
-/// `--at FILE:LINE` would refuse as ambiguous: the same route decision
-/// `ripr check` renders (`StubRouteDecision::SeamStub`), under the loaded
-/// configuration. `None` keeps the location form.
-pub(crate) fn stub_route_seam_id(root: &Path, finding: &Finding) -> Option<String> {
+/// How a finding's MCP stub route command selects its seam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StubRouteSeamChoice {
+    /// `--at FILE:LINE --kind FAMILY` picks one seam.
+    Location,
+    /// `--at` would refuse as ambiguous; exactly one seam on the line produces
+    /// a stub (`StubRouteDecision::SeamStub`, the route `ripr check` renders),
+    /// so the command names `--seam-id ID`.
+    SeamId(String),
+    /// `--at` would refuse as ambiguous and no single seam id is validated,
+    /// so no runnable stub command exists.
+    Unrunnable,
+}
+
+/// The selector a finding's stub route must use, from the same route
+/// decision `ripr check` renders under the loaded configuration. Only an
+/// ambiguous `--at` line changes the location form: `SeamStub` names the
+/// validated seam, and every other outcome on an ambiguous line is
+/// unrunnable rather than a command that refuses.
+pub(crate) fn stub_route_seam_choice(root: &Path, finding: &Finding) -> StubRouteSeamChoice {
     let config = crate::config::load_for_root(root).unwrap_or_default();
-    match stub_route_for_finding(root, &config, finding, &mut None)?.decision {
-        StubRouteDecision::SeamStub { seam_id } => Some(seam_id),
-        _ => None,
+    let mut index = None;
+    let Some(route) = stub_route_for_finding(root, &config, finding, &mut index) else {
+        return StubRouteSeamChoice::Location;
+    };
+    match route.decision {
+        StubRouteDecision::SeamStub { seam_id } => StubRouteSeamChoice::SeamId(seam_id),
+        StubRouteDecision::Ambiguous { .. } | StubRouteDecision::Withheld { .. } => {
+            StubRouteSeamChoice::Unrunnable
+        }
+        StubRouteDecision::Stub { .. }
+        | StubRouteDecision::Refused { .. }
+        | StubRouteDecision::WeakOracle { .. } => {
+            // A refused or weak-oracle fold can also come from an ambiguous
+            // line; re-ask the `--at` resolver with the same seam index.
+            let ambiguous = stub_route_location(finding, root).is_some_and(|(file, line, kind)| {
+                matches!(
+                    resolve_at_location(root, &config, &file, line, Some(kind), &mut index),
+                    Err(TestStubError::Ambiguous { .. })
+                )
+            });
+            if ambiguous {
+                StubRouteSeamChoice::Unrunnable
+            } else {
+                StubRouteSeamChoice::Location
+            }
+        }
     }
 }
 
@@ -2295,6 +2333,80 @@ mod tests {
             stub_selector(None, retries, "field_construction"),
             TestStubSelector::At { .. }
         ));
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
+    }
+
+    /// The MCP stub route's seam choice comes from the route `ripr check`
+    /// renders: a changed field on a shared construction line names the
+    /// changed field's validated seam id, and a lone return seam keeps the
+    /// location form.
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn stub_route_seam_choice_names_the_changed_field_on_an_ambiguous_line() -> Result<(), String> {
+        let root = scratch_stub_crate(
+            "route-seam-choice",
+            "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn new() -> Config {\n    Config { retries: 5, verbose: false }\n}\n",
+        )?;
+        let diff = root.join("change.patch");
+        std::fs::write(
+            &diff,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7 +7 @@\n-    Config { retries: 3, verbose: false }\n+    Config { retries: 5, verbose: false }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: root.clone(),
+            diff_file: Some(diff),
+            ..Default::default()
+        })?;
+        let config = RiprConfig::default();
+        let mut index = None;
+        let seams =
+            analysis::scoped_file_seams(&root, &config, &PathBuf::from("src/lib.rs"), &mut index)?;
+        let retries = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::FieldConstruction && seam.expression().contains("retries")
+            })
+            .ok_or("no retries field seam")?;
+        let field = output
+            .findings
+            .iter()
+            .find(|finding| {
+                stub_route_location(finding, &root)
+                    .is_some_and(|(_, _, kind)| kind == "field_construction")
+            })
+            .ok_or("no field_construction stub-routed finding")?;
+        // Precondition: the location form for this finding's line refuses.
+        let (file, line, kind) = stub_route_location(field, &root).ok_or("no route")?;
+        assert!(matches!(
+            resolve_at_location(&root, &config, &file, line, Some(kind), &mut None),
+            Err(TestStubError::Ambiguous { .. })
+        ));
+        assert_eq!(
+            stub_route_seam_choice(&root, field),
+            StubRouteSeamChoice::SeamId(retries.id().as_str().to_string())
+        );
+        // Unresolved ambiguity: an expression that narrows to neither field
+        // leaves both stubbable candidates, so no single id is validated and
+        // the route is unrunnable rather than the refusing `--at` form.
+        let mut unnarrowed = field.clone();
+        unnarrowed.probe.expression = "retries: 5, verbose: false".to_string();
+        assert_eq!(
+            stub_route_seam_choice(&root, &unnarrowed),
+            StubRouteSeamChoice::Unrunnable
+        );
+        for finding in output.findings.iter().filter(|finding| {
+            stub_route_location(finding, &root)
+                .is_some_and(|(_, _, kind)| kind != "field_construction")
+        }) {
+            let (file, line, kind) = stub_route_location(finding, &root).ok_or("no route")?;
+            if resolve_at_location(&root, &config, &file, line, Some(kind), &mut None).is_ok() {
+                assert_eq!(
+                    stub_route_seam_choice(&root, finding),
+                    StubRouteSeamChoice::Location
+                );
+            }
+        }
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
     }
 

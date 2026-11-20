@@ -3,6 +3,7 @@
 id = "RIPR-SPEC-0122"
 tests = [
   "crates/ripr/src/app/test_stub.rs::tests::stub_hint_uses_the_seam_id_only_when_the_line_is_ambiguous",
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::ambiguous_field_line_stub_commands_run_and_target_the_changed_field",
 ]
 code = [
   "crates/ripr/src/app/test_stub.rs",
@@ -13,6 +14,7 @@ code = [
 id = "RIPR-SPEC-0211"
 tests = [
   "crates/ripr/src/mcp/repair.rs::tests::refusal_next_names_the_seam_id_when_the_line_is_ambiguous",
+  "crates/ripr/src/app/test_stub.rs::tests::stub_route_seam_choice_names_the_changed_field_on_an_ambiguous_line",
 ]
 code = [
   "crates/ripr/src/mcp/repair.rs",

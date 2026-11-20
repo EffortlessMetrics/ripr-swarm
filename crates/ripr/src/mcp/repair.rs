@@ -722,6 +722,13 @@ pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
     })
 }
 
+/// True when `token` can be pasted into a shell command unquoted.
+fn shell_safe_token(token: &str) -> bool {
+    !token
+        .chars()
+        .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
+}
+
 /// The one machine-readable next step for a refused `ripr_prepare_repair`,
 /// derived from the same typed reason the shared gate produced. It adds no
 /// verdict: a terminal refusal never becomes a route the gate refused.
@@ -809,19 +816,21 @@ fn refusal_next(
     // `ripr repair` names: the shared resolver derives the test skeleton from
     // the changed code. Guidance only: it grants no repair readiness. A path
     // that would need shell quoting names no command rather than a wrong one.
+    // An unquotable seam id names no command either, never the `--at` form
+    // that the id replaced because it refuses as ambiguous.
+    let command = match (stub_route, stub_seam_id) {
+        (Some(_), Some(id)) => {
+            shell_safe_token(id).then(|| format!("ripr agent stub --seam-id {id}"))
+        }
+        (Some((file, line, family)), None) => shell_safe_token(file)
+            .then(|| format!("ripr agent stub --at {file}:{line} --kind {family}")),
+        (None, _) => None,
+    };
     if matches!(reason, "seam_not_found" | "seam_ambiguous")
-        && let Some((file, line, family)) = stub_route
-        && !file
-            .chars()
-            .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
+        && let Some(command) = command
     {
         next["stub_route"] = json!({
-            "command": match stub_seam_id {
-                Some(id) if !id.chars().any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c)) => {
-                    format!("ripr agent stub --seam-id {id}")
-                }
-                _ => format!("ripr agent stub --at {file}:{line} --kind {family}"),
-            },
+            "command": command,
             "run_from": "the repository root",
             "note": "writes nothing without --write; derives a test skeleton from the changed code. Fill its todo!() values by hand, then re-check with after_editing_tests. This route does not make the item repair-ready.",
         });
@@ -1563,6 +1572,19 @@ pub(super) mod tests {
             != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
         {
             return Err(format!("location form lost: {located}"));
+        }
+        // An id that needs quoting names no command, never the ambiguous
+        // `--at` form it replaced.
+        let unsafe_id = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            Some("seam id; rm"),
+            None,
+        );
+        if unsafe_id.get("stub_route").is_some() {
+            return Err(format!("unquotable id must drop the route: {unsafe_id}"));
         }
         Ok(())
     }

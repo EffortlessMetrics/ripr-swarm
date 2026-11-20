@@ -4,4 +4,6 @@
   line holds several seams of that kind (`Config { retries: 5, verbose: false }`),
   so the suggested next command runs instead of refusing as ambiguous and names
   the changed seam (#15641).
-- The MCP `ripr_prepare_repair` refusal's `stub_route` command names `--seam-id` under the same ambiguity.
+- The MCP `ripr_prepare_repair` refusal's `stub_route` command names `--seam-id`
+  under the same ambiguity, and is left out when no single seam on that line
+  produces a stub instead of printing an `--at` command that refuses.
