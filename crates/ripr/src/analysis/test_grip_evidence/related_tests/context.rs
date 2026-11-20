@@ -3,6 +3,7 @@ use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
+use rayon::prelude::*;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
@@ -108,6 +109,57 @@ pub(crate) struct CompactGripContext<'a> {
     /// ran in line while holding it). Not window-cleared: nothing in
     /// here derives from bytes a window can change, only from the index.
     pin_syntax: crate::analysis::classify::OwnerPinSyntax,
+}
+
+/// Tests whose per-test facts one context-build step computes before it
+/// checks for cancellation again. On ripr-swarm a test costs about 160 µs on
+/// one thread, so a chunk is tens of milliseconds of work.
+const CONTEXT_TEST_CHUNK: usize = 512;
+
+/// One test's context facts, derived from the index and the context's
+/// whole-index tables alone, so tests can compute them on any thread.
+struct ContextTestFacts {
+    import_tokens: BTreeSet<String>,
+    file_key: ContextTestFileKey,
+    path_normalized: String,
+    module_path: Option<String>,
+    name_lower: String,
+    call_names: BTreeSet<String>,
+    assertion_tokens: BTreeSet<String>,
+    helper_owner_call_names: BTreeSet<String>,
+    free_spelling_helper_owner_call_names: BTreeSet<String>,
+    target_affinity_owner_call_names: BTreeSet<String>,
+    free_spelling_target_affinity_owner_call_names: BTreeSet<String>,
+    ambiguous_target_affinity_owner_call_names: BTreeSet<String>,
+    code_lines: Vec<String>,
+}
+
+/// Which file posting map a test joins: its module stem, else its
+/// crate-root file (#5395), else neither.
+enum ContextTestFileKey {
+    Stem(String),
+    CrateRoot(String),
+    None,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What the last context build on this thread decided for its per-test
+    /// facts: `Some(true)` when it mapped them over the rayon pool,
+    /// `Some(false)` when it computed them in line.
+    static LAST_CONTEXT_TESTS_FAN_OUT: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Whether the context's per-test facts map over the rayon pool. A context
+/// built on a pool worker stays in line under the same guard as the
+/// owner-pin scans (#8756): a worker blocked in a nested `par_iter` can steal
+/// sibling work that needs a memo lock its own stack holds.
+fn context_tests_fan_out() -> bool {
+    let fan_out = crate::analysis::classify::nested_parallelism_allowed();
+    #[cfg(test)]
+    LAST_CONTEXT_TESTS_FAN_OUT.with(|last| last.set(Some(fan_out)));
+    fan_out
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -439,47 +491,52 @@ impl<'a> CompactGripContext<'a> {
             direct_helper_import_aliases_by_file: &direct_helper_import_aliases_by_file,
         };
         let mut file_value_scans: BTreeMap<&Path, Arc<OnceLock<FileValueScan>>> = BTreeMap::new();
-        let tests_started = Instant::now();
-        trace_latency_phase("evidence_context_tests", "start", Duration::ZERO);
-        let tests: Vec<CompactTest<'a>> = index
-            .tests()
-            .iter()
-            .enumerate()
-            .map(|(test_index, test)| {
-                checkpoint()?;
-                if test_index % 4096 == 0 {
-                    trace_latency_phase(
-                        "evidence_context_tests",
-                        &format!("processed_{test_index}"),
-                        tests_started.elapsed(),
-                    );
+        // The per-test facts read only the index and the tables above, so
+        // they are computed a chunk at a time, in parallel where nesting is
+        // allowed; the posting maps and the per-file scans are then filled
+        // in test order, so every map and vector matches a serial build.
+        let facts_of = |test: &'a TestSummary| -> ContextTestFacts {
+            let test_scoped_function_names = test_scoped_function_names_by_file.get(&test.file);
+            let production_owner_names = package_scope(&test.file)
+                .and_then(|package| unambiguous_production_owner_names_by_package.get(&package));
+            let call_names = test
+                .calls
+                .iter()
+                .map(|call| call.name.clone())
+                .collect::<BTreeSet<_>>();
+            let mut assertion_tokens = BTreeSet::new();
+            for assertion in &test.assertions {
+                for token in extract_identifier_tokens(&assertion.text) {
+                    assertion_tokens.insert(token);
                 }
-                let test_scoped_function_names = test_scoped_function_names_by_file.get(&test.file);
-                let production_owner_names = package_scope(&test.file).and_then(|package| {
-                    unambiguous_production_owner_names_by_package.get(&package)
-                });
-                let call_names = test
-                    .calls
-                    .iter()
-                    .map(|call| call.name.clone())
-                    .collect::<BTreeSet<_>>();
-                let mut assertion_tokens = BTreeSet::new();
-                for assertion in &test.assertions {
-                    for token in extract_identifier_tokens(&assertion.text) {
-                        assertion_tokens.insert(token);
-                    }
-                }
-                let local_function_names = function_names_by_file.get(&test.file);
-                let code_lines = test
-                    .body
-                    .lines()
-                    .map(strip_comments_and_strings)
-                    // Filter after stripping: removing a quoted segment can
-                    // itself form a qualified path in the existing scanner.
-                    .filter(|line| is_import_relevant_line(line))
-                    .collect::<Vec<_>>();
-                let module_import_aliases = module_import_aliases_by_file.get(&test.file);
-                let mut helper_owner_call_names = helper_owner_call_names_for_test(
+            }
+            let local_function_names = function_names_by_file.get(&test.file);
+            let code_lines = test
+                .body
+                .lines()
+                .map(strip_comments_and_strings)
+                // Filter after stripping: removing a quoted segment can
+                // itself form a qualified path in the existing scanner.
+                .filter(|line| is_import_relevant_line(line))
+                .collect::<Vec<_>>();
+            let module_import_aliases = module_import_aliases_by_file.get(&test.file);
+            let mut helper_owner_call_names = helper_owner_call_names_for_test(
+                test,
+                &call_names,
+                &helper_owner_lookup,
+                module_import_aliases,
+                test_scoped_function_names,
+                production_owner_names,
+            );
+            helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
+                test,
+                &call_names,
+                &same_file_helper_owner_calls_by_file,
+                test_scoped_function_names,
+                production_owner_names,
+            ));
+            let mut free_spelling_helper_owner_call_names =
+                free_spelling_helper_owner_call_names_for_test(
                     test,
                     &call_names,
                     &helper_owner_lookup,
@@ -487,69 +544,110 @@ impl<'a> CompactGripContext<'a> {
                     test_scoped_function_names,
                     production_owner_names,
                 );
-                helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
+            free_spelling_helper_owner_call_names.extend(
+                same_file_helper_owner_call_names_for_test(
                     test,
                     &call_names,
-                    &same_file_helper_owner_calls_by_file,
+                    &same_file_free_helper_owner_calls_by_file,
                     test_scoped_function_names,
                     production_owner_names,
-                ));
-                let mut free_spelling_helper_owner_call_names =
-                    free_spelling_helper_owner_call_names_for_test(
-                        test,
-                        &call_names,
-                        &helper_owner_lookup,
-                        module_import_aliases,
-                        test_scoped_function_names,
-                        production_owner_names,
-                    );
-                free_spelling_helper_owner_call_names.extend(
-                    same_file_helper_owner_call_names_for_test(
-                        test,
-                        &call_names,
-                        &same_file_free_helper_owner_calls_by_file,
-                        test_scoped_function_names,
-                        production_owner_names,
-                    ),
+                ),
+            );
+            let mut target_affinity_owner_call_names = helper_owner_call_names_from_qualified_calls(
+                &test.calls,
+                &target_affinity_qualified_modules,
+                module_import_aliases,
+            );
+            target_affinity_owner_call_names.extend(
+                helper_owner_call_names_from_production_helpers(
+                    test,
+                    &call_names,
+                    &target_affinity_production_owner_calls_by_package,
+                    local_function_names,
+                ),
+            );
+            let free_spelling_target_affinity_owner_call_names =
+                free_spelling_target_affinity_owner_call_names_for_test(
+                    test,
+                    &call_names,
+                    &free_target_affinity_qualified_modules,
+                    &free_target_affinity_production_owner_calls_by_package,
+                    module_import_aliases,
+                    local_function_names,
                 );
-                let mut target_affinity_owner_call_names =
-                    helper_owner_call_names_from_qualified_calls(
-                        &test.calls,
-                        &target_affinity_qualified_modules,
-                        module_import_aliases,
-                    );
-                target_affinity_owner_call_names.extend(
-                    helper_owner_call_names_from_production_helpers(
-                        test,
-                        &call_names,
-                        &target_affinity_production_owner_calls_by_package,
-                        local_function_names,
-                    ),
+            let ambiguous_target_affinity_owner_call_names =
+                ambiguous_owner_call_names_from_production_helpers(
+                    test,
+                    &ambiguous_target_affinity_owner_calls_by_package,
+                    local_function_names,
                 );
-                let free_spelling_target_affinity_owner_call_names =
-                    free_spelling_target_affinity_owner_call_names_for_test(
-                        test,
-                        &call_names,
-                        &free_target_affinity_qualified_modules,
-                        &free_target_affinity_production_owner_calls_by_package,
-                        module_import_aliases,
-                        local_function_names,
+            target_affinity_owner_call_names.extend(
+                helper_owner_call_names_from_same_file_unit_production_helpers(
+                    test,
+                    &target_affinity_production_owner_calls_by_package,
+                    local_function_names,
+                    test_scoped_function_names,
+                    production_owner_names,
+                ),
+            );
+            let file_key = match crate::analysis::classify::module_stem(&test.file) {
+                Some(stem) => ContextTestFileKey::Stem(stem),
+                None => crate_root_file_key(&test.file)
+                    .map_or(ContextTestFileKey::None, ContextTestFileKey::CrateRoot),
+            };
+            ContextTestFacts {
+                import_tokens: import_affinity_tokens(&code_lines),
+                file_key,
+                path_normalized: normalize_path(&test.file),
+                module_path: module_path_for_index(index, &test.file),
+                name_lower: test.name.to_ascii_lowercase(),
+                call_names,
+                assertion_tokens,
+                helper_owner_call_names,
+                free_spelling_helper_owner_call_names,
+                target_affinity_owner_call_names,
+                free_spelling_target_affinity_owner_call_names,
+                ambiguous_target_affinity_owner_call_names,
+                code_lines,
+            }
+        };
+        let fan_out = context_tests_fan_out();
+        let indexed_tests: Vec<&'a TestSummary> = index.tests().iter().collect();
+        let mut tests: Vec<CompactTest<'a>> = Vec::with_capacity(indexed_tests.len());
+        let tests_started = Instant::now();
+        trace_latency_phase("evidence_context_tests", "start", Duration::ZERO);
+        for chunk in indexed_tests.chunks(CONTEXT_TEST_CHUNK) {
+            checkpoint()?;
+            let chunk_facts: Vec<ContextTestFacts> = if fan_out {
+                chunk.par_iter().map(|&test| facts_of(test)).collect()
+            } else {
+                chunk.iter().map(|&test| facts_of(test)).collect()
+            };
+            for (&test, facts) in chunk.iter().zip(chunk_facts) {
+                checkpoint()?;
+                let test_index = tests.len();
+                if test_index.is_multiple_of(4096) {
+                    trace_latency_phase(
+                        "evidence_context_tests",
+                        &format!("processed_{test_index}"),
+                        tests_started.elapsed(),
                     );
-                let ambiguous_target_affinity_owner_call_names =
-                    ambiguous_owner_call_names_from_production_helpers(
-                        test,
-                        &ambiguous_target_affinity_owner_calls_by_package,
-                        local_function_names,
-                    );
-                target_affinity_owner_call_names.extend(
-                    helper_owner_call_names_from_same_file_unit_production_helpers(
-                        test,
-                        &target_affinity_production_owner_calls_by_package,
-                        local_function_names,
-                        test_scoped_function_names,
-                        production_owner_names,
-                    ),
-                );
+                }
+                let ContextTestFacts {
+                    import_tokens,
+                    file_key,
+                    path_normalized,
+                    module_path,
+                    name_lower,
+                    call_names,
+                    assertion_tokens,
+                    helper_owner_call_names,
+                    free_spelling_helper_owner_call_names,
+                    target_affinity_owner_call_names,
+                    free_spelling_target_affinity_owner_call_names,
+                    ambiguous_target_affinity_owner_call_names,
+                    code_lines,
+                } = facts;
                 for call_name in &call_names {
                     tests_by_call_name
                         .entry(call_name.clone())
@@ -586,25 +684,29 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                if let Some(stem) = crate::analysis::classify::module_stem(&test.file) {
-                    tests_by_file_stem.entry(stem).or_default().push(test_index);
-                } else if let Some(path) = crate_root_file_key(&test.file) {
-                    tests_by_crate_root_file
-                        .entry(path)
-                        .or_default()
-                        .push(test_index);
+                match file_key {
+                    ContextTestFileKey::Stem(stem) => {
+                        tests_by_file_stem.entry(stem).or_default().push(test_index);
+                    }
+                    ContextTestFileKey::CrateRoot(path) => {
+                        tests_by_crate_root_file
+                            .entry(path)
+                            .or_default()
+                            .push(test_index);
+                    }
+                    ContextTestFileKey::None => {}
                 }
-                for token in import_affinity_tokens(&code_lines) {
+                for token in import_tokens {
                     tests_by_import_token
                         .entry(token)
                         .or_default()
                         .push(test_index);
                 }
-                Ok(CompactTest {
+                tests.push(CompactTest {
                     test,
-                    path_normalized: normalize_path(&test.file),
-                    module_path: module_path_for_index(index, &test.file),
-                    name_lower: test.name.to_ascii_lowercase(),
+                    path_normalized,
+                    module_path,
+                    name_lower,
                     call_names,
                     assertion_tokens,
                     helper_owner_call_names,
@@ -617,9 +719,9 @@ impl<'a> CompactGripContext<'a> {
                     file_value_scan: Arc::clone(
                         file_value_scans.entry(test.file.as_path()).or_default(),
                     ),
-                })
-            })
-            .collect::<Result<_, E>>()?;
+                });
+            }
+        }
         trace_latency_phase(
             "evidence_context_tests",
             "finished",
@@ -1015,6 +1117,236 @@ mod candidate_index_tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    /// Builds an index of `per_file` tests in each of several files: a crate
+    /// root, module files, a `mod.rs` and an integration-test file, with
+    /// same-file helpers that reach an owner and qualified imports.
+    fn many_test_index(per_file: usize) -> Result<RustIndex, String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let files = [
+            ("src/lib.rs", "root"),
+            ("src/alpha.rs", "alpha"),
+            ("src/beta.rs", "beta"),
+            ("src/gamma/mod.rs", "gamma"),
+            ("tests/delta.rs", "delta"),
+        ];
+        let mut tests = Vec::new();
+        let mut functions = Vec::new();
+        let mut parsed = Vec::new();
+        for (path, stem) in files {
+            let mut source = format!(
+                "pub fn owner_{stem}(x: i32) -> i32 {{ x + 1 }}\n\
+                 fn check_owner_{stem}(x: i32) -> i32 {{ owner_{stem}(x) }}\n"
+            );
+            for test in 0..per_file {
+                let shared = test % 7;
+                source.push_str(&format!(
+                    "#[test]\nfn t_{stem}_{test}() {{\n    \
+                     use crate::alpha::owner_alpha;\n    \
+                     let value = check_owner_{stem}({test});\n    \
+                     assert_eq!(value, crate::beta::owner_beta({test}));\n    \
+                     assert!(shared_{shared}(value) > token_{shared});\n}}\n"
+                ));
+            }
+            let path = PathBuf::from(path);
+            let facts = RaRustSyntaxAdapter.summarize_file(&path, &source)?;
+            if facts.tests.len() != per_file {
+                return Err(format!(
+                    "{}: parsed {} tests, expected {per_file}",
+                    path.display(),
+                    facts.tests.len()
+                ));
+            }
+            tests.extend(facts.tests.iter().cloned());
+            functions.extend(facts.functions.iter().cloned());
+            parsed.push((path, facts));
+        }
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests,
+            functions,
+            ..Default::default()
+        });
+        for (path, facts) in parsed {
+            index.insert_file_only(path, facts);
+        }
+        Ok(index)
+    }
+
+    /// Every posting map, every per-test field, and which tests share a
+    /// file scan, in a comparable form.
+    fn context_projection(context: &CompactGripContext<'_>) -> String {
+        let tests = context
+            .tests
+            .iter()
+            .enumerate()
+            .map(|(position, test)| {
+                let shares_scan_with = context
+                    .tests
+                    .iter()
+                    .position(|other| Arc::ptr_eq(&other.file_value_scan, &test.file_value_scan));
+                format!(
+                    "{position} {} {} {:?} {} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                    test.test.name,
+                    test.path_normalized,
+                    test.module_path,
+                    test.name_lower,
+                    test.call_names,
+                    test.assertion_tokens,
+                    test.helper_owner_call_names,
+                    test.free_spelling_helper_owner_call_names,
+                    test.target_affinity_owner_call_names,
+                    test.free_spelling_target_affinity_owner_call_names,
+                    test.ambiguous_target_affinity_owner_call_names,
+                    test.code_lines,
+                    shares_scan_with,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "{tests}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}",
+            context.tests_by_call_name,
+            context.tests_by_helper_owner_call_name,
+            context.tests_by_free_helper_owner_call_name,
+            context.tests_by_target_affinity_owner_call_name,
+            context.tests_by_free_target_affinity_owner_call_name,
+            context.tests_by_assertion_token,
+            context.tests_by_file_stem,
+            context.tests_by_crate_root_file,
+            context.tests_by_import_token,
+            context.function_name_counts,
+        )
+    }
+
+    /// The per-test facts are computed in parallel chunks off the pool; the
+    /// in-line build on a pool worker is the reference. Both must produce
+    /// the same context, and the posting maps must match an independent
+    /// in-order rebuild from the retained per-test facts.
+    #[test]
+    fn parallel_context_build_matches_the_in_line_build() -> Result<(), String> {
+        let per_file = CONTEXT_TEST_CHUNK / 2 + 37;
+        let index = many_test_index(per_file)?;
+        let total = per_file * 5;
+        if index.tests().len() != total || total <= 2 * CONTEXT_TEST_CHUNK {
+            return Err("fixture must span several context chunks".to_string());
+        }
+
+        LAST_CONTEXT_TESTS_FAN_OUT.with(|last| last.set(None));
+        let parallel = CompactGripContext::new(&index);
+        if LAST_CONTEXT_TESTS_FAN_OUT.with(std::cell::Cell::get) != Some(true) {
+            return Err("an off-pool build must take the parallel branch".to_string());
+        }
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let (in_line, decision) = pool.install(|| {
+            LAST_CONTEXT_TESTS_FAN_OUT.with(|last| last.set(None));
+            let context = CompactGripContext::new(&index);
+            (
+                context_projection(&context),
+                LAST_CONTEXT_TESTS_FAN_OUT.with(std::cell::Cell::get),
+            )
+        });
+        if decision != Some(false) {
+            return Err("a pool-worker build must take the in-line branch".to_string());
+        }
+        assert_eq!(context_projection(&parallel), in_line);
+
+        // The fixture exercises the maps the in-order pass fills.
+        assert_eq!(parallel.tests.len(), total);
+        let empty = [
+            (&parallel.tests_by_helper_owner_call_name, "helper owner"),
+            (&parallel.tests_by_assertion_token, "assertion token"),
+            (&parallel.tests_by_import_token, "import token"),
+            (&parallel.tests_by_file_stem, "file stem"),
+            (&parallel.tests_by_crate_root_file, "crate root"),
+        ]
+        .into_iter()
+        .filter(|(map, _)| map.is_empty())
+        .map(|(_, label)| label)
+        .collect::<Vec<_>>();
+        assert!(empty.is_empty(), "fixture must populate {empty:?} postings");
+        assert!(
+            parallel
+                .tests_by_helper_owner_call_name
+                .get("owner_gamma")
+                .is_some_and(|tests| tests.len() == per_file),
+            "every gamma test reaches its owner through the same-file helper"
+        );
+
+        // Independent oracle: rebuild postings in test order from the facts.
+        let rebuild = |field: &dyn Fn(&CompactTest<'_>) -> Vec<String>| {
+            let mut map: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+            for (position, test) in parallel.tests.iter().enumerate() {
+                for key in field(test) {
+                    map.entry(key).or_default().push(position);
+                }
+            }
+            map
+        };
+        let keys = |set: &BTreeSet<String>| set.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(
+            parallel.tests_by_call_name,
+            rebuild(&|t| keys(&t.call_names))
+        );
+        assert_eq!(
+            parallel.tests_by_assertion_token,
+            rebuild(&|t| keys(&t.assertion_tokens))
+        );
+        assert_eq!(
+            parallel.tests_by_helper_owner_call_name,
+            rebuild(&|t| keys(&t.helper_owner_call_names))
+        );
+        assert_eq!(
+            parallel.tests_by_target_affinity_owner_call_name,
+            rebuild(&|t| keys(&t.target_affinity_owner_call_names))
+        );
+        assert_eq!(
+            parallel.tests_by_import_token,
+            rebuild(&|t| keys(&import_affinity_tokens(&t.code_lines)))
+        );
+        for (position, (test, indexed)) in
+            parallel.tests.iter().zip(index.tests().iter()).enumerate()
+        {
+            assert!(
+                std::ptr::eq(test.test, indexed),
+                "test {position} must keep index order"
+            );
+        }
+        Ok(())
+    }
+
+    /// Binds the build to `nested_parallelism_allowed` (#8756): a build off
+    /// the pool fans its per-test facts out, a build on a pool worker does not.
+    #[test]
+    fn context_test_facts_fan_out_off_the_pool_and_stay_in_line_on_a_worker() -> Result<(), String>
+    {
+        let index = many_test_index(3)?;
+        let decision_of_build = || {
+            LAST_CONTEXT_TESTS_FAN_OUT.with(|last| last.set(None));
+            let context = CompactGripContext::new(&index);
+            (
+                context.tests.len(),
+                LAST_CONTEXT_TESTS_FAN_OUT.with(std::cell::Cell::get),
+            )
+        };
+        assert_eq!(
+            decision_of_build(),
+            (15, Some(true)),
+            "a build outside the pool may fan out"
+        );
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            pool.install(decision_of_build),
+            (15, Some(false)),
+            "a build on a pool worker must run in line"
+        );
         Ok(())
     }
 
@@ -3669,6 +4001,11 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_dire
     owner_names
 }
 
+#[cfg(test)]
+thread_local! {
+    static QUALIFIED_HELPER_CLEAN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qualified_calls(
     calls: &[CallFact],
     qualified_helpers: &QualifiedHelperModules<'_>,
@@ -3676,6 +4013,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qual
 ) -> BTreeSet<String> {
     let mut owner_names = BTreeSet::new();
     for call in calls {
+        // The indexed name is required by every qualified and aliased match.
+        // Check it before cleaning, but still clean candidate text before
+        // testing its syntax: removing quoted text can change its spelling.
+        if !qualified_helpers.by_name.contains_key(call.name.as_str()) {
+            continue;
+        }
+        #[cfg(test)]
+        QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.set(count.get() + 1));
         let cleaned = strip_comments_and_strings(&call.text);
         for &(module_path, helper_owner_names) in qualified_helpers.candidates(&cleaned, &call.name)
         {
@@ -3994,6 +4339,31 @@ mod tests {
             scoped_names,
             Some(&production_names),
         ));
+    }
+
+    #[test]
+    fn qualified_helper_skips_cleaning_for_names_without_candidates() {
+        let modules = BTreeMap::from([(
+            "pkg::helpers".to_string(),
+            BTreeMap::from([("target".to_string(), BTreeSet::from(["owner".to_string()]))]),
+        )]);
+        let inverted = QualifiedHelperModules::new(&modules);
+        let calls = [
+            ("absent", "pkg::helpers::absent()"),
+            ("absent", r#"absent("pkg::helpers::target()")"#),
+            ("target", "pkg::helpers::target()"),
+            ("target", r#"target("pkg::helpers::target()")"#),
+        ]
+        .map(|(name, text)| CallFact {
+            line: 2,
+            name: name.to_string(),
+            text: text.to_string().into(),
+        });
+        QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.set(0));
+        let actual = helper_owner_call_names_from_qualified_calls(&calls, &inverted, None);
+        let cleaned = QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.get());
+        assert_eq!(actual, BTreeSet::from(["owner".to_string()]));
+        assert_eq!(cleaned, 2, "only candidate names need lexical cleaning");
     }
 
     #[test]

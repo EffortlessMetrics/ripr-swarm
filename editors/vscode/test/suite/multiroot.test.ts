@@ -576,6 +576,19 @@ async function openAndSave(root: RootExpectation): Promise<void> {
   assert.strictEqual(await editor.edit(builder => builder.insert(document.positionAt(document.getText().length), '\n')), true);
   assert.strictEqual(document.isDirty, true);
   assert.strictEqual(await document.save(), true, 'must drive a real saved-workspace event');
+  // #13636: the repair start refuses while production source is uncommitted,
+  // and the server now withholds it with the commit step. The save above
+  // left src uncommitted, so fold it into the fixture's boundary commit:
+  // HEAD~1 (ripr.baseRef) is unchanged, the evidence is the same, and the
+  // committed change keeps the start offered as #13716 asserts. Waiting out
+  // the server's 1s per-root premise memo keeps a code-action request made
+  // before the amend from answering for the clean tree.
+  const cp = require('child_process') as typeof import('child_process');
+  cp.execFileSync('git', ['-C', root.root, 'commit', '--quiet', '--amend', '--no-edit', '--all'],
+    { stdio: 'pipe' });
+  assert.strictEqual(cp.execFileSync('git', ['-C', root.root, 'status', '--porcelain', '--untracked-files=no'],
+    { encoding: 'utf8' }), '', 'the saved fixture change must be committed before the start is asserted');
+  await new Promise(resolve => setTimeout(resolve, 1100));
 }
 
 async function assertReaped(observed: ProcessObservation): Promise<void> {

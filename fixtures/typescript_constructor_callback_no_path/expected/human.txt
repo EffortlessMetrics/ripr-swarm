@@ -53,7 +53,6 @@ More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
   assessment. A test may already exercise these changes through macros, helper-call chains, or

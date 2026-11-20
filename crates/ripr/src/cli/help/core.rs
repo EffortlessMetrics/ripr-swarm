@@ -193,7 +193,7 @@ adjacent commits. Matching heads still do not mean matching working trees.
 /// flag mining for typo suggestions and the help tests read the full text.
 pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name the changed behavior your tests may not catch.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Common options:
   --base REV        Compare against this revision; when omitted, ripr uses
@@ -221,14 +221,14 @@ Exit status: 0 for a completed run, including findings that are `exposed` or wea
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
-  ripr check
+  ripr check [src/lib.rs]   (a PATH keeps only that changed file, like --path)
   ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
@@ -263,11 +263,13 @@ Options:
                            or glob: `src/lib.rs`, `crates/api`, `src/**/*.rs`.
                            Applied before the diff-size limits, so they measure
                            only the chosen files. Changed files outside the
-                           scope are named in a language_scope_unsupported
-                           limitation and have no finding: the outcome is
-                           partial_with_limitations, never clean. A scope that
+                           scope are named in a requested_scope_excluded
+                           scope note and have no finding; the outcome stays
+                           complete. Built-in generated skips still make the
+                           run partial. A scope that
                            leaves no changed file is an error. Not supported
-                           for repo-scoped formats.
+                           for repo-scoped formats. A bare PATH argument
+                           (`ripr check src/lib.rs`) is the same as --path.
   --exclude GLOB           Skip changed files matching GLOB (repeatable;
                            wins over --path). Same pattern shapes, same
                            disclosure as --path.
@@ -527,10 +529,12 @@ Environment variables:
                                           an unparseable value fails the run.
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
-                                          like --quiet (check, explain, context,
-                                          pilot, repair, continue). Any value except
-                                          empty, 0 or false silences it; stdout, exit
-                                          codes and errors are unchanged.
+                                          like --quiet on every command that takes
+                                          it (check, explain, context, pilot,
+                                          evidence-health, repair, continue, status,
+                                          agent repair, reports ci-packet). Any value
+                                          except empty, 0 or false silences it;
+                                          stdout, exit codes and errors are unchanged.
   RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
                                           machine format on a non-terminal stderr,
                                           where it is off by default. Any value

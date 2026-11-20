@@ -399,7 +399,7 @@ fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String
     .map_err(|err| {
         format!(
             "plus --gap-ledger {} is not a gap decision ledger: {err}. \
-             Pass the ledger written by `ripr gap-ledger` (default target/ripr/reports/gap-decision-ledger.json).",
+             Pass the ledger written by `ripr reports gap-ledger` (default target/ripr/reports/gap-decision-ledger.json).",
             gap_ledger.display()
         )
     })?;
@@ -983,6 +983,26 @@ mod tests {
             Err(msg) if msg.contains("non-empty path") => Ok(()),
             other => Err(format!("expected `non-empty path` error, got {other:?}")),
         }
+    }
+
+    /// #14317: the remedy for a malformed ledger names the command that
+    /// writes one; `ripr gap-ledger` is not a command.
+    #[test]
+    fn malformed_gap_ledger_remedy_names_the_real_producer() -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-plus-malformed-ledger-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let ledger = dir.join("ledger.json");
+        fs::write(&ledger, "not json {").map_err(|err| format!("write ledger: {err}"))?;
+        let Err(err) = render_gap_ledger_repo_badge_json(&ledger) else {
+            return Err("a malformed ledger must be refused".to_string());
+        };
+        fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        assert!(
+            err.contains("`ripr reports gap-ledger`") && !err.contains("`ripr gap-ledger`"),
+            "{err}"
+        );
+        Ok(())
     }
 
     #[test]

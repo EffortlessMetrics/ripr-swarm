@@ -6,7 +6,9 @@
 //!
 //! 1. `.cargo_vcs_info.json`, which `cargo package` writes into every packaged
 //!    crate. A crates.io install or an unpacked `.crate` has no `.git`, so this
-//!    is its only commit record.
+//!    is its only commit record. A publish-stage package (#14198) is recorded
+//!    dirty; its `.ripr-publish-stage` marker naming the same commit makes it
+//!    that commit, clean.
 //! 2. The enclosing Git checkout, but only when it tracks this manifest. A
 //!    crate unpacked inside some unrelated repository must not borrow that
 //!    repository's HEAD.
@@ -22,7 +24,9 @@ use std::process::{Command, Stdio};
 #[path = "src/build_commit_record.rs"]
 mod build_commit_record;
 
-use build_commit_record::{is_full_commit_id, parse_cargo_vcs_info};
+use build_commit_record::{
+    PUBLISH_STAGE_MARKER, is_full_commit_id, parse_cargo_vcs_info, publish_stage_identity,
+};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -31,9 +35,15 @@ fn main() {
         let vcs_info = dir.join(".cargo_vcs_info.json");
         if vcs_info.is_file() {
             println!("cargo:rerun-if-changed=.cargo_vcs_info.json");
+            let marker_path = dir.join(PUBLISH_STAGE_MARKER);
+            let marker = fs::read_to_string(&marker_path).ok();
+            if marker.is_some() {
+                println!("cargo:rerun-if-changed={PUBLISH_STAGE_MARKER}");
+            }
             fs::read_to_string(vcs_info)
                 .ok()
                 .and_then(|text| parse_cargo_vcs_info(&text))
+                .map(|(commit, dirty)| publish_stage_identity(commit, dirty, marker.as_deref()))
         } else {
             checkout_identity(dir)
         }
@@ -41,8 +51,11 @@ fn main() {
     let (commit, dirty) = identity.unwrap_or_default();
     // A commit identifies a clean build's code. A dirty or commit-less build
     // is identified by its sources instead, so persisted analysis caches
-    // never serve one such build's results to another.
-    let source_digest = if commit.is_empty() || dirty {
+    // never serve one such build's results to another. Skip the 58+ MB source
+    // digest on non-release profiles (dev/test), where `build_identity` falls
+    // back to a per-process identity.
+    let is_release = std::env::var("PROFILE").as_deref() == Ok("release");
+    let source_digest = if is_release && (commit.is_empty() || dirty) {
         manifest_dir
             .as_deref()
             .map(Path::new)

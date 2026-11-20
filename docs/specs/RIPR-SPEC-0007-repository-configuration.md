@@ -28,6 +28,12 @@ The configuration layer should:
   (`load_for_root`, workspace-status presence, Python repair
   config-profile detection, first-pr preflight, and agent-receipt
   config fingerprinting share that presence rule);
+- refuse, before opening it, a `ripr.toml` entry that is a symbolic link
+  whose resolved target lies outside the enclosing repository (the nearest
+  directory with a `.git` entry, or the link's own directory when there is
+  none); the refusal is one fixed message naming the entry and the repair,
+  without the resolved path or any target content, and a link whose target
+  stays inside the repository still loads (#14310, Unix);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
 - derive misplaced or retired-key recovery hints from the complete parser
@@ -98,6 +104,50 @@ child-only `/target/ripr/` rule is still flagged), and the changed-scope
 artifact disclosure names `/target/` too. Roots
 relocated by `RIPR_CACHE_DIR` or `[perl].cache_dir`, and projects without a
 `Cargo.toml`, keep the literal-root rule above.
+
+### Self-ignoring default output tree
+
+Once a workspace output guard has established that `target/ripr` is contained, ripr gives
+that tree a `target/ripr/.gitignore` containing `*`: immediately when the tree
+already exists, otherwise on the first atomic write into it under the same
+path spelling the guard used. ripr's own default output therefore stays out of
+`git status` and needs no `.gitignore` edit from the user; a tree written under
+a different spelling is marked by the next guarded run, and until then the
+artifact-ignore probe reports it as uncovered. The guard itself creates no directory, so a
+command that refuses after its guard leaves nothing behind. The file is
+created exclusively and never rewritten: a user's own `target/ripr/.gitignore`
+is kept as written. ripr never creates or edits the repository's own
+`.gitignore`. With an explicit `RIPR_CACHE_DIR`, which waives the cache
+guard's containment check, the tree is marked only after the check passes on
+its own.
+
+Because Git applies that rule to the tree's contents rather than to the
+`target/ripr` name, the artifact-ignore probe treats the existing default
+root as covered when the root itself is ignored, or when its ignore file is
+exactly the one ripr writes and a would-be entry inside it is ignored. A
+user-owned ignore file there is judged by the root probe alone, because it may
+unignore part of the tree, and the Cargo `target` probe never uses the
+fallback.
+Before the first write, the default root needs no warning: doctor and the
+first-`check` note warn only for relocated in-repository roots. A Cargo
+project's whole-`target/` requirement above is unchanged, because the
+self-ignore file covers only `target/ripr`. `check` runs the guard before its
+first-run ignore note, so a tree an older ripr left unignored is judged as the
+run leaves it.
+The committed-source probe that names gitignored source files a diff cannot
+see skips ignored records inside a `target/ripr` tree, at the repository top
+or under a nested root: ripr's own output is not source, so it costs no walk
+of the cache and cannot fail a check through that probe's git calls.
+
+Doctor runs the same output containment guard without writing (#14114).
+When `ripr check` and `ripr pilot` would refuse the default output location,
+because `target` is a regular file or a link that dangles, loops or leaves the
+workspace, doctor fails an `output_location` check with the guard's reason,
+recommends no analysis command, including whole-repository pilot, and drops its
+`✓ Cache` line. `RIPR_CACHE_DIR` waives the check exactly as it waives the guard,
+and a usable output location adds no check. While any `!` check blocks, the
+verbose start-here block gives that recovery instead of packet refresh advice,
+as the compact screen already does.
 
 ### Doctor blocking and advisory marks (#9033)
 
@@ -170,6 +220,56 @@ a missing file, or a directory at that path does not trigger the note.
 An explicit policy retains its loader and typed refusal contract from
 RIPR-SPEC-0241. Implicit SARIF/badge and repository consumers do not receive
 a false skipped-policy note and keep their existing policy authority.
+
+### Owner-scoped selector and review-comments policy (#13895)
+
+One suppression decision reaches both `ripr check` and the CI path
+(`review-comments` into `gate evaluate`), and it survives edits to the
+suppressed expression.
+
+**Function selector.** A `kind = "exposure_gap"` entry may select by owning
+function instead of `finding_id`: `path` is the exact root-relative file
+(no glob) and `function` is the owner name exactly as the finding's owner
+symbol carries it after the file, for example `retry_allowed`,
+`impl Retry::allowed` or `inner::helper`. It is a separate field from `owner`,
+which stays the human or team that owns the exception. An exposure-gap entry
+needs `finding_id`, a `path` glob, or `path` + `function`; `function` without
+`path`, with `finding_id`, with a glob `path`, or on a `test_efficiency` entry
+is rejected, as is a duplicate `(path, function)` and any unknown field. A
+`finding_id` hashes the parsed expression, so editing a suppressed function
+changes it; the function selector ignores `finding_id` and keeps matching. It
+is exact and fails closed: another file, another function in the same file, a
+missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
+(duplicate owners) never matches. Expired entries still do not apply.
+
+**Review-comments.** `ripr review-comments --suppression-policy PATH` loads
+the same file with the same loader as `ripr check` (relative paths resolve
+against `--root`; a missing or malformed file is an error; not combinable with
+`--gap-ledger`) and applies the same matcher to the selected seams. Matching
+seams leave `comments` and `summary_only` and appear in the existing
+`suppressed` array with reason `suppressed_by_policy` and a message naming the
+policy entry; `gate evaluate` already reads that array as non-blocking.
+`finding_id` selectors join seams through the producer-id join the repair
+paths use and apply only when the id names exactly one seam of the whole
+diff-scoped inventory, judged over every seam the streamed analysis observed
+and not over the selected or capped subset; an id shared with an unselected
+sibling, an id carrying a collision ordinal (`.N`), or an id whose inventory is
+unavailable is reported and not applied. `path` globs match the seam file. A
+`static_class` entry never applies to a review seam (different vocabulary) and
+is reported as not applied rather than skipped silently. A `function` entry
+covers every seam of that function, including seams added later, so give it an
+`expires` date. Expired and ambiguous selectors are reported as warnings.
+Known fail-closed limitation: suppression runs after the brief cap, so
+policy-suppressed seams still occupy cap slots and can push an unsuppressed
+seam out of the rendered set; the cap omission stays disclosed. The default `.ripr/suppressions.toml` remains opt-in (#7998): without
+the flag it is disclosed on stderr, never applied.
+
+**Check output.** `review-comments --check-output` honors findings that
+document marks `suppressed: true`: each finding id joins its seam under the
+same uniqueness rule. The check run's `suppressed_by` selector is not widened
+to its owner function, so a finding the run left unsuppressed stays blocking.
+With both inputs the union applies. Static evidence only: a
+suppression is an accepted exception, not a claim that a test would notice.
 
 ## Required Evidence
 
@@ -313,7 +413,8 @@ then the human diagnostic explains how to fix or remove the candidate's file
 and rerun with a new candidate-tree identity; editing only the worktree file
 cannot repair that immutable subject. A config-free candidate uses the built-in
 defaults, not a parent or worktree config. The JSON refusal retains its redacted
-first-line message, config_invalid identity and analysis/config-load route.
+first-line message plus the parser's source-free reason (#14441), its
+config_invalid identity and analysis/config-load route.
 ```
 
 ### Unknown keys name the nearest valid key (#13682)
@@ -325,6 +426,17 @@ when ripr loads the config,
 then the load fails and the error adds `did you mean `mode`?`, built only from
 the parser's fixed key names; an unrelated key gets no suggestion. The
 source-free summary keeps the hint only when it names a known key.
+The source-free summary also keeps the parser's reason without file content
+(#14441): an unknown key becomes `unknown key, expected one of ...` (the key
+is dropped; the expected list is ripr's schema), and a grammar reason such as
+`unclosed table, expected `]`` keeps its fixed wording only when every
+backticked token is punctuation. Wrong-type and value lines never pass.
+The reason is read only from the parser's own layout (an `invalid ripr.toml:
+TOML parse error at line N, column M` header with no quoted text before it,
+then the gutter, `N | ` excerpt and caret lines) and only when the message
+after it is a single line; a key or value whose newline splits the message,
+or a semantic diagnostic whose echoed value imitates that layout, keeps the
+location alone.
 
 Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
 reference table,
@@ -452,6 +564,47 @@ then the config is present but unreadable,
 and it is not described as using built-in defaults.
 ```
 
+### A config link that leaves the repository is refused unread (#14310)
+
+```text
+Given a workspace whose ripr.toml is a symbolic link,
+and the link resolves to a path outside the enclosing repository,
+when check, diff, pilot or a structured-output route loads configuration,
+then the run stops with one fixed refusal naming the entry and the repair,
+and the target is not opened,
+and neither the resolved path nor any target content is printed.
+Given the same link resolving inside the repository,
+then the configuration loads as a regular file would.
+```
+
+### Doctor checks the pytest the Python verify route runs (#13617)
+
+```text
+Given a Python root that is not unittest-only,
+when ripr doctor runs,
+then doctor checks that PATH `python` (the interpreter of the printed
+`python -m pytest` verify command) imports pytest, from a fresh private
+empty directory with PYTHONSAFEPATH=1 and PYTHONPATH unset, without
+starting pytest, so no checkout or temp-directory code is executed;
+
+Given PATH `python` cannot import pytest,
+when doctor reports the probe,
+then the result is an advisory warning that never changes the exit code;
+
+Given a project `.venv` or `venv` whose site-packages statically lists
+pytest while PATH `python` lacks it,
+when doctor reports the failure,
+then the warning names that venv's activate script, joined to the selected
+root and shell-quoted so it pastes from the caller's directory; a venv
+without pytest gives no activation advice, and an unreadable venv layout is
+reported as not verified, never as a pass.
+```
+
+The virtualenv is read statically and never executed. The printed verify
+command itself names the project venv interpreter when one exists
+(RIPR-SPEC-0028, #13801); doctor still probes only PATH `python`, so it never
+executes an interpreter from the checkout.
+
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 
 ```text
@@ -481,6 +634,16 @@ renders `!`, exits 3, and emits a `doctor_recovery` canonical action naming
 `git_head`; it recommends neither a first commit nor a check command. A
 genuine unborn branch retains the advisory and first-commit guidance, with
 exit 0 when the other checks pass. An unanswered probe never claims unborn.
+
+When `HEAD` resolves but RIPR-SPEC-0084's default-base search finds no
+candidate (a depth-1 CI checkout that fetched only its own commit, a
+repository whose branch is neither `main` nor `master` with no `origin/HEAD`),
+a bare `ripr check` stops with that search's message. Doctor records an
+advisory `git_default_base` check whose evidence ends with that same message,
+keeps exit 0 when the other checks pass, and recommends
+`ripr check --base REF` bound to the diagnosed root instead of a bare
+`ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
+never produces the advisory, and a failed prerequisite still outranks it.
 
 ### Doctor separates analysis readiness from source-build prerequisites
 
@@ -544,7 +707,11 @@ then the cargo_toml check passes and names the nested manifest (Cargo.toml
 found at rust/Cargo.toml via workspace root rust/);
 and a root with Rust sources but no Cargo.toml, or an empty root under the
 Rust-only default, still fails cargo_toml;
-and doctor's selected --root is not rebound to the nested workspace.
+and doctor's selected --root is not rebound to the nested workspace;
+and the bounded nested walk visits each level's entries in name order, so in a
+tree with more directories than its cap, which manifests it sees (and so which
+it names) depends on directory names, not on filesystem listing order
+(#14230).
 
 Given a git root with a TypeScript marker (`package.json` or `tsconfig.json`)
 and a nested Cargo workspace (`rust/Cargo.toml`) and no Cargo.toml or `.rs`
@@ -559,6 +726,17 @@ Cargo.toml exists;
 and doctor's selected --root is not rebound;
 and language detection remains a shallow root scan (the locator stays
 cargo-only).
+
+Given a root whose projects sit below the shallow marker scan (for example
+`backend/Cargo.toml` and `frontend/package.json` with no marker at the root
+or in `src/`) and a loaded `ripr.toml` whose `[languages] enabled` names
+languages,
+when ripr doctor runs with the human screen,
+then the detected-languages line says where the scan looked and names the
+languages the loaded ripr.toml enables, instead of "none detected" (#15195);
+and with no loaded ripr.toml the line still says "none detected";
+and any detected language keeps the ordinary detected-languages line;
+and the marker scan and doctor JSON output are unchanged.
 ```
 
 ### Literal artifact-root rule excludes no source sibling
@@ -627,6 +805,10 @@ not the symlink spelling.
 - `hostile_repos::looping_ref_without_base_is_not_reported_as_unborn`
 - `hostile_repos::unreadable_ref_without_base_is_not_reported_as_unborn`
 - `output::doctor::tests::unborn_head_verdict_claims_nothing_when_the_probe_never_answered`
+- `output::doctor::tests::unresolvable_default_base_is_advised_and_not_sent_to_bare_ripr_check`
+- `output::doctor::tests::shallow_checkout_without_a_base_branch_is_advised`
+- `output::doctor::tests::no_default_base_recommendation_names_explicit_base_bound_to_root`
+- `generated_review_workflow::doctor_packet_refresh_and_first_check_preserve_physical_root_identity`
 
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
   pins literal rule escaping and unchanged raw path spelling.
@@ -710,6 +892,14 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_only_the_workspace_has_ripr_toml`
 - `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_the_member_file_is_a_symlink_to_the_workspace_file`
 - `crates/ripr/src/config.rs::tests::closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file`
+- `crates/ripr/src/config/tests.rs::config_link_leaving_the_repository_is_refused_before_it_is_read`
+  pins the refusal for file, directory, named pipe, link chain and linked
+  directory targets at root, ancestor and member entries (#14310, Unix).
+- `crates/ripr/src/config/tests.rs::unresolvable_config_links_and_absent_entries_keep_their_contracts`
+- `crates/ripr/src/config/tests.rs::config_link_inside_the_repository_still_loads`
+- `crates/ripr/src/config/tests.rs::config_link_without_a_repository_marker_is_bounded_by_its_own_directory`
+- `crates/ripr/tests/config_link_escape_refusal.rs::a_config_link_to_an_outside_file_is_refused_on_every_route`
+- `crates/ripr/tests/config_link_escape_refusal.rs::a_config_link_inside_the_repository_still_loads_on_every_route`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_both_files_and_the_recovery_root`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_built_in_defaults_when_the_workspace_has_no_file`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_keeps_root_dot_when_the_invocation_path_has_an_apostrophe`
@@ -762,6 +952,7 @@ Current tests:
 - `crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level`
 - `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks`
+- `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_under_the_cap_is_name_ordered`
 - `crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::polyglot_git_root_with_typescript_and_nested_workspace_keeps_cargo_toml_required`
 - `crates/ripr/src/output/doctor.rs::tests::nested_workspace_does_not_override_rust_disabled_in_languages`
