@@ -142,3 +142,48 @@ fn given_a_helper_local_import_of_a_rival_owner_then_the_module_import_does_not_
     );
     Ok(())
 }
+
+#[test]
+fn given_a_helper_parameter_named_like_a_longer_import_then_the_test_is_still_related()
+-> Result<(), String> {
+    // `n` is the alias of `subtotal`, not of `total`, so the parameter does
+    // not rebind the owner.
+    let finding = finding_for(
+        "from pkg.core import total\nfrom pkg.other import subtotal as n\n\n\ndef run(n):\n    return total(n)\n\n\ndef test_total():\n    assert run(1) == 11\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.related_tests.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn given_a_value_helper_test_beside_a_same_module_caller_test_then_both_rows_stay()
+-> Result<(), String> {
+    let core_py = "def total(n):\n    return n + 10\n\n\ndef wrapper(n):\n    return total(n)\n";
+    let owners = extract_owners(Path::new(CORE), core_py);
+    let mut tests = extract_tests(
+        Path::new("tests/test_wrapper.py"),
+        "from pkg.core import wrapper\n\n\ndef test_wrapper():\n    assert wrapper(1) == 11\n",
+    );
+    tests.extend(extract_tests(
+        Path::new(TESTS),
+        "from pkg.core import total\n\n\ndef run(n):\n    return total(n)\n\n\ndef test_total():\n    assert run(1) == 11\n",
+    ));
+    let finding = classify_change(Path::new(CORE), 2, "    return n + 10", &owners, &tests)
+        .ok_or_else(|| "expected a finding for the changed owner line".to_string())?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    let mut names: Vec<&str> = finding
+        .related_tests
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        ["test_total", "test_wrapper"],
+        "{:?}",
+        finding.evidence
+    );
+    assert!(finding.related_tests.iter().all(|row| row.oracle.is_none()));
+    Ok(())
+}

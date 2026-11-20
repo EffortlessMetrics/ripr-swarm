@@ -535,14 +535,25 @@ fn classify_change_for_owner_inner<'a>(
     };
     // Only when no test relates to the owner itself: a test that calls a
     // same-module caller of the owner earns a weak `helper_owner_call` row
-    // (#4568), never an oracle.
-    let helper_callers = if !related_candidates.is_empty() {
+    // (#4568), never an oracle. A related candidate whose relation is already
+    // `helper_owner_call` reaches the owner only through a same-file value
+    // helper (#15350); it is reach-only too, so it does not hide the callers'
+    // rows, and a test both reach keeps one row.
+    let reached_directly = related_candidates
+        .iter()
+        .any(|candidate| candidate.relation != PythonRelationKind::HelperOwnerCall);
+    let mut helper_callers = if reached_directly {
         Vec::new()
     } else if let Some(memo) = related.as_deref_mut() {
         memo.helper_candidates(owner, owners, all_tests)
     } else {
         helper_owner_call_candidates(owner, owners, all_tests)
     };
+    helper_callers.retain(|helper| {
+        !related_candidates
+            .iter()
+            .any(|candidate| std::ptr::eq(candidate.test, helper.candidate.test))
+    });
     // #12955: with no related test at all, whether too many cross-module
     // callers went unfollowed decides between `no_static_path` and unknown.
     let cross_module_over_cap = related_candidates.is_empty()

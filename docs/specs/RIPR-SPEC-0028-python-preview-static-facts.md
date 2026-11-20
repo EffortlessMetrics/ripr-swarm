@@ -511,6 +511,10 @@ body. A helper whose parameter or assignment target rebinds the owner's name,
 or the alias the owner is imported as, does not relate; a test that binds the
 helper's name itself (a fixture parameter or a local) does not reach it. The relation carries no
 oracle, so such a test turns a `no_static_path` reading weak, never `exposed`.
+Such a test does not hide the rows of tests that reach the owner through a
+same-module or cross-module caller; a test both reach keeps one row. Because a
+value-helper test reaches the owner from its own file, its row also keeps the
+reading weak where cross-module callers alone would read the edit as unresolved.
 A top-level `click.command` or `click.group` function that no test calls is
 related, with the weak `cli_runner_invoke` relation, to a test that passes it
 as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),

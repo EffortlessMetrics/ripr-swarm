@@ -1113,10 +1113,9 @@ fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
         // view imports it as) is not the owner.
         let rebinds_owner = helper.local_names.iter().any(|local| {
             *local == owner.name
-                || view
-                    .imports
-                    .iter()
-                    .any(|import| import.alias == *local && import.imported.ends_with(&owner.name))
+                || view.imports.iter().any(|import| {
+                    import.alias == *local && imports_owner_name(&import.imported, &owner.name)
+                })
         });
         if rebinds_owner {
             return false;
@@ -1128,6 +1127,16 @@ fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
         !bare_name_bound_to_other_module(&view, owner)
             && (body_calls_owner(&view.body_text, owner) || import_alias_calls_owner(&view, owner))
     })
+}
+
+/// Whether an imported spelling names `owner_name` itself: the bare name or a
+/// dotted path ending in it (`pkg.core.total`), never a longer name that only
+/// ends with it (`subtotal`).
+fn imports_owner_name(imported: &str, owner_name: &str) -> bool {
+    imported == owner_name
+        || imported
+            .strip_suffix(owner_name)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 /// Whether the test imports the free-function owner's name (under any alias)

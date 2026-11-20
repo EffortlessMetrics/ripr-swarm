@@ -4562,6 +4562,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_helper_returning_the_owner_call_then_the_test_is_related_reach_only",
   "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_helper_shape_that_is_not_established_then_the_test_stays_unrelated",
   "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_direct_owner_call_beside_the_helper_then_the_direct_relation_wins",
+  "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_helper_parameter_named_like_a_longer_import_then_the_test_is_still_related",
+  "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_value_helper_test_beside_a_same_module_caller_test_then_both_rows_stay",
   "crates/ripr/src/analysis/language/python/value_helper_tests.rs::given_a_helper_local_import_of_a_rival_owner_then_the_module_import_does_not_mask_it",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_literal_format_spec_text_then_a_call_shaped_mention_stays_hidden",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_nested_triple_quoted_literal_in_a_field_then_its_text_stays_hidden",
