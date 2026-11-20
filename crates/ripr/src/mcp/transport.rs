@@ -68,7 +68,7 @@ impl Admission {
             error.error.message = match hint {
                 Some(message) => message.into(),
                 None => format!(
-                    "{}; to use the initialize lifecycle, send an `initialize` request first (params: protocolVersion, capabilities, clientInfo), then the `notifications/initialized` notification; to use the stateless lifecycle, put those `io.modelcontextprotocol/...` keys in params._meta",
+                    "{}; either send an `initialize` request first (params: protocolVersion, capabilities, clientInfo) then the `notifications/initialized` notification, or complete params._meta with the `io.modelcontextprotocol/...` keys",
                     error.error.message
                 )
                 .into(),
