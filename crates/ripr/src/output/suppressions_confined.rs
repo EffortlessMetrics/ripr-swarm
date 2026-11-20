@@ -49,7 +49,13 @@ fn confined_repository_file(
     root: &Path,
     relative_path: &Path,
 ) -> Result<Option<PathBuf>, Vec<String>> {
-    let canonical_root = std::fs::canonicalize(root).map_err(|_| confinement_refusal())?;
+    let canonical_root = match std::fs::canonicalize(root) {
+        Ok(canonical) => canonical,
+        // A root that no longer exists has no policy file to read; this
+        // matches the pre-confinement "missing path means no accepted debt".
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(_err) => return Err(confinement_refusal()),
+    };
     if !canonical_root.is_dir() {
         return Err(confinement_refusal());
     }
@@ -77,11 +83,11 @@ fn confined_repository_file(
             Err(_) => return Err(confinement_refusal()),
         }
 
-        let resolved = std::fs::canonicalize(&candidate).map_err(|_| confinement_refusal())?;
+        let resolved = std::fs::canonicalize(&candidate).map_err(|_err| confinement_refusal())?;
         if !resolved.starts_with(&canonical_root) {
             return Err(confinement_refusal());
         }
-        let metadata = std::fs::metadata(&resolved).map_err(|_| confinement_refusal())?;
+        let metadata = std::fs::metadata(&resolved).map_err(|_err| confinement_refusal())?;
         let is_final = index + 1 == components.len();
         if is_final {
             return metadata
@@ -130,6 +136,18 @@ mod tests {
             std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
         std::fs::write(path, text).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn removed_root_has_no_policy_to_read() -> Result<(), String> {
+        let root = temp_root("removed-root")?;
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        assert!(
+            load_suppressions_for_root_at(&root, Path::new(".ripr/suppressions.toml"))
+                .map_err(|errors| errors.join("\n"))?
+                .is_empty()
+        );
+        Ok(())
     }
 
     #[test]
