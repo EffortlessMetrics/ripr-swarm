@@ -8,6 +8,7 @@ use crate::analysis::canonical_gap::canonical_gap_identities;
 use crate::app::Mode;
 use crate::app::agent_brief::{
     AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam, AgentBriefSelection,
+    AgentBriefWorkingSetSource,
 };
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
 use crate::config::{RiprConfig, config_fingerprint};
@@ -91,6 +92,19 @@ pub(crate) fn render_agent_brief_json(
         },
         "warnings": warnings,
     });
+    if selection.top_seams.is_empty()
+        && matches!(
+            working_set.source,
+            AgentBriefWorkingSetSource::Files
+                | AgentBriefWorkingSetSource::Base
+                | AgentBriefWorkingSetSource::Diff
+        )
+    {
+        let limits = &mut value["limits"];
+        limits["cap_omitted_seams"] = json!(selection.omitted_by_cap);
+        limits["omitted_by_policy"] = json!(selection.omitted_by_policy);
+        limits["static_limited_omitted_seams"] = json!(selection.omitted_static_limited);
+    }
     if let Some(projection) = causal_projection
         && let Some(object) = value.as_object_mut()
     {
@@ -358,6 +372,7 @@ mod tests {
         let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
 
         assert_eq!(value["schema_version"], AGENT_BRIEF_SCHEMA_VERSION);
+        assert!(value["limits"].get("omitted_by_policy").is_none());
         assert_eq!(value["scope"], "working_set");
         assert_eq!(value["working_set"]["source"], "diff");
         assert_eq!(value["limits"]["returned"], 1);
@@ -523,6 +538,45 @@ mod tests {
             )
             .as_str()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_brief_discloses_scoped_selection_omissions() -> Result<(), String> {
+        let mut limited = classified();
+        limited.evidence.propagate = stage(StageState::Unknown);
+        let explicit = AgentBriefResolvedWorkingSet::seam_id(limited.seam.id().as_str());
+        let seams = [limited];
+        let files = AgentBriefResolvedWorkingSet::files(vec!["src/pricing.rs".into()]);
+        let config = RiprConfig::default();
+        for (inventory, scope, expected) in [
+            (&seams[..], &files, Some(1)),
+            (&seams[..0], &files, Some(0)),
+            (&seams[..], &explicit, None),
+        ] {
+            let selection = select_agent_brief_seams(
+                inventory,
+                scope,
+                3,
+                AgentBriefPolicy::from_config(&config),
+            );
+            let raw =
+                render_agent_brief_json(Path::new("."), &Mode::Draft, &config, scope, &selection)?;
+            let brief: Value = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
+            assert_eq!(brief["top_seams"], json!([]));
+            let limits = &brief["limits"];
+            for (field, count) in [
+                ("cap_omitted_seams", expected.map(|_| 0)),
+                ("omitted_by_policy", expected),
+                ("static_limited_omitted_seams", expected),
+            ] {
+                assert_eq!(
+                    limits.get(field).cloned(),
+                    count.map(Value::from),
+                    "{field}"
+                );
+            }
+        }
         Ok(())
     }
 
