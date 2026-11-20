@@ -248,19 +248,26 @@ function selectNextestRelease(metadata, host) {
   return { version, url, sha256: checksum.toLowerCase() };
 }
 
-// Walk from the filesystem root without following symlinks. On the supported
-// Linux host, anchor creation and probe cleanup to open directory descriptors.
-function probeNpmCache(cache, checkout) {
+// Resolve the caller's existing home as a trusted prefix. Below that boundary
+// (or the filesystem root for other selections), never follow cache symlinks.
+function probeNpmCache(cache, checkout, home) {
   if (!path.isAbsolute(cache) || /[\x00-\x1f\x7f]/.test(cache) || cache.split(path.sep).includes('..')) {
     throw failure('Expected one absolute cache directory without traversal or control characters.');
   }
-  const absolute = path.resolve(cache);
+  let absolute = path.resolve(cache);
+  if (home && path.isAbsolute(home) && absolute.startsWith(path.resolve(home) + path.sep)) {
+    try { absolute = path.join(fs.realpathSync.native(home), path.relative(home, absolute)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; } // A new home can be created below.
+  }
   const root = path.parse(absolute).root;
   const source = fs.realpathSync(checkout);
   if (absolute === root || absolute === source || absolute.startsWith(source + path.sep)) {
     throw failure('Choose a cache directory outside the checkout and below the filesystem root.');
   }
-  const flags = fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+  // Node does not export Linux O_PATH (asm-generic/fcntl.h, x64/arm64).
+  // It requires search permission on ancestors without opening them for reading.
+  const searchOnly = process.platform === 'linux' ? 0o10000000 : 0;
+  const flags = searchOnly | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
   let fd = fs.openSync(root, flags);
   let directory = root;
   const anchored = () => process.platform === 'linux' ? `/proc/self/fd/${fd}` : directory;
@@ -549,10 +556,13 @@ async function provision(options, deps = {}) {
       const editor = path.join(root, 'editors', 'vscode');
       let cache;
       try {
+        // Even "config get" can mkdir the cache or rotate logs. Give this Node
+        // lookup read access only. Install, graph checks and smoke use activeEnv.
+        const queryEnv = { ...activeEnv, NODE_OPTIONS: '--permission --allow-fs-read=*' };
         const lookup = await call(commands.npm, ['config', 'get', 'cache'],
-          { cwd: editor, env: activeEnv, capture: true, timeoutMs: 30_000 });
+          { cwd: editor, env: queryEnv, capture: true, timeoutMs: 30_000 });
         cache = lookup.stdout.replace(/\r?\n$/, '');
-        const state = probeNpmCache(cache, root);
+        const state = probeNpmCache(cache, root, activeEnv.HOME);
         print(`npm cache ${JSON.stringify(cache)} (${state}): write, read and cleanup passed.`);
       } catch (error) {
         const subject = cache === undefined ? 'npm cache configuration' : `npm cache ${JSON.stringify(cache).slice(0, 2048)}`;

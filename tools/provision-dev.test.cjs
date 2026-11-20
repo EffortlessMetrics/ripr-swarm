@@ -205,7 +205,11 @@ function nativeToolMain() {
     if (args[0] === '--version') return output('11.6.0');
     const cache = process.env.npm_config_cache ?? process.env.NPM_CONFIG_CACHE
       ?? state.defaultCache ?? path.join(process.env.HOME, '.npm');
-    if (JSON.stringify(args) === JSON.stringify(['config', 'get', 'cache'])) return output(cache);
+    if (JSON.stringify(args) === JSON.stringify(['config', 'get', 'cache'])) {
+      // npm initializes its effective cache during config lookup, even for "get".
+      try { fs.mkdirSync(cache, { recursive: true }); } catch { /* npm tolerates this. */ }
+      return output(cache);
+    }
     if (args[0] === 'ci') {
       if (state.failAtInstall) fail('fixture npm ci encountered an unusable cache', 83);
       const lockBytes = fs.readFileSync(path.join(process.cwd(), 'package-lock.json'));
@@ -349,6 +353,14 @@ function makeFixture(t, options = {}) {
     'sudo', 'apt-get', 'apt-cache',
     'npm', 'xvfb-run', 'Xvfb', 'xauth']) {
     if (name !== options.missingCommand) writeFile(path.join(bin, name), toolScript, 0o755);
+  }
+  if (options.missingCommand !== 'npm') {
+    // The lookup's Node process may write only the fixture event journal.
+    writeFile(statePath + '.npm.cjs', 'process.argv.splice(1, 1);\n(' + nativeToolMain.toString() + ')();');
+    writeFile(path.join(bin, 'npm'), '#!/bin/bash\n'
+      + 'record=()\nif [[ "$1" == config && "$NODE_OPTIONS" == *--permission* ]]; then\n'
+      + '  record+=(--allow-fs-write="$RIPR_PROVISION_TEST_STATE")\nfi\n'
+      + 'exec node "${record[@]}" "$RIPR_PROVISION_TEST_STATE.npm.cjs" "$0" "$@"\n', 0o755);
   }
   for (const [name, actual] of [['bash', '/bin/bash'], ['timeout', NATIVE ? '/usr/bin/timeout' : null],
     ['node', process.execPath]]) {
@@ -889,9 +901,15 @@ test('An explicit npm cache with spaces is used by lookup, install and offline r
     const f = makeFixture(t);
     const cache = path.join(f.env.HOME, 'chosen cache ');
     f.env.NPM_CONFIG_CACHE = cache;
+    const physicalHome = path.join(path.dirname(f.env.HOME), 'physical home');
+    fs.mkdirSync(physicalHome);
+    fs.symlinkSync(physicalHome, f.env.HOME);
+    fs.chmodSync(f.env.HOME, 0o311); // Traverse and create, without listing the parent.
     const lock = fs.readFileSync(f.lock);
     const first = f.cli(['--ensure']);
+    fs.chmodSync(f.env.HOME, 0o700);
     assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stdout, /\(created\)/);
     assert.deepEqual(fs.readdirSync(cache), []);
     assert.match(first.stdout, /npm cache/i);
     fs.writeFileSync(path.join(cache, 'sentinel'), 'keep');
@@ -924,14 +942,21 @@ test('Unsafe npm cache selections preserve existing contents and reject before i
     fs.writeFileSync(file, 'keep');
     fs.symlinkSync(f.root, link);
     fs.symlinkSync(path.join(f.env.HOME, 'absent'), dangling);
-    for (const cache of [file, dangling, path.join(link, 'escaped'), f.root, '/', 'relative',
-      f.root + '/../outside', f.root + '/tracked-cache', f.env.HOME + '\n/extra']) {
+    const unsafe = [
+      [file, /ENOTDIR/], [dangling, /ENOTDIR|ELOOP/], [path.join(link, 'escaped'), /ENOTDIR|ELOOP/],
+      [f.root, /outside the checkout/], ['/', /below the filesystem root/],
+      ['relative', /one absolute/], [f.root + '/../outside', /traversal/],
+      [f.root + '/tracked-cache', /outside the checkout/], [f.env.HOME + '\n/extra', /control characters/],
+    ];
+    for (const [cache, reason] of unsafe) {
       f.env.npm_config_cache = cache;
-      await assert.rejects(f.run([]), /npm cache.*npm_config_cache=/s);
+      await assert.rejects(f.run([]), error => reason.test(error.message) && /npm_config_cache=/.test(error.message));
     }
+    assert.equal(f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'config').length, unsafe.length);
     assert.equal(fs.readFileSync(file, 'utf8'), 'keep');
     assert.equal(fs.existsSync(path.join(f.root, 'escaped')), false);
     assert.equal(fs.existsSync(path.join(f.root, 'tracked-cache')), false);
+    assert.equal(fs.existsSync(path.join(f.env.HOME, 'absent')), false);
     assert.equal(f.read().events.some(event => event.command === 'npm' && event.args[0] === 'ci'), false);
   });
 
