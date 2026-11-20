@@ -913,7 +913,11 @@ mod tests {
             .chain(other_changes)
             .collect();
         let modules = ModuleDeclarations::read(
-            std::iter::once(new).chain(others.iter().map(|(_, _, other_new)| *other_new)),
+            std::iter::once((Path::new(path), new)).chain(
+                others
+                    .iter()
+                    .map(|(other, _, other_new)| (Path::new(*other), *other_new)),
+            ),
             all_changes.iter().map(|file| {
                 let source =
                     find_file_facts(&index, &file.path).map(|facts| facts.data().source.as_ref());
