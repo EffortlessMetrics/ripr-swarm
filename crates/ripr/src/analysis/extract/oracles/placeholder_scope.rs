@@ -160,3 +160,24 @@ fn binding_extent(ident: &ast::IdentPat) -> Option<(std::ops::Range<usize>, bool
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PlaceholderScope;
+
+    #[test]
+    fn associated_type_equals_in_a_spaced_generic_preserves_the_initializer() {
+        for ty in ["&dyn Iterator<Item = u8>", "&dyn Iterator <Item = u8>"] {
+            for (init, lowers) in [("todo!()", true), ("real_value()", false)] {
+                let body =
+                    format!("let expected: {ty} = {init}; assert!(expected.size_hint().0 > 0);");
+                let scope = PlaceholderScope::from_body(&body);
+                assert_eq!(
+                    scope.at(body.find("assert!").unwrap()).contains("expected"),
+                    lowers,
+                    "{body}"
+                );
+            }
+        }
+    }
+}

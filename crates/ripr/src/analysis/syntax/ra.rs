@@ -3826,12 +3826,12 @@ fn early_error() -> Result<(), String> {
         ] {
             for (opening, closing) in [
                 ("let other = |unused: i32,\nexpected: i32| {", "};"),
-                ("match pair { (expected, _) => {", "} }"),
-                ("match pair { (_, expected) => {", "} }"),
+                ("match (1, 2) { (expected, _) => {", "} }"),
+                ("match (1, 2) { (_, expected) => {", "} }"),
                 ("{ let Pair { expected, other } = pair();", "}"),
             ] {
                 let source = format!(
-                    "#[test]\nfn t() {{\nlet expected: &dyn Iterator <Item = u8> = todo!();\n{opening}\n{assertion}\n{closing}\n{assertion}\n}}"
+                    "#[test]\nfn t() {{\nlet expected: i32 = todo!();\n{opening}\n{assertion}\n{closing}\n{assertion}\n}}"
                 );
                 let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
                 let readings: Vec<_> = facts
