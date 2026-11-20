@@ -3658,6 +3658,50 @@ impl Size {
             )),
         }
     }
+
+    /// #12713 (Option A): the direct `--kind return_value` stub for a probe
+    /// line with no inventory seam keeps the cfg-gated parent refusal the
+    /// shape path applies. An owner in `src/extra.rs`, declared from
+    /// `src/lib.rs` as `#[cfg(feature = "extra")] mod extra;`, refuses with
+    /// `owner_unsupported`; the same owner under a plain `mod extra;` stubs.
+    /// Passing no package root on the direct path makes the gated case stub.
+    #[test]
+    fn return_value_direct_stub_refuses_an_owner_under_a_cfg_gated_parent() -> Result<(), String> {
+        // Line 3, a match arm result, holds no inventory `return_value` seam,
+        // so `--at src/extra.rs:3 --kind return_value` takes the direct path.
+        const EXTRA: &str = "pub fn pick(a: i32) -> i32 {\n    match a {\n        0 => 5,\n        _ => a * 2,\n    }\n}\n";
+        let resolve = |label: &str, lib: &str| {
+            let root = scratch_stub_crate(label, lib)?;
+            std::fs::write(root.join("src/extra.rs"), EXTRA).map_err(|error| error.to_string())?;
+            let selector =
+                TestStubSelector::parse_at("src/extra.rs:3")?.with_kind("return_value")?;
+            let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
+                .map_err(|error| format!("{error:?}"));
+            let _ = std::fs::remove_dir_all(&root);
+            resolution
+        };
+        let gated = resolve(
+            "rv-gated-parent",
+            "#[cfg(feature = \"extra\")]\nmod extra;\n",
+        )?;
+        assert_eq!(gated.at_note, None, "the direct path never substitutes");
+        assert_eq!(gated.seam_line, 3);
+        match &gated.outcome {
+            Err(refusal) if refusal.as_str() == "owner_unsupported" => {}
+            other => {
+                return Err(format!(
+                    "an owner under a cfg-gated parent must refuse: {other:?}"
+                ));
+            }
+        }
+        let plain = resolve("rv-plain-parent", "mod extra;\n")?;
+        assert_eq!(plain.seam_line, 3);
+        if let Err(refusal) = &plain.outcome {
+            return Err(format!("the ungated control must stub: {refusal:?}"));
+        }
+        Ok(())
+    }
+
     /// class is not the strongly-gripped omission case.
     #[test]
     fn at_kind_stub_on_an_open_gap_is_not_strongly_gripped() -> Result<(), String> {
