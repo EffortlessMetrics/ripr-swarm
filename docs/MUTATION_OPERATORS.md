@@ -56,7 +56,7 @@ family is in parentheses.
 | Update (`t++` → `t--`) | n/a | n/a | UpdateOperator | n/a | n/a | partial (predicate) |
 | Unary minus removed (`-a` → `a`) | UnaryOperator | `-a` → `+a` | UnaryOperator (`-a` → `+a`) | yes² (return_value) | yes (return_value) | yes (return_value) |
 | Bitwise (`a & b` → `a \| b`) | BinaryOperator | `&` ↔ `\|` | none | unknown² | yes (return_value) | yes (return_value) |
-| Module constant (`LIMIT = 100` → `101`) | none | number +1 | none | unknown | false gap | false gap |
+| Module constant (`LIMIT = 100` → `101`) | none | number +1 | none | unknown | unknown | false gap |
 | Number literal in an expression (`x * 3` → `x * 4`) | none | number +1 | none | yes (return_value) | yes (return_value) | yes (return_value) |
 | Boolean literal returned (`true` → `false`) | FnValue | `True` ↔ `False` | BooleanLiteral | yes⁸ (return_value) | yes (return_value) | yes (return_value) |
 | String literal returned (`"hello"` → `""`) | FnValue | string mutation | StringLiteral | yes (return_value) | yes (return_value) | yes (return_value) |
@@ -115,7 +115,7 @@ the mutmut 3.3.1 source (`mutmut/node_mutation.py`).
 | | yes | partial | unknown | false gap | rows |
 | --- | --- | --- | --- | --- | --- |
 | Rust | 17 | 6 | 8 | 0 | 31 |
-| Python | 28 | 4 | 0 | 1 | 33 |
+| Python | 28 | 4 | 1 | 0 | 33 |
 | TypeScript | 22 | 10 | 1 | 1 | 34 |
 
 ## Where ripr falls short, by language
@@ -132,8 +132,9 @@ unknown, as are module constants, a returned `a && b` flipped to `a || b`, and
 bitwise edits on a returned name. Unary `-`/`!` edits are read only on a
 one-line whole-body tail (#14815).
 
-**Python.** A changed module constant reads `no_static_path` even though the
-test calls the function that reads it
+**Python.** A changed module constant reads `static_unknown` with the
+`missing_import_graph` limit even though the test calls the function that
+reads it, unless the test pins a literal result the constant feeds
 ([#12950](https://github.com/EffortlessMetrics/ripr-swarm/issues/12950)). A
 deleted call statement and a body replaced with `None` stay `weakly_exposed`
 even under a test that pins them.

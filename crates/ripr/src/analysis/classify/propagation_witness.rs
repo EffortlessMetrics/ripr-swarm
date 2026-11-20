@@ -674,6 +674,20 @@ fn short_circuit_owner_tail_line(
     whole_body_tail_line(owner, identity)
 }
 
+/// #15104: whether `probe` changes its owner's whole-body constant tail
+/// (the shape the constant arm of [`constant_tail_witness`] reads, and the
+/// one every direct-return edge on such a tail rests on). A cheap
+/// owner-body reading, so the classifier asks the whole-file gate decision
+/// only for such probes.
+pub(in crate::analysis) fn changes_constant_owner_tail(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+) -> bool {
+    probe.family == ProbeFamily::ReturnValue
+        && probe.owner.as_ref() == Some(&owner.id)
+        && constant_owner_tail_line(owner, &normalize_semantic_text(&probe.expression)).is_some()
+}
+
 /// The line of the owner's body when that body is exactly one constant
 /// expression whose normalized text is `identity`.
 fn constant_owner_tail_line(
