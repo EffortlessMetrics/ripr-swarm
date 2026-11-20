@@ -20350,6 +20350,54 @@
       ]
     },
     {
+      "id": "rust_predicate_appended_char_arm_old_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_char_arm_old_input",
+      "vector": "an_original_char_arm_input_does_not_reach_an_appended_arm_through_the_return_sink",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_appended_char_arm_old_input_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_appended_char_arm_old_input",
+      "vector": "a_char_tail_return_sink_does_not_promote_an_original_arm_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_appended_char_arm",
       "language": "rust",
       "tier": "pure",
@@ -20466,6 +20514,30 @@
         {
           "type": "expected_class",
           "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_constant_tail_cfg_twin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_constant_tail_cfg_twin",
+      "vector": "a_cfg_gated_owner_whose_twin_the_test_runs_changes_its_constant_tail",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
         }
       ]
     }
