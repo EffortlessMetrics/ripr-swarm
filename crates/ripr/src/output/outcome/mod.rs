@@ -493,9 +493,9 @@ struct StaticSnapshot {
 
 /// The ids and owners one snapshot withheld by an owner opt-out.
 #[derive(Default)]
-struct SnapshotOwnerOptOuts {
-    seam_ids: BTreeSet<String>,
-    owners: BTreeSet<String>,
+pub(crate) struct SnapshotOwnerOptOuts {
+    pub(crate) seam_ids: BTreeSet<String>,
+    pub(crate) owners: BTreeSet<String>,
 }
 
 fn json_string_set(value: Option<&Value>) -> Option<BTreeSet<String>> {
@@ -507,6 +507,18 @@ fn json_string_set(value: Option<&Value>) -> Option<BTreeSet<String>> {
     })
 }
 
+/// The one reader of an `owner_opt_outs` disclosure (#14139), shared by
+/// `ripr outcome` and the baseline delta (#14898). `None` unless it names
+/// every withheld seam (`withheld` equals the `seam_ids` count) and at least
+/// one owner: otherwise a withheld seam cannot be told from a removed one.
+pub(crate) fn owner_opt_out_disclosure(disclosure: &Value) -> Option<SnapshotOwnerOptOuts> {
+    let withheld = disclosure.get("withheld").and_then(Value::as_u64)?;
+    let seam_ids = json_string_set(disclosure.get("seam_ids"))?;
+    let owners = json_string_set(disclosure.get("owners"))?;
+    (u64::try_from(seam_ids.len()).ok() == Some(withheld) && !owners.is_empty())
+        .then_some(SnapshotOwnerOptOuts { seam_ids, owners })
+}
+
 /// What a repo-exposure snapshot withheld by an owner opt-out (#14139), read
 /// from `owner_opt_outs`. Fail closed: a disclosure that does not name every
 /// withheld seam id and at least one withheld owner cannot tell a withheld
@@ -515,16 +527,9 @@ fn repo_exposure_owner_opt_outs(value: &Value) -> Result<SnapshotOwnerOptOuts, S
     let Some(disclosure) = value.get("owner_opt_outs") else {
         return Ok(SnapshotOwnerOptOuts::default());
     };
-    let withheld = disclosure.get("withheld").and_then(Value::as_u64);
-    let ids = json_string_set(disclosure.get("seam_ids"));
-    let owners = json_string_set(disclosure.get("owners"));
-    match (withheld, ids, owners) {
-        (Some(withheld), Some(seam_ids), Some(owners))
-            if u64::try_from(seam_ids.len()).ok() == Some(withheld) && !owners.is_empty() =>
-        {
-            Ok(SnapshotOwnerOptOuts { seam_ids, owners })
-        }
-        _ => Err(
+    match owner_opt_out_disclosure(disclosure) {
+        Some(opt_outs) => Ok(opt_outs),
+        None => Err(
             "static snapshot withholds seams by owner opt-out (`owner_opt_outs`) without naming every withheld seam in `owner_opt_outs.seam_ids` and its owners in `owner_opt_outs.owners`, so a withheld seam cannot be told from a removed one; regenerate the snapshot with this ripr's `ripr check --format repo-exposure-json`, then compare"
                 .to_string(),
         ),

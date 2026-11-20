@@ -1548,13 +1548,7 @@ pub(super) struct PreparedAnalysisScope<'a> {
     /// #14898: `analysis_scope.owner_opt_outs`, read once. `None` when the
     /// scope discloses none; `Some(Err(()))` when the disclosure does not
     /// name every withheld seam and at least one owner.
-    owner_opt_outs: Option<Result<ScopeOwnerOptOuts<'a>, ()>>,
-}
-
-/// What the current side withheld by an owner opt-out (#14898).
-struct ScopeOwnerOptOuts<'a> {
-    seam_ids: BTreeSet<&'a str>,
-    owners: BTreeSet<&'a str>,
+    owner_opt_outs: Option<Result<crate::output::outcome::SnapshotOwnerOptOuts, ()>>,
 }
 
 impl<'a> PreparedAnalysisScope<'a> {
@@ -1576,27 +1570,12 @@ impl<'a> PreparedAnalysisScope<'a> {
     }
 }
 
-/// Read an `owner_opt_outs` disclosure the way `ripr outcome` does: it must
-/// name every withheld seam (`withheld` equals the `seam_ids` count) and at
-/// least one owner, or no withheld seam can be told from a resolved one.
-fn scope_owner_opt_outs(disclosure: &Value) -> Result<ScopeOwnerOptOuts<'_>, ()> {
-    let strings = |key: &str| -> Option<BTreeSet<&str>> {
-        disclosure
-            .get(key)?
-            .as_array()?
-            .iter()
-            .map(Value::as_str)
-            .collect()
-    };
-    let withheld = disclosure.get("withheld").and_then(Value::as_u64);
-    match (withheld, strings("seam_ids"), strings("owners")) {
-        (Some(withheld), Some(seam_ids), Some(owners))
-            if u64::try_from(seam_ids.len()).ok() == Some(withheld) && !owners.is_empty() =>
-        {
-            Ok(ScopeOwnerOptOuts { seam_ids, owners })
-        }
-        _ => Err(()),
-    }
+/// Read an `owner_opt_outs` disclosure through `ripr outcome`'s reader, so
+/// both hold one contract; `Err` when it is malformed.
+fn scope_owner_opt_outs(
+    disclosure: &Value,
+) -> Result<crate::output::outcome::SnapshotOwnerOptOuts, ()> {
+    crate::output::outcome::owner_opt_out_disclosure(disclosure).ok_or(())
 }
 
 /// The identity of a baseline entry absent from current evidence, as the
@@ -1660,7 +1639,7 @@ pub(super) fn owner_opt_out_absence(
             ));
         }
     };
-    if let Some(seam_id) = entry.seam_id.filter(|id| opt_outs.seam_ids.contains(id)) {
+    if let Some(seam_id) = entry.seam_id.filter(|id| opt_outs.seam_ids.contains(*id)) {
         return Some(OwnerOptOutAbsence::Withheld(format!(
             "the current analysis withholds its seam `{seam_id}` by an owner opt-out (owner_mutants_skip)"
         )));
