@@ -25,7 +25,7 @@ use crate::analysis::classify::{
     unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
-    assertion_reads_placeholder, mask_comments_and_strings, placeholder_bound_variables,
+    PlaceholderScope, assertion_reads_placeholder, mask_comments_and_strings,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
@@ -2360,15 +2360,19 @@ impl ClassifiedProbeEvidence {
         // assertion earns nothing instead of reading "no assertion".
         if assertion_refusal.is_none() && discriminate.state != StageState::Yes {
             for (test, _) in &context.related_tests {
-                let placeholders = placeholder_bound_variables(test.body.as_str());
-                if placeholders.is_empty() {
-                    continue;
-                }
+                let scope = PlaceholderScope::from_body(test.body.as_str());
                 // #14883: the same read test the lowering uses, so a message
                 // word or a string literal naming the placeholder is not a read.
                 let Some(assertion) = test.assertions.iter().find(|assertion| {
                     assertion.strength == OracleStrength::Unknown
-                        && assertion_reads_placeholder(&assertion.text, &placeholders)
+                        && assertion_reads_placeholder(
+                            &assertion.text,
+                            &scope.on_line(
+                                test.body.as_str(),
+                                assertion.line.saturating_sub(test.start_line),
+                                &assertion.text,
+                            ),
+                        )
                 }) else {
                     continue;
                 };

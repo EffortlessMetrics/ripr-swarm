@@ -715,12 +715,11 @@ Two pattern terms are used below.
     The line reads `unknown` / unknown instead of `exact_value` / strong
     when all of these hold:
 
-    - an operand names a local the same test body binds with `let`, and
-      every visible `let` initializer for that name is exactly a `todo!`,
-      `unimplemented!`, `unreachable!` or `panic!` invocation, with
-      comments and string contents masked first. A second binding of the
-      same name to anything else drops the name, so an ambiguous body
-      keeps today's reading;
+    - in a parsed Rust test, the asserted name resolves at the comparison
+      to a local initialized directly by a `todo!`, `unimplemented!`,
+      `unreachable!` or `panic!` invocation. A same-named closure
+      parameter, match-arm pattern or later local only shadows the
+      placeholder within its own lexical scope (#14868);
     - the reading this replaces is strong (`exact_value`,
       `whole_object_equality`, `exact_error_variant` or `snapshot`), or
       a medium or weak one (#14882).

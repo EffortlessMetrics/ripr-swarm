@@ -30,7 +30,7 @@ pub(crate) fn extract_assertions_in(
     // #14810: a local the body binds only to an unfilled placeholder macro
     // (`let expected: i32 = todo!(..)`) pins no expected value, so an
     // assertion compared with it earns no strong credit.
-    let placeholder_vars = placeholder_bound_variables(body);
+    let scope = super::PlaceholderScope::from_body(body);
     // #3709: the dedicated guarded-Result-match scanner owns every recognized
     // `match <direct-call> { Ok.. Err.. }` statement. Skipping its start lines
     // keeps the generic statement joiner from swallowing the whole match block
@@ -63,7 +63,7 @@ pub(crate) fn extract_assertions_in(
                 &trimmed,
                 lines.clone(),
                 start_line + offset,
-                &placeholder_vars,
+                &scope.on_line(body, offset, &trimmed),
             )
         {
             out.push(oracle);
@@ -133,8 +133,11 @@ pub(crate) fn extract_assertions_in(
                 classification.kind = OracleKind::ExactErrorVariant;
                 classification.strength = OracleStrength::Strong;
             }
-            let classification =
-                without_unfilled_expected(classification, &trimmed, &placeholder_vars);
+            let classification = without_unfilled_expected(
+                classification,
+                &trimmed,
+                &scope.on_line(body, fact_offset + preceding_lines, &trimmed),
+            );
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
                 line: start_line + fact_offset + preceding_lines,
@@ -161,7 +164,7 @@ pub(crate) fn extract_assertions_in(
 pub(crate) fn err_return_guard_oracles(
     body: &str,
     start_line: usize,
-    placeholders: &std::collections::BTreeSet<String>,
+    scope: &super::PlaceholderScope,
 ) -> Vec<OracleFact> {
     let mut out = Vec::new();
     let mut lines = body.lines().enumerate().peekable();
@@ -169,8 +172,12 @@ pub(crate) fn err_return_guard_oracles(
         let mut trimmed = line.trim().to_string();
         let guard_line = trimmed.starts_with("if ") || trimmed.starts_with("if(");
         if guard_line
-            && let Some(oracle) =
-                err_return_guard_oracle(&mut trimmed, &mut lines, start_line + offset, placeholders)
+            && let Some(oracle) = err_return_guard_oracle(
+                &mut trimmed,
+                &mut lines,
+                start_line + offset,
+                &scope.on_line(body, offset, line.trim()),
+            )
         {
             out.push(oracle);
         }
@@ -6515,7 +6522,8 @@ fn boundary() -> Result<(), String> {{
 
     fn guard_readings(body: &str) -> Result<[(OracleKind, OracleStrength); 2], String> {
         let lexical = only_fact(body)?;
-        let parser = err_return_guard_oracles(body, 1, &placeholder_bound_variables(body));
+        let parser =
+            err_return_guard_oracles(body, 1, &super::super::PlaceholderScope::from_body(body));
         let [parser] = parser.as_slice() else {
             return Err(format!(
                 "expected one parser-path guard oracle, got {parser:?}"
@@ -6618,7 +6626,11 @@ fn t() {
                 "fn t() -> Result<(), String> {{\n    let expected: i32 = todo!(\"x\");\n    {statement}\n    Ok(())\n}}\n"
             );
             let lexical = only_fact(&body)?;
-            let parser = err_return_guard_oracles(&body, 1, &placeholder_bound_variables(&body));
+            let parser = err_return_guard_oracles(
+                &body,
+                1,
+                &super::super::PlaceholderScope::from_body(&body),
+            );
             if statement.starts_with("if ") {
                 let [parser] = parser.as_slice() else {
                     return Err(format!(
