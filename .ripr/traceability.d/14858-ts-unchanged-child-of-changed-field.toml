@@ -11,6 +11,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::object_to_object_change_splits_children_by_value",
   "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::non_object_changed_value_child_read_keeps_credit",
   "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::non_object_old_value_member_read_keeps_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_scope_tests.rs::unchanged_looking_child_that_can_move_keeps_credit",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_value_observed_reads_unchanged_child",

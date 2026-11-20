@@ -887,7 +887,47 @@ fn ts_value_observed_reads_unchanged_child(
     if base.is_empty() || !ts_chain_is_plain_projection(base) {
         return false;
     }
+    // The changed key must sit directly on the owner call's result
+    // (`f().retries.other`, `this.f()?.retries.other`): a deeper path
+    // (`f().retries.retries.other`) or a wrapper (`wrap(f()).retries.other`)
+    // reads some other value whose children this check does not know.
+    if !ts_base_is_owner_call(base, owner_names) {
+        return false;
+    }
     ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14858: whether `base` ends in a call of an owner name, `f(...)` or
+/// `recv.f(...)`, so a member read on it reads the owner's result directly.
+fn ts_base_is_owner_call(base: &str, owner_names: &[&str]) -> bool {
+    let Some(without_close) = base.strip_suffix(')') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut open_at = None;
+    for (offset, character) in without_close.char_indices().rev() {
+        match character {
+            ')' => depth += 1,
+            '(' if depth == 0 => {
+                open_at = Some(offset);
+                break;
+            }
+            '(' => depth -= 1,
+            _ => {}
+        }
+    }
+    let Some(callee) = open_at.and_then(|at| without_close.get(..at)) else {
+        return false;
+    };
+    let callee = callee.trim_end().trim_end_matches("?.").trim_end();
+    owner_names.iter().any(|name| {
+        callee.strip_suffix(name).is_some_and(|before| {
+            !before
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        })
+    })
 }
 
 /// #14857: whether `observed` reads a field of the owner's returned literal

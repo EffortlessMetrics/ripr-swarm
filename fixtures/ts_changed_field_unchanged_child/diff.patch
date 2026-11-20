@@ -1,0 +1,9 @@
+diff --git a/src/config.ts b/src/config.ts
+index 1111111..2222222 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -6,3 +6,3 @@
+ export function buildConfig(): Config {
+-  return { retries: { n: 3, other: 1 }, verbose: false };
++  return { retries: { n: 5, other: 1 }, verbose: false };
+ }

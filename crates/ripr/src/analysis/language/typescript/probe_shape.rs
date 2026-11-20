@@ -1665,6 +1665,23 @@ const PRIMITIVE_PROTOTYPE_MEMBERS: &[&str] = &[
     "__lookupSetter__",
 ];
 
+/// #14858: a literal whose evaluation has no effect and depends on nothing:
+/// a number, a quoted string without interpolation, `true`, `false`, `null`
+/// or `undefined`.
+fn is_plain_literal_value(text: &str) -> bool {
+    let text = text.trim();
+    if matches!(text, "null" | "undefined") || is_number_or_boolean_literal(text) {
+        return true;
+    }
+    let mut chars = text.chars();
+    match (chars.next(), text.chars().last()) {
+        (Some(open @ ('"' | '\'')), Some(close)) if open == close && text.len() >= 2 => text
+            .get(1..text.len() - 1)
+            .is_some_and(|inner| !inner.contains(open) && !inner.contains('\\')),
+        _ => false,
+    }
+}
+
 /// #14858: a decimal number literal (`3`, `-1.5`, `1_000`) or `true`/`false`.
 fn is_number_or_boolean_literal(text: &str) -> bool {
     if matches!(text, "true" | "false") {
@@ -1693,9 +1710,26 @@ impl TypeScriptChangedField {
     /// member to the new child. Any other old value (a string, an array,
     /// `null`, an expression) has members or behavior this check does not
     /// model (`.length`, a throw), so it reads `None` and keeps the credit.
+    ///
+    /// Every member of each literal must be a plain literal value (a number, a
+    /// string, `true`, `false`, `null`, `undefined`) and none may be
+    /// `__proto__`: an initializer with effects (`n: (counter = 5)`) or a
+    /// prototype entry can change a child whose text is unchanged, so either
+    /// reads `None` and keeps the credit.
     pub(crate) fn changed_children(&self) -> Option<Vec<String>> {
-        let members = |value: &str| returned_object_fields(&format!("return {value}"));
+        let members = |value: &str| {
+            let fields = returned_object_fields(&format!("return {value}"))?;
+            fields
+                .iter()
+                .all(|(key, value)| key != "__proto__" && is_plain_literal_value(value))
+                .then_some(fields)
+        };
         let new = members(self.value.as_str())?;
+        if returned_object_fields(&format!("return {}", self.old_value)).is_some()
+            && members(self.old_value.as_str()).is_none()
+        {
+            return None;
+        }
         let Some(old) = members(self.old_value.as_str()) else {
             if !is_number_or_boolean_literal(self.old_value.trim()) {
                 return None;

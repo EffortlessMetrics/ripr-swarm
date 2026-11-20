@@ -136,7 +136,7 @@ fn non_object_changed_value_child_read_keeps_credit() -> Result<(), String> {
 }
 
 /// Review of #15644: a read of a member the OLD primitive answered through its
-/// prototype (`f().retries.toFixed()`) changes when the field becomes an object, so it
+/// prototype (`f().retries.toFixed`) changes when the field becomes an object, so it
 /// keeps its credit. An old value whose members the guard does not model (an
 /// array's or a string's `.length`, `null`) keeps the existing credit too.
 #[test]
@@ -144,7 +144,7 @@ fn non_object_old_value_member_read_keeps_credit() -> Result<(), String> {
     let prototype = class_for(
         NEW_OBJECT,
         OLD,
-        "expect(f().retries.toFixed()).toBe(\"3\");",
+        "expect(f().retries.toFixed).toBe(undefined);",
     )?;
     assert_class(prototype, true, "old number's prototype member")?;
     for old in [
@@ -156,4 +156,33 @@ fn non_object_old_value_member_read_keeps_credit() -> Result<(), String> {
         assert_class(got, true, old)?;
     }
     Ok(())
+}
+
+/// Devin review of #15644: shapes whose unchanged-looking child can still move
+/// keep their credit. A `__proto__` entry sets an inherited `other`; an
+/// initializer with an effect (`counter = 5`) moves a later `other: counter`;
+/// a deeper path whose key repeats the changed field's spelling and a wrapper
+/// call do not read the owner's result directly.
+#[test]
+fn unchanged_looking_child_that_can_move_keeps_credit() -> Result<(), String> {
+    let proto = class_for(
+        "  return { retries: { __proto__: { other: 5 } }, verbose: false };",
+        OLD,
+        "expect(f().retries.other).toBe(5);",
+    )?;
+    assert_class(proto, true, "__proto__ entry")?;
+    let effect = class_for(
+        "  return { retries: { n: (counter = 5), other: counter }, verbose: false };",
+        "  return { retries: { n: (counter = 3), other: counter }, verbose: false };",
+        "expect(f().retries.other).toBe(5);",
+    )?;
+    assert_class(effect, true, "initializer with an effect")?;
+    let nested = class_for(
+        "  return { retries: { retries: { other: 2 } }, verbose: false };",
+        "  return { retries: { retries: { other: 1 } }, verbose: false };",
+        "expect(f().retries.retries.other).toBe(2);",
+    )?;
+    assert_class(nested, true, "nested repeated key")?;
+    let wrapper = class_for(NEW_OBJECT, OLD, "expect(wrap(f()).retries.other).toBe(1);")?;
+    assert_class(wrapper, true, "wrapper call base")
 }
