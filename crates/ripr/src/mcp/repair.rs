@@ -883,10 +883,31 @@ impl WorkspaceSession {
                     "repair preparation",
                 )?,
                 None => {
-                    let mut paths = vec![std::path::PathBuf::from(&item.file)];
+                    // Item files can arrive as `./src/x.rs` while the captured
+                    // digests are keyed without the prefix: normalize both
+                    // sides so a spelling difference never skips the check.
+                    let item_file = normalize_item_path(&item.file);
+                    let mut paths = vec![item_file.clone()];
                     let fix_file = fix_site_file(item);
                     if !fix_file.is_empty() {
-                        paths.push(std::path::PathBuf::from(fix_file));
+                        paths.push(normalize_item_path(&fix_file));
+                    }
+                    // A ready Rust item whose own file has no captured digest
+                    // cannot be shown current: refuse rather than skip.
+                    if item.repair_readiness.ready
+                        && item_file.extension().is_some_and(|ext| ext == "rs")
+                        && producers.consumed_sources.digest(&item_file).is_none()
+                    {
+                        return Err(AttemptFailure::new(
+                            super::workspace::CODE_STALE_SNAPSHOT,
+                            format!(
+                                "repair preparation for canonical item {} is unavailable: the snapshot captured no source digest for `{}`, so it cannot be shown current",
+                                item.canonical_id,
+                                item_file.display()
+                            ),
+                            "run ripr_refresh again to analyze the current source, then retry",
+                        )
+                        .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
                     }
                     super::repair_card::verify_consumed_paths(
                         root,
@@ -1296,6 +1317,17 @@ fn must_not_change(fix_site: &RepairFixSite) -> Vec<String> {
 
 /// The allowed edit surface file of one ready item; the readiness gate
 /// already established that the fix site is a shared test-surface path.
+/// Repo-relative spelling used by the captured digests: no leading `./`,
+/// forward slashes.
+fn normalize_item_path(file: &str) -> std::path::PathBuf {
+    let unified = file.replace('\\', "/");
+    let mut rest = unified.as_str();
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped;
+    }
+    std::path::PathBuf::from(rest)
+}
+
 fn fix_site_file(item: &GapItem) -> String {
     item.repair_readiness
         .fix_site
@@ -2055,6 +2087,65 @@ pub(super) mod tests {
                 Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
                 other => return Err(format!("{label}: changed file must be stale: {other:?}")),
             }
+        }
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// #15240: a `./`-prefixed item file still matches its captured digest,
+    /// and a ready Rust item whose file has no captured digest is refused.
+    #[test]
+    fn unbound_item_with_dot_slash_file_is_checked_and_uncaptured_is_refused() -> Result<(), String>
+    {
+        let dir = unique_test_dir("unbound-dot")?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        let src = dir.join("src/lib.rs");
+        std::fs::write(&src, b"fn a() {}\n").map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("tests/checkout.rs"), b"fn t() {}\n").map_err(|e| e.to_string())?;
+        let build = |capture_src: bool| -> Result<WorkspaceSession, String> {
+            let mut session =
+                session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for item in &mut snapshot.items {
+                item.file = format!("./{}", item.file);
+            }
+            let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+            if capture_src {
+                consumed.record(Path::new("src/lib.rs"), Some(b"fn a() {}\n"));
+            }
+            consumed.record(Path::new("tests/checkout.rs"), Some(b"fn t() {}\n"));
+            snapshot.card_producers = Some(super::super::repair_card::SnapshotCardProducers {
+                repository_head: "head".to_string(),
+                bindings: Vec::new(),
+                candidate_seams: Vec::new(),
+                completeness: super::super::repair_admission::InventoryCompleteness::Complete,
+                config: crate::config::RiprConfig::default(),
+                consumed_sources: consumed,
+            });
+            Ok(session)
+        };
+        let mut captured = build(true)?;
+        captured
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+            .map_err(|failure| format!("unchanged ./ item must prepare: {}", failure.detail))?;
+        std::fs::write(&src, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+        match captured.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir)) {
+            Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+            other => {
+                return Err(format!(
+                    "./ item with changed file must be stale: {other:?}"
+                ));
+            }
+        }
+        let mut uncaptured = build(false)?;
+        match uncaptured.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir)) {
+            Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+            other => return Err(format!("uncaptured ready item must be refused: {other:?}")),
         }
         std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
         Ok(())
