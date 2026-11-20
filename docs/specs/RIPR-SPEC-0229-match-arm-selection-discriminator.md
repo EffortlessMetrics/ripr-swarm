@@ -666,7 +666,10 @@ the diff changes `None => 1` to `None => 0`.
   `a_rebound_read_macro_refusal_reads_activation_unknown_not_yes` (#15233):
   a rebinding defined after or before the assertions reads activation
   `unknown` and `activation_unknown`, never `yes` or `strongly_gripped`,
-  while the standard macro reads `weak` with the arm named.
+  while the standard macro reads `weak` with the arm named;
+  `the_rebound_refusal_names_only_the_rebound_read_macro`: the refusal
+  summary names a rebound `assert_eq!` and not a standard `println!`
+  invoked beside it.
 - `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus

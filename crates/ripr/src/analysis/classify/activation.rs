@@ -4911,8 +4911,8 @@ fn owner_may_call_itself(
 }
 
 /// The [`READ_MACROS`] names that the owner, a function it reaches, a
-/// related test or a helper that test reaches invoke, when that set is
-/// rebound in the workspace ([`macro_names_rebound`]); empty otherwise. A
+/// related test or a helper that test reaches invoke and that are rebound
+/// in the workspace ([`macro_names_rebound`]); empty when none is. A
 /// name nothing on those paths invokes cannot run the owner from a read
 /// call (#15022).
 fn invoked_read_macros_rebound(
@@ -4940,11 +4940,21 @@ fn invoked_read_macros_rebound(
         }
     }
     let names = invoked.into_iter().collect::<Vec<_>>();
-    if !names.is_empty() && macro_names_rebound(index, &names) {
-        names
-    } else {
-        Vec::new()
+    if names.is_empty() || !macro_names_rebound(index, &names) {
+        return Vec::new();
     }
+    // The set query refuses; the per-name queries (memoized like it) pick
+    // out the names actually rebound, so the summary never names a plain
+    // `println!` beside a rebound `assert_eq!` (#15233 review). The scan
+    // asks whether any requested name is bound, so some name answers; if
+    // none does, the whole set stays named rather than an empty list that
+    // would drop the refusal.
+    let rebound = names
+        .iter()
+        .copied()
+        .filter(|name| macro_names_rebound(index, &[name]))
+        .collect::<Vec<_>>();
+    if rebound.is_empty() { names } else { rebound }
 }
 
 /// Whether a function the owner reaches through its calls names the owner

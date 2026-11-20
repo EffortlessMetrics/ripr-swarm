@@ -638,3 +638,42 @@ fn small_and_large_prices() {{\n{body}    }}\n}}\n"
     }
     Ok(())
 }
+
+/// #15233 review: the refusal summary names only the read macros that are
+/// rebound. The test invokes a rebound `assert_eq!` and the standard
+/// `println!`; only `assert_eq!` is named. The control, with the standard
+/// `assert_eq!`, names the arm instead.
+#[test]
+fn the_rebound_refusal_names_only_the_rebound_read_macro() -> Result<(), String> {
+    let body = "#[test]\nfn prices() {\n    println!(\"{}\", 1);\n    \
+assert_eq!(price_cents(Size::Small), 300);\n    \
+assert_eq!(price_cents(Size::Large), 500);\n}\n";
+    let rebind = "macro_rules! assert_eq {\n    ($f:ident ( $($arg:tt)* ), $expected:expr) => {\n        \
+let _ = $f(Size::Medium);\n    };\n}\n";
+    for (prelude, rebound) in [(rebind, true), ("", false)] {
+        let tests = format!("use prices::*;\n\n{prelude}\n{body}");
+        // Fixture premise: both read macros are invoked, and only
+        // `assert_eq` is ever rebound.
+        assert!(tests.contains("println!(") && tests.contains("assert_eq!(price_cents"));
+        assert!(!tests.contains("macro_rules! println"));
+        assert_eq!(tests.contains("macro_rules! assert_eq"), rebound);
+        let (full, compact, _) = arm_evidence_with_tests(PRICES, &tests, "Size::Medium")?;
+        for evidence in [&full, &compact] {
+            let summary = evidence.activate.summary.as_str();
+            if rebound {
+                assert_eq!(evidence.activate.state, StageState::Unknown, "{summary}");
+                assert!(
+                    summary.starts_with(
+                        "A read macro on the related tests' path (`assert_eq!`) is rebound"
+                    ),
+                    "{summary}"
+                );
+                assert!(!summary.contains("println"), "{summary}");
+            } else {
+                assert_eq!(evidence.activate.state, StageState::Weak, "{summary}");
+                assert_eq!(missing_values(evidence), ["Size::Medium"]);
+            }
+        }
+    }
+    Ok(())
+}
