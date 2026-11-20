@@ -1237,48 +1237,6 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
     !owner_binding_lines(owner_source, owner, name).is_empty()
 }
 
-/// Zero-based index of the first line after the owner's `def` header (#15292).
-/// A multi-line signature spreads parameters over continuation lines
-/// (`    max_age: int | None = None,`) that read like annotated assignments, so
-/// scanning them as body lines would call every such parameter rebound. The
-/// header ends at the line where the bracket depth returns to zero and the
-/// statement ends in `:`. When no such line is found inside the owner the
-/// single-line reading (`owner.start_line`) is kept, which over-refuses and
-/// never awards credit.
-fn def_header_end(owner_source: &str, owner: &PythonOwner) -> usize {
-    let first = owner.start_line.saturating_sub(1);
-    let mut depth = 0_i32;
-    let mut quote: Option<char> = None;
-    for (index, line) in owner_source
-        .lines()
-        .enumerate()
-        .skip(first)
-        .take(owner.end_line.saturating_sub(first))
-    {
-        let mut last = None;
-        for ch in line.chars() {
-            if let Some(open) = quote {
-                if ch == open {
-                    quote = None;
-                }
-                continue;
-            }
-            match ch {
-                '\'' | '"' => quote = Some(ch),
-                '#' => break,
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth -= 1,
-                c if !c.is_whitespace() => last = Some(c),
-                _ => {}
-            }
-        }
-        if depth <= 0 && last == Some(':') {
-            return index + 1;
-        }
-    }
-    owner.start_line
-}
-
 /// Every owner-body line (zero-based index into `owner_source`, trimmed text)
 /// that binds `name`, by the same over-refusing reading as
 /// [`name_rebound_in_owner`].
@@ -1287,7 +1245,14 @@ pub(super) fn owner_binding_lines<'a>(
     owner: &PythonOwner,
     name: &str,
 ) -> Vec<(usize, &'a str)> {
-    let body_start = owner.start_line.max(def_header_end(owner_source, owner));
+    // A multi-line signature's continuation lines (`    max_age: int | None =
+    // None,`) read like annotated assignments, so the scan starts after the
+    // whole header (#15292). The shared header owner gives no span for a
+    // one-line or unrecognized header, which keeps the over-refusing reading
+    // from the line after `owner.start_line`.
+    let body_start = super::no_behavior::multi_line_def_header_span(owner_source, owner.start_line)
+        .map_or(owner.start_line, |(_, header_end)| header_end)
+        .max(owner.start_line);
     owner_source
         .lines()
         .enumerate()
@@ -1543,6 +1508,14 @@ mod tests {
         let single = "def quote(total=5):\n    return total > 1\n";
         let owner = quote_owner(single)?;
         assert!(!name_rebound_in_owner(single, &owner, "total"));
+        // An escaped quote and a decorator on the header keep the header end.
+        let quoted = "@cached\nasync def quote(\n    sep: str = \"\\\"\",\n    total: int = 0,\n) -> dict[str, int]:\n    return total > 1\n";
+        let owner = quote_owner(quoted)?;
+        assert!(!name_rebound_in_owner(quoted, &owner, "sep"));
+        assert!(!name_rebound_in_owner(quoted, &owner, "total"));
+        let rebound = format!("{quoted}    total = 1\n");
+        let owner = quote_owner(&rebound)?;
+        assert!(name_rebound_in_owner(&rebound, &owner, "total"));
         Ok(())
     }
 
