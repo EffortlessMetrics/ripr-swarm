@@ -195,6 +195,7 @@ impl RustAdapter {
                         &probe.expression,
                     );
                 }
+                dependency_edges.disclose_dependent_test_host(&mut finding, path);
                 push_retained_finding(&mut findings, finding);
             }
         }
