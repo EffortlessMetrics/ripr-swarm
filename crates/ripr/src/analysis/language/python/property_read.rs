@@ -13,8 +13,10 @@
 //!   local, any other call, and any patch or mock marker refuse the relation.
 //! - [`property_read_credit`] credits the relation only when the owner module
 //!   declares a plain builtin property (no rebinding of `property`, no
-//!   same-name setter, deleter or class attribute, no attribute hooks), the
-//!   changed line is a `return` of the getter, and the row-selected strong
+//!   same-name setter, deleter or class attribute, no attribute hooks, no
+//!   class-name mention or property store inside the class), the getter is
+//!   straight-line with one `return` and the changed line is that return,
+//!   and the row-selected strong
 //!   assertion is a top-level `assert <read> == <literal>`. Only that credit
 //!   lifts the owner's `decorator_indirection` limit (`static_limits.rs`); a
 //!   bare `assert v.<name>` or any other shape keeps it.
@@ -59,7 +61,7 @@ const TEST_REFUSAL_MARKERS: [&str; 15] = [
 
 /// Owner-module markers that can replace or intercept an attribute read
 /// without naming the class or the property.
-const MODULE_REFUSAL_MARKERS: [&str; 12] = [
+const MODULE_REFUSAL_MARKERS: [&str; 14] = [
     "__getattr",
     "__setattr",
     "__delattr",
@@ -69,6 +71,8 @@ const MODULE_REFUSAL_MARKERS: [&str; 12] = [
     "__init_subclass__",
     "__set_name__",
     "setattr(",
+    "delattr(",
+    "vars(",
     "metaclass",
     "builtins",
     "import *",
@@ -130,7 +134,7 @@ pub(super) fn property_read_credit<'a>(
         || !candidates
             .iter()
             .any(|candidate| candidate.relation == PythonRelationKind::PropertyRead)
-        || !owner_declares_plain_property(owner, owner_source)
+        || !owner_declares_plain_property(owner, owner_source, line_text)
     {
         return None;
     }
@@ -161,8 +165,10 @@ pub(super) fn property_read_credit<'a>(
 /// named anywhere else in the module, binds the owner name once (no
 /// `@<name>.setter` / `.deleter` / `.getter` sibling or class attribute of
 /// that name), and the module never spells `property` except as the bare
-/// decorator line.
-fn owner_declares_plain_property(owner: &PythonOwner, source: &str) -> bool {
+/// decorator line. The getter runs straight through to its one `return`,
+/// and `line_text` is that return: a change under a branch, or to a line
+/// before the return, may not reach the read the test compares.
+fn owner_declares_plain_property(owner: &PythonOwner, source: &str, line_text: &str) -> bool {
     // Python folds identifiers by NFKC: ASCII owner modules only.
     if !source.is_ascii()
         || MODULE_REFUSAL_MARKERS
@@ -246,10 +252,68 @@ fn owner_declares_plain_property(owner: &PythonOwner, source: &str) -> bool {
             getter = Some(function);
         }
     }
-    getter.is_some_and(|function| {
-        matches!(function.decorator_list.as_slice(),
-            [Expr::Name(name)] if name.id.as_str() == PROPERTY)
-    })
+    let Some(getter) = getter else {
+        return false;
+    };
+    if !matches!(getter.decorator_list.as_slice(),
+        [Expr::Name(name)] if name.id.as_str() == PROPERTY)
+    {
+        return false;
+    }
+    // Nothing in the class names the class (`Box.total = 6` in `__init__`)
+    // or stores or deletes the property (`self.total = 0`, `del self.total`):
+    // either can replace what the read runs.
+    let class_mentions = class.body.iter().any(|stmt| {
+        text_of(source, ast::Ranged::range(stmt))
+            .is_none_or(|text| names_identifier(text, class_name))
+    });
+    let mut property_stores = 0usize;
+    visit_exprs_in_statements(&class.body, &mut |expr| {
+        if let Expr::Attribute(attribute) = expr
+            && attribute.attr.as_str() == owner.name
+            && attribute.ctx != ExprContext::Load
+        {
+            property_stores += 1;
+        }
+    });
+    if class_mentions || property_stores != 0 {
+        return false;
+    }
+    straight_line_getter_returns(getter, source, line_text)
+}
+
+/// Whether the getter body is an optional docstring, simple statements and
+/// one final `return`, and `line_text` is that return's only line, written
+/// once in the getter.
+fn straight_line_getter_returns(
+    getter: &ast::StmtFunctionDef,
+    source: &str,
+    line_text: &str,
+) -> bool {
+    let Some((Stmt::Return(ret), before)) = getter.body.split_last() else {
+        return false;
+    };
+    let simple = |stmt: &Stmt| match stmt {
+        Stmt::Assign(_) | Stmt::AnnAssign(_) | Stmt::Pass(_) => true,
+        Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
+        _ => false,
+    };
+    if !before.iter().all(simple) {
+        return false;
+    }
+    let (Some(return_text), Some(getter_text)) =
+        (text_of(source, ret.range), text_of(source, getter.range))
+    else {
+        return false;
+    };
+    let changed = line_text.trim();
+    !return_text.contains('\n')
+        && return_text.trim() == changed
+        && getter_text
+            .lines()
+            .filter(|line| line.trim() == changed)
+            .count()
+            == 1
 }
 
 /// The test's reads of the owner property, when every use of the attribute,
@@ -270,27 +334,19 @@ fn property_reads(test: &PythonTest, owner: &PythonOwner) -> Option<PropertyRead
         return None;
     }
     let class = owner.class_path.as_str();
-    // Nothing the test module or a workspace file names replaces the class
-    // or the property first: `Box = Other`, a module-level `Box.total = 6` or
-    // `Box.__getattribute__ = ...`, a fixture or hook that substitutes the
-    // owner. Like the method-call relations, a namespace writer whose target
-    // is not spelled (`setattr`, `patch` in a sibling test) is not read as one;
-    // the test's own body refuses those markers above.
+    // Nothing outside the test body reaches the class first: `Box = Other`,
+    // a module-level `Box.total = 6`, a namespace writer anywhere in the
+    // module (`setattr`, `patch`, `sys.modules`, even in a sibling test), an
+    // autouse fixture, a setup hook, a definition-time call or a fixture that
+    // substitutes the owner.
     let rebinding = &test.constant_rebinding;
-    let named_write = |name: &str| {
-        rebinding
-            .attributes
-            .iter()
-            .chain(rebinding.foreign_attributes.iter())
-            .any(|attribute| attribute == name)
-    };
-    if rebinding.names.iter().any(|bound| bound == class)
-        || rebinding.module_rebinds(class)
-        || named_write(class)
-        || named_write(&owner.name)
-        || ["__getattribute__", "__getattr__", "__class__", "__dict__"]
-            .iter()
-            .any(|dunder| named_write(dunder))
+    if rebinding.rebinds(class)
+        || rebinding.module_opaque
+        || rebinding.assigns_attribute(class)
+        || rebinding.assigns_attribute(&owner.name)
+        || rebinding.assigns_dunder_attribute()
+        || rebinding.implicit_reach
+        || rebinding.header_reach
         || rebinding.fixture_substitution
         || super::test_activation::activation_control(test).is_some()
     {

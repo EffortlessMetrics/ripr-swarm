@@ -1948,25 +1948,34 @@ rejected alternative. Any can be reversed later without touching the rest.
     bare `@property` decorator line, never binds or imports it (no star
     import, no `builtins`), names the class nowhere outside its body, and
     holds no attribute hook (`__getattr__`, `__getattribute__`,
-    `__setattr__`, `__dict__`, `__class__`, `type`, `setattr(`, a
-    metaclass). The class body holds only methods and literal attributes
-    and binds the owner name once: a same-name setter, deleter or getter
-    sibling, or any decorator naming the property, keeps the limit. A
+    `__setattr__`, `__dict__`, `__class__`, `type`, `setattr(`,
+    `delattr(`, `vars(`, a metaclass). The class body holds only methods
+    and literal attributes, never names the class (`Box.total = 6` in
+    `__init__`), never stores or deletes the property name
+    (`self.total = 0`, `del self.total`), and binds the owner name once: a
+    same-name setter, deleter or getter sibling, or any decorator naming
+    the property, keeps the limit. The getter is an optional docstring and
+    simple assignments followed by its one `return`, and the changed line
+    is that return: a branching getter, a changed return under an `if` or
+    a changed line before the return keeps the limit. A
     related pytest test relates as `property_read` (R5a) when it reads
     `Cls(...).<name>` or `v.<name>` with `v` bound once to `Cls(...)`, `Cls`
     imported once under its own name from the owner's module; every use of
     the class is a construction, every use of a bound local is that read,
     the body is straight-line with no other call, no write, `del` or call
     of the attribute, and no patch or mock marker (`PropertyMock` among
-    them); the test module neither rebinds the class nor writes an
-    attribute named like the class, the property or an attribute hook,
-    and no fixture substitutes the owner. Like the call relations, a
-    namespace writer elsewhere in the module that spells no target is not
-    read as a write. The credit (`strong_oracle_observes_property_read`, `direct`)
+    them). Nothing outside the test body may reach the class first: the
+    test module neither rebinds the class nor writes an attribute named
+    like the class, the property or any dunder, holds no namespace writer
+    anywhere (`setattr`, `patch`, `sys.modules`, even in a sibling test or
+    on an unrelated receiver), no autouse fixture, setup hook or
+    definition-time call, no conftest fixture or hook on its directory
+    chain, and no fixture substitutes the owner. The credit (`strong_oracle_observes_property_read`, `direct`)
     needs a changed `return` line of the getter (`return_value` family)
     and the test's row-selected strong assertion to be a top-level
     `assert <read> == <literal>` with no message. A bare `assert v.<name>`,
-    a relational or computed comparison, a read through a helper, a class
+    `!=`, `is`, `in`, a chained comparison, an `or` chain, a message, an
+    assertion under `if` or `with`, a relational or computed comparison, a read through a helper, a class
     access `Cls.<name>` or any doubt keeps `decorator_indirection`.
     `functools.cached_property` is unchanged. Rejected: make `@property`
     transparent, because the earlier lift alone (#8551) read a direct
@@ -2277,12 +2286,14 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `from unittest.mock import patch` and `with patch('os.getcwd'):`, or
     `mocker.patch('os.getcwd')`: `static_unknown`, `mocked_module`
     (unchanged).
-30. Owner `@property def v(self)` in a plain `class C`, changed `return`
-    line, related test `assert C().v == 1`: `exposed`,
-    `strong_oracle_observes_property_read` (Decision 10, #15490; earlier
-    `static_unknown`, `decorator_indirection`). With a same-name setter,
-    a bare `assert C().v`, or no direct read: `static_unknown`,
-    `decorator_indirection` (unchanged).
+30. Owner `@property def v(self)` in `class C`, changed body line:
+    `static_unknown`, `decorator_indirection` (unchanged). Decision 10's
+    one exception: in a plain `class C` whose getter is a single changed
+    `return`, a related test `assert C().v == 1` in a test module with no
+    namespace writer, autouse fixture or setup hook reads `exposed`,
+    `strong_oracle_observes_property_read` (#15490). The corpus case
+    `py-spec0233-ex30-property` keeps the limit: a sibling test in its
+    module calls `client.patch(...)`, a namespace writer.
 31. Owner `def fmt(n): return f"NO:{n}"`, changed from `f"ID:{n}"`.
     `test_a` asserts `assert len(fmt(7)) == 4`; `test_b` calls `fmt(7)` and
     asserts `assert other == "x"`: `weakly_exposed`, `orthogonal` (today
