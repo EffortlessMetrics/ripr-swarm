@@ -747,6 +747,10 @@ fn cargo_metadata_command(workspace_root: &Path) -> std::process::Command {
     command
         .args([
             "metadata",
+            // The membership refusal below reads Cargo's diagnostic even when
+            // the parent process requests color for interactive output.
+            "--color",
+            "never",
             "--no-deps",
             "--format-version",
             "1",
