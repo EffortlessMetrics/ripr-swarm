@@ -6698,6 +6698,25 @@ fn non_rust_programming_policy_requires_retention_rule() {
 }
 
 #[test]
+fn installed_wheel_identity_retention_is_exact() -> Result<(), String> {
+    for (file, retained) in [
+        ("verify_installed_wheel.py", true),
+        ("test_verify.py", true),
+        ("other.py", false),
+        ("nested/test_verify.py", false),
+    ] {
+        let path = format!("tools/python/installed-wheel-identity/{file}");
+        let observed = non_rust_programming_retention_reason(&path);
+        if observed.is_some() != retained {
+            return Err(format!(
+                "unexpected installed wheel retention for {path}: {observed:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn shard_verifier_bootstrap_retention_is_exact() -> Result<(), String> {
     for path in [
         "tools/ci/shard-verifier-artifact.py",

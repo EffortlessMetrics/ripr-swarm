@@ -22983,6 +22983,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if matches!(
+        path,
+        "tools/python/installed-wheel-identity/verify_installed_wheel.py"
+            | "tools/python/installed-wheel-identity/test_verify.py"
+    ) {
+        return Some(
+            "The package smoke checks the pip environment's own scripts directory without a checkout or xtask; its stdlib verifier and substitution controls run on the existing release rehearsal (#4624).",
+        );
+    }
+
     if path == "tools/python/installed-provider-recovery/run.py" {
         return Some(
             "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",
