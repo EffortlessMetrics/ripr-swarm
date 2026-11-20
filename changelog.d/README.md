@@ -69,11 +69,14 @@ and any entry whose text is already in `Unreleased`, and then writes nothing.
 Once folded fragments are deleted, a rerun has nothing left to fold.
 
 The fold may also run ahead of the cut as a snapshot, so the cut itself folds
-only what is left: `--write --keep-fragments` adds the roll-up for every
-fragment present to `CHANGELOG.md` and changes nothing else, then
-deletion-only batch PRs (150 files or fewer) remove exactly the files that
-snapshot covered, and only after the roll-up has merged. A fragment added
-after a snapshot stays until the next snapshot or the cut. After the final
+only what is left. Fold and delete each batch in the same PR (`--write
+--limit 150`, or a rolled-up summary for `Internal / CI` per
+`docs/CHANGELOG_POLICY.md`): `check-changelog-fragments` fails any fragment
+whose entry exactly duplicates an `Unreleased` entry, so a
+`--keep-fragments` roll-up that leaves its fragments in place cannot pass on
+its own. Batches built from one base can insert at different bullets of a
+section so they merge in any order. A fragment added after a snapshot stays
+until the next snapshot or the cut. After the final
 fold, `cargo xtask check-changelog-fragments --release-cut` must pass: it
 fails on any fragment still here.
 

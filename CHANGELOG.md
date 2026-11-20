@@ -7731,28 +7731,33 @@ entries below are the complete record.
   head and reports unreadable heads as deferred, which stops the sweep from
   overrunning its job cap. The weekly Droid security scan moves to a
   GitHub-hosted runner, and `check-droid-review-config` rejects a regression.
-  (#14636, #14641, #1494).
-- Hosted CI cost and budgets: strict workspace Clippy is limited to three Cargo
-  jobs, the `Ripr Docs Gate` job gets a 45-minute budget, the nextest hang
-  window is pinned to the shard step cap, and sccache, lld, nextest and a single
-  codecov version are wired into the lanes. Required lanes run the full
-  precommit table with job and command deadlines, and the scratch reaper
-  threshold drops from 45 to 30 minutes with a hard disk guard. The `pr-plan`
+  (#14636, #14641).
+- Hosted CI cost and budgets: hosted strict workspace Clippy is limited to three
+  Cargo jobs (scratch runners keep their job count), the `Ripr Docs Gate` job
+  gets a 45-minute budget, a check fails if the nextest hang window is widened
+  past the shard step's 40-minute cap, sccache is wired into self-hosted jobs,
+  lld links on Linux, nextest runs the primary gates and one codecov action
+  version is used. Required lanes run the full precommit table, PR evidence is
+  bounded by job and command deadlines, the scratch reaper threshold drops from
+  45 to 30 minutes, the scratch-gc disk guard is a hard failure instead of a
+  warning, and routed Rust lanes fall back on a disk tempfail. The `pr-plan`
   stub text is replaced by an advisory summary. (#14589, #14732, #14906, #2230,
   #2246, #2258, #2265, #2453, #2469, #2779, #2997, #2686, #2985, #2705, #2992,
-  #2488, #2984, #1724).
+  #2488, #2984, #1724, #1494).
 - Performance guards: the `ripr` test suite fails when the Rust classifier
-  performs more indexed reads on a fixed five-gap diff, growth-guard retries
-  keep the faster normalized baseline, and the nightly DX scoreboard holds the
-  warm check to a 1,200 MB peak-memory ceiling (down from 1,536 MB; measured
-  1,017-1,045 MB). (#15049, #15100, #14802, #13703).
+  performs more indexed reads per probe on a fixed five-gap diff, growth-guard
+  retries keep the faster normalized baseline, and the nightly DX scoreboard
+  holds the `ripr-swarm-2026-10` warm check to a 1,200 MB peak-memory ceiling
+  (down from 1,536 MB; measured 1,017-1,045 MB). (#15049, #15100, #14802,
+  #13703).
 - Local check scoping: `cargo xtask check-fast` scopes Clippy to impacted
   packages and reports tests not run, `cargo policy docs-gate` runs a
   product-free docs/spec subset, and `verdict-corpus check-affected` selects
   only affected corpora; all three widen fail-closed on shared or unknown
   surfaces. `check-pr` runs gates lazily and surfaces the first actionable
   failure, and precommit owns policy gates and fails closed on incomplete
-  evidence. (#14644, #3017, #1269, #3036, #3112, #2741, #2858, #2635, #2684,
+  evidence. Policy gates print a pass status, and detached worktrees are
+  flagged. (#14644, #3017, #1269, #3036, #3112, #2741, #2858, #2635, #2684,
   #2733).
 - Toolchain and Windows hygiene: the workspace builds warning-free on the pinned
   and current stable toolchains, the Windows nightly builds its tests again,
@@ -7762,57 +7767,67 @@ entries below are the complete record.
   all-features modes, and Windows timeout parent exit is verified. (#14649,
   #14673, #15043, #14762, #2878, #2393, #2459, #2400, #2511).
 - Agent evals: the Tier 2 `evals/` Cargo workspace is scaffolded outside the
-  root workspace, and `cargo xtask agent-eval` treats a mismatch between
-  identical-workspace captures as an instrument failure that blocks baselines.
-  (#14643, #14726).
+  root workspace, and `cargo xtask agent-eval` treats a disagreement between the
+  `cli-agent-loop` FIND step and the `cli-agent-find` capture as an instrument
+  failure that fails every mode, blocks `--write-baseline` and makes `--compare`
+  refuse such a baseline. (#14643, #14726).
 - ub-review advisory lane: the lane is adopted in advisory mode and posts
   substantive findings, the pin is bumped, the source build is cached so runs
-  take about 2-3 minutes, fork PRs skip the lane, and bot review threads are
-  resolved automatically. (#1469, #1470, #1472, #1473, #1481, #729, #1484,
-  #1738, #1866, #2341, #2515).
-- Verdict corpus and trust: adds the repo-exposure guard-missing case to the
-  evidence-promotion corpus, a Rust repair adoption corpus, pilot exclusion and
-  repeated-observation governance, a targeted rerun benchmark receipt, real
-  producer two-binary proof for Perl checks, and duplicate-key rejection in the
-  promotion corpus. (#14872, #1561, #1562, #1585, #1531, #1491, #2277, #2279).
-- Typed models and analysis plumbing: static-limitation categories come from a
-  typed `StaticLimitKind` with unchanged wire strings, and `decision.rs`
-  heuristics use typed `AssertKind` matchers. Adds a probe-shape validator, a
+  take about 2-3 minutes, and fork PRs skip the lane. Separately, bot review
+  threads are resolved automatically so they do not block merges. (#1469, #1470,
+  #1472, #1473, #1481, #729, #1484, #1738, #1866, #2341, #2515).
+- Verdict corpus and trust: adds the repo-exposure guarded-boundary
+  guard-missing case to the evidence-promotion corpus, a Rust repair adoption
+  corpus, pilot exclusion and repeated pilot observation reconciliation, a
+  targeted rerun benchmark receipt, real producer two-binary proof for Perl
+  checks, and duplicate-key rejection in the promotion corpus. (#14872, #1561,
+  #1562, #1585, #1531, #1491, #2277, #2279).
+- Typed models and analysis plumbing: the static-limitation category producer
+  returns a typed `StaticLimitKind` token or a named untyped renderer category,
+  with unchanged wire strings, and `decision.rs` replaces six opaque substring
+  heuristics with typed `AssertKind` matchers. Adds a probe-shape validator, a
   SeamKind to ProbeFamily crosswalk, a typed causal delta model, canonical PR
-  deltas, `TestEvidenceSummary` with a semantic fingerprint, a live issue
-  snapshot adapter, a typed command spec scaffold, and a central output schema
-  registry. (#14965, #3023, #1479, #1937, #3016, #1586, #1593, #1783, #1833,
-  #1821, #2213, #2973, #3125).
+  deltas, `TestEvidenceSummary` with a semantic fingerprint, a bounded live
+  issue snapshot adapter, a typed command spec scaffold, and a central schema
+  registry for agent-artifact versions. (#14965, #3023, #1479, #1937, #3016,
+  #1586, #1593, #1783, #1833, #1821, #2213, #2973, #3125).
 - Schema and spec contracts: `check-verification-contracts` fails on breaking
   `schemas/ripr/*.json` changes without a `schema_version` bump and asserts each
   schema declares it. Spec-backed golden bless reasons, a ratcheted reverse
   spec-registration check, capability-matrix drift guard, advisory unresolved
-  traceability symbols and clearer spec-allocation errors are added, along with
-  legacy conformance metadata and the first RIPR-SPEC v2 requirement. (#1720,
-  #13689, #1844, #1843, #1691, #2785, #1718, #2940, #2662, #2650, #2683, #2549,
-  #2557, #2345, #2534, #2536).
+  traceability symbols and clearer spec-allocation errors are added, legacy
+  conformance metadata is allowed, and the first RIPR-SPEC v2 requirement lands.
+  (#1720, #13689, #1844, #1843, #1691, #2785, #1718, #2940, #2662, #2650, #2683,
+  #2549, #2557, #2345, #2534).
 - xtask policy allowlists: no-panic entries reject `TODO-*` placeholders and
-  past-expiry dates, count-based gates check bidirectionally, violation messages
-  show the allowlist entry format, and the network-policy pattern list is
-  expanded to more script types. Static-language scans skip fixture CHANGELOG
-  files. (#2090, #2173, #2344, #2484, #2339, #2499, #2338, #2501, #2412, #2502,
-  #2399, #2413, #2466).
+  past-expiry dates, count-based gates check bidirectionally, process and
+  network policy violation messages show the allowlist entry format, and the
+  network-policy pattern list is expanded to more script types. Static-language
+  scans skip fixture CHANGELOG files. (#2090, #2173, #2344, #2484, #2339, #2499,
+  #2338, #2501, #2412, #2502, #2399, #2413, #2466).
 - xtask reporting and checks: `check-archive-size-budget` tightens to 64 MiB,
   `dogfood` and `release-readiness` check the artifact-relative Start here path,
   and `goldens check-with-fixtures` prints an explicit compared-fixture count.
-  The command catalog marks CI-enforced commands, `install-hooks` warns on a
-  missing exec bit, shape lists rewritten allowlists, module-health gains a
-  responsibility smell and TypeScript scanning, and annotation severity maps
-  faithfully. (#14776, #14904, #14943, #15153, #2089, #2159, #2091, #2177,
-  #2088, #2143, #1721, #1854, #2544, #2568, #2575, #2632, #2722, #2726, #2520).
-- Fixtures, goldens and dogfood: ripr is built once and invoked directly,
-  fixtures and goldens run in parallel via rayon, a fixture scaffold command is
-  added, goldens bless has integrity guards, and dogfood exit codes reflect
-  scenario outcomes and ignore repo-local state. Test CWD locking uses an
-  `RwLock`, JSON path normalization handles single backslashes, and eval-sweep
+  The command catalog marks CI-enforced commands, `install-hooks` warns when it
+  writes a hook without the exec bit, shape lists rewritten allowlists,
+  module-health gains a responsibility smell and TypeScript scanning, and
+  annotation severity maps to notice or warning instead of being hardcoded. The
+  module-health test collector is restored, and unused imports, a forbidden word
+  and missing workflow budgets on main are fixed. (#14776, #14904, #14943,
+  #15153, #2089, #2159, #2091, #2177, #2088, #2143, #1721, #1854, #2544, #2568,
+  #2575, #2632, #2722, #2726, #2520).
+- Fixtures, goldens and dogfood: ripr is built once and invoked directly in
+  fixtures and dogfood, fixtures and goldens run in parallel via rayon, a
+  fixture scaffold command is added and its Fixtures variant type and code
+  placement are fixed, goldens bless has integrity guards, and dogfood exit
+  codes reflect scenario outcomes and the dogfood gate is isolated from
+  repo-local `ripr-pr` state. Subprocess-spawning tests are serialized against
+  cwd-changing tests through an `RwLock` cwd lock, JSON path normalization
+  handles single backslashes and iterates chars instead of bytes, a
+  `FixtureResult` alias and a useless `format!` lint are fixed, and eval-sweep
   uses the shared binary resolver. (#2110, #2176, #2202, #2415, #2529, #2445,
   #2526, #2530, #2410, #2506, #2411, #2509, #3065, #3110, #2044, #2051, #2124,
-  #2132, #2186, #2201, #2337, #2522, #2556, #2561, #3097, #3109).
+  #2132, #2186, #2201, #2337, #2522, #2556, #2561, #3097, #3109, #2536).
 - Release machinery: release workflow actions are pinned, a gated version bump
   and exact source-promotion preflight are added, packaged qualification
   receipts are preserved, proptest is locked and ripr-check ships a composite
