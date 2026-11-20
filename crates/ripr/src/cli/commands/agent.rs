@@ -427,6 +427,7 @@ struct AgentStartWritten {
 
 fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, CoreError> {
     ensure_command_root(&options.root, "agent start")?;
+    ensure_agent_start_out_contained(&options.root, &options.out_dir)?;
     let (input, config) = load_root_input_and_config(&options.root)?;
     let report = complete_agent_seam_inventory(&input.root, &config, "agent start")?;
     write_agent_start_with_report(&options, &input, &config, &report)
@@ -5789,6 +5790,60 @@ fn repair_receipt_summary_lines(
         lines.push(format!("next: {action}"));
     }
     lines
+}
+
+/// `agent start --out` is documented as relative to `--root`, so it is refused
+/// when it escapes the root (parent traversal, or an absolute path outside it),
+/// using the same containment test as the `--store` resolver (#15258).
+fn ensure_agent_start_out_contained(root: &Path, out_dir: &Path) -> Result<(), String> {
+    use std::path::Component;
+    let has_parent = out_dir
+        .components()
+        .any(|component| matches!(component, Component::ParentDir));
+    // `C:foo` and `\foo` carry a prefix or root but are not `is_absolute()` on
+    // Windows, so `root.join` would re-anchor them outside `--root`: only a
+    // fully absolute path inside the root may be rooted.
+    let rooted = out_dir.has_root()
+        || out_dir
+            .components()
+            .any(|component| matches!(component, Component::Prefix(_)));
+    // Resolve the deepest existing ancestor and require it to stay under the
+    // canonical root. This sees a symlink inside the root that points outside
+    // it, and compares an absolute `--out` in canonical form so a Windows
+    // verbatim root still matches a plain drive path inside it.
+    // With `..` refused, the missing tail below that ancestor cannot climb out.
+    let rooted_relative = rooted && !out_dir.is_absolute();
+    let outside = !has_parent
+        && !rooted_relative
+        && match root.canonicalize() {
+            Ok(canonical) => {
+                let mut probe = resolve_agent_start_out_dir(root, out_dir);
+                loop {
+                    match probe.canonicalize() {
+                        Ok(real) => break !real.starts_with(&canonical),
+                        // A dangling symlink does not canonicalize; its
+                        // target is unknown, so treat it as outside.
+                        Err(_) if probe.symlink_metadata().is_ok() => break true,
+                        Err(_) => {}
+                    }
+                    if !probe.pop() {
+                        break true;
+                    }
+                }
+            }
+            Err(_) => {
+                out_dir.is_absolute()
+                    && crate::app::repair_attempt::path_escapes_root(root, out_dir)
+            }
+        };
+    if has_parent || rooted_relative || outside {
+        return Err(format!(
+            "agent start --out {} is outside --root {}; pass --out naming a directory inside --root, for example `--out target/ripr/workflow`",
+            out_dir.display(),
+            root.display()
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_agent_start_out_dir(root: &Path, out_dir: &Path) -> PathBuf {

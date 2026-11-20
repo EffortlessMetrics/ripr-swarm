@@ -122,7 +122,7 @@ Input parameters:
 | Input | Required? | Purpose |
 | --- | --- | --- |
 | Language | required | Preview language under review, initially `typescript` or `python` in the command surface; JavaScript remains preview and requires an explicit future packet or adapter-family scope before promotion review. |
-| Candidate class | required | Evidence class under review, for example `boundary_gap`. |
+| Candidate class | required | Evidence class under review, for example `boundary_gap`. A plain label of 1-64 letters, digits, `_` or `-`; anything else is refused before any report is written, because the label names the default output files. |
 | Evidence receipts | optional | Explicit artifact for fixture coverage, static limits, false-positive review, calibration, baseline behavior, waiver/suppression behavior, rollback, and generated CI posture. Missing receipts block promotion. |
 
 ## Outputs

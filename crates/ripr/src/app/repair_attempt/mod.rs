@@ -47,6 +47,7 @@ const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// dependencies.
 const CARGO_WORKSPACE_LOCKFILE: &str = "Cargo.lock";
 
+pub(crate) use store::path_escapes_root;
 pub(crate) use store::{
     RepairAttemptStoreAccess, RepairAttemptStoreCurrentness, RepairAttemptStoreIdentity,
     RepairAttemptStoreLocationClass, RepairAttemptStoreRef, quoted_store_flag,
@@ -3563,7 +3564,13 @@ fn explicit_store_locator(
         return Ok(None);
     };
     let scoped = format!("{relative}/{}", attempt_id.as_str());
-    Ok(Some(crate::edit_cage::CagePathRule::subtree(&scoped)?))
+    let rule = crate::edit_cage::CagePathRule::subtree(&scoped).map_err(|reason| {
+        format!(
+            "--store {} is refused: {reason}; pass --store naming a directory inside --root, for example `--store target/ripr/repair-attempts`",
+            display_path(Path::new(&relative))
+        )
+    })?;
+    Ok(Some(rule))
 }
 
 /// Captures the edit-cage baseline and writes it to a workflow compatibility
@@ -6038,6 +6045,18 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_store_traversal_refusal_names_the_flag() -> Result<(), String> {
+        let id = RepairAttemptId::parse("repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string())?;
+        let refused = explicit_store_locator(Path::new("."), Some(Path::new("../x")), Some(&id));
+        let Err(message) = refused else {
+            return Err("a traversing --store must be refused".to_string());
+        };
+        assert!(message.contains("--store ../x is refused"), "{message}");
+        assert!(message.contains("pass --store naming"), "{message}");
+        Ok(())
+    }
     use crate::testing::fixture_git::fixture_git_ok as run_git;
     use crate::testing::verify_fixture::{mint_bound_receipt, mint_bound_receipt_pair};
 
