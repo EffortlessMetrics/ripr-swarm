@@ -2996,8 +2996,16 @@ impl Backend {
             // the run-level recovery and the per-document recovery must not
             // drift apart.
             let detail = outside_partition_recovery(partial_scope.as_ref());
+            let kind = if partial_scope
+                .as_ref()
+                .is_some_and(crate::analysis::PartialDiffScope::whole_diff_is_unreachable)
+            {
+                "narrow_diff"
+            } else {
+                "increase_configured_limit"
+            };
             Some(serde_json::json!({
-                "kind": "increase_configured_limit",
+                "kind": kind,
                 "detail": format!(
                     "ripr.refresh re-runs the identical limited partition and cannot widen it; {}",
                     detail

@@ -2318,8 +2318,16 @@ fn missing_ref_repair(
     // Unqualified, like the branch fallback below: `git fetch --tags`
     // follows the current branch's remote, which in a fork checkout is often
     // the one publishing the release (`upstream`), not `origin`.
-    if looks_like_release_tag(missing_ref) && commit_fetch_remote(root, git_timeout).is_some() {
-        return "Fetch the tags (for example `git fetch --tags`)".to_string();
+    // With no `origin`, Git has no default to fall back on outside a
+    // tracking branch, so the remote is named.
+    if looks_like_release_tag(missing_ref)
+        && let Some(remote) = commit_fetch_remote(root, git_timeout)
+    {
+        return if remote == "origin" {
+            "Fetch the tags (for example `git fetch --tags`)".to_string()
+        } else {
+            format!("Fetch the tags (for example `git fetch --tags {remote}`)")
+        };
     }
     let plain_branch = branch_like && !missing_ref.contains('/');
     match remotes.as_deref() {

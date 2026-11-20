@@ -3596,7 +3596,13 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
         AnalysisLimitationKind::DiffScopeOversized,
         AnalysisStage::AnalysisPipeline,
         AnalysisRecovery::new(
-            AnalysisRecoveryKind::IncreaseConfiguredLimit,
+            // The kind matches the advice: no budget raise can complete an
+            // unreachable whole diff, so the route is narrowing it.
+            if scope.whole_diff_is_unreachable() {
+                AnalysisRecoveryKind::NarrowDiff
+            } else {
+                AnalysisRecoveryKind::IncreaseConfiguredLimit
+            },
             format!("{}{}.", scope.widen_lead(true), scope.widen_instruction()),
         )?,
     )
@@ -10363,7 +10369,8 @@ index 0000000..1111111 100644
                 && limitation
                     .recovery
                     .detail
-                    .contains("narrow the diff with a PATH argument")),
+                    .contains("narrow the diff with a PATH argument")
+                && limitation.recovery.kind == AnalysisRecoveryKind::NarrowDiff),
             "the partial scope must be disclosed as a limitation; an over-guard whole diff \
              leads with narrowing"
         );
