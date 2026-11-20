@@ -628,10 +628,12 @@ mod tests {
     fn human_report_escapes_terminal_controls_from_a_hostile_file_name() -> Result<(), String> {
         let hostile = "repo/src/e\u{1b}]0;PWNED\u{07}\u{1b}[31mx\u{1b}[2J\u{202e}.rs";
         let report = report_for(PathBuf::from("repo"), PathBuf::from(hostile));
+        // `report_for` keeps `changed_files` plain; the hostile name rides on
+        // the changed seam's file, which the human report prints.
         assert!(
-            report.changed_files[0].path.contains('\u{1b}'),
-            "precondition: the report carries the raw hostile path: {:?}",
-            report.changed_files[0].path
+            report.changed_seams[0].file.contains('\u{1b}'),
+            "precondition: the seam carries the raw hostile path: {:?}",
+            report.changed_seams[0].file
         );
         assert!(
             render_diff_report_human_unescaped(&report).contains('\u{1b}'),
@@ -649,8 +651,8 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|err| format!("diff json parses: {err}"))?;
         assert_eq!(
-            value["changed_files"][0]["path"].as_str(),
-            Some(report.changed_files[0].path.as_str()),
+            value["changed_seams"][0]["file"].as_str(),
+            Some(report.changed_seams[0].file.as_str()),
             "JSON keeps the raw path"
         );
         Ok(())
