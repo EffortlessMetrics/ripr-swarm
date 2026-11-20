@@ -315,7 +315,9 @@ test-sufficiency claim.
   `lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis`
   pins the push marker on an unblocked didOpen and its retraction on commit;
   `lsp/tests.rs::framed_push_client_pending_marker_names_the_failure_after_a_failed_first_analysis`
-  pins the push marker naming the failure after a failed first attempt; and
+  pins the push marker naming the failure after a failed first attempt;
+  `analysis_pending_tests.rs::push_marker_recovery_shows_running_when_a_retry_starts_after_a_failure`
+  pins `analysis_running` on a push save that retries a failed attempt; and
   `analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt`
   pins blocked routes over a running attempt (#14447).
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and

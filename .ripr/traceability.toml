@@ -12131,6 +12131,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis",
   "crates/ripr/src/lsp/tests.rs::framed_push_client_pending_marker_names_the_failure_after_a_failed_first_analysis",
   "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/analysis_pending_tests.rs::analysis_pending_marker_names_the_recorded_failure_after_a_failed_attempt",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/analysis_pending_tests.rs::push_marker_recovery_shows_running_when_a_retry_starts_after_a_failure",
   "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::every_entry_has_a_nonempty_code",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::codes_and_aliases_are_globally_unique",
