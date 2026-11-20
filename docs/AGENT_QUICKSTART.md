@@ -81,7 +81,8 @@ Loop (max 3 rounds per gap):
 4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
            once more on the same root, base and saved source (new files need `git add -N PATH`).
            Check its exit status before reading it; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...` or
+           `verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`).
            `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
            `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
@@ -89,7 +90,7 @@ Loop (max 3 rounds per gap):
 
 STOP and report instead of looping when:
 - the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
-- the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
+- verify is refused and the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
 
@@ -180,6 +181,19 @@ subset:
   no-scope condition applies. A new file stays untracked until
   `git add -N <path>`, so stage new files before the post-edit check.
   Gitignored source is named in the notes but does not refuse.
+- `verify=complete_with_limits|outcome=O|findings=N|exposed=E|limits=CLASS:COUNT,...`
+  (#14821) means every condition above holds except equal counts, and every
+  unexposed finding is an analyzer limit no test edit can close: a
+  candidate-current, non-preview `static_unknown`, `infection_unknown` or
+  `propagation_unknown` finding that a test calls and that some exact test
+  pins: a related test reaches it and is `strong`/`medium` there, or is a
+  test ripr reads as `strong`/`medium` on another finding of the same
+  changed function in this run.
+  No related test bound to it may assert only weakly (`weak` or `smoke`).
+  The loop may end in DONE; report the `limits=` as unproven, not as
+  exposed. Any gap, `no_static_path`, weak or smoke-only related test, test
+  without an exact assertion, preview finding or suppressed unexposed
+  finding keeps `verify=refused`.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
   `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,

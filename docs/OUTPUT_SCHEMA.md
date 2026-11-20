@@ -1153,7 +1153,31 @@ verify=complete|outcome=O|findings=N|exposed=N
   (#14452).
 - The last line is always the verification record (#13516):
   `verify=complete|outcome=O|findings=N|exposed=N` or
-  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
+  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`, or (#14821)
+  `verify=complete_with_limits|outcome=O|findings=N|exposed=E|limits=CLASS:COUNT,...`
+  when `unexposed_findings_remain` is the only unmet condition and every
+  unexposed finding is an analyzer limit no test edit can close: a
+  candidate-current, non-preview, non-withheld `static_unknown`,
+  `infection_unknown` or `propagation_unknown` finding with no contributing
+  related test of `weak` or `smoke` oracle strength other than a
+  proximity-only one (`same_test_file`, `same_module`,
+  `weak_token_substring`; a row with no recorded relation counts as bound),
+  and with positive evidence: some related test whose relation establishes
+  reach (direct or helper owner call, re-export chain, or assertion-target
+  affinity for a non-function owner) is either contributing with `strong` or
+  `medium` strength, or is an examined-only row (selected by row role, never
+  by `miss`) of a test that is a contributing, reaching `strong`/`medium` row
+  on another finding
+  of the same owner function in the run (a test that pins one function
+  never vouches for an unasserted call to another). The vouching test is
+  matched by its full identity (file, name and start line), and the
+  vouching finding must itself be candidate-current, non-preview and not
+  withheld. A finding whose related-test rows were packed past the bounded
+  list (`related_tests_total` above the rows listed) never completes, since
+  a dropped row could be weak. The listed counts must reconcile to the full summary. `limits`
+  lists those classes in vocabulary order. It upgrades no finding: the limits
+  stay unproven, and `no_static_path`, `weakly_exposed` and
+  `reachable_unrevealed` findings always refuse. It is projected
   from the producer's `analysis_outcome` and the full `summary` counts, not the
   displayed or triaged subset. Its `findings`/`exposed` equal the header's
   `findings=`/`exposed=` except under `--suppression-policy`: the header
