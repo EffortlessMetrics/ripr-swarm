@@ -66,6 +66,11 @@ pub(super) fn python_multiline_return_dict_entry_discriminator(
     if depth != 1 || line_text.contains('#') {
         return None;
     }
+    // The literal must be the whole returned value: a closing line such as
+    // `} | overrides` or `}[key]` returns something other than this entry.
+    if source?.lines().nth(close.checked_sub(1)?)?.trim() != "}" {
+        return None;
+    }
     let segments: Vec<&str> = top_level_python_segments(line_text.trim())
         .into_iter()
         .filter(|segment| !segment.is_empty())

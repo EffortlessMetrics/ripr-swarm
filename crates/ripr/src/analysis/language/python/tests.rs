@@ -1497,6 +1497,13 @@ fn multiline_return_dict_entry_names_an_exact_key_read() -> Result<(), String> {
     assert_eq!(value(4, span, Some(&assigned)), None);
     let called = source.replace("    return {", "    return dict(a={");
     assert_eq!(value(4, span, Some(&called)), None);
+    // A closing line that combines or indexes the literal returns another
+    // value, so the entry is not what the caller reads for its key.
+    for suffix in ["} | overrides", "}[\"Accept-Encoding\"]", "}.copy()"] {
+        let combined = source.replace("\n    }\n", &format!("\n    {suffix}\n"));
+        assert_ne!(combined, source, "the closing line must be replaced");
+        assert_eq!(value(4, span, Some(&combined)), None, "{suffix}");
+    }
     Ok(())
 }
 
