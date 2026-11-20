@@ -20735,6 +20735,30 @@
           "class": "propagation_unknown"
         }
       ]
+    },
+    {
+      "id": "rust_awaited_pin_neither_version",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_awaited_pin_neither_version",
+      "vector": "an_awaited_async_owner_pin_on_a_value_neither_version_returns",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
