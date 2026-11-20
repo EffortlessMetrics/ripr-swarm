@@ -12,13 +12,14 @@ fn sha(text: &str) -> bool {
 
 /// Qualification's base comes from the already verified admission output, and
 /// must be the tested integration commit's first parent. Legacy PR/queue
-/// runs instead require the event base to equal that first parent; this does
-/// not claim an admission receipt.
+/// runs instead take the first parent of a merge checkout read from Git
+/// objects (the event payload base can be stale once the base branch moves);
+/// this does not claim an admission receipt.
 fn choose_base(
     profile: &str,
     event: &str,
     admitted: &str,
-    event_base: &str,
+    merge_checkout: bool,
     first_parent: &str,
     local: &str,
 ) -> Result<String, String> {
@@ -29,10 +30,10 @@ fn choose_base(
         ),
         "legacy"
             if matches!(event, "pull_request" | "merge_group")
-                && sha(event_base)
-                && event_base == first_parent =>
+                && merge_checkout
+                && sha(first_parent) =>
         {
-            Ok(event_base.into())
+            Ok(first_parent.into())
         }
         "legacy" if matches!(event, "pull_request" | "merge_group") => Err(
             "honesty digest: legacy event base missing, malformed, or not HEAD's first parent"
@@ -155,7 +156,8 @@ pub(super) fn check(corpus: &Value, violations: &mut Vec<String>) -> Result<(), 
     let profile = std::env::var("RIPR_HONESTY_PROFILE").unwrap_or_default();
     let event = std::env::var("GITHUB_EVENT_NAME").unwrap_or_default();
     let admitted = std::env::var("RIPR_HONESTY_ADMITTED_BASE").unwrap_or_default();
-    let event_base = std::env::var("RIPR_HONESTY_EVENT_BASE").unwrap_or_default();
+    let merge_checkout = crate::run_output("git", &["rev-parse", "--verify", "--quiet", "HEAD^2"])
+        .is_ok_and(|second| sha(second.trim()));
     let first = if profile == "qualification"
         || (profile == "legacy" && matches!(event.as_str(), "pull_request" | "merge_group"))
     {
@@ -174,7 +176,7 @@ pub(super) fn check(corpus: &Value, violations: &mut Vec<String>) -> Result<(), 
     } else {
         String::new()
     };
-    let base = choose_base(&profile, &event, &admitted, &event_base, &first, &local)?;
+    let base = choose_base(&profile, &event, &admitted, merge_checkout, &first, &local)?;
     let base_corpus = base_corpus(&base)?;
     let found = delta_problems(
         &base_corpus,
@@ -204,23 +206,23 @@ mod tests {
         let a = "a".repeat(40);
         let b = "b".repeat(40);
         assert_eq!(
-            choose_base("qualification", "pull_request", &a, "", &a, "").ok(),
+            choose_base("qualification", "pull_request", &a, false, &a, "").ok(),
             Some(a.clone())
         );
         assert_eq!(
-            choose_base("qualification", "pull_request", "", "", &a, &a)
+            choose_base("qualification", "pull_request", "", false, &a, &a)
                 .err()
                 .as_deref(),
             Some("honesty digest: admitted base missing, malformed, or not HEAD's first parent")
         );
         assert_eq!(
-            choose_base("qualification", "pull_request", &a, "", &b, &a)
+            choose_base("qualification", "pull_request", &a, false, &b, &a)
                 .err()
                 .as_deref(),
             Some("honesty digest: admitted base missing, malformed, or not HEAD's first parent")
         );
         assert_eq!(
-            choose_base("legacy", "pull_request", "", "", &a, &a)
+            choose_base("legacy", "pull_request", "", false, &a, &a)
                 .err()
                 .as_deref(),
             Some(
@@ -228,24 +230,24 @@ mod tests {
             )
         );
         assert_eq!(
-            choose_base("legacy", "merge_group", "", "", &a, &a)
+            choose_base("legacy", "merge_group", "", false, &a, &a)
                 .err()
                 .as_deref(),
             Some(
                 "honesty digest: legacy event base missing, malformed, or not HEAD's first parent"
             )
         );
-        assert_eq!(choose_base("", "", "", "", "", &a).ok(), Some(a.clone()));
+        assert_eq!(choose_base("", "", "", false, "", &a).ok(), Some(a.clone()));
         assert_eq!(
-            choose_base("", "", "", "", "", "").err().as_deref(),
+            choose_base("", "", "", false, "", "").err().as_deref(),
             Some("honesty digest: no valid local merge base")
         );
         assert_eq!(
-            choose_base("legacy", "pull_request", "", &a, &a, "").ok(),
+            choose_base("legacy", "pull_request", "", true, &a, "").ok(),
             Some(a.clone())
         );
         assert_eq!(
-            choose_base("legacy", "merge_group", "", &a, &b, "")
+            choose_base("legacy", "merge_group", "", true, "not-a-sha", "")
                 .err()
                 .as_deref(),
             Some(

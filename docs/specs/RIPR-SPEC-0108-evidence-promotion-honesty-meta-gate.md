@@ -186,8 +186,9 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      report path still exists fails. Removing the entry together with deleting
      the report is allowed (#12856); the other corpus checks still apply.
      Qualification uses the admission-verified first parent; legacy PR/queue
-     runs require the event base to match the integration first parent, and
-     local runs use the Git merge base. Missing or malformed base evidence
+     runs require a merge checkout and use its first parent read from Git
+     objects (the event payload base can be stale once the base branch moves),
+     and local runs use the Git merge base. Missing or malformed base evidence
      fails closed. This path comparison does not detect relocation and is not
      an authenticity check. Candidate-controlled validator changes require
      independent review; the current gate does not provide trusted-base

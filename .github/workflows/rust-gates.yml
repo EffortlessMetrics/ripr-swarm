@@ -457,7 +457,6 @@ jobs:
         env:
           RIPR_HONESTY_PROFILE: ${{ inputs.proof-profile }}
           RIPR_HONESTY_ADMITTED_BASE: ${{ steps.admitted.outputs.base }}
-          RIPR_HONESTY_EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: cargo xtask check-evidence-promotion-honesty
 
       # Lint optional-feature code as well as type-checking it (#13152).
