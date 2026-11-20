@@ -517,7 +517,7 @@ pub(crate) fn render_full_with_config_and_navigation(
         .map(|_| shared::SharedReport::build_with_origins(&visible, Some(&output.value_origins)))
         .filter(shared::SharedReport::is_shared);
     if let Some(shared) = &shared {
-        shared.render_catalogue(&mut out);
+        shared.render_catalogue(&mut out, &visible);
     }
     let findings_rendered = visible.len();
     for (ordinal, finding) in visible.iter().enumerate() {
@@ -1717,9 +1717,9 @@ pub(crate) fn render_finding_with_context_command_and_files(
         }
         _ => None,
     };
-    out.push_str(&explain::render_verdict_explanation(
+    out.push_str(&sections::name_finding_language(
         finding,
-        owner_signature.as_deref(),
+        explain::render_verdict_explanation(finding, owner_signature.as_deref()),
     ));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
