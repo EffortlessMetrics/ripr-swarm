@@ -33,9 +33,15 @@ pub(crate) struct LiteralArmReturn {
     pub(crate) old_text: String,
     /// The literal the changed arm returns after the edit. An exact
     /// assertion that expects it distinguishes the two versions when the
-    /// call takes the arm, and may be another arm's result when one shares
-    /// it: either way the reader cannot withdraw credit.
+    /// call takes the changed arm.
     pub(crate) new_value: ArmConstant,
+    /// Another arm also returns the new literal, so an assertion expecting
+    /// it may observe that unchanged arm instead: it counts as another arm's
+    /// result only when its call provably leaves the changed arm closed.
+    pub(crate) new_value_shared: bool,
+    /// The changed line and its text, to read the conditions that select it.
+    pub(crate) line: usize,
+    pub(crate) line_text: String,
 }
 
 /// `Some` when the changed line `line` is a one-line `return <literal>`
@@ -61,6 +67,7 @@ pub(crate) fn literal_arm_return(
     let changed = line.checked_sub(owner.start_line)?;
     let returns = owner_returns(&owner.file, source)?;
     let mut changed_seen = false;
+    let mut new_value_shared = false;
     for (return_line, value) in &returns {
         let value = value.as_ref()?;
         if *return_line == changed {
@@ -70,13 +77,58 @@ pub(crate) fn literal_arm_return(
             changed_seen = true;
         } else if *value == old_value {
             return None;
+        } else if *value == new_value {
+            new_value_shared = true;
         }
     }
     (changed_seen && returns.len() >= 2).then(|| LiteralArmReturn {
         old_value,
         old_text: old_text.to_string(),
         new_value,
+        new_value_shared,
+        line,
+        line_text: line_text.to_string(),
     })
+}
+
+/// Whether a call with `arguments` provably leaves the changed arm closed:
+/// some `if` / lone `case` condition the arm needs is provably unmet by the
+/// call's literal inputs (the #8569 reader). Anything unreadable is `false`.
+fn call_leaves_changed_arm(
+    change: &LiteralArmReturn,
+    owner: &TypeScriptOwner,
+    arguments: &[String],
+) -> bool {
+    use super::guard_entry_guard::{
+        CallInputs, call_excludes_arm, enclosing_conditions, parameter_defaults, parameter_shapes,
+    };
+    let Some(source) = owner.source_text.as_deref() else {
+        return false;
+    };
+    let Some(conditions) =
+        enclosing_conditions(source, owner.start_line, change.line, &change.line_text)
+    else {
+        return false;
+    };
+    let (params, defaults, options) = if owner.params.is_empty() {
+        let Some(shapes) = parameter_shapes(source) else {
+            return false;
+        };
+        (shapes.names, shapes.defaults, shapes.options)
+    } else {
+        let Some(defaults) = parameter_defaults(source, &owner.params) else {
+            return false;
+        };
+        (owner.params.clone(), defaults, Vec::new())
+    };
+    let inputs = CallInputs {
+        owner_source: source,
+        params: &params,
+        defaults: &defaults,
+        options: &options,
+        arguments,
+    };
+    call_excludes_arm(&inputs, &conditions)
 }
 
 /// What the related assertions say about the changed arm.
@@ -123,34 +175,41 @@ pub(crate) fn ts_literal_arm_witness(
                 .as_deref()
                 .filter(|_| !assertion.has_dynamic_matcher_arg);
             let expected_value = expected.and_then(scalar_constant);
-            // An assertion anywhere that expects the old or the new result,
-            // alone or inside a wrapping object, array or expression, may
-            // observe the changed arm directly or through a local or a
-            // wrapper, and then tells the versions apart: keep the verdict.
-            if [&change.old_value, &change.new_value]
-                .into_iter()
-                .any(|value| {
-                    expected_value.as_ref() == Some(value)
-                        || [
-                            assertion.expected_value_or_variant.as_deref(),
-                            assertion.dynamic_expected_text.as_deref(),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .any(|text| mentions_constant(text, value))
-                })
-            {
-                return LiteralArmWitness::Kept;
-            }
-            let observes_owner_call = ts_observed_owner_call_arguments(
+            let observed_arguments = ts_observed_owner_call_arguments(
                 candidate.test,
                 assertion,
                 &names,
                 owner,
                 &receivers,
-            )
-            .is_some();
-            if !observes_owner_call {
+            );
+            // An exact scalar expectation of the new result on an owner call
+            // is another arm's result only when another arm shares it and
+            // the call provably leaves the changed arm closed.
+            let new_result_of_another_arm = expected_value.as_ref() == Some(&change.new_value)
+                && change.new_value_shared
+                && observed_arguments
+                    .as_deref()
+                    .is_some_and(|arguments| call_leaves_changed_arm(change, owner, arguments));
+            // An assertion anywhere that expects the old or the new result,
+            // alone or inside a wrapping object, array or expression, may
+            // observe the changed arm directly or through a local or a
+            // wrapper, and then tells the versions apart: keep the verdict.
+            let pinned = |value: &ArmConstant| {
+                expected_value.as_ref() == Some(value)
+                    || [
+                        assertion.expected_value_or_variant.as_deref(),
+                        assertion.dynamic_expected_text.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| mentions_constant(text, value))
+            };
+            if pinned(&change.old_value)
+                || (!new_result_of_another_arm && pinned(&change.new_value))
+            {
+                return LiteralArmWitness::Kept;
+            }
+            if observed_arguments.is_none() {
                 // A member, transform or wrapper of the owner's result, or a
                 // local (destructured, module-level or hook-assigned) that
                 // may hold it, can observe the arm without spelling its old

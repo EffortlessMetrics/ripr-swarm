@@ -29,6 +29,9 @@ fn a_switch_arm_literal_return_is_located_with_its_old_value() {
             old_value: ArmConstant::Text("one".to_string()),
             old_text: "'one'".to_string(),
             new_value: ArmConstant::Text("uno".to_string()),
+            new_value_shared: false,
+            line: 13,
+            line_text: "      return 'uno';".to_string(),
         })
     );
 }
@@ -265,45 +268,24 @@ fn an_assertion_expecting_the_arms_old_result_keeps_exposed() -> Result<(), Stri
 
 /// An exact assertion on the selected arm that expects its new result also
 /// tells the versions apart (#12991 `switch_literal_return_controls`): the
-/// base returns the old literal there. When another arm shares the new
-/// literal the assertion may reach either arm, so the verdict is kept too.
-/// An assertion that only expects an unchanged arm's distinct result still
-/// removes the credit.
+/// base returns the old literal there. An assertion expecting an unchanged
+/// arm's distinct result still removes the credit.
 #[test]
 fn an_assertion_expecting_the_arms_new_result_keeps_exposed() -> Result<(), String> {
-    for (label, source, body) in [
-        (
-            "arm-new-direct",
-            DIR.to_string(),
-            "    expect(dir(1)).toBe('uno');
-",
-        ),
+    for (label, body) in [
+        ("arm-new-direct", "    expect(dir(1)).toBe('uno');\n"),
         (
             "arm-new-with-other",
-            DIR.to_string(),
-            "    expect(dir(2)).toBe('two');
-    expect(dir(1)).toEqual(\"uno\");
-",
+            "    expect(dir(2)).toBe('two');\n    expect(dir(1)).toEqual(\"uno\");\n",
         ),
         (
             "arm-new-object",
-            DIR.to_string(),
-            "    expect(dir(2)).toBe('two');
-    expect({ d: dir(1) }).toEqual({ d: 'uno' });
-",
-        ),
-        // Another arm already returns the new literal: the assertion may
-        // reach the changed arm or that one, and is not ruled out.
-        (
-            "arm-new-shared",
-            DIR.replace("'other'", "'uno'"),
-            "    expect(dir(3)).toBe('uno');
-",
+            "    expect(dir(2)).toBe('two');\n    expect({ d: dir(1) }).toEqual({ d: 'uno' });\n",
         ),
     ] {
         let finding = finding_at(
             label,
-            &source,
+            DIR,
             4,
             "      return 'one';",
             "      return 'uno';",
@@ -316,21 +298,87 @@ fn an_assertion_expecting_the_arms_new_result_keeps_exposed() -> Result<(), Stri
             finding.missing
         );
     }
-    // The alternate side: only an unchanged arm's distinct result is
-    // expected, so the credit is still removed.
     let finding = finding_at(
         "arm-new-absent",
         DIR,
         4,
         "      return 'one';",
         "      return 'uno';",
-        &vitest(
-            "    expect(dir(2)).toBe('two');
-    expect(dir(3)).toBe('other');
-",
-        ),
+        &vitest("    expect(dir(2)).toBe('two');\n    expect(dir(3)).toBe('other');\n"),
     )?;
     assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+/// The paired truth table when the new literal is shared: `gold` stays 7
+/// while `silver` moves 5 -> 7. `silver` expecting 5 passes on the base
+/// only and `silver` expecting 7 on the candidate only, so both keep
+/// `exposed`; `gold` expecting 7 passes on both, so its credit is removed
+/// because the call provably leaves the changed arm closed. A selector the
+/// reader cannot evaluate keeps the verdict.
+#[test]
+fn a_shared_new_result_is_credited_only_on_the_selected_arm() -> Result<(), String> {
+    const PRICE: &str = "export function dir(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 7;\n    case 'silver':\n      return 5;\n    default:\n      return 0;\n  }\n}\n";
+    let run = |label: &str, body: &str| {
+        finding_at(
+            label,
+            PRICE,
+            6,
+            "      return 5;",
+            "      return 7;",
+            &vitest(body),
+        )
+    };
+    for (label, body) in [
+        ("shared-silver-old", "    expect(dir('silver')).toBe(5);\n"),
+        ("shared-silver-new", "    expect(dir('silver')).toBe(7);\n"),
+        (
+            "shared-silver-local",
+            "    const result = dir('silver');\n    expect(result).toBe(7);\n",
+        ),
+        ("shared-computed", "    expect(dir(pick())).toBe(7);\n"),
+        (
+            "shared-gold-and-silver",
+            "    expect(dir('gold')).toBe(7);\n    expect(dir('silver')).toBe(7);\n",
+        ),
+    ] {
+        let finding = run(label, body)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    for (label, body) in [
+        ("shared-gold", "    expect(dir('gold')).toBe(7);\n"),
+        (
+            "shared-gold-local",
+            "    const result = dir('gold');\n    expect(result).toBe(7);\n",
+        ),
+        (
+            "shared-gold-and-default",
+            "    expect(dir('gold')).toBe(7);\n    expect(dir('bronze')).toBe(0);\n",
+        ),
+    ] {
+        let finding = run(label, body)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {:?}",
+            finding.missing
+        );
+        // The literal-arm rule itself removed the credit, naming the
+        // unchanged arm's result the assertion expects.
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("expects another arm's result (") && line.contains("`7`")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
     Ok(())
 }
 

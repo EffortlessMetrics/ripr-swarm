@@ -2686,9 +2686,12 @@ keys); do not take the next number.
 - #15306: a changed one-line `return <literal>` whose owner returns only
   distinct scalar literals (a switch or if-chain lookup) is credited only when
   some strong related assertion expects the arm's old or new literal (either
-  distinguishes the versions when the call takes the arm; a new literal another
-  arm shares is not ruled out). When every strong assertion on a direct owner
-  call expects another arm's readable literal,
+  distinguishes the versions when the call takes the arm). When another arm
+  also returns the new literal, an exact assertion expecting it counts as that
+  arm's result only when its call's literal inputs provably leave the changed
+  arm closed (the #8569 condition reader); otherwise it keeps the verdict.
+  When every strong assertion on a direct owner call expects another arm's
+  readable literal,
   the change is not observed: the existing literal-return reading makes it
   `infection_unknown`, with a line naming the unpinned arm result.
   A duplicated old literal, any non-literal or multi-line return, a generator
@@ -2702,6 +2705,7 @@ keys); do not take the next number.
   `an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm`,
   `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
   `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
+  `a_shared_new_result_is_credited_only_on_the_selected_arm`,
   `an_unreadable_expected_side_keeps_the_verdict` and
   `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
