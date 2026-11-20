@@ -1045,18 +1045,35 @@ fn dynamic_assertion_why(matcher: &str, expected_text: Option<&str>) -> String {
 
 /// True when `text` is an object or array literal with a member value that is
 /// a bare identifier on its own (`{ a: x }`, `[x, 1]`, shorthand `{ x }`,
-/// spread `...x`), not a key, string, number, keyword literal (`true`,
-/// `false`, `null`, `undefined`, `NaN`, `Infinity`), call, member access,
-/// `new` expression or asymmetric matcher such as `expect.any(String)`. A
-/// conservative scan: any doubt reads as false, which keeps the generic
-/// wording.
+/// spread `...x`), not a key (plain or computed `[k]`), string, number,
+/// keyword literal (`true`, `false`, `null`, `undefined`, `NaN`, `Infinity`),
+/// call or call argument, member read (`x.y`, `o[k]`), `new` expression or
+/// asymmetric matcher such as `expect.any(String)`. A conservative scan
+/// tracks which bracket each word sits in; any doubt reads as false, which
+/// keeps the generic wording.
 fn container_holds_identifier(text: &str) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Ctx {
+        Object,
+        Array,
+        Other,
+    }
+    fn before(chars: &[char], at: usize) -> (Option<char>, bool) {
+        let mut k = at;
+        while k > 0 && chars[k - 1].is_whitespace() {
+            k -= 1;
+        }
+        let prev = k.checked_sub(1).and_then(|p| chars.get(p)).copied();
+        let spread = k >= 3 && chars[k - 3..k].iter().all(|ch| *ch == '.');
+        (prev, spread)
+    }
     if !(text.starts_with('{') && text.ends_with('}')
         || text.starts_with('[') && text.ends_with(']'))
     {
         return false;
     }
     let chars: Vec<char> = text.chars().collect();
+    let mut stack: Vec<Ctx> = Vec::new();
     let mut i = 0;
     let mut quote: Option<char> = None;
     while i < chars.len() {
@@ -1070,39 +1087,63 @@ fn container_holds_identifier(text: &str) -> bool {
             i += 1;
             continue;
         }
-        if matches!(c, '\'' | '"' | '`') {
-            quote = Some(c);
-            i += 1;
-            continue;
-        }
-        if c.is_alphabetic() || c == '_' || c == '$' {
-            let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || matches!(chars[i], '_' | '$')) {
-                i += 1;
+        let top = stack.last().copied();
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '{' | '[' => {
+                let (prev, spread) = before(&chars, i);
+                let value_slot = match top {
+                    None => true,
+                    Some(Ctx::Object) => prev == Some(':') || spread,
+                    Some(Ctx::Array) => matches!(prev, Some('[' | ',')) || spread,
+                    Some(Ctx::Other) => false,
+                };
+                stack.push(match (value_slot, c) {
+                    (true, '{') => Ctx::Object,
+                    (true, _) => Ctx::Array,
+                    (false, _) => Ctx::Other,
+                });
             }
-            let word: String = chars[start..i].iter().collect();
-            let mut k = start;
-            while k > 0 && chars[k - 1].is_whitespace() {
-                k -= 1;
+            '(' => stack.push(Ctx::Other),
+            '}' | ']' | ')' => {
+                stack.pop();
             }
-            let before = k.checked_sub(1).and_then(|at| chars.get(at)).copied();
-            let after_spread = k >= 3 && chars[k - 3..k].iter().all(|ch| *ch == '.');
-            let value_start = matches!(before, Some(':' | '[' | ',' | '{')) || after_spread;
-            let mut j = i;
-            while j < chars.len() && chars[j].is_whitespace() {
-                j += 1;
+            _ if c.is_alphabetic() || c == '_' || c == '$' => {
+                let start = i;
+                while i < chars.len()
+                    && (chars[i].is_alphanumeric() || matches!(chars[i], '_' | '$'))
+                {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                let (prev, spread) = before(&chars, start);
+                let mut j = i;
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                let next = chars.get(j).copied();
+                let bare = match top {
+                    Some(Ctx::Object) => {
+                        (prev == Some(':') || spread || matches!(prev, Some('{' | ',')))
+                            && matches!(next, Some(',' | '}'))
+                    }
+                    Some(Ctx::Array) => {
+                        (matches!(prev, Some('[' | ',')) || spread)
+                            && matches!(next, Some(',' | ']'))
+                    }
+                    _ => false,
+                };
+                if bare
+                    && !matches!(
+                        word.as_str(),
+                        "true" | "false" | "null" | "undefined" | "NaN" | "Infinity"
+                    )
+                {
+                    return true;
+                }
+                continue;
             }
-            let value_end = matches!(chars.get(j), Some(',' | '}' | ']'));
-            if value_start
-                && value_end
-                && !matches!(
-                    word.as_str(),
-                    "true" | "false" | "null" | "undefined" | "NaN" | "Infinity"
-                )
-            {
-                return true;
-            }
-            continue;
+            _ => {}
         }
         i += 1;
     }
@@ -1643,5 +1684,12 @@ mod dynamic_why_tests {
         assert!(!container_holds_identifier("{ n: NaN, m: [Infinity] }"));
         assert!(!container_holds_identifier("{ d: new Date(0) }"));
         assert!(!container_holds_identifier("[Number.MAX_VALUE]"));
+        // Computed keys, member reads by index and call arguments are not
+        // member values either.
+        assert!(!container_holds_identifier("{ [key]: 1 }"));
+        assert!(!container_holds_identifier("[obj[key]]"));
+        assert!(!container_holds_identifier("[f(1, value, 3)]"));
+        assert!(container_holds_identifier("{ a: [1, { b: item }] }"));
+        assert!(container_holds_identifier("[[item]]"));
     }
 }
