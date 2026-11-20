@@ -1318,6 +1318,7 @@ tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 limit=STATIC_LIMIT_KIND
 owner=OWNER_NAME
 before=BASE EXPRESSION
+seen=VALUE; VALUE (+N more)
 done=... | open=... | stop=...
 next=ripr context ... --at SELECTOR
 ```
@@ -1347,6 +1348,9 @@ next=ripr context ... --at SELECTOR
   read on the base side; each is omitted when the producer recorded none, and
   `before=` when it equals the record's expression. They carry the two facts a
   `missing=-` row lacks, so an agent does not fetch the JSON packet for them.
+- `seen=` lists up to six input values the related tests already use (the
+  packet's `observed_values`), then `(+N more)`. It prints only when `next=`
+  is omitted, so no packet fact is dropped; absent when none were observed.
 - `next=` is the scope-bound `ripr context` command for this finding. It is
   omitted for an `open=` test-side gap that names no concrete missing
   discriminator and has at most one related test: the packet then adds nothing

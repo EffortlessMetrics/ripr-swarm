@@ -1161,7 +1161,7 @@ already be tested, so reading it as a gap would be a wrong actionable signal.
 `ripr explain <finding> --format agent` prints the selected finding in the
 `check --format agent` line style: one record, its strongest related test, at
 most one `limit=` line, `owner=` and `before=` lines when the producer recorded
-them, exactly one terminal line, and a scope-bound `next=ripr context ...`
+them (plus a `seen=` line of observed test inputs when `next=` is omitted), exactly one terminal line, and a scope-bound `next=ripr context ...`
 command. `next=` is omitted only for an `open=` test-side gap that names no
 concrete missing discriminator and has at most one related test, because the
 packet then restates the record (#14298). The terminal states are:

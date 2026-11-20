@@ -541,12 +541,41 @@ pub(super) fn render_finding(
         out.push_str(&line);
         out.push('\n');
     }
+    let keep_context = context_adds_detail(finding, terminal);
+    if !keep_context && let Some(line) = seen_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
     out.push_str(terminal);
     out.push('\n');
-    if context_adds_detail(finding, terminal) {
+    if keep_context {
         out.push_str(&format!("next={context_command}\n"));
     }
     out
+}
+
+/// Most observed test inputs a `seen=` line lists before `(+N more)`.
+const MAX_SEEN_VALUES: usize = 6;
+
+/// `seen=V1; V2 (+N more)`: the input values the related tests already use,
+/// printed only when `next=` is omitted, because the context packet's
+/// `observed_values` is then the one fact this projection would otherwise
+/// drop. Absent when the producer observed no values.
+fn seen_line(finding: &Finding) -> Option<String> {
+    let values = &finding.activation.observed_values;
+    if values.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = values
+        .iter()
+        .take(MAX_SEEN_VALUES)
+        .map(|fact| clip(fact.value.trim()))
+        .collect();
+    let mut line = format!("seen={}", field(&shown.join("; ")));
+    if values.len() > MAX_SEEN_VALUES {
+        line.push_str(&format!(" (+{} more)", values.len() - MAX_SEEN_VALUES));
+    }
+    Some(line)
 }
 
 /// `owner=NAME`: the function the changed line belongs to, from the producer's
@@ -571,8 +600,10 @@ fn before_line(finding: &Finding) -> Option<String> {
 /// Whether `ripr context` still holds something this projection did not print.
 /// For a test-side gap with no concrete missing discriminator and at most one
 /// related test, the packet's remaining body is the same record, `before`,
-/// owner and producer-internal limitations, so `next=` is omitted and the
-/// agent writes the test instead of fetching it. Any other finding keeps the
+/// owner, observed inputs (printed as `seen=`), stage prose that restates
+/// `stages=` and producer-internal limitations, so `next=` is omitted and the
+/// agent writes the test instead of fetching it. The terminal is matched by its
+/// prefix; a reworded terminal keeps `next=` (fails closed). Any other finding keeps the
 /// pointer: the discriminator's reason, observed inputs, flow sink and extra
 /// related tests live only in the packet.
 fn context_adds_detail(finding: &Finding, terminal: &str) -> bool {
