@@ -21089,6 +21089,9 @@ id = "RIPR-SPEC-0260"
 name = "Python guarded-arm activation gate for return-value credit"
 spec = "docs/specs/RIPR-SPEC-0260-python-guarded-arm-activation.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::literal_or_edit_requires_each_alternative_to_change_the_selected_arm",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::changing_an_inline_case_suite_keeps_its_existing_evidence",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::an_unpaired_match_alternative_line_requires_a_row_that_flips_arms",
   "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_refuses_native_escapes_and_binding_changes",
   "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_ignores_nonexecuting_keyword_text",
   "crates/ripr/src/analysis/language/python/dunder_entry_tests.rs::guarded_self_field_credit_refuses_mixed_binding_targets_and_non_space_indents",
@@ -21171,7 +21174,9 @@ tests = [
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
   "fixtures/python_effect_order_guarded_before_call",
 ]
+fixtures = ["fixtures/python_match_or_missing_alternative"]
 code = [
+  "crates/ripr/src/analysis/language/python/match_alternatives.rs",
   "crates/ripr/src/analysis/language/python/effect_alignment.rs",
   "crates/ripr/src/analysis/language/python/sink_alignment.rs",
   "crates/ripr/src/analysis/language/python/guard_credit.rs",
@@ -21182,6 +21187,7 @@ code = [
   "crates/ripr/src/analysis/language/python/classify.rs",
 ]
 outputs = [
+  "fixtures/python_match_or_missing_alternative/expected/check.json",
   "fixtures/python_guarded_write_alias_overwrite/expected/check.json",
   "fixtures/python_guarded_field_value_untaken/expected/check.json",
   "fixtures/python_guarded_write_entered/expected/check.json",

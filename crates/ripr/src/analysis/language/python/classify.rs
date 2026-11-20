@@ -156,6 +156,8 @@ pub(super) struct PythonNoBehaviorContext {
     /// (`module_value.rs`, #9423). A diff with any other changed line cannot
     /// reconstruct the old module and keeps the abstention.
     pub(super) sole_line_replacement: bool,
+    /// The only changed line in this file was inserted or deleted.
+    pub(super) sole_unpaired_line: bool,
     /// The current per-file import check used the raw workspace write view
     /// and all admitted module spellings, before legacy path refusal flags.
     pub(super) module_import_unshadowed: bool,
@@ -1126,6 +1128,41 @@ fn classify_change_for_owner_inner<'a>(
         &related_candidates,
         &focus,
     );
+    // Paired case headers and literal continuation lines use the native match
+    // statement on both sides. A pure deletion uses the existing base-side
+    // source view, with the same symmetric arm-selection test.
+    let pattern_line = |raw: &str| {
+        raw.contains('|')
+            && (raw.trim_start().starts_with("case")
+                || no_behavior.brackets.new_in
+                || no_behavior.brackets.old_in
+                || old_guard.is_some())
+    };
+    let pattern_edit = pattern_line(line_text) || old_line_text.is_some_and(pattern_line);
+    let match_gap = if static_limit.is_none() && pattern_edit {
+        let side = owner_source
+            .map(|source| (owner, source, line))
+            .or_else(|| {
+                old_guard
+                    .as_ref()
+                    .map(|view| (&view.owner, view.source, view.line))
+            });
+        side.and_then(|(site_owner, source, site_line)| {
+            super::match_alternatives::missing(
+                site_owner,
+                source,
+                site_line,
+                old_line_text.unwrap_or(""),
+                no_behavior.sole_line_replacement || no_behavior.sole_unpaired_line,
+                &related_candidates,
+                &focus,
+            )
+        })
+    } else {
+        None
+    };
+    let missing_alternative = match_gap.is_some();
+    let boundary = match_gap.or(boundary);
     let boundary_gap = boundary
         .as_ref()
         .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
@@ -1930,7 +1967,7 @@ fn classify_change_for_owner_inner<'a>(
                 shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }]
-        } else if boundary_downgraded {
+        } else if boundary_downgraded || missing_alternative {
             // The boundary downgrade names the equality that would activate the
             // changed predicate, with the reason listing the operand values the
             // strong related calls actually bind.

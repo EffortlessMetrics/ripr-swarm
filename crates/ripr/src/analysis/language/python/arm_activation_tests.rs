@@ -347,3 +347,141 @@ fn a_chained_method_rule_fails_open_when_the_result_is_read_otherwise() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn literal_or_edit_requires_each_alternative_to_change_the_selected_arm() -> Result<(), String> {
+    use ExposureClass::{Exposed, WeaklyExposed};
+
+    let classify_case = |old: &str,
+                         new: &str,
+                         prefix: &str,
+                         tests: &str|
+     -> Result<Finding, String> {
+        let source = format!(
+            "def kind(val):\n    match val:\n{prefix}        case {new}:\n            return True\n        case _:\n            return False\n"
+        );
+        let line = 3 + prefix.lines().count();
+        let owners = extract_owners(Path::new(OWNER_FILE), &source);
+        let tests = extract_tests(
+            Path::new(TEST_FILE),
+            &format!("{KIND_IMPORT}\nimport pytest\n\n{tests}"),
+        );
+        classify_change_with_context(
+            Path::new(OWNER_FILE),
+            line,
+            &format!("        case {new}:"),
+            Some(&format!("        case {old}:")),
+            &owners,
+            &tests,
+            PythonNoBehaviorContext {
+                sole_line_replacement: true,
+                ..Default::default()
+            },
+            Some(&source),
+        )
+        .ok_or_else(|| "missing Python case finding".to_string())
+    };
+    let table = |rows: &str| {
+        format!(
+            "@pytest.mark.parametrize('val, expected', [{rows}])\ndef test_kind(val, expected):\n    assert kind(val) == expected\n"
+        )
+    };
+    let yes = r#""yes""#;
+    let both = r#""yes" | "y""#;
+    let three = r#""yes" | "y" | "on""#;
+    let misses = table(r#"("yes", True), ("off", False)"#);
+    let y = table(r#"("y", True)"#);
+    for (old, new) in [(both, yes), (yes, both)] {
+        let missed = classify_case(old, new, "", &misses)?;
+        assert_eq!(missed.class, WeaklyExposed);
+        assert_eq!(
+            missed
+                .activation
+                .missing_discriminators
+                .iter()
+                .map(|m| m.value.as_str())
+                .collect::<Vec<_>>(),
+            [r#"val == "y""#]
+        );
+        assert_eq!(classify_case(old, new, "", &y)?.class, Exposed);
+    }
+    for (old, new) in [(three, yes), (yes, three)] {
+        let partial = classify_case(old, new, "", &y)?;
+        assert_eq!(partial.class, WeaklyExposed);
+        assert_eq!(
+            partial
+                .activation
+                .missing_discriminators
+                .first()
+                .ok_or("missing on discriminator")?
+                .value,
+            r#"val == "on""#
+        );
+        let complete = table(r#"("y", True), ("on", True)"#);
+        assert_eq!(classify_case(old, new, "", &complete)?.class, Exposed);
+    }
+    for prior in [
+        "        case \"y\":\n            return True\n",
+        "        case other if other:\n            return True\n",
+    ] {
+        assert_eq!(classify_case(both, yes, prior, &y)?.class, WeaklyExposed);
+    }
+    let other = "        case \"other\":\n            return False\n";
+    assert_eq!(classify_case(both, yes, other, &y)?.class, Exposed);
+    for test in [
+        "def test_kind():\n    assert kind(*get_args()) == True\n",
+        "def test_kind():\n    kind('y')\n    assert kind('yes') == True\n",
+        "def test_kind():\n    assert kind('yes') == True, kind('y')\n",
+        "def test_kind():\n    assert kind('yes') == True\n    assert kind('y') is not None\n",
+    ] {
+        assert_eq!(
+            classify_case(both, yes, "", test)?.class,
+            WeaklyExposed,
+            "{test}"
+        );
+    }
+
+    // Numeric patterns compare by equality, singleton patterns by identity.
+    // A row equal to an altered alternative must still flip arm selection.
+    for (old, new, row, class) in [
+        ("2 | 1", "2", "True", Exposed),
+        ("0x20 | 1", "1", "0x20", Exposed),
+        ("b'a' | b'b'", "b'a'", "b'b'", Exposed),
+        ("2j | 1j", "2j", "3", WeaklyExposed),
+        ("1+2j | 3", "3", "3", WeaklyExposed),
+        ("2 | True", "2", "1", WeaklyExposed),
+        ("True | 1", "True", "True", WeaklyExposed),
+        ("True | 1", "True", "1.0", Exposed),
+        (
+            "2 | 9007199254740993",
+            "2",
+            "9007199254740992.0",
+            WeaklyExposed,
+        ),
+        (r#""a|b" | "x""#, r#""x""#, "'a|b'", Exposed),
+    ] {
+        let test = format!("def test_kind():\n    assert kind({row}) == True\n");
+        assert_eq!(
+            classify_case(old, new, "", &test)?.class,
+            class,
+            "{old} with {row}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn changing_an_inline_case_suite_keeps_its_existing_evidence() -> Result<(), String> {
+    let source = "def kind(val):\n    match val:\n        case 'yes' | 'y': return False\n        case _: return False\n";
+    assert_eq!(
+        classify_at(
+            source,
+            3,
+            "        case 'yes' | 'y': return True",
+            KIND_IMPORT,
+            "def test_kind():\n    assert kind('yes') == False\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

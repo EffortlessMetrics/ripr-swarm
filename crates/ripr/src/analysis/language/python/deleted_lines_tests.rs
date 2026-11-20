@@ -163,6 +163,52 @@ fn assert_base_side_shape(findings: &[Finding], expression: &str) -> Result<(), 
 
 const CAPPED: &str = "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n# keep the cap\n    return total\n";
 
+#[test]
+fn an_unpaired_match_alternative_line_requires_a_row_that_flips_arms() -> Result<(), String> {
+    let alternative = "            | 'y'";
+    let short = "def kind(val):\n    match val:\n        case (\n            'yes'\n        ):\n            return True\n        case _:\n            return False\n";
+    let long = short.replace("        ):", &format!("{alternative}\n        ):"));
+    for (value, class) in [
+        ("yes", ExposureClass::WeaklyExposed),
+        ("y", ExposureClass::Exposed),
+    ] {
+        for (source, added, removed, currentness) in [
+            (
+                short,
+                vec![],
+                vec![line(5, 5, alternative)],
+                SourceCurrentness::BaseDeleted,
+            ),
+            (
+                long.as_str(),
+                vec![5],
+                vec![],
+                SourceCurrentness::CandidateCurrent,
+            ),
+        ] {
+            let test = format!(
+                "from src.cart import kind\n\ndef test_kind():\n    assert kind('{value}') == True\n"
+            );
+            let findings = analyze_with_test("match-or-line", source, &test, &added, removed)?;
+            let [finding] = findings.as_slice() else {
+                return Err(format!("expected one match finding: {findings:?}"));
+            };
+            assert_eq!(finding.source_currentness, currentness);
+            assert_eq!(finding.class, class);
+            if class == ExposureClass::WeaklyExposed {
+                assert!(
+                    finding
+                        .activation
+                        .missing_discriminators
+                        .iter()
+                        .any(|m| m.value == "val == 'y'")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The #7587 shape: the indented comment is re-added at column 0 and pairs
 /// with the old comment by content, so no added line pairs with the deleted
 /// clamp. It was silent; it is now base-side evidence on `capped_total`.
