@@ -12,7 +12,7 @@ use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
     ExposureClass, Finding, LanguageId, LanguageStatus, MissingDiscriminatorFact, RelatedTest,
-    StageEvidence,
+    StageEvidence, StageState,
 };
 use crate::output::next_step::{ANALYZER_ROUTE_SENTENCE_PREFIX, reconcile_next_step};
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
@@ -1449,7 +1449,7 @@ fn finding_message(finding: &Finding) -> String {
     };
     parts.push(format!(
         "{subject} {}.",
-        finding_class_message_predicate(&finding.class)
+        finding_class_message_predicate(finding)
     ));
     // RIPR-SPEC-0088 §PR8: the SARIF message text is a machine-consumed surface.
     // Use the shared reconciliation fn (not the raw field) so the embedded
@@ -1469,8 +1469,21 @@ fn finding_message(finding: &Finding) -> String {
 /// "Changed code `x` ...". Mirrors the human summary vocabulary ("appear
 /// noticed by tests", "partly noticed", "reached but not noticed", "no test
 /// path", "unclear") and states no runtime verdict.
-fn finding_class_message_predicate(class: &ExposureClass) -> &'static str {
-    match class {
+///
+/// A reached-but-not-noticed finding claims a reaching test only when reach is
+/// `yes` and not callee-only, the same guard the human classification hint
+/// applies (#7003, #7330); weak or callee-only reach keeps the uncertainty.
+fn finding_class_message_predicate(finding: &Finding) -> &'static str {
+    let reach_established = finding.ripr.reach.state == StageState::Yes
+        && !finding
+            .ripr
+            .reach
+            .summary
+            .starts_with(crate::domain::CALLEE_ONLY_REACH_PREFIX);
+    match &finding.class {
+        ExposureClass::ReachableUnrevealed if !reach_established => {
+            "has no assertion that appears to notice a change, and test reach to it is not established"
+        }
         ExposureClass::Exposed => "appears noticed by tests",
         ExposureClass::WeaklyExposed => "is only partly noticed by tests",
         ExposureClass::ReachableUnrevealed => {
@@ -3632,6 +3645,36 @@ weakly_gripped = "note"
             let message = finding_message(&finding);
             assert!(!message.contains(class.as_str()), "{message}");
             assert!(!message.contains('\n'), "{message}");
+        }
+
+        // #15374 review: reached-but-not-noticed claims a reaching test only
+        // when reach is established; weak or callee-only reach keeps the doubt.
+        let mut reached = sample_finding();
+        reached.class = ExposureClass::ReachableUnrevealed;
+        reached.ripr.reach = stage(StageState::Yes, "related tests call discounted_total");
+        let message = finding_message(&reached);
+        assert!(
+            message.contains("is reached by tests, but no assertion"),
+            "{message}"
+        );
+        for reach in [
+            stage(StageState::Weak, "marker test only"),
+            stage(
+                StageState::Yes,
+                &format!(
+                    "{} discounted_total",
+                    crate::domain::CALLEE_ONLY_REACH_PREFIX
+                ),
+            ),
+        ] {
+            let mut unestablished = reached.clone();
+            unestablished.ripr.reach = reach;
+            let message = finding_message(&unestablished);
+            assert!(!message.contains("is reached by tests"), "{message}");
+            assert!(
+                message.contains("test reach to it is not established."),
+                "{message}"
+            );
         }
 
         // Empty expression: a plain subject, still one sentence.
