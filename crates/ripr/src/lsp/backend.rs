@@ -9489,6 +9489,9 @@ fn workspace_status_receipt_summary(
 /// is still reported not_analyzed (#6853 review).
 fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDiffScope>) -> String {
     let raise = match partial_scope {
+        // No budget raise can complete this run, so the document route is
+        // the same narrowing advice the workspace status gives.
+        Some(scope) if scope.whole_diff_is_unreachable() => return scope.widen_instruction(),
         Some(scope) => scope.budget_raise_instruction(),
         None => "raise RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET".to_string(),
     };
@@ -10398,6 +10401,7 @@ mod top_limitation_selection_tests {
             whole_diff_budgets: None,
             over_limit_files: Vec::new(),
             line_budget_limits: Vec::new(),
+            enabled_changed_lines: 0,
             partition_identity: "sha256:partition".to_string(),
         }
     }

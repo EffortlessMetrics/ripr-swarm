@@ -236,6 +236,18 @@ doctor guidance before the diff loader runs.
 The existing PR-evidence path inventory uses the same inclusion option, keeping
 its changed-file count aligned with retained gitlinks in the packet diff.
 
+An explicit `--base` that does not resolve gets advice shaped by its spelling
+(#15484). A fetched remote-tracking form is named first, as a capitalized
+sentence that quotes the short `origin/<name>` spelling when
+`rev-parse --symbolic-full-name` maps it to exactly that ref (the full
+`refs/remotes/...` form when a tag or local branch shadows it). Otherwise a
+full 40- or 64-hex commit id names `git fetch <remote> <id>` (with
+`--unshallow` in a shallow clone), and a dotted release-tag name
+(`v1.2`, `v1.2.3-rc.1`) names `git fetch --tags`, which follows the current
+branch's remote. Abbreviated ids, which `git fetch` cannot request, and names
+such as `deadbeef`, `v2` or `v2-feature`, which are also valid branch names,
+keep the branch advice.
+
 ### Honesty bar
 
 - A resolved base MUST genuinely exist (`git rev-parse --verify` must

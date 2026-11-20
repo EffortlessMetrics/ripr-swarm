@@ -1,0 +1,18 @@
+# Base-resolution and partial-scope advice that names a working next step (#15484).
+[[extend]]
+id = "RIPR-SPEC-0084"
+tests = [
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_commit_fetch_for_a_hex_id",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_tag_fetch_for_a_release_tag_shape",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_prefers_the_short_tracking_spelling_when_unambiguous",
+  "crates/ripr/tests/hostile_repos.rs::unresolved_commit_id_base_names_the_commit_fetch_route",
+  "crates/ripr/tests/hostile_repos.rs::unresolved_release_tag_base_names_the_tag_fetch_route",
+  "crates/ripr/tests/hostile_repos.rs::fetched_only_base_advice_is_a_capitalized_sentence_with_the_short_spelling",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0364"
+tests = [
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::partial_widen_says_to_narrow_when_no_budget_can_complete_the_run",
+  "crates/ripr/tests/hostile_repos.rs::partial_scope_over_the_analysis_limit_says_to_narrow_not_to_raise_the_budget",
+]

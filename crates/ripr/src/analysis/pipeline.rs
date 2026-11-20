@@ -9282,6 +9282,7 @@ index 0000000..1111111 100644
             whole_diff_budgets: None,
             over_limit_files: Vec::new(),
             line_budget_limits: Vec::new(),
+            enabled_changed_lines: 0,
             partition_identity: "sha256:partition".to_string(),
         }
     }

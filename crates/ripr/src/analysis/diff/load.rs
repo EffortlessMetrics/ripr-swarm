@@ -2236,6 +2236,16 @@ fn missing_ref_repair(
     // `git fetch` cannot request an abbreviated one, and a short hex word
     // (`deadbeef`, `cafe123`) is as likely a branch, so those keep the
     // branch advice below.
+    // Git also accepts a full-length hex branch name, so a fetched branch of
+    // that spelling keeps its working tracking advice (#8652).
+    if looks_like_commit_id(missing_ref) {
+        let remotes = configured_remotes(root, git_timeout);
+        if let Some(advice) =
+            remote_tracking_advice(root, missing_ref, flag, remotes.as_deref(), git_timeout)
+        {
+            return advice;
+        }
+    }
     if looks_like_commit_id(missing_ref)
         && let Some(remote) = commit_fetch_remote(root, git_timeout)
     {
@@ -2305,10 +2315,11 @@ fn missing_ref_repair(
     // and `git fetch <remote>` does not bring tags that no fetched branch
     // reaches. Shape only: asking the remote which tags exist costs a network
     // round trip this local diagnosis never makes.
-    if looks_like_release_tag(missing_ref)
-        && let Some(remote) = commit_fetch_remote(root, git_timeout)
-    {
-        return format!("Fetch the tags (for example `git fetch --tags {remote}`)");
+    // Unqualified, like the branch fallback below: `git fetch --tags`
+    // follows the current branch's remote, which in a fork checkout is often
+    // the one publishing the release (`upstream`), not `origin`.
+    if looks_like_release_tag(missing_ref) && commit_fetch_remote(root, git_timeout).is_some() {
+        return "Fetch the tags (for example `git fetch --tags`)".to_string();
     }
     let plain_branch = branch_like && !missing_ref.contains('/');
     match remotes.as_deref() {
@@ -5706,6 +5717,23 @@ mod tests {
         )?;
         let tracked = missing_ref_repair(&dir, "deadbeef", "--base", None);
         assert!(tracked.contains("--base origin/deadbeef`"), "{tracked}");
+        // Git accepts a full-length hex branch name too: once fetched, its
+        // tracking form is the working advice, not a commit fetch.
+        let hex_branch = "fedcba9876543210fedcba9876543210fedcba98";
+        run_git_checked(
+            &dir,
+            &[
+                "update-ref",
+                &format!("refs/remotes/origin/{hex_branch}"),
+                "HEAD",
+            ],
+        )?;
+        let tracked = missing_ref_repair(&dir, hex_branch, "--base", None);
+        assert!(
+            tracked.contains(&format!("--base origin/{hex_branch}`"))
+                && !tracked.contains("Fetch the commit"),
+            "{tracked}"
+        );
         let branch = missing_ref_repair(&dir, "feature-x", "--base", None);
         assert!(
             branch.contains("fetched branch is named `origin/feature-x`"),
@@ -5731,7 +5759,7 @@ mod tests {
         for tag in ["v9.9.9", "v2.0", "v1.2.3-rc.1"] {
             let repair = missing_ref_repair(&dir, tag, "--base", None);
             assert!(
-                repair.contains("`git fetch --tags origin`") && !repair.contains("fetched branch"),
+                repair.contains("`git fetch --tags`") && !repair.contains("fetched branch"),
                 "{tag} needs the tag fetch, got: {repair}"
             );
         }

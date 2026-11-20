@@ -845,6 +845,10 @@ pub struct PartialDiffScope {
     /// budget raised would be clamped back to the same partition (#13641
     /// review).
     pub line_budget_limits: Vec<(&'static str, usize)>,
+    /// Changed lines across the enabled-language files of the whole diff.
+    /// Unlike the uninspected lower bound, it leaves out disabled-language
+    /// files, which no line limit or budget counts.
+    pub enabled_changed_lines: usize,
     /// Lowercase hex sha256 of the canonical partition form (decision 7).
     pub partition_identity: String,
 }
@@ -881,9 +885,10 @@ impl PartialDiffScope {
         if self.whole_diff_budgets.is_some() || !self.over_limit_files.is_empty() {
             return None;
         }
-        let total = self
-            .selected_changed_lines
-            .saturating_add(self.uninspected_changed_lines_lower_bound);
+        // Only enabled-language lines count against a line limit; a cleared
+        // whole-diff budget can also come from the index guard, which this
+        // line-limit advice must not claim.
+        let total = self.enabled_changed_lines;
         let (env, limit) = self
             .line_budget_limits
             .iter()
@@ -893,6 +898,12 @@ impl PartialDiffScope {
         // stays within reach of the built-in guard; past it, narrowing leads
         // and the limit raise stays named for larger runners.
         (total > limit && total > DIFF_CHANGED_RUST_LINE_LIMIT).then_some((total, limit, env))
+    }
+
+    /// Whether no partial-budget raise can complete the run, so every
+    /// recovery surface leads with narrowing instead.
+    pub(crate) fn whole_diff_is_unreachable(&self) -> bool {
+        self.unreachable_whole_diff().is_some()
     }
 
     /// The lead-in each surface puts before [`Self::widen_instruction`]:
@@ -1732,6 +1743,7 @@ fn select_admitted_partial_diff_partition(
                 limits
             },
         ),
+        enabled_changed_lines: enabled_lines,
         partition_identity: sha256_hex(canonical.as_bytes()),
     }))
 }
@@ -8438,6 +8450,18 @@ fn absent_delimiter_boundary_returns_head() {
              RIPR_MAX_DIFF_CHANGED_RUST_LINES first is the other route), then re-run"
         );
         assert_eq!(narrow.widen_lead(true), "To get a complete result, ");
+        // Only enabled-language lines count: the same partition whose whole
+        // diff is mostly disabled-language lines (or whose whole-diff budget
+        // the index guard cleared) is not a line-limit problem.
+        let mostly_disabled = PartialDiffScope {
+            enabled_changed_lines: 6,
+            ..narrow.clone()
+        };
+        assert!(!mostly_disabled.whole_diff_is_unreachable());
+        assert_eq!(
+            mostly_disabled.widen_lead(true),
+            "To widen the analyzed partition, "
+        );
         // Control: the same diff under a limit that can hold it keeps the
         // incremental advice, which can complete the run.
         let reachable = require_partial(

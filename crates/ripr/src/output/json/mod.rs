@@ -434,6 +434,7 @@ mod tests {
             whole_diff_budgets: None,
             over_limit_files: Vec::new(),
             line_budget_limits: Vec::new(),
+            enabled_changed_lines: 0,
             partition_identity: "b".repeat(64),
         }
     }

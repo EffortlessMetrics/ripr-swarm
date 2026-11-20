@@ -809,7 +809,7 @@ fn unresolved_release_tag_base_names_the_tag_fetch_route() -> Result<(), String>
     let scratch = Scratch::new("tagbase")?;
     let root = repo_with_origin(&scratch, "r")?;
     let stderr = base_refusal(&root, "v9.9.9")?;
-    if !stderr.contains("`git fetch --tags origin`") || stderr.contains("fetched branch") {
+    if !stderr.contains("`git fetch --tags`") || stderr.contains("fetched branch") {
         return Err(format!("a release-tag name needs the tag fetch\n{stderr}"));
     }
     let stderr = base_refusal(&root, "velocity")?;
