@@ -864,7 +864,7 @@ fn durable_attempt_for_seam(
         AttemptFailure::new(
             super::workspace::CODE_ANALYSIS_FAILED,
             format!(
-                "the durable attempt store could not be read, so a live attempt for this seam cannot be ruled out: {error}; no session attempt was created"
+                "no session attempt was created: the durable attempt store could not be read, so a live attempt for this seam cannot be ruled out: {error}"
             ),
             "run `ripr agent status` in the repository for the full diagnostic, then retry",
         )
