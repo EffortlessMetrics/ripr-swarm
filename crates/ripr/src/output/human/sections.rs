@@ -693,6 +693,13 @@ pub(crate) fn render_finding_with_config(
 /// word is one of the adapter's own phrase words. Whitespace between the two
 /// words may include a wrap break, because this runs on the wrapped block;
 /// both names have the same length, so the wrap layout is unchanged.
+///
+/// Text the analyzed project wrote is never renamed: a backtick-quoted span,
+/// and every occurrence of the finding's own source values (changed
+/// expressions, owner, file, related test names, files and oracles, flow
+/// sinks and sink texts) that contain `TypeScript`. A source value that the
+/// renderer wraps across lines is protected per line only where a whole
+/// value line appears; that residual is limited to values over a line long.
 pub(super) fn name_finding_language(finding: &Finding, rendered: String) -> String {
     if finding.language != Some(LanguageId::JavaScript) || !rendered.contains("TypeScript") {
         return rendered;
@@ -714,10 +721,12 @@ pub(super) fn name_finding_language(finding: &Finding, rendered: String) -> Stri
         "external",
         "bounded",
     ];
+    let protected = project_text_ranges(finding, &rendered, NAME);
     let word_char = |c: char| c.is_alphanumeric() || c == '/' || c == '_';
     let mut named = String::with_capacity(rendered.len());
     let mut rest = rendered.as_str();
     while let Some(at) = rest.find(NAME) {
+        let absolute = rendered.len() - rest.len() + at;
         let (before, from) = rest.split_at(at);
         let after = &from[NAME.len()..];
         named.push_str(before);
@@ -736,7 +745,8 @@ pub(super) fn name_finding_language(finding: &Finding, rendered: String) -> Stri
         let previous_separated = named.ends_with(char::is_whitespace);
         let adapter_phrase = (separated && NEXT_WORDS.contains(&next_word))
             || (previous_separated && PREVIOUS_WORDS.contains(&previous_word));
-        named.push_str(if whole_word && adapter_phrase {
+        let project_text = protected.iter().any(|range| range.contains(&absolute));
+        named.push_str(if whole_word && adapter_phrase && !project_text {
             "JavaScript"
         } else {
             NAME
@@ -745,6 +755,55 @@ pub(super) fn name_finding_language(finding: &Finding, rendered: String) -> Stri
     }
     named.push_str(rest);
     named
+}
+
+/// Byte ranges of `rendered` that quote the analyzed project's own text and
+/// contain `name`: backtick spans on one line, and occurrences of the
+/// finding's source values (#15325).
+fn project_text_ranges(
+    finding: &Finding,
+    rendered: &str,
+    name: &str,
+) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    for line_start in std::iter::once(0).chain(rendered.match_indices('\n').map(|(at, _)| at + 1)) {
+        let line = rendered[line_start..].split('\n').next().unwrap_or("");
+        let mut ticks = line.match_indices('`').map(|(at, _)| at);
+        while let (Some(open), Some(close)) = (ticks.next(), ticks.next()) {
+            if line[open..close].contains(name) {
+                ranges.push(line_start + open..line_start + close + 1);
+            }
+        }
+    }
+    let probe = &finding.probe;
+    let mut values: Vec<String> = vec![
+        probe.expression.clone(),
+        probe.location.file.display().to_string(),
+    ];
+    values.extend(probe.before.iter().cloned());
+    values.extend(probe.after.iter().cloned());
+    values.extend(probe.owner.iter().map(|owner| owner.0.clone()));
+    for test in &finding.related_tests {
+        values.push(test.name.clone());
+        values.push(test.file.display().to_string());
+        values.extend(test.oracle.iter().cloned());
+    }
+    values.extend(finding.flow_sinks.iter().map(|sink| sink.text.clone()));
+    values.extend(finding.changed_sink.iter().cloned());
+    values.extend(finding.observed_sink.iter().cloned());
+    for value in values.iter().filter(|value| value.contains(name)) {
+        for piece in std::iter::once(value.as_str()).chain(value.lines()) {
+            let piece = piece.trim();
+            if piece.contains(name) {
+                ranges.extend(
+                    rendered
+                        .match_indices(piece)
+                        .map(|(at, matched)| at..at + matched.len()),
+                );
+            }
+        }
+    }
+    ranges
 }
 
 pub(super) fn render_finding_with_shared_sections(

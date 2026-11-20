@@ -6825,6 +6825,58 @@ mod tests {
         );
     }
 
+    /// #15325: the project's own text keeps its words. A JavaScript literal or
+    /// test name that reads like an adapter phrase is quoted as written, in
+    /// the full block and the digest, while the adapter's own prose is renamed.
+    #[test]
+    fn javascript_projection_keeps_project_text_that_reads_like_adapter_phrases() {
+        let mut js = typescript_preview_finding(false);
+        js.language = Some(LanguageId::JavaScript);
+        js.probe.location = SourceLocation::new("lib/mode.js", 3, 1);
+        js.probe.before = Some("return \"TypeScript preview disabled\";".to_string());
+        js.probe.after = Some("return \"TypeScript preview enabled\";".to_string());
+        js.probe.expression = "return \"TypeScript preview enabled\";".to_string();
+        js.related_tests.push(RelatedTest {
+            name: "accepts TypeScript test files".to_string(),
+            file: PathBuf::from("test/mode.test.js"),
+            line: 5,
+            oracle_strength: OracleStrength::Weak,
+            oracle_kind: OracleKind::ExactValue,
+            oracle: Some("expect(mode()).toBe(\"TypeScript preview enabled\")".to_string()),
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        });
+        for rendered in [
+            render_finding(&js),
+            render(&single_finding_output(js.clone())),
+        ] {
+            assert!(
+                rendered.contains("\"TypeScript preview enabled\""),
+                "{rendered}"
+            );
+            assert!(
+                !rendered.contains("JavaScript preview enabled"),
+                "{rendered}"
+            );
+            assert!(
+                !rendered.contains("JavaScript preview disabled"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("accepts JavaScript test"), "{rendered}");
+            assert!(rendered.contains("JavaScript preview"), "{rendered}");
+        }
+        let block = "  Related test: test/a.js:1 accepts TypeScript test files\n\
+            Next step \u{2014} TypeScript preview advisory: check `TypeScript preview` stays\n";
+        assert_eq!(
+            super::sections::name_finding_language(&js, block.to_string()),
+            "  Related test: test/a.js:1 accepts TypeScript test files\n\
+            Next step \u{2014} JavaScript preview advisory: check `TypeScript preview` stays\n"
+        );
+    }
+
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
