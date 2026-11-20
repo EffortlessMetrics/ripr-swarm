@@ -4,6 +4,7 @@ mod boundary_input_limit;
 mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
+mod predicate_boundary_pairing;
 mod shared_execution_context;
 mod unread_owner_result_field;
 mod unselected_arm;

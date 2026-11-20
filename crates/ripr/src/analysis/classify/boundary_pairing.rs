@@ -1289,6 +1289,31 @@ fn owner_call_activates_boundary(
         && activation_marks_boundary_call(activation, call, &test.file)
 }
 
+/// A test-local asserting helper can receive the owner result as a value
+/// (including a clone), or through an invoked zero-argument callback. Verify
+/// the input of this argument's own call, independently of other statements.
+pub(in crate::analysis) fn helper_argument_is_boundary_call(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    argument: &str,
+    line: usize,
+    index: &RustIndex,
+) -> bool {
+    let argument = argument.trim();
+    let expression = argument.strip_prefix("||").unwrap_or(argument).trim();
+    let expression = expression.strip_suffix(".clone()").unwrap_or(expression);
+    if super::owner_pin::direct_call_name(expression) != Some(&owner.name)
+        || !super::call_identity::boundary_owner_calls_resolve(index, owner, test, expression, line)
+    {
+        return false;
+    }
+    let calls = owner_call_sites(expression, owner);
+    matches!(calls.as_slice(), [args] if argument_list_activates_boundary(
+        probe, owner, test, args, super::argument_fold::FoldScope::of_test(test, index)
+    ))
+}
+
 fn argument_list_activates_boundary(
     probe: &Probe,
     owner: &FunctionSummary,
