@@ -143,10 +143,10 @@ use tower_lsp_server::ls_types::{
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
     RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    ShowMessageParams, TextDocumentIdentifier, TraceValue, UnchangedDocumentDiagnosticReport,
-    Unregistration, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
-    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
+    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
+    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -4095,6 +4095,9 @@ impl Backend {
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
+                DocumentStalenessReason::SavedContentNotYetAnalyzed => {
+                    "Saving again cannot change this; the evidence returns when ripr analyzes the saved file. Run `ripr.refresh` if it does not."
+                }
             };
             return markdown_hover(format!(
                 "**ripr** evidence for this file is paused: {}. {route}",
@@ -4393,6 +4396,85 @@ impl Backend {
                 }
             }
         }
+    }
+
+    /// Register one save of `uri` (a client `didSave`, or the save implied
+    /// by an external rewrite the client reloaded). `prior_change` is the
+    /// quarantine edge of a buffer change registered in the same lifecycle
+    /// step and not yet published, with the version captured for its
+    /// decision; it is folded into the save's edge so that step publishes
+    /// once (#15316). If the save cannot be registered, the change edge is
+    /// still published on its own so a withdrawal is never lost.
+    async fn register_save(
+        &self,
+        uri: Uri,
+        save_text: Option<String>,
+        prior_change: Option<(QuarantineTransition, Option<i32>)>,
+    ) {
+        // Deduplicate by saved-content input identity (#1908): a save whose
+        // bytes did not change since the last recorded save cannot change
+        // analysis input, so it neither advances the workspace revision nor
+        // schedules a refresh. The save event is still disclosed.
+        // With includeText: false the save identity would come from the
+        // retained buffer — but only while that buffer is still a
+        // synchronization authority. After a rejected incremental change
+        // (#1746) the client's persisted document may diverge from the frozen
+        // buffer, so the save carries no observable identity: adopt none
+        // rather than invent one from text the server cannot trust.
+        let text = if self.document_buffer_authority_unknown(&uri) {
+            save_text.clone()
+        } else {
+            save_text.clone().or_else(|| self.document_text(&uri))
+        };
+        let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
+        // Update the per-document saved-content identity and quarantine
+        // state first (#1970): the dedup decision below gates the refresh,
+        // never the quarantine lift. A save whose buffer again matches the
+        // analyzed saved content re-serves the document even when no
+        // refresh is scheduled. A failed store lock means the save was never
+        // registered; skip every downstream mutation so the store, the
+        // dedup ledger, and the committed snapshot cannot diverge.
+        let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
+        else {
+            if let Some((change, change_version)) = prior_change {
+                self.handle_document_quarantine_transition(&uri, change, change_version)
+                    .await;
+            }
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    "ripr didSave dropped: the document store is unavailable; the save was not registered and no refresh was scheduled",
+                )
+                .await;
+            return;
+        };
+        let transition = prior_change.map_or(transition, |(change, _)| change.then(transition));
+        if let Some(digest) = &digest
+            && self.saved_content_digest_matches(&uri, digest)
+        {
+            self.handle_document_quarantine_transition(&uri, transition, decision_version)
+                .await;
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    "ripr didSave deduplicated: saved content is unchanged since the last recorded save; no refresh scheduled",
+                )
+                .await;
+            return;
+        }
+        // Only the saved document's own resolution can change; a deduplicated
+        // save returned above and leaves every cached key warm.
+        self.invalidate_rust_index_key(&uri);
+        match digest {
+            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
+            None => self.advance_workspace_revision(),
+        }
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
+            .await;
+        // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
+        // Diff-scoped findings are complete; seams run on explicit refresh only.
+        self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
+            .await;
     }
 
     /// Withdraw a dirty document's line-local diagnostics (#1970/#7771):
@@ -7349,21 +7431,22 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.handle_document_quarantine_transition(&uri, transition, decision_version)
-            .await;
         // An external rewrite (formatter, `git checkout`, a coding agent) that
         // the client reloads into an open buffer arrives as a change with no
         // `didSave`, so the evidence would stay paused behind advice to save
         // a file that is not dirty. When the new buffer is exactly the file
         // on disk it is saved content: record it as a save so the normal
-        // digest dedup and refresh path analyze it.
+        // digest dedup and refresh path analyze it. The change edge is
+        // handed to the save so the client receives one marker for this
+        // version, naming the saved-content state (#15316), instead of a
+        // "buffer diverges" marker followed by a same-version re-clear.
         if self.buffer_equals_unanalyzed_disk_content(&uri) {
-            self.did_save(DidSaveTextDocumentParams {
-                text_document: TextDocumentIdentifier { uri },
-                text: None,
-            })
-            .await;
+            self.register_save(uri, None, Some((transition, decision_version)))
+                .await;
+            return;
         }
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
+            .await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -7429,65 +7512,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        // Deduplicate by saved-content input identity (#1908): a save whose
-        // bytes did not change since the last recorded save cannot change
-        // analysis input, so it neither advances the workspace revision nor
-        // schedules a refresh. The save event is still disclosed.
-        let uri = params.text_document.uri;
-        // With includeText: false the save identity would come from the
-        // retained buffer — but only while that buffer is still a
-        // synchronization authority. After a rejected incremental change
-        // (#1746) the client's persisted document may diverge from the frozen
-        // buffer, so the save carries no observable identity: adopt none
-        // rather than invent one from text the server cannot trust.
-        let text = if self.document_buffer_authority_unknown(&uri) {
-            params.text.clone()
-        } else {
-            params.text.clone().or_else(|| self.document_text(&uri))
-        };
-        let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
-        // Update the per-document saved-content identity and quarantine
-        // state first (#1970): the dedup decision below gates the refresh,
-        // never the quarantine lift. A save whose buffer again matches the
-        // analyzed saved content re-serves the document even when no
-        // refresh is scheduled. A failed store lock means the save was never
-        // registered; skip every downstream mutation so the store, the
-        // dedup ledger, and the committed snapshot cannot diverge.
-        let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
-        else {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    "ripr didSave dropped: the document store is unavailable; the save was not registered and no refresh was scheduled",
-                )
-                .await;
-            return;
-        };
-        if let Some(digest) = &digest
-            && self.saved_content_digest_matches(&uri, digest)
-        {
-            self.handle_document_quarantine_transition(&uri, transition, decision_version)
-                .await;
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    "ripr didSave deduplicated: saved content is unchanged since the last recorded save; no refresh scheduled",
-                )
-                .await;
-            return;
-        }
-        // Only the saved document's own resolution can change; a deduplicated
-        // save returned above and leaves every cached key warm.
-        self.invalidate_rust_index_key(&uri);
-        match digest {
-            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
-            None => self.advance_workspace_revision(),
-        }
-        self.handle_document_quarantine_transition(&uri, transition, decision_version)
-            .await;
-        // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
-        // Diff-scoped findings are complete; seams run on explicit refresh only.
-        self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
+        self.register_save(params.text_document.uri, params.text, None)
             .await;
     }
 
@@ -9331,6 +9356,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         }
         DocumentStalenessReason::NoAnalyzedSavedContent => {
             "save the file if it is new, then refresh (`ripr.refresh`)"
+        }
+        DocumentStalenessReason::SavedContentNotYetAnalyzed => {
+            "they return when ripr analyzes the saved file; run `ripr.refresh` if they do not"
         }
     };
     format!(
