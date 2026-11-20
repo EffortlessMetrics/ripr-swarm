@@ -1603,12 +1603,13 @@ declarations cannot be read, no witness completes and propagation reads
 `propagation_unknown`. Ungated owners, an owner beside an unrelated
 `cfg(test)` module and a same-named function on another path keep the
 credit. A `#[path]` module declaration gates the owners it may reach:
-the file its literal names, resolved against the declaring file's
+the file its relative literal names, resolved against the declaring file's
 directory (case-insensitively, with a backslash read as a separator), any file under
 that file's directory, where its own `mod` declarations resolve, except a
 default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
 can move or compile out), and any file whose path spells the declaration's
-name. A target that is not a literal on a top-level out-of-line
+name. A rooted or drive-qualified literal is opaque and gates every owner.
+A target that is not a literal on a top-level out-of-line
 declaration (an inline module's `#[path]`, a `#[path]` declaration inside
 an inline module, a non-literal value, an empty literal or one ending in
 `/`, a literal rooted at `/` or holding a `:`, as a drive does) gates every owner,
