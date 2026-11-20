@@ -4996,7 +4996,8 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
 /// (`<div>` is an intrinsic element and `<Ns.Item>` a member tag), and a `<`
 /// that follows an identifier or `)` is a type argument or comparison. A `<`
 /// right after `>` opens a nested or arrow-returned element
-/// (`<Wrapper><Name/></Wrapper>`, `() =><Name/>`), so it counts.
+/// (`<Wrapper><Name/></Wrapper>`, `() =><Name/>`), so it counts. A generic
+/// type parameter list `<Name extends X>` or `<Name = X>` is not a render.
 /// The render proves reach only; assertion strength is judged separately.
 pub(crate) fn contains_jsx_element_name(test_file: &Path, body_text: &str, name: &str) -> bool {
     let is_jsx_file = test_file
@@ -5013,10 +5014,19 @@ pub(crate) fn contains_jsx_element_name(test_file: &Path, body_text: &str, name:
             .chars()
             .next()
             .is_some_and(|ch| ch.is_whitespace() || ch == '/' || ch == '>');
+        // `<Name extends X>(..) => ..` and `<Name = X>` open a generic type
+        // parameter list, not an element: an element name is never followed
+        // by `extends` or `=`.
+        let after_name = rest.trim_start();
+        let type_parameter = after_name.starts_with('=')
+            || after_name
+                .strip_prefix("extends")
+                .is_some_and(|tail| tail.starts_with(|ch: char| ch.is_whitespace()));
         let before = body_text[..idx].chars().next_back();
         let opens_element =
             before.is_none_or(|ch| !(is_javascript_identifier_char(ch) || matches!(ch, ')' | '<')));
         tag_ends
+            && !type_parameter
             && opens_element
             && !line_prefix_looks_like_comment_or_string(body_text, idx)
             && !inside_block_comment(body_text, idx)

@@ -218,3 +218,26 @@ fn a_render_with_an_unrelated_exact_assertion_is_not_exposed() -> Result<(), Str
     );
     Ok(())
 }
+
+#[test]
+fn a_generic_type_parameter_named_like_the_owner_is_not_a_render() -> Result<(), String> {
+    let body = "import React from 'react';\nimport { it, expect } from 'vitest';\nimport { Badge } from './Badge';\nit('identity', () => { const identity = <Badge extends object>(v: Badge) => v; expect(identity({})).toEqual({}); });\n";
+    assert!(
+        body.contains("<Badge extends object>"),
+        "fixture must declare the type parameter"
+    );
+    let guard = workspace(body)?;
+    let finding = finding(&guard.root)?;
+    let rows = finding
+        .get("related_tests")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.to_string().contains("import_path_affinity")),
+        "a type parameter list is not a render of the owner: {finding}"
+    );
+    Ok(())
+}
