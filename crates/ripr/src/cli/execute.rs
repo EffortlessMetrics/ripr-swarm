@@ -20,7 +20,7 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
             Ok(())
         }
         CliCommand::Init(args) => commands::init(&args).map_err(CommandError::from),
-        CliCommand::Config(args) => commands::config(&args),
+        CliCommand::Config(args) => commands::config(&args).map_err(CommandError::from),
         CliCommand::Pilot(args) => commands::pilot(&args).map_err(CommandError::from),
         CliCommand::Outcome(args) => commands::outcome(&args).map_err(CommandError::from),
         CliCommand::EvidenceHealth(args) => {

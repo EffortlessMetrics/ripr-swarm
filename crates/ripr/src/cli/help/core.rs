@@ -73,7 +73,6 @@ selects: a configured [suppressions] path that does not exist fails, and a
 present manifest (default .ripr/suppressions.toml) must parse.
 Exact-path keys (analysis.production_like_targets, analysis.test_harnesses
 target, languages.*.handwritten_files) must each name a file under the root.
-A missing declared file exits 1. Unmatched glob patterns are allowed.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 

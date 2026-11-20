@@ -648,8 +648,7 @@ and `languages.rust.handwritten_files`, `languages.python.handwritten_files`
 and `languages.typescript.handwritten_files`. Analysis treats a path that
 names no file as a setting that matches nothing, so a typo would otherwise
 switch the setting off without a word. `config validate` lists every missing
-entry with its key and exits 1 (#15495). A symlink must resolve to a file
-inside the validated root. Glob keys such as
+entry with its key and fails (#15495). Glob keys such as
 `generated_file_patterns` are not checked, because a pattern that matches no
 file today is legitimate.
 

@@ -1,11 +1,10 @@
 # Exit Codes
 
-ripr uses four ordinary command exit codes, plus standalone Unix check interruption:
+ripr uses three ordinary command exit codes, plus standalone Unix check interruption:
 
 | Code | Meaning |
 |------|---------|
 | `0`  | The command completed. |
-| `1`  | `config validate` found a declared exact path that does not resolve to a file under the selected root. |
 | `2`  | The command could not complete: usage, parse, operational, or internal error. |
 | `3`  | ripr declined: the command ran and reached a blocking result, or a request it will not run (the output says why). |
 | `130` | Supported standalone Unix `check` analysis was interrupted. |

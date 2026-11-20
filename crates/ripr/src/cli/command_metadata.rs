@@ -138,7 +138,7 @@ pub(crate) struct CommandOutputs {
 
 /// Ordinary command-completion contract projected into `help --json` (#5066).
 ///
-/// The numeric 0/1/2/3 mapping is owned by [`crate::cli::CommandError`] and
+/// The numeric 0/2/3 mapping is owned by [`crate::cli::CommandError`] and
 /// `docs/EXIT_CODES.md`. This enum names which of those codes a command can
 /// emit and the stdout disclosure an orchestrator must know. It is not a
 /// runtime mutation of any command's exit path. External standalone interruption
@@ -147,8 +147,6 @@ pub(crate) struct CommandOutputs {
 pub(crate) enum CommandExitContract {
     /// Standard contract: `0` completed, `2` could not complete. Never `3`.
     CompletedOrFailed,
-    /// A missing declared file is a completed lint finding (exit 1).
-    ConfigValidate,
     /// `ripr check` / `ripr diff`: findings still complete with `0`;
     /// unsupported input keeps its report and exits `2`.
     AdvisoryFindings,
@@ -208,7 +206,6 @@ const EXIT_DOCTOR_FINDINGS: CommandExitContract = CommandExitContract::DoctorFin
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
 fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
-        "cmd:config.validate" => Some(CommandExitContract::ConfigValidate),
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         // `gate check` composes review-comments with the same evaluator and
         // exit mapping (RIPR-SPEC-0435): a producer failure is config_error.
@@ -538,7 +535,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr config validate --root PATH",
         next_routes: &["doctor", "check"],
         stop_states: &["explicit refusal on invalid configuration"],
-        exit: CommandExitContract::ConfigValidate,
+        exit: EXIT_COMPLETED_OR_FAILED,
         limitations: "checks configuration only; it does not analyze, compile, or run tests.",
         not_applicable_reason: None,
     },
