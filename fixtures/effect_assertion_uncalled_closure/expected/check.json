@@ -100,7 +100,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a closure ripr cannot see invoked exactly once"
         }
       ],
       "stop_reasons": [],
@@ -202,7 +202,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a closure ripr cannot see invoked exactly once"
         }
       ],
       "stop_reasons": [],

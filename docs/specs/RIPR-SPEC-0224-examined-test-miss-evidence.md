@@ -124,6 +124,12 @@ vector is not by itself `no_assertion`. `assertion_not_credited` is not a
 bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust splits
 every such row into `assertion_inert` or `assertion_admission_unproven` from its typed
 refusal (#5446), so the unsplit value is not left on a Rust refused row.
+An `assertion_inert` row whose every refusal names the same conditional
+construct carries that construct as its `miss_support` value (`a \`for\` loop,
+which may run zero times`), and `output::related_test_miss` renders "this
+test's assertion is inside <construct>" (#15337). Refusals that disagree, or
+that name no construct, leave the support absent and the generic sentence in
+place. The support stays evidence only.
 
 ### Minimum evidence per miss
 

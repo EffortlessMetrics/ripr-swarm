@@ -4,7 +4,7 @@ use super::owner_pin::{AssertionRefusal, OwnerPinSyntax};
 use crate::analysis::classify::{ProbeContext, direct_call_name};
 use crate::analysis::facts::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
-use crate::domain::{RelatedTest, RelatedTestMiss};
+use crate::domain::{RelatedTest, RelatedTestMiss, RelatedTestMissSupport};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -196,6 +196,9 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
         // `AssertionInert` only when all of them agree; any disagreement or
         // unproven refusal is admission-unproven, independent of source order.
         let mut split: Option<RelatedTestMiss> = None;
+        // #15337: the construct every refusal names, while they all name the
+        // same one; any refusal without it, or naming another, clears it.
+        let mut construct: Option<Option<&'static str>> = None;
         for assertion in &test.assertions {
             let Some(refusal) = pin_syntax.equality_assertion_refusal(
                 probe,
@@ -208,8 +211,23 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
             };
             let miss = related_test_miss_for_assertion_refusal(context, test, &refusal);
             split = Some(combine_refusal_misses(split, miss));
+            let named = refusal.conditional_construct();
+            construct = Some(match construct {
+                Some(prior) if prior != named => None,
+                _ => named,
+            });
         }
         row.miss = Some(split.unwrap_or(RelatedTestMiss::AssertionAdmissionUnproven));
+        // The row names the construct only when it is inert and every
+        // refusal agrees on it, so the support is this row's own fact.
+        if row.miss == Some(RelatedTestMiss::AssertionInert)
+            && let Some(Some(construct)) = construct
+        {
+            row.miss_support = Some(RelatedTestMissSupport {
+                value: construct.to_string(),
+                flow_sink: None,
+            });
+        }
     }
 }
 

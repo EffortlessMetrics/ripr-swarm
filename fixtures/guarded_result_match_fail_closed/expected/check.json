@@ -228,7 +228,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         },
         {
           "name": "shadowed_callee_never_credits_the_seam",
@@ -240,7 +240,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         },
         {
           "name": "swallowed_error_arm_never_credits",
@@ -252,7 +252,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         },
         {
           "name": "variable_binding_scrutinee_keeps_existing_weaker_meaning",
@@ -264,7 +264,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         },
         {
           "name": "direct_owner_call_keeps_the_file_related",
@@ -518,7 +518,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         },
         {
           "name": "shadowed_callee_never_credits_the_seam",
@@ -530,7 +530,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         },
         {
           "name": "swallowed_error_arm_never_credits",
@@ -542,7 +542,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         },
         {
           "name": "variable_binding_scrutinee_keeps_existing_weaker_meaning",
@@ -554,7 +554,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+          "why": "assertion inert: this test's assertion is inside a `match` arm"
         }
       ],
       "stop_reasons": [],

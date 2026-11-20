@@ -281,3 +281,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — effect_assertion_uncalled_closure (22)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless effect_assertion_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

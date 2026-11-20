@@ -1,0 +1,108 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/owner_return_pin_json_uncalled_closure/input
+
+Summary: 3 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 3 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 3]: reach yes: Related tests appear to reach did_save_params: checks
+  E2 [findings 1, 3]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 3]: propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})
+  E4 [findings 1, 3]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  E5 [findings 1, 3]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  E6 [findings 1, 3]: local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)
+  E7 [findings 1, 3]: related test tests/save.rs:4 checks uses no oracle; misses: assertion inert: this test's assertion is inside a closure ripr cannot see invoked exactly once
+  E8 [findings 1, 3]: assertion not credited: `assert_eq!` in checks at tests/save.rs:4: the assertion is inside a closure ripr cannot see invoked exactly once
+  N1 [findings 1, 3]: Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
+
+Finding 1: NOTE ./src/lib.rs:5
+  id: probe:src_lib.rs:error_path:3c99e167
+Changed
+  before: Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})
+  expr:   Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})
+  source:  base_deleted — base-side evidence, not a candidate edit target
+Change type
+  error handling changed
+  family: error_path
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::did_save_params
+  gap id (for scripts): gap:rust:src/lib.rs:did_save_params:error_variant:error_path:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new
+Static exposure
+  reachable_unrevealed (note, confidence 0.79)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8
+Weakness
+  - No exact error variant discriminator was detected
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+Next step
+  shared guidance: N1
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/owner_return_pin_json_uncalled_closure/input --diff <cwd>/fixtures/owner_return_pin_json_uncalled_closure/diff.patch --mode fast probe:src_lib.rs:error_path:3c99e167
+  ripr context --root <cwd>/fixtures/owner_return_pin_json_uncalled_closure/input --diff <cwd>/fixtures/owner_return_pin_json_uncalled_closure/diff.patch --mode fast --at probe:src_lib.rs:error_path:3c99e167
+
+Finding 2: WARNING ./src/lib.rs:5
+  id: probe:src_lib.rs:return_value:9659b9fa
+Changed
+  before: Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})
+  after:  Ok(())
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::did_save_params
+  gap id (for scripts): gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok
+Static exposure
+  reachable_unrevealed (warning, confidence 0.79)
+Evidence
+  - reach yes: Related tests appear to reach did_save_params: checks
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: Ok(())
+  - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - local flow reaches returned value: Ok(()) (line 5)
+  - related test tests/save.rs:4 checks uses no oracle; misses: assertion inert: this test's assertion is inside a closure ripr cannot see invoked exactly once
+  - assertion not credited: `assert_eq!` in checks at tests/save.rs:4: the assertion is inside a closure ripr cannot see invoked exactly once
+Weakness
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - No strong discriminator was detected
+Next step
+  - ripr did not credit the `assert_eq!` in checks at tests/save.rs:4; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/owner_return_pin_json_uncalled_closure/input --diff <cwd>/fixtures/owner_return_pin_json_uncalled_closure/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
+  ripr context --root <cwd>/fixtures/owner_return_pin_json_uncalled_closure/input --diff <cwd>/fixtures/owner_return_pin_json_uncalled_closure/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
+
+Finding 3: NOTE ./src/lib.rs:5
+  id: probe:src_lib.rs:return_value:94904a64
+Changed
+  before: Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})
+  expr:   Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})
+  source:  base_deleted — base-side evidence, not a candidate edit target
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::did_save_params
+  gap id (for scripts): gap:rust:src/lib.rs:did_save_params:return_value:return_value:err_schemaerror_method_none_path_string_new_expected_string_new_observed_string_new
+Static exposure
+  reachable_unrevealed (note, confidence 0.79)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8
+Weakness
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - No strong discriminator was detected
+Next step
+  shared guidance: N1
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/owner_return_pin_json_uncalled_closure/input --diff <cwd>/fixtures/owner_return_pin_json_uncalled_closure/diff.patch --mode fast probe:src_lib.rs:return_value:94904a64
+  ripr context --root <cwd>/fixtures/owner_return_pin_json_uncalled_closure/input --diff <cwd>/fixtures/owner_return_pin_json_uncalled_closure/diff.patch --mode fast --at probe:src_lib.rs:return_value:94904a64
