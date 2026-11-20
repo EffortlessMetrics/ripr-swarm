@@ -46,9 +46,9 @@ mod method_hop_tests;
 #[cfg(test)]
 mod multi_caller_tests;
 #[cfg(test)]
-mod receiver_shape_tests;
-#[cfg(test)]
 mod multi_site_tests;
+#[cfg(test)]
+mod receiver_shape_tests;
 mod receiver_value;
 pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
@@ -798,7 +798,7 @@ fn receiver_ends_with_self(receiver: &str) -> bool {
     before
         .chars()
         .next_back()
-        .is_none_or(|c| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '$' | '#')))
+        .is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '$' | '#')))
 }
 
 /// A receiver expression that is exactly a constructed value of an

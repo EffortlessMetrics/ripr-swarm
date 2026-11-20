@@ -50,7 +50,10 @@ const ONE_LINE_TOP: &str = "    P { s: n }.go()";
 fn expect_chain(source: &str, label: &str) -> Result<(), String> {
     let (names, chain) = hops_above_unit(&[("src/lib.rs", source)])?;
     assert_eq!(names, ["go", "top"], "{label}: {chain:?}");
-    assert!(chain.hops.iter().all(|hop| hop.receiver.is_none()), "{label}");
+    assert!(
+        chain.hops.iter().all(|hop| hop.receiver.is_none()),
+        "{label}"
+    );
     Ok(())
 }
 
@@ -88,6 +91,7 @@ fn self_as_part_of_a_path_or_identifier_does_not_bind() {
         ("x.self.unit()", false),
         ("Self::unit()", false),
         ("my_self.unit()", false),
+        ("\u{e9}self.unit()", false),
         ("a::self.unit()", false),
         ("$self.unit()", false),
     ] {
@@ -119,15 +123,19 @@ fn own_line_constructed_receivers_bind() -> Result<(), String> {
             "struct literal",
             "    Parser {\n        s: n,\n    }\n    .go()",
         ),
-        ("type path call", "    P::new(\n        n,\n    )\n    .go()"),
+        (
+            "type path call",
+            "    P::new(\n        n,\n    )\n    .go()",
+        ),
         ("one-line constructor", "    P::new(n)\n        .go()"),
+        (
+            "comment before the call line",
+            "    P {\n        s: n,\n    } // built\n    .go()",
+        ),
     ] {
         let source = lib("        self.unit()", top_body)
             .replace("Parser {", "P {")
-            .replace(
-                "impl P {",
-                "impl P {\n    fn new(s: u64) -> P { P { s } }",
-            );
+            .replace("impl P {", "impl P {\n    fn new(s: u64) -> P { P { s } }");
         expect_chain(&source, label)?;
     }
     Ok(())
@@ -136,13 +144,22 @@ fn own_line_constructed_receivers_bind() -> Result<(), String> {
 #[test]
 fn own_line_receiver_that_is_not_a_constructed_local_type_stays_unbound() -> Result<(), String> {
     for (label, top_body) in [
-        ("variable on its own line", "    let p = P { s: n };\n    p\n    .go()"),
+        (
+            "variable on its own line",
+            "    let p = P { s: n };\n    p\n    .go()",
+        ),
         ("variable call line", "    let p = P { s: n };\n    p.go()"),
         ("call result", "    make()\n    .go()"),
-        ("lowercase path call", "    build::new(\n        n,\n    )\n    .go()"),
+        (
+            "lowercase path call",
+            "    build::new(\n        n,\n    )\n    .go()",
+        ),
         ("method result", "    P { s: n }.wrap()\n    .go()"),
         ("other type", "    Q { s: n }\n    .go()"),
         ("argument not receiver", "    check(P { s: n })\n    .go()"),
+        ("wrapped in a variant", "    Some(P { s: n })\n    .go()"),
+        ("block result", "    unsafe { P { s: n } }\n    .go()"),
+        ("macro result", "    vec![P { s: n }]\n    .go()"),
     ] {
         expect_stop_at_go(&lib("        self.unit()", top_body), label)?;
     }
@@ -151,7 +168,9 @@ fn own_line_receiver_that_is_not_a_constructed_local_type_stays_unbound() -> Res
 
 #[test]
 fn imported_type_on_an_own_line_receiver_stays_unbound() -> Result<(), String> {
-    let model = format!("{TYPE}impl P {{\n    pub fn go(&self) -> u64 {{ self.unit() }}\n    fn unit(&self) -> u64 {{ self.s * 2 }}\n}}\n");
+    let model = format!(
+        "{TYPE}impl P {{\n    pub fn go(&self) -> u64 {{ self.unit() }}\n    fn unit(&self) -> u64 {{ self.s * 2 }}\n}}\n"
+    );
     let chained = "pub fn top(n: u64) -> u64 {\n    P {\n        s: n,\n    }\n    .go()\n}\n";
     let local = format!("{model}{chained}");
     let (names, _) = hops_above_unit(&[("src/lib.rs", &local)])?;
