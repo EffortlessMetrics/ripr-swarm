@@ -1,5 +1,5 @@
 [package]
-name = "probe"
+name = "app"
 version = "0.0.0"
 edition = "2024"
 

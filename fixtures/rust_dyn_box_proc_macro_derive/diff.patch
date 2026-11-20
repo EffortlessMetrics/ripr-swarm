@@ -1,6 +1,6 @@
-diff --git a/probe/src/lib.rs b/probe/src/lib.rs
---- a/probe/src/lib.rs
-+++ b/probe/src/lib.rs
+diff --git a/app/src/lib.rs b/app/src/lib.rs
+--- a/app/src/lib.rs
++++ b/app/src/lib.rs
 @@ -8,6 +8,6 @@
  
  impl Shape for Square {

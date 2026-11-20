@@ -8,9 +8,9 @@ Issue: #15277
 
 ## Given
 
-`impl Shape for Square { fn area }` in the `probe` member changes from
+`impl Shape for Square { fn area }` in the `app` member changes from
 `self.0 * self.0` to `self.0 * self.0 + 1`. The unchanged `extlib` member,
-which `probe` depends on and imports `Ext` from, declares `pub trait Ext {
+which `app` depends on and imports `Ext` from, declares `pub trait Ext {
 fn area(&self) -> u32 { 7 } }` and the blanket `impl<T: ?Sized> Ext for T
 {}`. The test binds `let s: Box<dyn Shape> = Box::new(Square(3));` and
 asserts `s.area() == 7`. The blanket impl answers the call on the `Box`, so

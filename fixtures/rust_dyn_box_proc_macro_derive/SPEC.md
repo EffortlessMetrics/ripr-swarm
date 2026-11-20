@@ -8,11 +8,11 @@ Issue: #15277
 
 ## Given
 
-`impl Shape for Square { fn area }` in the `probe` member changes from
+`impl Shape for Square { fn area }` in the `app` member changes from
 `self.0 * self.0` to `self.0 * self.0 + 1`. The `mac` member is a
 proc-macro crate whose `Ext` derive emits `pub trait Ext { fn area(..) }
 impl Ext for Box<dyn crate::Shape> { fn area(..) { 7 } }` from a string
-literal, and `probe` applies `#[derive(Ext)]` to an unrelated struct. The
+literal, and `app` applies `#[derive(Ext)]` to an unrelated struct. The
 test binds `let s: Box<dyn Shape> = Box::new(Square(3));` and asserts
 `s.area() == 7`. The generated impl answers the call on the `Box`, so the
 test passes on the old code and on the new code.
