@@ -10,30 +10,58 @@
 //! a reason. A pin is checked against the report too: it must match the
 //! report's recorded version and must be older than the current one, so a pin
 //! cannot silently outlive the need for it.
-//! A clean capture must also agree with its producing commit. A dirty capture
-//! needs a pin because its commit does not identify its exact sources (#15533).
+//! The opt-in producer check compares clean captures with their producing
+//! commits and requires pins for dirty captures (#15533).
 
 use super::{
     EVIDENCE_PROMOTION_HONESTY_CORPUS, is_exact_git_commit, read_evidence_promotion_corpus,
 };
 use crate::run::capture_process_output;
+use ra_ap_syntax::{
+    Edition, SourceFile,
+    ast::{self, HasAttrs, HasModuleItem, HasName, LiteralKind},
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 const SEAM_CACHE_SOURCE: &str = "crates/ripr/src/analysis/seam_cache.rs";
-const CONSTANT_PREFIX: &str = "pub(crate) const CACHE_SCHEMA_VERSION: &str = \"";
 
 /// Read the analyzer's current full-cache generation from its source, so the
 /// gate follows the constant instead of a copy that could itself go stale.
 pub(super) fn current_cache_schema_version(seam_cache_source: &str) -> Result<String, String> {
-    seam_cache_source
-        .lines()
-        .find_map(|line| line.trim().strip_prefix(CONSTANT_PREFIX))
-        .and_then(|rest| rest.split('"').next())
+    let missing = || format!("could not read `CACHE_SCHEMA_VERSION` from {SEAM_CACHE_SOURCE}");
+    let parsed = SourceFile::parse(seam_cache_source, Edition::Edition2024);
+    if !parsed.errors().is_empty() {
+        return Err(missing());
+    }
+    let mut declarations = parsed.tree().items().filter_map(|item| match item {
+        ast::Item::Const(constant)
+            if constant
+                .name()
+                .is_some_and(|name| name.text() == "CACHE_SCHEMA_VERSION") =>
+        {
+            Some(constant)
+        }
+        _ => None,
+    });
+    let constant = declarations.next().ok_or_else(missing)?;
+    // Conditional definitions require knowing the producing build's cfg.
+    if declarations.next().is_some() || constant.attrs().next().is_some() {
+        return Err(missing());
+    }
+    let Some(ast::Expr::Literal(literal)) = constant.body() else {
+        return Err(missing());
+    };
+    let LiteralKind::String(value) = literal.kind() else {
+        return Err(missing());
+    };
+    value
+        .value()
+        .ok()
         .filter(|version| !version.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| format!("could not read `CACHE_SCHEMA_VERSION` from {SEAM_CACHE_SOURCE}"))
+        .map(|version| version.into_owned())
+        .ok_or_else(missing)
 }
 
 /// Dotted numeric comparison (`1.74` < `1.146`). A version that does not parse
@@ -161,7 +189,7 @@ fn check_reports(
     current: &str,
     pins: &BTreeMap<String, (String, String)>,
     violations: &mut Vec<String>,
-    mut read_producer_generation: impl FnMut(&str) -> Result<String, String>,
+    mut read_producer_generation: Option<impl FnMut(&str) -> Result<String, String>>,
 ) {
     let mut used = Vec::new();
     let mut producer_generations = BTreeMap::new();
@@ -199,6 +227,9 @@ fn check_reports(
             }
             None => {}
         }
+        let Some(read_producer_generation) = read_producer_generation.as_mut() else {
+            continue;
+        };
         let Some((commit, dirty)) = producer_commit(report) else {
             violations.push(format!(
                 "{path}: missing producer evidence: `analysis_inputs.analyzer_version` must identify a full build commit (#15533)"
@@ -235,7 +266,10 @@ fn check_reports(
     }
 }
 
-pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result<(), String> {
+pub(super) fn check_report_cache_schemas(
+    violations: &mut Vec<String>,
+    verify_producers: bool,
+) -> Result<(), String> {
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let corpus = read_evidence_promotion_corpus(corpus_path)?;
     let Some(parent) = corpus_path.parent() else {
@@ -272,11 +306,27 @@ pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result
         reports.push((display, report));
     }
     let pins = read_pins(&corpus, violations);
+    if verify_producers
+        && !reports
+            .iter()
+            .any(|(_, report)| recorded_version(report).is_some())
+    {
+        return Err(format!(
+            "no schema-bearing captures in {}",
+            reports_dir.display()
+        ));
+    }
     if reports.is_empty() && pins.is_empty() {
         return Ok(());
     }
     let current = current_generation()?;
-    check_reports(&reports, &current, &pins, violations, producer_generation);
+    check_reports(
+        &reports,
+        &current,
+        &pins,
+        violations,
+        verify_producers.then_some(producer_generation),
+    );
     Ok(())
 }
 
@@ -322,13 +372,50 @@ mod tests {
             "1.146",
             &pins,
             &mut violations,
-            |commit| match commit {
+            Some(|commit: &str| match commit {
                 CURRENT_COMMIT => Ok("1.146".into()),
                 OLDER_COMMIT => Ok("1.74".into()),
                 _ => Err("commit unavailable".into()),
-            },
+            }),
         );
         violations
+    }
+
+    #[test]
+    fn required_currentness_does_not_resolve_producers() {
+        let mut violations = Vec::new();
+        check_reports(
+            &[("r.json".into(), capture_at("1.146", MISSING_COMMIT))],
+            "1.146",
+            &BTreeMap::new(),
+            &mut violations,
+            None::<fn(&str) -> Result<String, String>>,
+        );
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn comment_and_string_lookalikes_cannot_supply_the_schema() -> Result<(), String> {
+        let decoys = r###"
+/*
+/* Nested comment */
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
+*/
+const RAW: &str = r#"
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
+"#;
+"###;
+        assert!(current_cache_schema_version(decoys).is_err());
+        let source = format!("{decoys}\npub(crate) const CACHE_SCHEMA_VERSION: &str = \"1.74\";");
+        assert_eq!(current_cache_schema_version(&source)?, "1.74");
+        Ok(())
+    }
+
+    #[test]
+    fn a_conditional_or_duplicate_schema_declaration_is_ambiguous() {
+        let declaration = "pub(crate) const CACHE_SCHEMA_VERSION: &str = \"1.146\";";
+        assert!(current_cache_schema_version(&format!("#[cfg(any())]\n{declaration}")).is_err());
+        assert!(current_cache_schema_version(&format!("{declaration}\n{declaration}")).is_err());
     }
 
     #[test]

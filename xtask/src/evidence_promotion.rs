@@ -4295,6 +4295,16 @@ fn write_evidence_promotion_corpus_summary_report(
 }
 
 pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), String> {
+    if args == ["--producer-schemas"] {
+        let mut violations = Vec::new();
+        repo_seam_reports::check_report_digests(&mut violations)?;
+        report_cache_schema::check_report_cache_schemas(&mut violations, true)?;
+        if !violations.is_empty() {
+            return Err(violations.join("\n"));
+        }
+        println!("pass: report digests, cache generation pins, and producer schemas agree");
+        return Ok(());
+    }
     let options = parse_evidence_promotion_honesty_args(args)?;
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let mut pure_violations = Vec::new();
@@ -4306,7 +4316,7 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     repo_seam_reports::check_report_digests(&mut pure_violations)?;
     // A capture must also record the analyzer's current cache generation,
     // or be pinned older with a reason (#12293).
-    report_cache_schema::check_report_cache_schemas(&mut pure_violations)?;
+    report_cache_schema::check_report_cache_schemas(&mut pure_violations, false)?;
     let mut external_runs = Vec::new();
     if options.run_pinned_external {
         external_runs = run_evidence_promotion_pinned_external_cases(corpus_path, &options)?;
@@ -4329,7 +4339,7 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     };
     ensure_reports_dir()?;
     let mut body = format!(
-        "# check-evidence-promotion-honesty\n\nStatus: {}\n\n",
+        "# check-evidence-promotion-honesty\n\nStatus: {}\n\nProducer schema verification: opt in with `--producer-schemas`.\n\n",
         if violations.is_empty() {
             "pass"
         } else {
