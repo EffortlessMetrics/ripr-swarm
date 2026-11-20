@@ -3416,7 +3416,10 @@ Summary options:
 summary.tsv (method, endpoint, payload file, message; empty when there is
 nothing to post) plus summary-request.json. It updates the marked comment that
 github-actions[bot] posted earlier, even when the findings are gone, and posts
-nothing for a clean pull request. It does not call GitHub or read a token.
+nothing for a clean pull request. It reads RIPR_GATE_MODE and the gate's
+target/ripr/reports/gate-decision.json: a blocked or misconfigured gate, or an
+unknown mode, is stated first, and a mode that can fail the job replaces the
+advisory footer. It does not call GitHub or read a token.
 
 Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--output-dir PATH]
 
@@ -3559,7 +3562,10 @@ Summary options:
 summary.tsv (method, endpoint, payload file, message; empty when there is
 nothing to post) plus summary-request.json. It updates the marked comment that
 github-actions[bot] posted earlier, even when the findings are gone, and posts
-nothing for a clean pull request. It does not call GitHub or read a token.
+nothing for a clean pull request. It reads RIPR_GATE_MODE and the gate's
+target/ripr/reports/gate-decision.json: a blocked or misconfigured gate, or an
+unknown mode, is stated first, and a mode that can fail the job replaces the
+advisory footer. It does not call GitHub or read a token.
 
 Examples:
   ripr pr-comments summary --root . --pull-request 7 --head-sha 0123abcd --raw -

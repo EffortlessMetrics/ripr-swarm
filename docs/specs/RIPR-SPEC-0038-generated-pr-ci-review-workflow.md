@@ -219,6 +219,15 @@ annotation falls back to the gate command line and exit code when the report
 does not state the status that exit code means. This is presentation only: it
 never changes the decision or the exit code.
 
+The pull request summary comment (`ripr pr-comments summary`) states the same
+verdict first, read the same way, and is posted for it even when there are no
+finding rows. Text from the analyzed change in that statement is rendered
+inert, like the rest of the comment. The comment calls itself advisory and
+says it does not block merging only when the job cannot fail on the gate: an
+empty `RIPR_GATE_MODE` or `visible-only`, the values the workflow marks
+`continue-on-error`. Any other value is named in the footer as a check that can
+block merging.
+
 ## Language-Aware Grouping
 
 Rust-only generated CI output remains the default. For a configuration that

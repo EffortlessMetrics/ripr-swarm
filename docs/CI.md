@@ -2212,7 +2212,11 @@ configure the workflow, so changing a mode never means editing the file:
   say the findings are gone. It is skipped for fork and Dependabot pull
   requests, whose token cannot write; those still get the job summary, check
   annotations and SARIF. Only the comment `github-actions[bot]` posted is ever
-  updated.
+  updated. When `RIPR_GATE_MODE` lets the gate fail the job (any value other
+  than empty or `visible-only`), the comment's footer says the check can block
+  merging instead of calling the result advisory, and a blocked gate, a gate
+  configuration error or an unknown mode is stated at the top of the comment
+  (#15718).
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning. Code scanning is free on public repositories; a private repository

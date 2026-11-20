@@ -92,7 +92,7 @@ const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 /// the producer refused to run, this envelope is the only place that names
 /// the cause; every downstream packet degrades to a missing/blocked state.
 const CHECK_JSON: &str = "target/ripr/pr/check.json";
-const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
+const GATE_JSON: &str = gate_verdict::GATE_DECISION_JSON;
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
 const DELTA_MD: &str = "target/ripr/reports/baseline-debt-delta.md";
@@ -373,13 +373,7 @@ impl Summary {
     /// report left by an earlier run under another mode is never worded as
     /// this run's verdict. Every other state prints nothing here.
     fn gate_verdict(&mut self, gate_mode: &str) {
-        let verdict = gate_verdict::GateVerdict::from_mode(gate_mode).or_else(|| {
-            fs::read(self.root.join(GATE_JSON))
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-                .filter(|decision| decision["mode"].as_str() == Some(gate_mode))
-                .and_then(|decision| gate_verdict::GateVerdict::from_decision(&decision))
-        });
+        let verdict = gate_verdict::GateVerdict::for_run(&self.root, gate_mode);
         let Some(verdict) = verdict else {
             return;
         };
