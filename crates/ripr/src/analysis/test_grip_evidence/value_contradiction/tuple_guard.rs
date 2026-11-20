@@ -125,7 +125,7 @@ fn signature(
                 "Add" | "std::ops::Add" | "core::ops::Add"
             )
             && owner.name == "add"
-            && params.self_param()?.syntax().text().to_string() == "self" =>
+            && params.self_param()?.syntax().text() == "self" =>
         {
             signature.push(("self".to_owned(), self_ty.clone()));
         }
@@ -245,7 +245,7 @@ fn test_inputs(
             }
             _ => return None,
         };
-        if mac.attrs().next().is_some() || mac.path()?.syntax().text().to_string() != "assert_eq" {
+        if mac.attrs().next().is_some() || mac.path()?.syntax().text() != "assert_eq" {
             return None;
         }
         let sides = equality_assertion_arguments(&mac.syntax().text().to_string())?;
