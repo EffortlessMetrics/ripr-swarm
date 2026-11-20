@@ -168,6 +168,8 @@ The artifact embeds an input identity computed at check time:
   unclassified new field fails compilation; a unit test pins the role of
   every field. Any PR that adds a finding-affecting config field must
   classify it and bump `config_identity_version` in the same PR.
+  For `perl.executable`, version 6 compares the configured spelling case-sensitively.
+  It treats backslashes as separators on Windows and as filename characters on Unix.
   Render-only knobs (severity display, `reports.max_related_tests`),
   LSP-only fields, fields not consumed by the diff-check pipeline
   (`profiles.bun_ub`, `suppressions.path`), and loader container metadata

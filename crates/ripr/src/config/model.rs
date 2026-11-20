@@ -3,6 +3,7 @@
 use crate::analysis::seams::SeamGripClass;
 use crate::app::Mode;
 use crate::domain::{ExposureClass, LanguageId, OracleStrength};
+use crate::output::path::path_identity_key_on;
 use std::path::{Path, PathBuf};
 
 use super::overrides::{ConfigOverride, WorkspaceCrate};
@@ -881,7 +882,7 @@ pub struct CheckInputExplicit {
 /// same PR. The classification is closed: the field enumerator destructures
 /// every config struct without `..`, so an unclassified field fails to
 /// compile, and a unit test pins the resulting role of every field.
-pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 5;
+pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 6;
 
 /// How one `ripr.toml` field participates in the check-artifact identity gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1250,7 +1251,7 @@ impl RiprConfig {
                 value: Some(
                     executable
                         .as_ref()
-                        .map(|path| path.to_string_lossy().replace('\\', "/"))
+                        .map(|path| path_identity_key_on(path, cfg!(windows), false))
                         .unwrap_or_else(|| "none".to_string()),
                 ),
                 note: "which producer binary generates the Perl fact packet",
