@@ -705,6 +705,8 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) unary_tail: Option<&'a super::UnaryTailChange>,
 }
 
+pub(super) const RSTEST_FIXTURE_INPUT: &str = "A related test passes the rstest fixture";
+
 /// Why a related test's input to `owner` is unreadable when no boundary
 /// input was found: a boundary literal passed to a macro whose expansion
 /// ripr does not read (a test-local wrapper such as `check!(100, 0)` may
@@ -795,7 +797,7 @@ fn opaque_boundary_input(
                     })
             }) {
                 return Some(format!(
-                    "A related test passes the rstest fixture `{fixture}` to `{owner}`; ripr does not read the fixture's value, so whether it sits on the changed boundary [{}] is unknown",
+                    "{RSTEST_FIXTURE_INPUT} `{fixture}` to `{owner}`; ripr does not read the fixture's value, so whether it sits on the changed boundary [{}] is unknown",
                     list_or_unknown(probe_literals)
                 ));
             }

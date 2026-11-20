@@ -142,6 +142,22 @@ fn an_rstest_fixture_feeding_the_owner_reads_infection_unknown() -> Result<(), S
         vec![StageState::Unknown],
         "{findings:?}"
     );
+    assert_eq!(
+        findings[0].missing,
+        vec![findings[0].ripr.infect.summary.clone()]
+    );
+    let unresolved = boundary_findings(
+        "use pricing::discount;\nuse rstest::{fixture, rstest};\n#[fixture]\nfn amount() -> u32 { std::env::var(\"AMOUNT\").unwrap().parse().unwrap() }\n#[rstest]\nfn at_threshold(amount: u32) { assert_eq!(discount(amount), 0); }\n",
+    )?;
+    assert_eq!(infection_states(&unresolved), vec![StageState::Unknown]);
+    assert_eq!(
+        unresolved[0].missing,
+        vec![unresolved[0].ripr.infect.summary.clone()]
+    );
+    let literal = boundary_findings(
+        "use pricing::discount;\n#[test]\nfn at_threshold() { assert_eq!(discount(100), 10); }\n",
+    )?;
+    assert_eq!(infection_states(&literal), vec![StageState::Yes]);
     Ok(())
 }
 
