@@ -589,10 +589,16 @@ fn run_blocks(source: &str) -> Vec<String> {
 /// Steps added by a PR that are absent from the retained predecessor, allowed
 /// only as an exact (job, whole run block) match so any other added or altered
 /// step still fails the per-job equality below.
-const PR_OWNED_STEPS: &[(&str, &str)] = &[(
-    "release-proof",
-    "cargo test -p xtask --features perl-identity reports::sarif::identity_tests",
-)];
+const PR_OWNED_STEPS: &[(&str, &str)] = &[
+    (
+        "release-proof",
+        "cargo test -p xtask --features perl-identity reports::sarif::identity_tests",
+    ),
+    (
+        "release-proof",
+        "cargo test -p ripr --features scip-admission --lib analysis::scip",
+    ),
+];
 fn without_pr_owned_steps(job_name: &str, scripts: Vec<String>) -> Vec<String> {
     scripts
         .into_iter()
@@ -786,7 +792,9 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
         early_host_checked,
         "early editor host was not failure-injected"
     );
-    assert_eq!(count, 14, "nonempty payload denominator");
+    // 15 since #8115 added the single-line SCIP admission cargo step to the
+    // release-proof payload; it is failure-injected above like the others.
+    assert_eq!(count, 15, "nonempty payload denominator");
     Ok(())
 }
 

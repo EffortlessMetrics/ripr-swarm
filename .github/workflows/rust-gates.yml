@@ -463,6 +463,13 @@ jobs:
         id: all_features_check
         run: cargo clippy -p ripr --all-targets --all-features -- -D warnings
 
+      # #8115: `scip-admission` is non-default, so the workspace nextest run
+      # below never builds this module; its runtime and vendored-proto drift
+      # tests are required here, in the lane routed-rust.yml's Result needs.
+      - name: Test SCIP admission
+        id: scip_admission
+        run: cargo test -p ripr --features scip-admission --lib analysis::scip
+
       - name: Strict workspace Clippy
         id: clippy
         # #14589: bound simultaneous large lint units on the 16-GiB hosted route.
