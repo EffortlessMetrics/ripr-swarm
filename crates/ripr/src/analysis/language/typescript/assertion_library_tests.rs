@@ -345,7 +345,10 @@ it('reads the receivers', () => {
         OracleStrength::Weak,
         "expect(...).to.be.empty",
     );
-    assert_eq!(assertions[0].observed_expression.as_deref(), Some("inst.values()"));
+    assert_eq!(
+        assertions[0].observed_expression.as_deref(),
+        Some("inst.values()")
+    );
     assert_eq!(assertions[0].expected_value_or_variant, None);
     assert_oracle(
         &assertions[1],
@@ -353,8 +356,14 @@ it('reads the receivers', () => {
         OracleStrength::Weak,
         "expect(...).to.have.lengthOf(...)",
     );
-    assert_eq!(assertions[1].observed_expression.as_deref(), Some("other.values()"));
-    assert_eq!(assertions[1].expected_value_or_variant.as_deref(), Some("2"));
+    assert_eq!(
+        assertions[1].observed_expression.as_deref(),
+        Some("other.values()")
+    );
+    assert_eq!(
+        assertions[1].expected_value_or_variant.as_deref(),
+        Some("2")
+    );
     assert_oracle(
         &assertions[2],
         OracleKind::ExactValue,
