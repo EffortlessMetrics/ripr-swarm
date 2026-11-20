@@ -338,7 +338,9 @@ mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 
 A refusal (for example, an unknown seam or gap) exits `3` with the cause on
-stderr and empty stdout.
+stderr and, with `--json`, a refusal document on stdout (an
+agent-seam-packets-json envelope with no findings and the cause in
+`run_limitations`).
 
 Examples:
   ripr agent packet --root . --seam-id ID --json
@@ -681,8 +683,10 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
-                   `return_value`, `error_path`, `match_arm`). Only seams of
-                   that kind are tried, so a line holding several changes
+                   `return_value`, `error_path`, `match_arm`,
+                   `call_deletion`, `field_construction`, `side_effect`).
+                   Only seams of that kind are tried, so a line
+                   holding several changes
                    stubs the one the finding reported; two separate seams of
                    that kind on one line are refused with their seam IDs.
                    `ripr check` prints it. Without it, --at tries only the
@@ -1223,7 +1227,8 @@ Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
 Copy a qualified current-input cache snapshot, excluding historical keys,
 unreferenced shards, fingerprint mappings and staging files. The live cache
-is never changed. Run repo exposure or repo badge analysis first.
+is never changed. Run `ripr check --format repo-exposure-summary-json`
+first (same --root).
 
   --root PATH   Analyzed root, preserving the spelling supplied to check.
                 Default: the same implicit workspace resolution as check.
@@ -2350,10 +2355,20 @@ Options:
   --actor KIND          Who recorded this: human, agent, or unknown. Default unknown.
   --review STATUS       unreviewed (default), reviewed_accepted, or reviewed_rejected.
   --review-actor KIND   Required when --review is not unreviewed.
-  --reason CODE         Closed taxonomy (useful_actionable, useful_limitation,
-                        wrong_target, wrong_discriminator, false_actionable,
-                        unclear_explanation, too_slow, intentional_defensive_code,
-                        other, ...). `other` requires --note and --judgment.
+  --reason CODE         Closed taxonomy of 25 codes:
+                        useful_actionable, useful_limitation,
+                        correct_target, correct_discriminator,
+                        clear_explanation, wrong_target,
+                        wrong_discriminator, false_actionable,
+                        duplicate_item, already_covered,
+                        incorrect_causal_attribution, stale_result,
+                        missing_context, ambiguous_target,
+                        unclear_explanation, verify_command_failed,
+                        receipt_command_failed, route_too_broad,
+                        too_slow, too_noisy, unsupported_workflow,
+                        intentional_defensive_code,
+                        intentional_low_grip, manual_review_preferred,
+                        other. `other` requires --note and --judgment.
   --judgment CLASS      Required for --reason other. Must match the reason class
                         otherwise.
   --note TEXT           Optional bounded note (1024 bytes). Fail-closed on known
@@ -3821,7 +3836,8 @@ Options:
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided
                         sha does not match. Without --root, --current-head is
-                        format-checked only.
+                        compared against the HEAD of the repository in the
+                        current directory.
   --out PATH            Write receipt JSON to this path. When omitted, writes to
                         target/ripr/receipts/<canonical_gap_id>.json with
                         filename-unsafe characters (`:`, etc.) percent-encoded
@@ -4035,6 +4051,12 @@ over explicit TypeScript-family preview audit corpus rows. It reports the
 bounded false-actionable rate for rows that must remain non-actionable and does
 not rerun analysis, execute TypeScript tests, edit source, generate tests, call
 providers, run mutation testing, change gates, or contribute badge authority.
+The corpus is a JSON object with `"schema_version": "0.1"`, `"kind": "typescript_preview_false_actionable_audit_corpus"`
+and a `"cases"` array. Each case needs the string fields id, language,
+risk_class, evidence_kind, disposition, gap_state, actionability_category,
+authority_boundary, source_fixture and source_finding_id, the boolean fields
+repair_packet_ready and must_remain_non_actionable, and may carry
+static_limit_kind.
 
 Examples:
   ripr reports ci-packet --root .
@@ -4239,6 +4261,12 @@ over explicit TypeScript-family preview audit corpus rows. It reports the
 bounded false-actionable rate for rows that must remain non-actionable and does
 not rerun analysis, execute TypeScript tests, edit source, generate tests, call
 providers, run mutation testing, change gates, or contribute badge authority.
+The corpus is a JSON object with `"schema_version": "0.1"`, `"kind": "typescript_preview_false_actionable_audit_corpus"`
+and a `"cases"` array. Each case needs the string fields id, language,
+risk_class, evidence_kind, disposition, gap_state, actionability_category,
+authority_boundary, source_fixture and source_finding_id, the boolean fields
+repair_packet_ready and must_remain_non_actionable, and may carry
+static_limit_kind.
 
 Examples:
   ripr reports ts-false-actionable --corpus target/ripr/reports/typescript-false-actionable-corpus.json

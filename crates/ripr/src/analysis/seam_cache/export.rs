@@ -181,7 +181,7 @@ fn export_selected(
         copy_classified(cache, key, source, &mut report)?;
     }
     if report.classified_entries == 0 {
-        return Err("no valid classified cache for current inputs; run repo exposure or repo badge analysis first".to_owned());
+        return Err("no valid classified cache for current inputs; run `ripr check --format repo-exposure-summary-json` on this root first".to_owned());
     }
     let copied = RepoFileFactCache {
         dir: relocated(&facts.dir, source, output)?,
@@ -301,7 +301,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     // refusal below already uses.
     let source = fs::canonicalize(&source).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            "source cache not found; run repo exposure or repo badge analysis first".to_owned()
+            "source cache not found; run `ripr check --format repo-exposure-summary-json` on this root first".to_owned()
         } else {
             format!("resolve source cache: {error}")
         }
@@ -519,7 +519,7 @@ mod tests {
         ignore_remove_dir_all(&root);
         assert!(err.contains("not found"), "{err}");
         assert!(
-            err.contains("run repo exposure or repo badge analysis first"),
+            err.contains("run `ripr check --format repo-exposure-summary-json` on this root first"),
             "error should name the recovery route, got: {err}"
         );
         assert!(!err.contains("os error"), "{err}");

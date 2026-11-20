@@ -332,6 +332,21 @@ fn gate_check_with_producer(
         eprintln!(
             "ripr gate check: review-comments could not complete: {error}; the gate fails closed with config_error (exit 2)"
         );
+        // The evaluator then reports the guidance gate check itself just
+        // removed as "not found", which reads as a user mistake. Keep its
+        // written config_error report and exit status, but say what happened
+        // (#15257).
+        return evaluate_and_write(&plan.gate).map_err(|failure| match failure {
+            CommandError::Failure(message)
+                if message.starts_with("ripr gate decision is config_error") =>
+            {
+                CommandError::Failure(format!(
+                    "gate check wrote a config_error decision because review-comments produced no guidance; fix the review-comments failure above and rerun `ripr gate check --base <rev>`; the decision report is {}",
+                    plan.gate.out.display()
+                ))
+            }
+            other => other,
+        });
     }
     evaluate_and_write(&plan.gate)
 }
