@@ -110,6 +110,49 @@ fn an_arm_some_test_input_enters_stays_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn isolated_throw_message_after_a_nonzero_return() -> Result<(), String> {
+    let source = "export function price(b: number): number {\n  if (b !== 0) return b;\n  throw new Error(\"nope\");\n}\n";
+    let classify = |label: &str, assertion: &str| {
+        let test = format!(
+            "import {{ price }} from '../src/price';\ntest('price', () => {{\n  {assertion}\n}});\n"
+        );
+        finding_for(
+            label,
+            source,
+            3,
+            "  throw new Error(\"zero\");",
+            "  throw new Error(\"nope\");",
+            &test,
+        )
+    };
+    let missed = classify("throw-after-return", "expect(price(2)).toBe(2);")?;
+    assert_eq!(missed.class, ExposureClass::ReachableUnrevealed);
+    assert_eq!(missed.ripr.infect.state, StageState::No);
+    assert!(missed.ripr.infect.summary.contains("b !== 0"));
+    assert!(missed.activation.missing_discriminators.is_empty());
+
+    let observed = classify(
+        "throw-message-observed",
+        "expect(() => price(0)).toThrow('nope');",
+    )?;
+    assert_eq!(observed.class, ExposureClass::Exposed);
+    assert_ne!(observed.ripr.infect.state, StageState::No);
+
+    let broad = classify("throw-message-broad", "expect(() => price(0)).toThrow();")?;
+    assert_eq!(broad.class, ExposureClass::WeaklyExposed);
+    assert_ne!(broad.ripr.infect.state, StageState::No);
+
+    for assertion in [
+        "expect(price(input)).toBe(2);",
+        "expect(price(2)).toBe(2); expect(() => price(0)).toThrow();",
+    ] {
+        let uncertain = classify("throw-after-return-control", assertion)?;
+        assert_ne!(uncertain.ripr.infect.state, StageState::No);
+    }
+    Ok(())
+}
+
 fn shape_change(label: &str, old: &str, new: &str) -> Result<Finding, String> {
     let source =
         format!("export function price(flag: boolean, n?: number): number {{\n{new}\n}}\n");
