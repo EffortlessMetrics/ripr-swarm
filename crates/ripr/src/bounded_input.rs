@@ -82,7 +82,7 @@ pub(crate) fn read_root_metadata_toml(
         (Ok(root), Ok(path)) => (root, path),
         (Err(err), _) | (_, Err(err)) => {
             return Err(format!(
-                "refusing to read {what} {display}: its location cannot be resolved ({})",
+                "refusing to read {what} {display}: its location cannot be resolved ({}); check that it and its parent directories are readable and not a link loop",
                 err.kind()
             ));
         }
@@ -94,7 +94,11 @@ pub(crate) fn read_root_metadata_toml(
     }
     read_metadata_toml(&path)
         .map(Some)
-        .map_err(|err| format!("failed to read {what} {display}: {err}"))
+        .map_err(|err| {
+            format!(
+                "failed to read {what} {display}: {err}; keep it as a readable regular file within the size limit"
+            )
+        })
 }
 
 pub(crate) fn read_metadata_toml_with_limit(
