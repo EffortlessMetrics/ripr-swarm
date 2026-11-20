@@ -788,7 +788,7 @@ fn base_refusal(root: &Path, base: &str) -> Result<String, String> {
 }
 
 #[test]
-fn unresolved_commit_id_base_names_the_commit_fetch() -> Result<(), String> {
+fn unresolved_commit_id_base_names_the_commit_fetch_route() -> Result<(), String> {
     let scratch = Scratch::new("hexbase")?;
     let root = repo_with_origin(&scratch, "r")?;
     let sha = "0123456789abcdef0123456789abcdef01234567";
@@ -805,7 +805,7 @@ fn unresolved_commit_id_base_names_the_commit_fetch() -> Result<(), String> {
 }
 
 #[test]
-fn unresolved_release_tag_base_names_the_tag_fetch() -> Result<(), String> {
+fn unresolved_release_tag_base_names_the_tag_fetch_route() -> Result<(), String> {
     let scratch = Scratch::new("tagbase")?;
     let root = repo_with_origin(&scratch, "r")?;
     let stderr = base_refusal(&root, "v9.9.9")?;
