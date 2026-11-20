@@ -162,7 +162,7 @@ fn unsafe_parameter_retains_both_declaration_and_boundary_identity() -> Result<(
     );
     let declaration = shapes
         .iter()
-        .find(|shape| !shape.unsafe_boundary)
+        .find(|shape| shape.unsafe_boundary.is_none())
         .ok_or_else(|| "unsafe boundary hid the exact declaration".to_string())?;
     assert_eq!(declaration.family, ProbeFamily::StaticUnknown);
     assert_eq!(declaration.start_line, 3);
@@ -170,7 +170,7 @@ fn unsafe_parameter_retains_both_declaration_and_boundary_identity() -> Result<(
     assert_eq!(declaration.text, text);
     let retained = shapes
         .iter()
-        .find(|shape| shape.unsafe_boundary)
+        .find(|shape| shape.unsafe_boundary.is_some())
         .ok_or_else(|| "declaration fix erased the unsafe obligation".to_string())?;
     assert_eq!(retained.family, ProbeFamily::StaticUnknown);
     assert_eq!(retained.start_byte, boundary.start_byte());
@@ -193,7 +193,7 @@ fn unsafe_body_without_parameter_keeps_its_existing_obligation() -> Result<(), S
     });
     let shapes = parser_probe_shapes_for_changed_line(&index, &path, 2, "let value = 7;");
     assert_eq!(shapes.len(), 1);
-    assert!(shapes[0].unsafe_boundary);
+    assert!(shapes[0].unsafe_boundary.is_some());
     assert_eq!(shapes[0].family, ProbeFamily::StaticUnknown);
     assert_eq!(shapes[0].start_line, 2);
     assert_eq!(Some(shapes[0].start_byte), source.find("unsafe fn"));

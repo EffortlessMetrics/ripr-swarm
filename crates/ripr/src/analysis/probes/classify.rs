@@ -146,6 +146,12 @@ pub(super) fn removed_type_bounds(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UnsafeBoundary {
+    Enclosing,
+    EditedOpener,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParserProbeShape<'a> {
     pub(crate) family: ProbeFamily,
@@ -153,7 +159,7 @@ pub(crate) struct ParserProbeShape<'a> {
     pub(crate) start_byte: usize,
     pub(crate) text: &'a str,
     pub(crate) standalone_call: bool,
-    pub(crate) unsafe_boundary: bool,
+    pub(super) unsafe_boundary: Option<UnsafeBoundary>,
 }
 
 pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
@@ -251,12 +257,16 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         {
             continue;
         }
-        let unsafe_boundary = shape.kind == ProbeShapeKind::UnsafeBoundary;
-        if unsafe_boundary && !unsafe_boundary_owns_changed_line(facts, shape, line) {
-            continue;
-        }
+        let unsafe_boundary = if shape.kind == ProbeShapeKind::UnsafeBoundary {
+            let Some(boundary) = unsafe_boundary_for_line(facts, shape, line, removed_text) else {
+                continue;
+            };
+            Some(boundary)
+        } else {
+            None
+        };
         let candidate_key = selection_key(&family, shape.text.as_str());
-        if !unsafe_boundary && candidate_key.is_none() {
+        if unsafe_boundary.is_none() && candidate_key.is_none() {
             continue;
         }
         let candidate = ParserProbeShape {
@@ -265,7 +275,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             // source text. Project them at the changed line so diff synthesis
             // emits one explicit canonical probe while `start_byte` keeps the
             // stable boundary identity used for deduplication.
-            start_line: if unsafe_boundary {
+            start_line: if unsafe_boundary.is_some() {
                 line
             } else {
                 shape.start_line()
@@ -281,7 +291,8 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .iter()
             .position(|(current, _)| current.family == candidate.family)
         {
-            if candidate.unsafe_boundary && selected[position].0.unsafe_boundary {
+            if candidate.unsafe_boundary.is_some() && selected[position].0.unsafe_boundary.is_some()
+            {
                 if candidate.start_byte > selected[position].0.start_byte {
                     selected[position] = (candidate, candidate_key);
                 }
@@ -300,7 +311,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     for (shape, _) in &mut selected {
         shape.standalone_call = parser_call_shape_is_standalone(facts, shape);
     }
-    if selected.iter().all(|(shape, _)| shape.unsafe_boundary)
+    if selected
+        .iter()
+        .all(|(shape, _)| shape.unsafe_boundary.is_some())
         && let Some(declaration) = declarations::declaration_shape(facts, line, changed_text)
     {
         // Keep the enclosing unsafe obligation as well as the exact declaration.
@@ -444,48 +457,57 @@ fn line_is_nested_statement(
 /// unsafe boundary shares its opening or closing line. Re-resolve the exact
 /// AST range and fail closed on those ambiguous edge lines; interior lines and
 /// edge lines wholly owned by the boundary remain eligible.
-fn unsafe_boundary_owns_changed_line(
+fn unsafe_boundary_for_line(
     facts: &FileData,
     shape: &ProbeShapeFact,
     line: usize,
-) -> bool {
-    let Some(boundary) = unsafe_boundary_syntax_range(facts, shape) else {
-        return false;
-    };
-    let Some(line_range) = source_line_byte_range(&facts.source, line) else {
-        return false;
-    };
+    removed: Option<&str>,
+) -> Option<UnsafeBoundary> {
+    let (boundary, body_start) = unsafe_boundary_syntax_range(facts, shape)?;
+    let line_range = source_line_byte_range(&facts.source, line)?;
     let boundary_start = u32::from(boundary.start()) as usize;
     let boundary_end = u32::from(boundary.end()) as usize;
     if boundary_start >= line_range.end || boundary_end <= line_range.start {
-        return false;
+        return None;
     }
 
     if line == shape.start_line() {
         let prefix_end = boundary_start.max(line_range.start).min(line_range.end);
-        let Some(prefix) = facts.source.get(line_range.start..prefix_end) else {
-            return false;
-        };
+        let prefix = facts.source.get(line_range.start..prefix_end)?;
         if !boundary_edge_is_empty(prefix) {
-            return false;
+            return None;
         }
     }
     if line == shape.end_line() {
         let suffix_start = boundary_end.max(line_range.start).min(line_range.end);
-        let Some(suffix) = facts.source.get(suffix_start..line_range.end) else {
-            return false;
-        };
+        let suffix = facts.source.get(suffix_start..line_range.end)?;
         if !boundary_edge_is_empty(suffix) {
-            return false;
+            return None;
         }
     }
-    true
+    // A body edit can share its line with the opening brace. Only call the
+    // opener unchanged if the removed line preserves the prefix through it.
+    let in_body = body_start.is_some_and(|start| {
+        let start = usize::from(start);
+        line_range.start >= start
+            || (start <= line_range.end
+                && facts
+                    .source
+                    .get(line_range.start..start)
+                    .zip(removed)
+                    .is_some_and(|(prefix, old)| old.trim_start().starts_with(prefix.trim_start())))
+    });
+    Some(if in_body {
+        UnsafeBoundary::Enclosing
+    } else {
+        UnsafeBoundary::EditedOpener
+    })
 }
 
 fn unsafe_boundary_syntax_range(
     facts: &FileData,
     shape: &ProbeShapeFact,
-) -> Option<ra_ap_syntax::TextRange> {
+) -> Option<(ra_ap_syntax::TextRange, Option<ra_ap_syntax::TextSize>)> {
     let parse = parse_clean_source_file(&facts.source)?;
     let root = parse.tree();
     for function in root.syntax().descendants().filter_map(ast::Fn::cast) {
@@ -493,7 +515,12 @@ fn unsafe_boundary_syntax_range(
             continue;
         };
         if u32::from(token.text_range().start()) == shape.start_byte {
-            return Some(function.syntax().text_range());
+            let body_start = function
+                .body()
+                .and_then(|body| body.stmt_list())
+                .and_then(|body| body.l_curly_token())
+                .map(|brace| brace.text_range().end());
+            return Some((function.syntax().text_range(), body_start));
         }
     }
     for block in root.syntax().descendants().filter_map(ast::BlockExpr::cast) {
@@ -501,7 +528,11 @@ fn unsafe_boundary_syntax_range(
             continue;
         };
         if u32::from(token.text_range().start()) == shape.start_byte {
-            return Some(block.syntax().text_range());
+            let body_start = block
+                .stmt_list()
+                .and_then(|body| body.l_curly_token())
+                .map(|brace| brace.text_range().end());
+            return Some((block.syntax().text_range(), body_start));
         }
     }
     None
@@ -1825,7 +1856,7 @@ mod tests {
         assert_eq!(unsafe_shape.start_line, 3);
         assert_eq!(unsafe_shape.start_byte, block_start);
         assert_eq!(unsafe_shape.text, "unsafe block");
-        assert!(unsafe_shape.unsafe_boundary);
+        assert!(unsafe_shape.unsafe_boundary.is_some());
         Ok(())
     }
 
@@ -2377,7 +2408,7 @@ mod tests {
                     start_byte: shape.start_byte(),
                     text: shape.text.as_str(),
                     standalone_call: true,
-                    unsafe_boundary: false,
+                    unsafe_boundary: None,
                 };
                 if let Some(position) = expected
                     .iter()

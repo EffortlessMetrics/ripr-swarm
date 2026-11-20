@@ -73,6 +73,7 @@ pub(crate) fn probes_for_file_with_relations(
     // added line at every step of the run, once per added line (#7524).
     let added_run_starts = changed.added_run_starts();
     let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
+    let mut unsafe_boundaries = Vec::new();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
         index,
         &changed.path,
@@ -792,11 +793,13 @@ pub(crate) fn probes_for_file_with_relations(
                 })
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
-                let key = (shape.start_byte, shape.family.as_str().to_string());
-                if emitted_parser_shapes.contains_key(&key) {
-                    continue;
+                if shape.unsafe_boundary.is_none() {
+                    let key = (shape.start_byte, shape.family.as_str().to_string());
+                    if emitted_parser_shapes.contains_key(&key) {
+                        continue;
+                    }
+                    emitted_parser_shapes.insert(key, probes.len());
                 }
-                emitted_parser_shapes.insert(key, probes.len());
                 let canonical_text = canonical_probe_text(text, shape.text);
                 if shape.family == ProbeFamily::StaticUnknown
                     && skip_added_string_continuation(shape.start_line, text)
@@ -871,6 +874,9 @@ pub(crate) fn probes_for_file_with_relations(
                     before,
                     Some(canonical_text.clone()),
                 );
+                if let Some(boundary) = shape.unsafe_boundary {
+                    unsafe_boundaries.push((probes.len(), shape.start_byte, boundary));
+                }
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
             }
             continue;
@@ -1002,6 +1008,35 @@ pub(crate) fn probes_for_file_with_relations(
             seeded.binding_return = return_flow.clone();
             probes.push(seeded);
         }
+    }
+
+    // Only candidate-side probes actually emitted for this file can carry the
+    // edit. A parser shape that was filtered or downgraded cannot hide a note.
+    // Select the first surviving projection per boundary, so a classified edit
+    // cannot consume the fallback needed for a different line in the same body.
+    if !unsafe_boundaries.is_empty() {
+        let classified = probes
+            .iter()
+            .map(|seed| &seed.probe)
+            .filter(|probe| probe.family != ProbeFamily::StaticUnknown)
+            .filter_map(|probe| Some((probe.location.line, probe.owner.as_ref()?)))
+            .collect::<BTreeSet<_>>();
+        let mut retained = BTreeSet::new();
+        let mut keep = vec![true; probes.len()];
+        for (index, boundary, context_only) in unsafe_boundaries {
+            let probe = &probes[index].probe;
+            let shadowed = context_only == super::classify::UnsafeBoundary::Enclosing
+                && probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| classified.contains(&(probe.location.line, owner)));
+            keep[index] = !shadowed && retained.insert(boundary);
+        }
+        probes = probes
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(probe, keep)| keep.then_some(probe))
+            .collect();
     }
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
@@ -6316,7 +6351,7 @@ mod tests {
             start_byte,
             text,
             standalone_call: false,
-            unsafe_boundary: false,
+            unsafe_boundary: None,
         }
     }
 
