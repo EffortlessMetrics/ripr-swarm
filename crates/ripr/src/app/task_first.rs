@@ -4937,8 +4937,15 @@ pub(crate) mod tests {
             }
         };
         let counted = || CLASSIFIED_INVENTORY_SEAMS.with(std::cell::Cell::get);
-        let plain =
-            |root: &Path| crate::analysis::inventory_classified_seams_at_with_config(root, &config);
+        // Every read that does not widen holds the cap-mutator lock, so a
+        // concurrent pilot or repair test cannot move the effective limit
+        // between this test's reads (#12421). Widening calls take the lock
+        // themselves and run unheld.
+        let hold = crate::analysis::hold_seam_limit_mutators;
+        let plain = |root: &Path| {
+            let _seam_limit_mutators = hold();
+            crate::analysis::inventory_classified_seams_at_with_config(root, &config)
+        };
         let to_json = |seams: &[crate::analysis::ClassifiedSeam]| -> Result<String, String> {
             serde_json::to_string(seams).map_err(|error| error.to_string())
         };
@@ -4946,7 +4953,11 @@ pub(crate) mod tests {
 
         // New path, cold: classify once.
         CLASSIFIED_INVENTORY_SEAMS.with(|count| count.set(0));
-        let (repaired, repaired_info) = inventory_for_repair(&root, &config)?;
+        let (repaired, repaired_info) = {
+            // A cold walk within the ceiling widens in place and never reruns.
+            let _seam_limit_mutators = hold();
+            inventory_for_repair(&root, &config)?
+        };
         let total = repaired.len();
         assert!(
             total > DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
@@ -4994,12 +5005,14 @@ pub(crate) mod tests {
         // and classifies only the cap.
         remove_cache()?;
         CLASSIFIED_INVENTORY_SEAMS.with(|count| count.set(0));
-        let (report, widening) =
+        let (report, widening) = {
+            let _seam_limit_mutators = hold();
             crate::analysis::inventory_classified_seams_report_for_repair_at_with_config(
                 &root,
                 &config,
                 total - 1,
-            )?;
+            )?
+        };
         assert_eq!(widening, RepairWidening::NotApplied);
         assert_eq!(counted(), DEFAULT_REPO_EXPOSURE_SEAM_LIMIT);
         assert_eq!(
