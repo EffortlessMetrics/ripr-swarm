@@ -2855,7 +2855,8 @@ branch holding a statement, or code after the chain is outside the subset.
   confined lexically, a glob whose own module composition did not resolve has
   a separate cause, another disabling input (a lexical fallback, an unknown
   `#[path]` target or an unseen unindexed member) keeps placement off without
-  the include, and a glob that reaches the assertion from an ancestor module
+  the include, a glob in a file an unindexed member mounts stays unplaced
+  without it, and a glob that reaches the assertion from an ancestor module
   or along the module chain is ambiguous with placement on
   (`the_refusal_names_the_include_that_makes_placement_unavailable`,
   `a_public_glob_keeps_its_direct_explanation_with_an_include_present`,

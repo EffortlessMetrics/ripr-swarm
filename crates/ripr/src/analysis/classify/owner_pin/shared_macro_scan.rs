@@ -66,6 +66,8 @@ struct ScanKey {
     /// #14116: the crate roots an unread include fragment left unplaced.
     /// Read from disk, so the index alone does not determine it.
     roots_tainted: BTreeSet<PathBuf>,
+    /// #14116: the files an unindexed member mounts. Read from disk too.
+    roots_mounted: BTreeSet<PathBuf>,
 }
 
 impl ScanKey {
@@ -95,6 +97,7 @@ impl ScanKey {
             include_targets: index.include_targets.len(),
             roots_disabled: roots.disabled,
             roots_tainted: roots.tainted.clone(),
+            roots_mounted: roots.mounted.clone(),
         }
     }
 }
