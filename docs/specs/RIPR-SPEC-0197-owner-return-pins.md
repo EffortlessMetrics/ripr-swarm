@@ -1610,7 +1610,9 @@ default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
 can move or compile out), and any file whose path spells the declaration's
 name. A target that is not a literal on a top-level out-of-line
 declaration (an inline module's `#[path]`, a `#[path]` declaration inside
-an inline module, a non-literal value) gates every owner. Limit:
+an inline module, a non-literal value, an empty literal or one ending in
+`/`, a literal rooted at `/` or holding a `:`, as a drive does) gates every owner,
+as does an unparseable declaring file. Limit:
 the declarations inside a target file are not followed, so every file under
 its directory is gated.
 

@@ -4216,11 +4216,23 @@ snapshot withheld a seam. A snapshot whose `owner_opt_outs` does not name every
 withheld seam in `seam_ids` and at least one owner in `owners` is refused, as
 byte-bounded and seam-limited snapshots are.
 
-Other consumers of a check-produced `repo-exposure-json` read only its
-remaining `seams` and do not read `owner_opt_outs`: `ripr gate
---repo-exposure`, gap ledgers and the baselines derived from them never see a
-withheld seam, and a baseline entry recorded before the attribute was added
-reads as resolved there (not reconciled yet; tracked in #14898). The Markdown formats
+Baselines reconcile the same disclosure (#14898). `ripr reports gap-ledger
+--repo-exposure` copies `owner_opt_outs` verbatim into the ledger (a
+`--records` ledger keeps its source's), `ripr gate` carries it into the
+gate decision's `analysis_scope.owner_opt_outs`, and `ripr baseline create`
+records each entry's `changed_owner` (the gate decision's
+`repair_route.changed_owner`). A baseline entry absent from current evidence
+is then never read as resolved when the current side withheld it: its seam
+id is in `seam_ids` or its unsuffixed `changed_owner` is in `owners` (the
+`ripr outcome` rule) reads `suppressed` with `withheld_by:
+"owner_mutants_skip"`; a line-suffixed same-named owner, a legacy entry with
+no `changed_owner` in a file holding a withheld owner, or a malformed
+disclosure reads `not_evaluated` instead, so a `cfg` twin's genuine change is
+neither resolved nor silently opted out. `baseline update --remove-resolved`
+keeps both. Removing the attribute later makes the owner's seams current
+debt again, so they read as new. Only the repo-exposure gap-ledger route
+carries the `owner_opt_outs` disclosure; a gate decision without it applies no
+owner opt-out reading. The Markdown formats
 print one `Withheld by owner opt-out (owner_mutants_skip): N seam(s) ...` line
 under the summary table (`repo-exposure-md`) or the seam total
 (`repo-seams-md`). The repo badges withhold the seams from their count and add
@@ -5618,7 +5630,10 @@ guidance; no `run_limitations` and no incomplete `analysis_outcome` when one is
 present; every seam converted to a record; and a `source_subject.corpus` carrying
 the producer's `cache_schema_version`, 16-lowercase-hex `files_content_hash`, and
 `analyzed_production_files` array, plus the top-level `analysis_inputs` object (carried into the coverage `corpus`); a refused disclosure is named in the fallback
-`gap_ledger_artifact` scope's additive `coverage_refused` array):
+`gap_ledger_artifact` scope's additive `coverage_refused` array), and an
+optional top-level `owner_opt_outs` copied verbatim from the snapshot when it
+withheld seams by an owner opt-out (#14898; a `--records` ledger keeps its
+source's). The coverage disclosure carries
 `scope` (`rust_workspace`), `basis` (`repo_exposure_complete_run`), `run_status`,
 `corpus`, `records_total` and `records_digest` (SHA-256 over every record's
 canonical serialization, ordered by `gap_id`). The digest is tamper-evident
@@ -12219,7 +12234,9 @@ Field contract:
   `suppressions`, `cfg_features`, `workspace_manifests`, `lockfile`,
   `toolchain`, `analyzer_version`, `records_or_disclosure`,
   `config_unloadable`, `unverifiable`); it is absent when no coverage was
-  disclosed. Only that path can emit
+  disclosed. Either `--gap-ledger` scope carries an additive
+  `owner_opt_outs` object, the ledger's own disclosure copied verbatim, when
+  the ledger has one (#14898). Only that path can emit
   `rust_workspace_complete`: a `rust_workspace_complete` scope arriving in a
   `--pr-guidance` document is dropped (with a warning) and leaves baseline
   entries `not_evaluated`. A hand-edited gate-decision file is out of scope: the
@@ -12588,6 +12605,12 @@ JSON shape:
 }
 ```
 
+An entry also carries an additive `changed_owner` (#14898) when the source
+decision names one in `repair_route.changed_owner` (a seam owner such as
+`src/pricing.rs::discount`). `baseline diff` and `baseline update` match it
+against the current side's `analysis_scope.owner_opt_outs`; entries without it
+keep working.
+
 The gate evaluator accepts this `entries[]` ledger shape in addition to the
 older lightweight `decisions[]` baseline fixture shape, so newly created
 baselines can be used by `ripr gate evaluate --baseline`.
@@ -12860,7 +12883,16 @@ Field contract:
   `"not_evaluated"`; `not_evaluated_reason` is a one-sentence reason. Such an
   item is never `resolved` and `baseline update --remove-resolved` keeps it. The
   same set is exhaustive in the Markdown `Not evaluated by the current analysis`
-  section.
+  section. An entry whose owner the current `analysis_scope.owner_opt_outs`
+  may name but does not establish (a line-suffixed same-named owner, a legacy
+  entry with no `changed_owner`, or a malformed disclosure) is in this set too
+  (#14898).
+- `items[].withheld_by` - additive (#14898), `"owner_mutants_skip"` only on a
+  `suppressed` item whose baseline entry is absent because the current
+  `analysis_scope.owner_opt_outs` names its seam id or its unsuffixed
+  `changed_owner`. Such an item is never `resolved` and `baseline update
+  --remove-resolved` keeps it. The same set is exhaustive in the Markdown
+  `Withheld by owner opt-out` section.
 - `items[].review` - optional reviewed baseline metadata copied from the
   baseline ledger when the item is baseline-derived. It preserves
   `reviewed`, `owner`, `reason`, `created_at`, `review_after`, and `source`
