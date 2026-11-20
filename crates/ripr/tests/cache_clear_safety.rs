@@ -1381,7 +1381,9 @@ fn cache_status_json_conforms_to_the_published_schema_in_every_portable_state() 
     let ok = cache_status_json(&base, Path::new("cache"))?;
     let cache_dir = ok.get("cache_dir").and_then(serde_json::Value::as_str);
     if cache_dir != Some("cache") {
-        return Err(format!("expected relative cache_dir 'cache', got {cache_dir:?}"));
+        return Err(format!(
+            "expected relative cache_dir 'cache', got {cache_dir:?}"
+        ));
     }
     conforms_to_cache_status_schema(&ok, &schema).map_err(|error| format!("ok: {error}"))?;
 
