@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/app/tests/python_test_style_matrix.rs::conditional_fixture_reimport_requires_the_asyncio_provider",
+]

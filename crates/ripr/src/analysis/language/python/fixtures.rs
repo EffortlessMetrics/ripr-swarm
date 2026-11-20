@@ -128,6 +128,29 @@ pub(super) fn collect_fixture_defs(
 /// (`from pytest_asyncio import fixture as afx`). Any other binding of the
 /// name, including `from pytest import fixture as afx`, ends it.
 fn update_asyncio_aliases(stmt: &Stmt, aliases: &[String], asyncio_aliases: &mut Vec<String>) {
+    // A conditional re-import can revoke an existing provider. Keep it only
+    // when it survives every possible arm. A read of the alias binds nothing.
+    if let Stmt::If(branch) = stmt {
+        let condition = match &*branch.test {
+            Expr::Constant(value) => match value.value {
+                Constant::Bool(value) => Some(value),
+                _ => None,
+            },
+            _ => None,
+        };
+        for (suite, reachable) in [
+            (&branch.body, condition != Some(false)),
+            (&branch.orelse, condition != Some(true)),
+        ] {
+            if reachable && !suite.is_empty() && !asyncio_aliases.is_empty() {
+                let mut possible = asyncio_aliases.clone();
+                for child in suite {
+                    update_asyncio_aliases(child, aliases, &mut possible);
+                }
+                asyncio_aliases.retain(|alias| possible.contains(alias));
+            }
+        }
+    }
     if let Stmt::ImportFrom(import) = stmt {
         let from_asyncio = import.level.is_none_or(|level| level.to_u32() == 0)
             && import

@@ -702,7 +702,10 @@ This order is the existing behavior and is normative:
   file's only binding of that name) or a `fixture` alias imported from
   `pytest_asyncio` and not rebound before the def: that plugin awaits it
   and hands the test its returned value, while plain `pytest.fixture`
-  hands a strict-mode test the un-awaited coroutine (#14803).
+  hands a strict-mode test the un-awaited coroutine (#14803). A prior
+  module-level `if` that can re-import the alias from plain `pytest`
+  withholds this credit. A literal-false arm or a read of the name alone
+  leaves the provider intact (#14846).
   `C` is the owner's class imported under its own
   name from the owner's module, and the fixture's file binds neither the
   fixture name nor `C` a second time. The test takes the fixture as a

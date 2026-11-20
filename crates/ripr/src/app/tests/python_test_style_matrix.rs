@@ -324,6 +324,40 @@ const WEAK_ONLY: &[WeakOnly] = &[
 ];
 
 #[test]
+fn conditional_fixture_reimport_requires_the_asyncio_provider() -> Result<(), String> {
+    let prefix = "import sys\nimport pytest\nfrom pytest_asyncio import fixture as fx\nfrom src.cart import Cart\n";
+    let test = "\n@fx\nasync def cart():\n    return Cart(200)\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert await cart.discounted() == 190\n";
+    for (binding, exposed) in [
+        ("", true),
+        ("if fx is None:\n    pass\n", true),
+        ("if False:\n    from pytest import fixture as fx\n", true),
+        ("from pytest import fixture as fx\n", false),
+        ("if True:\n    from pytest import fixture as fx\n", false),
+        (
+            "if sys.platform == 'win32':\n    from pytest import fixture as fx\n",
+            false,
+        ),
+    ] {
+        let finding = check_style(
+            "conditional fixture provider",
+            &[("src/cart.py", ASYNC_CART)],
+            CART_EDIT,
+            &format!("{prefix}{binding}{test}"),
+        )?;
+        assert!(
+            !finding.related_tests.is_empty(),
+            "{binding:?}: {finding:?}"
+        );
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{binding:?}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn python_test_styles_without_strong_credit_keep_weak_tests_out_of_exposed() -> Result<(), String> {
     // The supported styles' weak rows are held to `weakly_exposed` below.
     let mut failures = Vec::new();
