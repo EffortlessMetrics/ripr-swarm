@@ -36,6 +36,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 2 related test(s) found for owner `stringify`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/lib.test.js:4 <computed title, line 4> uses strong exact value oracle: t.equal(...)", "related test tests/lib.test.js:8 <computed title, line 8> uses strong exact value oracle: t.equal(...)"],
       "flow_sinks": [
       ],

@@ -87,5 +87,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/javascript_tap_registration/input --diff <cwd>/fixtures/javascript_tap_registration/diff.patch --mode fast probe:src_lib.js:typescript_preview:61159b02
   ripr context --root <cwd>/fixtures/javascript_tap_registration/input --diff <cwd>/fixtures/javascript_tap_registration/diff.patch --mode fast --at probe:src_lib.js:typescript_preview:61159b02
 
-
 Note: 1 JavaScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
