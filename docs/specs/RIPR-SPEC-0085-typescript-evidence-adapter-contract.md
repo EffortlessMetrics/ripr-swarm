@@ -203,8 +203,10 @@ its prompt in a non-interactive shell), which would run an unlocked version.
 
 If the package has no framework hint, a selected registration bound to a
 runtime `node:test` import supports `node --test <file>` when the test's
-nearest package is the reported command directory. This also applies when
-the package's test script is a wrapper.
+nearest package is the reported command directory. The whole-file command
+requires every indexed registration to resolve to Node and the extraction
+check to report no registration gaps. Mixed or partially indexed files
+retain the existing verification fallback.
 
 An unresolved or ambiguous runner becomes the named limitation
 `typescript_test_runner_unresolved`. No command is ever synthesized from

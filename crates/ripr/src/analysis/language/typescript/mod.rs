@@ -667,6 +667,7 @@ impl TypeScriptAdapter {
             .collect::<Vec<_>>();
         let mut all_owners: Vec<TypeScriptOwner> = Vec::new();
         let mut all_tests: Vec<TypeScriptTest> = Vec::new();
+        let mut direct_node_test_files = std::collections::HashSet::new();
         let mut parse_limits: Vec<TypeScriptParseLimit> = Vec::new();
         let mut read_failures: Vec<TypeScriptReadFailure> = Vec::new();
         let mut extraction_gaps: Vec<TypeScriptTestExtractionGap> = Vec::new();
@@ -1025,6 +1026,7 @@ impl TypeScriptAdapter {
                 // serves the recorded one instead of parsing the file again.
                 // Only a completed check is recorded: a worker failure says
                 // nothing about the file.
+                let partial_recorded = persisted_gap.is_some();
                 let (partial, partial_checked) = match persisted_gap {
                     Some(recorded) => (recorded, false),
                     None => match try_detect_partial_test_extraction_expanded(
@@ -1048,6 +1050,16 @@ impl TypeScriptAdapter {
                         partial_extraction: partial_checked
                             .then(|| PersistedPartialExtraction::of(partial.as_ref())),
                     });
+                }
+                // A direct Node command runs the whole file. Every indexed
+                // registration must resolve to Node, and partial extraction
+                // must have completed without finding a registration gap.
+                if (partial_recorded || partial_checked)
+                    && partial.is_none()
+                    && !tests.is_empty()
+                    && tests.iter().all(|test| test.node_test_registration)
+                {
+                    direct_node_test_files.insert(relative.as_path());
                 }
                 if let Some(gap) = partial {
                     extraction_gaps.push(gap);
@@ -1178,16 +1190,11 @@ impl TypeScriptAdapter {
         fn registration_key(test: &TypeScriptTest) -> (&Path, usize, &str) {
             (test.file.as_path(), test.line, test.name.as_str())
         }
-        let mut node_test_registrations: std::collections::HashSet<_> = all_tests
+        let node_test_registrations: std::collections::HashSet<_> = all_tests
             .iter()
-            .filter(|test| test.node_test_registration)
+            .filter(|test| direct_node_test_files.contains(test.file.as_path()))
             .map(registration_key)
             .collect();
-        // Expanded or same-line tests can share an output identity. An
-        // ambiguous row cannot borrow another registration's runner.
-        for test in all_tests.iter().filter(|test| !test.node_test_registration) {
-            node_test_registrations.remove(&registration_key(test));
-        }
         let mut node_test_packages = std::collections::HashMap::new();
 
         // Phase 2: for each accepted changed file, classify each changed

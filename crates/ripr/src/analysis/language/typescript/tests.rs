@@ -15370,6 +15370,12 @@ fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Res
             None,
         ),
         (
+            "mixed",
+            "node suite.mjs",
+            "import { test as nodeCheck } from 'node:test';\ntest('unrelated wrapper registration', () => {});",
+            Some("npm test -- test/pricing.test.mjs"),
+        ),
+        (
             "nested",
             "node suite.mjs",
             "import { test } from 'node:test';",
@@ -15393,10 +15399,19 @@ fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Res
             (package, "../src/pricing.ts")
         };
         let test_file = test_package.join("test/pricing.test.mjs");
+        let callee = if name == "mixed" {
+            ts_write_file(
+                &test_package.join("suite.mjs"),
+                "import { test } from 'node:test';\nglobalThis.test = test;\nawait import('./test/pricing.test.mjs');\n",
+            )?;
+            "nodeCheck"
+        } else {
+            "test"
+        };
         ts_write_file(
             &test_file,
             &format!(
-                "{import}\nimport assert from 'node:assert';\nimport {{ applyDiscount }} from '{price_import}';\ntest('applies discount', () => {{ assert.equal(applyDiscount(100, 50), 90); }});\n"
+                "{import}\nimport assert from 'node:assert';\nimport {{ applyDiscount }} from '{price_import}';\n{callee}('applies discount', () => {{ assert.equal(applyDiscount(100, 50), 90); }});\n"
             ),
         )?;
 
@@ -15420,8 +15435,9 @@ fn verify_command_uses_selected_test_node_import_with_opaque_npm_script() -> Res
             .findings
             .iter()
             .find(|finding| {
-                crate::domain::typescript_script_preview_related_test(finding)
-                    .is_some_and(|related| related.file == expected_test)
+                crate::domain::typescript_script_preview_related_test(finding).is_some_and(
+                    |related| related.file == expected_test && related.name == "applies discount",
+                )
             })
             .ok_or_else(|| format!("expected a finding targeting {expected_test:?}"))?;
         let verify = finding
