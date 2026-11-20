@@ -190,26 +190,26 @@ fn a_bare_assert_on_anything_else_stays_weak() -> Result<(), String> {
 
 #[test]
 fn bool_comparison_identity_stays_with_the_compared_owner_field() -> Result<(), String> {
-    for (body, exposed) in [
-        ("assert_eq!(true, opts(10).big);", true),
-        ("assert_ne!(opts(10).big, false);", true),
+    for (body, expected) in [
+        ("assert_eq!(true, opts(10).big);", "exposed"),
+        ("assert_ne!(opts(10).big, false);", "exposed"),
         (
             "let _ = opts(10); assert_eq!(rival::opts(10).big, true);",
-            false,
+            "weakly_exposed",
         ),
         (
             "let mut o = opts(10); o.big = true; assert_eq!(o.big, true);",
-            false,
+            "weakly_exposed",
         ),
         (
             "let o = opts(10); assert_eq!(true, true, \"{}\", o.big);",
-            false,
+            "weakly_exposed",
         ),
     ] {
         let report = finding(body, "predicate")?;
         let class = report.get("classification").and_then(Value::as_str);
-        if (class == Some("exposed")) != exposed || class.is_none() {
-            return Err(format!("{body}: expected exposed={exposed}, got {class:?}"));
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
         }
     }
     Ok(())
