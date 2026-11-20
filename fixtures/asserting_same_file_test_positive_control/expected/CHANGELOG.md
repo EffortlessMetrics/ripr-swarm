@@ -173,3 +173,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — asserting_same_file_test_positive_control (14)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless asserting_same_file_test_positive_control --reason "..."`
+
+Updated:
+- `expected/sarif.json`

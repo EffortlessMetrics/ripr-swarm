@@ -550,3 +550,14 @@ Updated:
 - `expected/human.txt`
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — helper_chain_one_hop (43)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/sarif.json`

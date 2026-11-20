@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Missing check: changed TypeScript equality-boundary at line 11 lacks a concrete preview discriminator. weakly_exposed static exposure for predicate probe:     if (getter === undefined) {. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `getter == undefined`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "text": "Missing check: changed TypeScript equality-boundary at line 11 lacks a concrete preview discriminator. Changed code `if (getter === undefined) {` is only partly noticed by tests. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `getter == undefined`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_cache.ts:typescript_preview:c77a33fa|probe:src_cache.ts:typescript_preview:c77a33fa|src/cache.ts"

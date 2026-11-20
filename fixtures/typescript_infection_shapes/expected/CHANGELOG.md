@@ -245,3 +245,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_infection_shapes (21)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/sarif.json`

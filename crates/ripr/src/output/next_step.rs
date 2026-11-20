@@ -67,6 +67,12 @@ pub(crate) fn reconcile_next_step(finding: &Finding) -> String {
     )
 }
 
+/// Opening words of the trailing analyzer-routing sentence that
+/// [`unresolved_edge_guidance`] appends (`Route analyzer work to `<route>`.`).
+/// It names internal analyzer work, not an author action, so the SARIF alert
+/// message drops it; `properties.suggested_next_action` keeps it whole.
+pub(crate) const ANALYZER_ROUTE_SENTENCE_PREFIX: &str = "Route analyzer work to ";
+
 /// Evidence-specific guidance for a named unresolved edge. This changes only
 /// the explanation; it neither clears the limitation nor admits a repair.
 pub(crate) fn unresolved_edge_guidance(finding: &Finding) -> Option<String> {
@@ -93,7 +99,7 @@ pub(crate) fn unresolved_edge_guidance(finding: &Finding) -> Option<String> {
         .map(|boundary| format!(" ({boundary})"))
         .unwrap_or_default();
     let route = detail(crate::domain::LIMITATION_ANALYZER_ROUTE_PREFIX)
-        .map(|route| format!(" Route analyzer work to `{route}`."))
+        .map(|route| format!(" {ANALYZER_ROUTE_SENTENCE_PREFIX}`{route}`."))
         .unwrap_or_default();
     Some(format!(
         "Tests cannot close this static-analysis limitation: ripr cannot trace {edge}{boundary}. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.{route}"

@@ -455,3 +455,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_rejects_literal_equality (35)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_rejects_literal_equality --reason "..."`
+
+Updated:
+- `expected/sarif.json`

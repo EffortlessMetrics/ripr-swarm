@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Missing check: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator. weakly_exposed static exposure for predicate probe:   if (user.length >= 3) {. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "text": "Missing check: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator. Changed code `if (user.length >= 3) {` is only partly noticed by tests. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_auth.ts:typescript_preview:23e9836b|probe:src_auth.ts:typescript_preview:23e9836b|src/auth.ts"

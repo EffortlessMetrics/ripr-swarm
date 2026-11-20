@@ -171,3 +171,25 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — compile_time_marker_test_no_observation (14)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — compile_time_marker_test_no_observation (15)
+
+Reason:
+RIPR-SPEC-0008: SARIF message keeps weak reach uncertain (#15374)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/sarif.json`

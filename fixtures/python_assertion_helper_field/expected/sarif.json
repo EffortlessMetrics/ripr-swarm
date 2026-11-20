@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "exposed static exposure for predicate probe:         self.writes += 1. Next step: Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior."
+            "text": "Changed code `self.writes += 1` appears noticed by tests. Next step: Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.exposed|probe:src_stats.py:python_preview:1fd9a5f2|probe:src_stats.py:python_preview:1fd9a5f2|src/stats.py"

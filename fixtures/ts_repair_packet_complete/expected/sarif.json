@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Missing check: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator. weakly_exposed static exposure for predicate probe:     if (amount >= threshold) {. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == threshold`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)."
+            "text": "Missing check: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator. Changed code `if (amount >= threshold) {` is only partly noticed by tests. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == threshold`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.ts:typescript_preview:2396aec1|probe:src_discount.ts:typescript_preview:2396aec1|src/discount.ts"

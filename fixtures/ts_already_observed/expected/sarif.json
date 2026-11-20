@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "exposed static exposure for predicate probe:     if (score >= 60) {. Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value."
+            "text": "Changed code `if (score >= 60) {` appears noticed by tests. Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.exposed|probe:src_validator.ts:typescript_preview:1538ac63|probe:src_validator.ts:typescript_preview:1538ac63|src/validator.ts"
