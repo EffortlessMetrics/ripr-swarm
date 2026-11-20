@@ -3695,17 +3695,20 @@ mod spec_0106_scan_tests {
     }
 
     #[test]
-    fn unwrap_err_binding_survives_a_bracket_inside_a_string() {
-        // #14810 round 3: a `(` or `)` inside a string literal must not raise
-        // the depth and swallow the assertion that follows the `;`.
-        for arg in [r#""(""#, r#"")""#] {
-            let body = format!(
-                "\n            let err = parse({arg}).unwrap_err();\n            assert_eq!(err, E::Unclosed);\n        "
-            );
+    fn unwrap_err_binding_survives_brackets_in_strings_and_comments() {
+        for receiver in [
+            r#"parse("(")"#,
+            r#"parse(")")"#,
+            r#"parse("{")"#,
+            r#"parse("}")"#,
+            r#"parse("x") /* ( */ "#,
+            r#"parse("x")"#,
+        ] {
+            let body = format!("let err = {receiver}.unwrap_err(); assert_eq!(err, E::Unclosed);");
             let vars = unwrap_err_bound_variables(&body);
             assert!(
                 vars.contains("err"),
-                "a bracket inside a string argument must not hide the unwrap_err binding: {vars:?}"
+                "expected an unwrap_err binding for {receiver}: {vars:?}"
             );
         }
     }
