@@ -887,10 +887,14 @@ const REPAIR_SEAM_CEILING: usize = 2 * crate::analysis::DEFAULT_REPO_EXPOSURE_SE
 
 /// Seam inventory for a repair resolver. A repository only just past the
 /// built-in cap (tokio: 12,754 seams) would otherwise refuse every repair, so
-/// a default-source cut within [`REPAIR_SEAM_CEILING`] reruns once with the cap
-/// raised to the exact total. The rerun is cut by nothing, and one that
-/// declined a Rust file is discarded, so the fail-closed truncation gate below
-/// is unchanged: an explicit
+/// a default-source cut within [`REPAIR_SEAM_CEILING`] is widened to the exact
+/// total. The widen is decided after seam discovery and before classification
+/// (#15384), so a cold widened repair classifies each seam once instead of
+/// classifying the cut and then the whole inventory again; the cut is still
+/// stored under the default key as before. A warm truncated default-key hit
+/// falls back to one widened rerun. The widened inventory is cut by nothing,
+/// and one that declined a Rust file keeps the original cut, so the fail-closed
+/// truncation gate below is unchanged: an explicit
 /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
 ///
 /// The CLI resolvers, the repair-start gate behind `ripr agent status` and the
