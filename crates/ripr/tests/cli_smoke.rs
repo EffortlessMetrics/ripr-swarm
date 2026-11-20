@@ -130,6 +130,8 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[path = "cli_smoke/root_default_outputs.rs"]
+mod root_default_outputs;
 // Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
