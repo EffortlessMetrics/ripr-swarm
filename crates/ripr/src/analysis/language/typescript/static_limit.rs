@@ -1006,9 +1006,9 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                         normalized_path(&candidate.test.file),
                         candidate.test.evidence_line(assertion)
                     );
-                    let why = format!(
-                        "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
-                        assertion.matcher
+                    let why = dynamic_assertion_why(
+                        &assertion.matcher,
+                        assertion.dynamic_expected_text.as_deref(),
                     );
                     limitations.push(TypeScriptNamedLimitation {
                         name: "typescript_dynamic_assertion_unresolved",
@@ -1022,6 +1022,79 @@ pub(crate) fn named_limitations_for_oracle_candidates(
         }
     }
     limitations
+}
+
+/// Words an unresolved expected value for the shape it actually has (#15331).
+/// Wording only: the assertion stays unresolved and no oracle strength is
+/// upgraded. The consumer in `output::typescript_packet_projection` keys off
+/// the shape phrases below, so they are one contract.
+fn dynamic_assertion_why(matcher: &str, expected_text: Option<&str>) -> String {
+    const TAIL: &str = "the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior";
+    match expected_text.map(str::trim) {
+        Some("undefined") => format!(
+            "the matcher `.{matcher}(...)` expects `undefined`, which the adapter does not read as a resolved expected value; {TAIL}"
+        ),
+        Some(text) if container_holds_identifier(text) => format!(
+            "the matcher `.{matcher}(...)` receives an object or array literal that contains variables; {TAIL}"
+        ),
+        _ => {
+            format!("the matcher `.{matcher}(...)` receives a non-literal dynamic argument; {TAIL}")
+        }
+    }
+}
+
+/// True when `text` is an object or array literal with a bare identifier
+/// member value (not a key, string, number, or `true`/`false`/`null`/
+/// `undefined`). A conservative scan: any doubt reads as false, which keeps
+/// the generic wording.
+fn container_holds_identifier(text: &str) -> bool {
+    if !(text.starts_with('{') && text.ends_with('}')
+        || text.starts_with('[') && text.ends_with(']'))
+    {
+        return false;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut quote: Option<char> = None;
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(q) = quote {
+            if c == '\\' {
+                i += 1;
+            } else if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if matches!(c, '\'' | '"' | '`') {
+            quote = Some(c);
+            i += 1;
+            continue;
+        }
+        if c.is_alphabetic() || c == '_' || c == '$' {
+            let start = i;
+            while i < chars.len() && (chars[i].is_alphanumeric() || matches!(chars[i], '_' | '$')) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let preceded_by_digit = start > 0 && chars[start - 1].is_ascii_digit();
+            let mut j = i;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            let is_key = chars.get(j) == Some(&':');
+            if !is_key
+                && !preceded_by_digit
+                && !matches!(word.as_str(), "true" | "false" | "null" | "undefined")
+            {
+                return true;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// A `toMatchObject` assertion whose resolved expected value is written as a
@@ -1514,4 +1587,40 @@ pub(crate) fn derived_boundary_operand_limitation(
         ),
         repair_route: "analysis/typescript-derived-boundary-operand",
     })
+}
+
+#[cfg(test)]
+mod dynamic_why_tests {
+    use super::{container_holds_identifier, dynamic_assertion_why};
+
+    #[test]
+    fn expected_value_shapes_get_distinct_reasons() {
+        let undefined = dynamic_assertion_why("is", Some("undefined"));
+        assert!(undefined.contains("expects `undefined`"), "{undefined}");
+        let members = dynamic_assertion_why("toEqual", Some("{ items: [item1, item2] }"));
+        assert!(members.contains("contains variables"), "{members}");
+        let variable = dynamic_assertion_why("toBe", Some("expectedTotal"));
+        assert!(
+            variable.contains("non-literal dynamic argument"),
+            "{variable}"
+        );
+        let missing = dynamic_assertion_why("toBe", None);
+        assert!(
+            missing.contains("non-literal dynamic argument"),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn container_scan_ignores_keys_strings_and_keyword_literals() {
+        assert!(!container_holds_identifier(
+            "{ a: 'x y', b: [1, 2.5e3], c: null }"
+        ));
+        assert!(!container_holds_identifier(
+            "[true, false, undefined, 'item1']"
+        ));
+        assert!(container_holds_identifier("{ items: [item1, item2] }"));
+        assert!(container_holds_identifier("[1, f(2)]"));
+        assert!(!container_holds_identifier("foo"));
+    }
 }

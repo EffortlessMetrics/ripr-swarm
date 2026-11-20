@@ -299,6 +299,33 @@ fn plain_blockers_read_the_real_producer_evidence() -> Result<(), String> {
             "dynamic blocker lost the test line or matcher: {text}"
         ));
     }
+    // #15331: the three expected-value shapes get three distinct reasons; none
+    // of them upgrades the finding.
+    let undefined_test = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount at the threshold', () => {\n    expect(applyDiscount(100, 100)).toBe(undefined);\n});\n";
+    let undefined_case = check_typescript(
+        "pin-undefined",
+        &[("tests/discount.test.ts", undefined_test)],
+    )?;
+    let text = typescript_dynamic_assertion_blocker(&undefined_case.typed).ok_or_else(|| {
+        format!(
+            "no blocker for an `undefined` expected value: {}",
+            undefined_case.finding
+        )
+    })?;
+    if !text.contains("expects `undefined`") || text.contains("variable or computed") {
+        return Err(format!("`undefined` read as a variable: {text}"));
+    }
+    let members_test = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount at the threshold', () => {\n    const a = 90;\n    expect(applyDiscount(100, 100)).toEqual({ items: [a, 1] });\n});\n";
+    let members = check_typescript("pin-members", &[("tests/discount.test.ts", members_test)])?;
+    let text = typescript_dynamic_assertion_blocker(&members.typed).ok_or_else(|| {
+        format!(
+            "no blocker for a container with variables: {}",
+            members.finding
+        )
+    })?;
+    if !text.contains("contains variables") || text.contains("variable or computed") {
+        return Err(format!("container with variables misworded: {text}"));
+    }
     let moved_test = "import { applyDiscount } from '../src/discount';\n\ntest('applyDiscount rejects NaN', () => {\n    expect(() => applyDiscount(Number.NaN, 1)).toThrow(TypeError);\n});\n";
     let moved = check_typescript(
         "pin-moved",
