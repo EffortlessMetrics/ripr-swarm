@@ -8916,6 +8916,24 @@ fn header_param_line_defaults_reads_defaults_on_one_header_line() {
     assert_eq!(names("    ):"), None);
 }
 
+/// #15292: the multi-line header span skips string literals, so brackets and
+/// `#` inside defaults never move the header end into the body, and a shape
+/// the scan cannot follow gives no span.
+#[test]
+fn multi_line_def_header_span_skips_string_literals() {
+    let span = super::no_behavior::multi_line_def_header_span;
+    let body = "    return sep\n";
+    let empty = format!("def f(\n    sep=\"\",\n    end='',\n):\n{body}");
+    assert_eq!(span(&empty, 1), Some((1, 4)));
+    let prefixed = format!("def f(\n    sep=r\"(\",\n    tag=b'#[',\n) -> int:  # note\n{body}");
+    assert_eq!(span(&prefixed, 1), Some((1, 4)));
+    let triple = format!("def f(\n    doc=\"\"\"a (\n    b:\"\"\",\n):\n{body}");
+    assert_eq!(span(&triple, 1), Some((1, 4)));
+    // A one-quote string left open at the end of a line is not followed.
+    let open = format!("def f(\n    sep=\"(\\\n\",\n):\n{body}");
+    assert_eq!(span(&open, 1), None);
+}
+
 /// Classifies `line` of a multi-line header with the diff producer's flag.
 fn classify_multi_line_header_line(
     file: &Path,
