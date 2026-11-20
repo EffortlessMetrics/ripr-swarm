@@ -299,6 +299,11 @@ const DEFAULT_GATE_CHECK_GUIDANCE: &str = "target/ripr/review/comments.json";
 struct GateCheckPlan {
     review_comments_args: Vec<String>,
     guidance_out: PathBuf,
+    /// True when `--guidance-out` was passed. A defaulted guidance path sits
+    /// under `<root>/target/ripr` (#15378), which the root's report-output
+    /// containment already guards; only an explicit path, which resolves
+    /// against the invoking directory, takes the cwd containment checks.
+    guidance_explicit: bool,
     gate: GateOptions,
 }
 
@@ -324,8 +329,10 @@ fn gate_check_with_producer(
     // Refuse escaping output paths (for example a committed `target` symlink)
     // before deleting anything, not only before the producer writes.
     crate::atomic_file::ensure_report_output_contained(&plan.gate.input.root)?;
-    crate::atomic_file::ensure_relative_output_contained(&plan.guidance_out)?;
-    ensure_guidance_parent_contained(&plan.guidance_out)?;
+    if plan.guidance_explicit {
+        crate::atomic_file::ensure_relative_output_contained(&plan.guidance_out)?;
+        ensure_guidance_parent_contained(&plan.guidance_out)?;
+    }
     remove_stale_guidance(&plan.guidance_out)?;
     if let Err(error) = produce(&plan.review_comments_args) {
         // The producer can fail after it wrote a complete-looking document
@@ -522,6 +529,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
     let head = head.unwrap_or_else(|| "HEAD".to_string());
     // #15378: the default guidance lands under --root, next to the gate
     // report and where `reports ci-summary --root` reads it.
+    let guidance_explicit = guidance_out.is_some();
     let guidance_out = guidance_out
         .unwrap_or_else(|| default_output_under_root(&root, DEFAULT_GATE_CHECK_GUIDANCE));
     review_args.extend([
@@ -554,6 +562,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
     Ok(GateCheckPlan {
         review_comments_args: review_args,
         guidance_out,
+        guidance_explicit,
         gate,
     })
 }
@@ -1753,6 +1762,10 @@ mod tests {
         let plan = parse_gate_check_plan(&args(&["--root", &root_arg, "--base", "abc123"]))?;
         let guidance = root.join(DEFAULT_GATE_CHECK_GUIDANCE);
         assert_eq!(plan.guidance_out, guidance);
+        assert!(
+            !plan.guidance_explicit,
+            "a defaulted guidance path is guarded by the root's containment"
+        );
         assert_eq!(
             plan.review_comments_args.last(),
             Some(&guidance.display().to_string()),
@@ -1782,6 +1795,7 @@ mod tests {
             explicit.guidance_out,
             PathBuf::from("target/gc/comments.json")
         );
+        assert!(explicit.guidance_explicit);
         assert_eq!(explicit.gate.out, PathBuf::from("target/gc/gate.json"));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

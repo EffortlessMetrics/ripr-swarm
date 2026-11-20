@@ -80,6 +80,28 @@ fn gate_check_with_a_member_root_writes_reports_where_ci_summary_reads() -> Test
             assert!(!repo.join(report).exists(), "written under cwd: {report}");
         }
 
+        // A relative root outside the invoking directory: the defaulted
+        // guidance is guarded by the root's own containment, not refused as
+        // an escaping `--guidance-out` the user never passed.
+        let sibling = repo.join("crates/other");
+        std::fs::create_dir_all(&sibling)?;
+        let from_sibling = run_command(
+            ripr,
+            Some(&sibling),
+            &[
+                "gate",
+                "check",
+                "--root",
+                "../itoa",
+                "--base",
+                "HEAD~1",
+                "--mode",
+                "visible-only",
+            ],
+        )?;
+        assert!(from_sibling.status.success(), "{from_sibling:?}");
+        assert!(!sibling.join("target").exists(), "written under cwd");
+
         let after = run_command(ripr, Some(&repo), &summary_args)?;
         let after_text = String::from_utf8(after.stdout)?;
         assert!(
