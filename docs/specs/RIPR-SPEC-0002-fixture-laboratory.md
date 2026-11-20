@@ -27,6 +27,12 @@ parent concurrency. The JSON, human, and `human-full` surfaces remain sequential
 within a case. This bounds Rayon workers, not all native helper or I/O threads;
 dogfood's real-repository children keep their existing environment.
 
+For a `human.txt` mismatch, the drift report compares the five fields in the
+rendered `Evidence:` vector. It lists each changed stage with its old and new
+state. Equal vectors yield `stage_states_unchanged: true`; a change in the
+visible evidence details then yields `detail_window_changed`. A missing,
+duplicate, or malformed vector leaves stage equality unknown.
+
 ## Required Evidence
 
 Registry-backed fixtures require their locked dependencies in the effective
