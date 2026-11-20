@@ -2140,6 +2140,10 @@ fn ignored_or_unreadable_deno_tests_register_nothing() {
         "Deno.test(\"rate\");",
         "Deno.other(\"rate\", () => { assertEquals(rate(1), 2); });",
         "Deno.test(\"rate\", someFunction);",
+        "Deno.test(\"rate\", { ignore: true }, () => { assertEquals(rate(1), 2); });",
+        "Deno.test({ name: \"rate\", \"ignore\": true, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test({ name: \"rate\", ignore, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test.ignore(\"rate\", () => { assertEquals(rate(1), 2); });",
     ] {
         assert!(deno_tests(&format!("{body}\n")).is_empty(), "{body}");
     }
@@ -2198,13 +2202,37 @@ fn deno_std_assertions_map_to_their_node_counterparts() {
             "{call}"
         );
     }
-    // A same-named local helper, or an unrelated module, earns no credit.
+    // A same-named local helper, an unrelated module, a look-alike std
+    // specifier, a namespace import, or a node-style member call on Deno's
+    // plain `assert` function earns no credit.
     for source in [
         "import { assertEquals } from \"./helpers.ts\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
         "function assertEquals(a, b) {}\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import { assertEquals } from \"@std/assertx\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import { assertEquals } from \"https://deno.land/stdlib/assert/mod.ts\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import { assertEquals } from \"https://deno.land/x/fork/assert/mod.ts\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import * as asserts from \"jsr:@std/assert\";\nDeno.test(\"t\", () => { asserts.assertEquals(rate(1), 2); });\n",
+        "import { assert } from \"jsr:@std/assert\";\nDeno.test(\"t\", () => { assert.equal(rate(1), 2); });\n",
     ] {
         let tests = deno_tests(source);
         assert_eq!(tests.len(), 1);
         assert!(tests[0].assertions.is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn deno_ignore_false_and_aliased_std_assertions_still_register() {
+    for source in [
+        "import { assertEquals } from \"jsr:@std/assert\";\nDeno.test({ name: \"rate\", ignore: false, fn() { assertEquals(rate(1), 2); } });\n",
+        "import { assertEquals as eq } from \"jsr:@std/assert/equals\";\nDeno.test(\"rate\", () => { eq(rate(1), 2); });\n",
+    ] {
+        let tests = deno_tests(source);
+        assert_eq!(tests.len(), 1, "{source}");
+        assert_eq!(tests[0].name, "rate", "{source}");
+        assert_eq!(tests[0].assertions.len(), 1, "{source}");
+        assert_eq!(
+            tests[0].assertions[0].matcher, "deepStrictEqual",
+            "{source}"
+        );
     }
 }

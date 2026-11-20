@@ -6,6 +6,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::deno_test_registration_forms_each_register_one_test",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::ignored_or_unreadable_deno_tests_register_nothing",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::deno_std_assertions_map_to_their_node_counterparts",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::deno_ignore_false_and_aliased_std_assertions_still_register",
   "crates/ripr/tests/typescript_no_config_detection.rs::deno_json_enables_typescript_and_links_the_deno_test",
 ]
 code = [

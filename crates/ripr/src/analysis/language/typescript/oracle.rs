@@ -1805,14 +1805,20 @@ fn is_deno_std_assert_module(module: &str) -> bool {
     }
     module
         .strip_prefix("https://deno.land/std")
-        .is_some_and(|rest| rest.contains("/assert/") || rest.ends_with("/testing/asserts.ts"))
+        .is_some_and(|rest| {
+            rest.starts_with(['@', '/'])
+                && (rest.contains("/assert/") || rest.ends_with("/testing/asserts.ts"))
+        })
 }
 
 /// The `node:assert/strict` method a Deno std assertion reads as. Only the
-/// equality and error assertions with an exact node counterpart are mapped;
-/// every other export stays unbound (fail-closed).
+/// truthy, equality and error assertions with an exact node counterpart are
+/// mapped; every other export stays unbound (fail-closed). Deno's `assert` is
+/// a plain function with no `.equal`-style members, so it binds as the `ok`
+/// method rather than as a node assert object.
 fn deno_assert_method(export: &str) -> Option<&'static str> {
     match export {
+        "assert" => Some("ok"),
         "assertEquals" => Some("deepStrictEqual"),
         "assertStrictEquals" => Some("strictEqual"),
         "assertThrows" => Some("throws"),
@@ -2044,10 +2050,6 @@ impl TypeScriptAssertionBindings {
             // check and `assertThrows` / `assertRejects` a broad error check.
             // A namespace import and any other export stay unbound.
             match imported {
-                Some("assert") if !namespace => {
-                    self.assert_objects
-                        .push((local, true, AssertFlavor::NodeStrict));
-                }
                 Some(name) if !namespace => {
                     if let Some(method) = deno_assert_method(name) {
                         self.assert_methods.push((

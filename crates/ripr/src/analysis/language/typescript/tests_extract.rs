@@ -3825,8 +3825,9 @@ fn test_name_and_assertions_from_registration(
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
     // Deno's `Deno.test(...)` registers through the global namespace and has
     // its own argument shapes; the callback is read from a local arena copy.
-    let deno_arena = oxc_allocator::Allocator::default();
+    let deno_arena;
     let deno = if deno_test_callee(&call.callee) {
+        deno_arena = oxc_allocator::Allocator::default();
         Some(deno_test_registration(call, source, &deno_arena)?)
     } else {
         None
