@@ -19992,7 +19992,7 @@ JSON shape:
     "cases": [
       {
         "name": "generated-pr-ci-review-workflow",
-        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run && cargo run --quiet -p ripr -- reports ci-summary --root <generated-ci-cockpit-fixture> --base-ref main",
+        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run && cargo run --quiet -p ripr -- reports ci-summary --full --root <generated-ci-cockpit-fixture> --base-ref main",
         "duration_ms": 123,
         "start_here": true,
         "repair_commands": 4,
