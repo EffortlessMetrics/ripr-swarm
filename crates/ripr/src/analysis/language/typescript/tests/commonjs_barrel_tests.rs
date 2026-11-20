@@ -501,3 +501,73 @@ fn whole_forward_of_an_es_default_is_not_the_owner() -> Result<(), String> {
         "var qs = require('../lib/index.js');\n\ntest('parses', () => {\n  expect(qs('a=1')).toEqual(['a=1']);\n});\n",
     )
 }
+
+/// A named CommonJS edge (`exports.helper = require('./parse').helper`)
+/// reads a property that can be `undefined`: a declaration the source never
+/// exports links nothing (Devin review of #15487).
+#[test]
+fn member_edge_onto_an_unexported_declaration_stays_unlinked() -> Result<(), String> {
+    let owner = "exports.parse = function parse(s) { return helper(s); };\nfunction helper(str) {\n  return str.split('&');\n}\n";
+    unlinked(
+        "cjs-r-member-unexported",
+        owner,
+        "exports.helper = require('./parse').helper;\n",
+        "var qs = require('../lib/index.js');\n\ntest('helper', () => {\n  expect(qs.helper('a=1')).toEqual(['a=1']);\n});\n",
+    )
+}
+
+/// A reassigned loader, a `default` property, an ES namespace forwarded as a
+/// named property, a local read before its declaration and a nested
+/// re-binding of the forwarded local all stay unlinked.
+#[test]
+fn unstable_or_non_callable_forwards_stay_unlinked() -> Result<(), String> {
+    unlinked(
+        "cjs-r-require-written",
+        FN_OWNER,
+        "require = function () { return function fake() {}; };\nmodule.exports = { parse: require('./parse') };\n",
+        QS_TEST,
+    )?;
+    unlinked(
+        "cjs-r-default-key",
+        FN_OWNER,
+        "module.exports = { default: require('./parse') };\n",
+        "var qs = require('../lib/index.js');\n\ntest('parses', () => {\n  expect(qs('a=1')).toEqual(['a=1']);\n});\n",
+    )?;
+    unlinked(
+        "cjs-r-es-namespace-member",
+        "export default function parse(str) {\n  // parse\n  return str.split('&');\n}\n",
+        "module.exports = { parse: require('./parse') };\n",
+        QS_TEST,
+    )?;
+    unlinked(
+        "cjs-r-before-init",
+        FN_OWNER,
+        "module.exports = { parse: parse };\nvar parse = require('./parse');\n",
+        QS_TEST,
+    )?;
+    unlinked(
+        "cjs-r-nested-rebind",
+        FN_OWNER,
+        "var parse = require('./parse');\nif (process.env.X) { var parse = require('./other'); }\nmodule.exports = { parse: parse };\n",
+        QS_TEST,
+    )
+}
+
+/// A test that replaces or spies on the barrel member does not run the
+/// barrel's export through `qs.parse(...)`.
+#[test]
+fn a_replaced_or_spied_namespace_member_stays_unlinked() -> Result<(), String> {
+    let barrel = "module.exports = { parse: require('./parse') };\n";
+    unlinked(
+        "cjs-r-member-assign",
+        FN_OWNER,
+        barrel,
+        "var qs = require('../lib/index.js');\n\ntest('parses', () => {\n  qs.parse = () => ['x'];\n  expect(qs.parse('a=1')).toEqual(['x']);\n});\n",
+    )?;
+    unlinked(
+        "cjs-r-member-spy",
+        FN_OWNER,
+        barrel,
+        "var qs = require('../lib/index.js');\n\ntest('parses', () => {\n  jest.spyOn(qs, 'parse').mockReturnValue(['x']);\n  expect(qs.parse('a=1')).toEqual(['x']);\n});\n",
+    )
+}

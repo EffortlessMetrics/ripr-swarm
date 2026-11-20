@@ -55,6 +55,9 @@ struct ModuleUses {
     export_roots: usize,
     /// A binding named `require` (the file is not calling Node's loader).
     binds_require: bool,
+    /// Every binding of each name anywhere in the file, nested scopes
+    /// included: a forwarded local must be bound exactly once.
+    bindings: HashMap<String, usize>,
 }
 
 impl<'a> oxc_ast_visit::Visit<'a> for ModuleUses {
@@ -67,6 +70,10 @@ impl<'a> oxc_ast_visit::Visit<'a> for ModuleUses {
         if matches!(identifier.name.as_str(), "module" | "exports" | "require") {
             self.binds_require = true;
         }
+        *self
+            .bindings
+            .entry(identifier.name.to_string())
+            .or_default() += 1;
     }
 }
 
@@ -85,11 +92,14 @@ pub(crate) fn commonjs_reexports(
             uses.visit_statement(statement);
         }
     }
-    if uses.binds_require || top_level_this(body) {
+    // A written `require` (Node's loader is a parameter, so `require = f`
+    // declares nothing) is not the loader either.
+    let writes = super::owners::identifier_writes(body);
+    if uses.binds_require || writes.contains("require") || top_level_this(body) {
         return out;
     }
-    let locals = require_locals(body);
-    let forward_of = |expression: &Expression<'_>| -> Option<Forward> {
+    let locals = require_locals(body, &writes, &uses.bindings);
+    let forward_of = |expression: &Expression<'_>, at: usize| -> Option<Forward> {
         let expression = expression.get_inner_expression();
         if let Some(source) = require_string_literal_source(expression) {
             return Some((source, None));
@@ -100,7 +110,11 @@ pub(crate) fn commonjs_reexports(
         let Expression::Identifier(identifier) = expression else {
             return None;
         };
-        locals.get(identifier.name.as_str()).cloned()
+        // A local read before its declaration runs is still `undefined`.
+        locals
+            .get(identifier.name.as_str())
+            .filter(|(_, declared_at)| *declared_at < at)
+            .map(|(forward, _)| forward.clone())
     };
     let resolve = |source: &str| {
         normalized_relative_import_module(relative, source, alias_map, Some(workspace_root))
@@ -148,18 +162,30 @@ pub(crate) fn commonjs_reexports(
                                     continue;
                                 }
                             };
+                            // A `default` key is an ordinary property, not the
+                            // module's whole value.
+                            if key == "default" {
+                                named.push((String::new(), None, false, position));
+                                continue;
+                            }
                             let value = (property.kind == PropertyKind::Init && !property.method)
-                                .then(|| forward_of(&property.value))
+                                .then(|| forward_of(&property.value, position))
                                 .flatten();
                             named.push((key, value, false, position));
                         }
                     }
-                    other => whole.push((forward_of(other), position)),
+                    other => whole.push((forward_of(other, position), position)),
                 }
             }
             Some(ExportTarget::Named { name, bare }) => {
                 accounted += 1;
-                named.push((name, forward_of(&assign.right), bare, position));
+                // `exports.default` is an ordinary property, not the module's
+                // whole value: unreadable, so no edge from this file is safe.
+                if name == "default" {
+                    named.push((String::new(), None, bare, position));
+                } else {
+                    named.push((name, forward_of(&assign.right, position), bare, position));
+                }
             }
             None => {}
         }
@@ -322,21 +348,21 @@ fn is_module_exports_member(member: &oxc_ast::ast::StaticMemberExpression<'_>) -
 }
 
 /// Top-level `const|var|let x = require('./y')`, `= require('./y').m` and
-/// `{ m: x } = require('./y')` bindings: local -> forwarded value. A `var`
-/// or `let` the file writes again, or a name declared more than once, is not
-/// a stable forward and is dropped.
-fn require_locals(body: &[Statement<'_>]) -> HashMap<String, Forward> {
-    let writes = super::owners::identifier_writes(body);
-    let mut locals: HashMap<String, Forward> = HashMap::new();
-    let mut declared: HashMap<String, usize> = HashMap::new();
-    for statement in body {
+/// `{ m: x } = require('./y')` bindings: local -> (forwarded value, the
+/// statement index that binds it). A `var` or `let` the file writes again,
+/// or a name bound more than once anywhere in the file (a nested `var` or
+/// parameter included), is not a stable forward and is dropped.
+fn require_locals(
+    body: &[Statement<'_>],
+    writes: &HashSet<String>,
+    bindings: &HashMap<String, usize>,
+) -> HashMap<String, (Forward, usize)> {
+    let mut locals: HashMap<String, (Forward, usize)> = HashMap::new();
+    for (position, statement) in body.iter().enumerate() {
         let Statement::VariableDeclaration(declaration) = statement else {
             continue;
         };
         for declarator in &declaration.declarations {
-            for identifier in declarator.id.get_binding_identifiers() {
-                *declared.entry(identifier.name.to_string()).or_default() += 1;
-            }
             let Some(init) = &declarator.init else {
                 continue;
             };
@@ -344,7 +370,7 @@ fn require_locals(body: &[Statement<'_>]) -> HashMap<String, Forward> {
             let constant = declaration.kind == VariableDeclarationKind::Const;
             let mut bind = |name: &str, forward: Forward| {
                 if constant || !writes.contains(name) {
-                    locals.insert(name.to_string(), forward);
+                    locals.insert(name.to_string(), (forward, position));
                 }
             };
             match &declarator.id {
@@ -377,6 +403,6 @@ fn require_locals(body: &[Statement<'_>]) -> HashMap<String, Forward> {
             }
         }
     }
-    locals.retain(|name, _| declared.get(name) == Some(&1));
+    locals.retain(|name, _| bindings.get(name) == Some(&1));
     locals
 }

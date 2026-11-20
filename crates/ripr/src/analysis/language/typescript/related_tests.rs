@@ -246,6 +246,7 @@ impl ReExportIndex {
         let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
         let mut commonjs_forwards: HashMap<String, String> = HashMap::new();
         let mut commonjs_own_names: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut commonjs_entries: Vec<((String, String), (String, String))> = Vec::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
             let path = normalized_path(file);
@@ -286,6 +287,7 @@ impl ReExportIndex {
                 entries.entry(key).or_insert_with(|| value);
             }
             star_edges.extend(file_facts.star_edges);
+            commonjs_entries.extend(file_facts.commonjs_entries);
             for (from, to) in file_facts.commonjs_forwards {
                 commonjs_forwards.entry(from).or_insert(to);
             }
@@ -341,8 +343,37 @@ impl ReExportIndex {
             commonjs_forwards,
             commonjs_own_names,
         };
+        index.admit_commonjs_entries(commonjs_entries);
         index.index_outbound_calls();
         index
+    }
+
+    /// Admit CommonJS named edges whose source is established to export the
+    /// forwarded member: its own export, an edge of its own (a chained
+    /// barrel, admitted to a fixed point), or a whole-module forward the
+    /// resolver checks hop by hop. A member read off a module that never
+    /// exports it is `undefined`, so it links nothing (#15284).
+    fn admit_commonjs_entries(&mut self, mut pending: Vec<((String, String), (String, String))>) {
+        loop {
+            let before = pending.len();
+            pending.retain(|(key, (member, source))| {
+                let canonical = self.canonical_module(source);
+                let established = self.source_exports_name(source, member)
+                    || self
+                        .entries
+                        .contains_key(&(canonical.clone(), member.clone()))
+                    || (member != "default" && self.commonjs_forwards.contains_key(&canonical));
+                if established {
+                    self.entries
+                        .entry(key.clone())
+                        .or_insert_with(|| (member.clone(), source.clone()));
+                }
+                !established
+            });
+            if pending.is_empty() || pending.len() == before {
+                break;
+            }
+        }
     }
 
     /// `true` when no module's exported code calls an imported binding.
@@ -1215,6 +1246,7 @@ impl ReExportIndex {
         if local_identifier_declared_in_test_body(&test.body_text, local)
             || enclosing_scope_shadows(test, local)
             || test.written_locals_in_file.contains(local)
+            || namespace_member_replaced(&test.body_text, local)
         {
             return false;
         }
@@ -1613,6 +1645,43 @@ impl ReExportIndex {
     }
 }
 
+/// Whether the test body replaces or spies on a member of the `require()`
+/// namespace `local` (`qs.parse = fake`, `jest.spyOn(qs, 'parse')`), so a
+/// later `qs.parse(...)` may not run the barrel's export. Text-level and
+/// fail-closed: any such spelling withholds the CommonJS barrel credit.
+fn namespace_member_replaced(body: &str, local: &str) -> bool {
+    let spy = format!("spyOn({local}");
+    if body.contains(&spy) {
+        return true;
+    }
+    let needle = format!("{local}.");
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let mut search = 0;
+    while let Some(found) = body[search..].find(&needle) {
+        let start = search + found;
+        search = start + needle.len();
+        if body[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| is_ident(c) || c == '.')
+        {
+            continue;
+        }
+        let rest = &body[search..];
+        let member_len = rest.find(|c: char| !is_ident(c)).unwrap_or(rest.len());
+        let after = rest[member_len..].trim_start();
+        let assigns =
+            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+        let compound = ["+=", "-=", "||=", "&&=", "??="]
+            .iter()
+            .any(|operator| after.starts_with(operator));
+        if member_len > 0 && (assigns || compound) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether an export resolved to `(target_module, target_name)` is `owner`:
 /// the owner's own named export, or the default export when the owner is it.
 /// A CommonJS whole-function module exports the function as its value, not as
@@ -1749,6 +1818,12 @@ pub(crate) struct ModuleExportFacts {
     /// (#15284).
     #[serde(default)]
     pub(crate) commonjs_own_names: Vec<String>,
+    /// CommonJS named edges (`exports.n = require('./a').m`), the same shape
+    /// as `entries`. A CommonJS member read can be `undefined`, so the index
+    /// admits one only when the source is established to export the member
+    /// (#15284).
+    #[serde(default)]
+    pub(crate) commonjs_entries: Vec<((String, String), (String, String))>,
 }
 
 impl ModuleExportFacts {
@@ -1765,6 +1840,7 @@ impl ModuleExportFacts {
             pairs.iter().map(|(a, b)| a.len() + b.len()).sum::<usize>()
         };
         string_pair_bytes(&self.entries)
+            .saturating_add(string_pair_bytes(&self.commonjs_entries))
             .saturating_add(tuple_bytes(&self.star_edges))
             .saturating_add(tuple_bytes(&self.commonjs_forwards))
             .saturating_add(
@@ -2004,7 +2080,13 @@ pub(crate) fn module_export_facts(
     // `exports.n = require('./a').n`, `module.exports = require('./a')`.
     let commonjs =
         super::commonjs_reexports::commonjs_reexports(relative, body, alias_map, workspace_root);
-    facts.entries.extend(commonjs.entries);
+    // Every CommonJS edge resolved its `require()` target on disk (a
+    // directory's `index`, a `package.json` `main`), so the facts are not
+    // persisted across runs, like an ES `export ... from`.
+    if !commonjs.entries.is_empty() || !commonjs.forwards.is_empty() {
+        facts.re_exports_from_source = true;
+    }
+    facts.commonjs_entries = commonjs.entries;
     facts.commonjs_forwards = commonjs.forwards;
     facts.commonjs_own_names = commonjs.own_names;
     facts
