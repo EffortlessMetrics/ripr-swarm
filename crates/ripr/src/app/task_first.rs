@@ -4782,11 +4782,28 @@ pub(crate) mod tests {
                 .0
                 .len();
         assert!(per_module > 0, "calibration module yields seams");
+        let before_hit = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        assert_eq!(inventory_for_repair(&root, &config)?.0.len(), per_module);
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get(),
+            before_hit,
+            "repair reuses a healthy complete ordinary entry"
+        );
+
         let modules = (DEFAULT_REPO_EXPOSURE_SEAM_LIMIT + per_module) / per_module + 5;
         for file in 1..modules {
             write_module(file)?;
         }
         write_lib(modules)?;
+
+        // A damaged ordinary entry must neither hide a widened entry nor
+        // disable the cache-base trust checks on either lookup.
+        let key = crate::analysis::workspace_cache_key_at_with_config(&root, &config)?;
+        let [(entry_dir, _), _] =
+            crate::analysis::seam_cache::RepoSeamFactCache::at(&root).entry_dirs();
+        std::fs::create_dir_all(&entry_dir).map_err(|error| error.to_string())?;
+        let damaged = entry_dir.join(key.filename());
+        std::fs::write(&damaged, b"invalid cache entry").map_err(|error| error.to_string())?;
 
         // Run repair cold: an ordinary cached prefix would hide a redundant pass.
         let before = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
@@ -4796,6 +4813,17 @@ pub(crate) mod tests {
             classified.len()
         );
         assert!(info.is_none_or(|info| !info.is_truncated()));
+
+        let before_hit = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        let (warm, limit) = inventory_for_repair(&root, &config)?;
+        assert_eq!(warm.len(), classified.len());
+        assert!(limit.is_none());
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get(),
+            before_hit,
+            "a malformed ordinary entry must not hide a healthy widened entry"
+        );
+        std::fs::remove_file(damaged).map_err(|error| error.to_string())?;
 
         // Plain inventory: cut by the default cap.
         let (_, plain) =

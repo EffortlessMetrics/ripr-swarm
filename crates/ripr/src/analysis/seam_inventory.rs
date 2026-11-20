@@ -475,6 +475,7 @@ fn inventory_classified_seams_report_collect(
         key
     };
     let load = |key: RepoSeamCacheKey| {
+        let started = Instant::now();
         let ordinary = reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key));
         if let Some(ceiling) = repair_ceiling {
             match &ordinary {
@@ -482,6 +483,14 @@ fn inventory_classified_seams_report_collect(
                 CacheLoad::Hit((_, Some(cut), fallback))
                     if cut.total <= ceiling
                         && rust_index::declined_rust_files_at(root, fallback).is_empty() => {}
+                CacheLoad::CorruptIgnored { reason }
+                    if !super::seam_cache::is_base_untrusted_reason(reason) =>
+                {
+                    // Damage to one ordinary entry does not invalidate the
+                    // independently published widened result.
+                    trace_latency_phase("cache_load", "corrupt_ignored", started.elapsed());
+                    eprintln!("ripr: repo seam cache entry ignored ({reason})");
+                }
                 _ => return (key, ordinary),
             }
             let widened = repair_key(&key, ceiling);
