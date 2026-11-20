@@ -216,3 +216,49 @@ fn discarded_last_commit_retry_prints_no_deletion_note() -> Result<(), Box<dyn s
     );
     Ok(())
 }
+
+// #15330: an adopted last-commit retry still prints the disclosures it
+// buffered (here the pure-rename note), before the "analyzed the last commit"
+// label, so the capture never swallows a note about the reported range.
+#[test]
+fn adopted_last_commit_retry_prints_its_buffered_disclosures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("check-adopted-retry-disclosure");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    super::run_git(&root, &["checkout", "-B", "main"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"sm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate(x: u64) -> bool { x > 100 }\n",
+    )?;
+    std::fs::write(root.join("README.md"), "notes\n")?;
+    commit_all(&root, "feature")?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate(x: u64) -> bool { x >= 100 }\n",
+    )?;
+    super::run_git(&root, &["mv", "README.md", "NOTES.md"])?;
+    commit_all(&root, "tighten gate and rename notes")?;
+    let root_arg = root.display().to_string();
+
+    let bare = run_ripr(&["check", "--root", &root_arg]);
+    let bare_err = String::from_utf8_lossy(&bare.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+
+    let label = bare_err
+        .find("analyzed the last commit")
+        .ok_or_else(|| format!("the retry must be adopted: {bare_err}"))?;
+    let rename = bare_err
+        .find("1 pure rename(s)")
+        .ok_or_else(|| format!("an adopted retry keeps its rename note: {bare_err}"))?;
+    assert!(
+        rename < label,
+        "the buffered note prints before the last-commit label: {bare_err}"
+    );
+    Ok(())
+}
