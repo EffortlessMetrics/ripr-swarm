@@ -1334,10 +1334,25 @@ import or `del` of the argname drops it from the cases, and a nested `def` or
 `class`, a `match` or a star import drops all cases. Any `lambda` in the test,
 or a comprehension whose `for` target names the argname, also leaves the call
 unresolved. When no strong related call binds a literal
-argument (test locals, `*args`, a construct-call passing a dict), static
-evidence cannot see the activating input either way: the oracle verdict stands
-and an `exposed` finding carries a `boundary_activation_unresolved` evidence
-line naming that limitation.
+argument, static evidence cannot see the activating input either way. If a
+strong related test does make a recognized owner call but passes its inputs in
+a form the reader cannot read (a `*args` unpack, or a bare name it cannot bind
+such as a reassigned test local, a fixture, or a parametrize argname whose
+table is named by a variable or whose rows name values), that call is
+not established to reach the changed boundary: the finding fails closed to
+`weakly_exposed`, says the inputs went unread, and names no missing
+discriminator, because the unread input may already sit on the boundary
+(#15287). When the calls the reader recognizes pass only expressions it does
+not evaluate (a list of objects, a constructor call, a dict display), or no
+strong related test makes a recognized owner call at all (an implicit dunder
+such as `__bool__`, a construct-call `Owner()(...)`), the oracle verdict stands and an `exposed` finding carries a
+`boundary_activation_unresolved` evidence line naming that limitation; an
+operand the owner rebinds keeps the same limitation. One rebinding is read
+through: when the owner's first statement is `name = float(name)` or
+`name = int(name)`, it is the only binding of that parameter, and every strong
+call binds it to a numeric literal the conversion leaves equal (integers for
+`int`; floats and integers within 2**53 for `float`), the call's literal is the
+compared value (#15287).
 
 For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
 integer bound, a closed generator walk can resolve a rebound parameter. It

@@ -1101,10 +1101,11 @@ fn classify_change_for_owner_inner<'a>(
     // arguments, `exposed` requires one of those calls to bind both operands
     // to equal values (or, for `==` -> `==`, either compared literal).
     // Unresolved operands never count as observed, so this fails closed to
-    // `weakly_exposed` without naming a boundary they may already reach. With no
-    // literal owner inputs at all the gate cannot see the activation either
-    // way; that case keeps the oracle verdict and carries a named
-    // `boundary_activation_unresolved` limitation instead.
+    // `weakly_exposed` without naming a boundary they may already reach. A
+    // recognized owner call whose inputs went unread (`UnreadInput`, #15287)
+    // fails closed the same way. With no recognized owner call at all the gate
+    // cannot see the activation either way; that case keeps the oracle verdict
+    // and carries a named `boundary_activation_unresolved` limitation instead.
     let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
         .then(|| {
             python_boundary_evidence(
@@ -1118,8 +1119,10 @@ fn classify_change_for_owner_inner<'a>(
         })
         .flatten();
     let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
-        e.activation == BoundaryActivation::Unresolved
-            || (e.activation == BoundaryActivation::Missing && e.discriminator.is_none())
+        matches!(
+            e.activation,
+            BoundaryActivation::Unresolved | BoundaryActivation::UnreadInput
+        ) || (e.activation == BoundaryActivation::Missing && e.discriminator.is_none())
     }) && super::boundary::unresolved_loop_list_boundary(
         line,
         line_text,
@@ -1131,12 +1134,16 @@ fn classify_change_for_owner_inner<'a>(
     );
     // Fail closed (#15287): a boundary no strong related call is established to
     // reach is a gap whether the calls were readable and off the boundary
-    // (`Missing`) or unreadable (`Unresolved`: a `*args` row, a named constant
-    // the table does not bind, a rebound operand). An input the analysis cannot
-    // read cannot discriminate the changed boundary, so neither earns `exposed`.
-    let boundary_gap = boundary
-        .as_ref()
-        .filter(|evidence| evidence.activation != BoundaryActivation::Observed);
+    // (`Missing`) or passed test-side inputs the reader cannot see
+    // (`UnreadInput`: a `*args` row, a test local, a parametrize row naming a
+    // value). `Unresolved` (no recognized owner call, or an operand the owner
+    // rebinds) keeps the oracle verdict with its named limitation.
+    let boundary_gap = boundary.as_ref().filter(|evidence| {
+        matches!(
+            evidence.activation,
+            BoundaryActivation::Missing | BoundaryActivation::UnreadInput
+        )
+    });
     let mut boundary_downgraded = false;
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the
