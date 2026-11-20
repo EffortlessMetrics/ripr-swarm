@@ -1342,6 +1342,208 @@ fn library_export_imports_in_another_file_still_defeat_a_module_name() {
     }
 }
 
+/// The single-walk implementation that predates the name-independent summary
+/// (#15329), kept as the oracle. Only `modules` is owned (`String`) to match
+/// `reexports_library_module`; the logic is otherwise verbatim.
+fn single_walk_library_may_export_other(index: &RustIndex, owner_root: &Path, name: &str) -> bool {
+    let Some(source_dir) = owner_root.parent() else {
+        return true;
+    };
+    if !index.include_limitations.is_empty() {
+        return true;
+    }
+    let src_dirs = BTreeSet::new();
+    let mut library = Vec::new();
+    for (path, facts) in index.files().iter() {
+        if !path.starts_with(source_dir) {
+            continue;
+        }
+        match target_root(path, index, &src_dirs) {
+            None => return true,
+            Some(root) if root == owner_root => {
+                let masked = mask_comments_and_strings(&facts.source);
+                let includes = whole_word_offsets(&masked, "include")
+                    .into_iter()
+                    .any(|offset| {
+                        masked[offset + "include".len()..]
+                            .trim_start()
+                            .starts_with('!')
+                    });
+                if includes || declares_value_named(&masked, name) {
+                    return true;
+                }
+                library.push(masked);
+            }
+            Some(_) => {}
+        }
+    }
+    let modules: BTreeSet<String> = library
+        .iter()
+        .flat_map(|masked| declared_module_names(masked))
+        .filter(|module| {
+            !library.iter().any(|masked| {
+                library_import_statements(masked)
+                    .iter()
+                    .any(|statement| use_statement_binds_name(statement, module))
+                    || binds_extern_crate(masked, module)
+            })
+        })
+        .map(String::from)
+        .collect();
+    index.files().iter().any(|(path, facts)| {
+        target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
+            && public_use_statements(&facts.source)
+                .iter()
+                .any(|statement| {
+                    (contains_as_whole_word(statement, name) || statement.contains('*'))
+                        && !reexports_library_module(statement, &modules)
+                })
+    })
+}
+
+/// (label, `lib.rs` tail, expected answer per name).
+type LibraryExportCase<'a> = (&'a str, &'a str, &'a [(&'a str, bool)]);
+
+const LIBRARY_EXPORT_NAMES: [&str; 8] = [
+    "LIMIT", "score", "rebate", "ext", "absent", "m", "helpers", "Widget",
+];
+
+#[test]
+fn library_export_summary_answers_match_the_single_walk_on_a_multi_file_library() {
+    let m = "pub fn score() -> i64 { 1 }\npub fn rebate() -> i64 { 2 }\n";
+    let helpers = "pub const LIMIT: u32 = 9;\n// pub use ghost::absent;\n";
+    let widget = "pub struct Widget;\n";
+    let base = [
+        ("src/m.rs", m),
+        ("src/helpers.rs", helpers),
+        ("src/widget.rs", widget),
+    ];
+    let mods = "pub mod m;\nmod helpers;\nmod widget;\n";
+    let root = Path::new(LIB);
+    // (label, lib.rs tail, name -> expected)
+    let cases: [LibraryExportCase; 6] = [
+        (
+            "value declared in a library file",
+            "",
+            &[
+                ("LIMIT", true),
+                ("score", false),
+                ("absent", false),
+                ("ext", false),
+            ],
+        ),
+        (
+            "re-export through a library module",
+            "pub use self::m::score;\n",
+            &[("score", false), ("rebate", false), ("LIMIT", true)],
+        ),
+        (
+            // No `crate`/`self`/`super` root: not provably local, fails closed.
+            "re-export through a bare module path",
+            "pub use m::score;\n",
+            &[("score", true), ("rebate", false), ("LIMIT", true)],
+        ),
+        (
+            "re-export of a foreign item",
+            "pub use fastscore::ext;\n",
+            &[
+                ("ext", true),
+                ("score", false),
+                ("absent", false),
+                ("LIMIT", true),
+            ],
+        ),
+        (
+            "foreign glob",
+            "pub use fastscore::*;\n",
+            &[("rebate", true), ("absent", true), ("Widget", true)],
+        ),
+        (
+            "glob of a library module",
+            "pub use self::m::*;\n",
+            &[("rebate", false), ("absent", false), ("LIMIT", true)],
+        ),
+    ];
+    for (label, tail, expected) in cases {
+        let lib = format!("{mods}{tail}");
+        let mut files = vec![(LIB, lib.as_str())];
+        files.extend(base);
+        let library = index(&files);
+        assert_eq!(library.files().len(), 4, "{label}");
+        for name in LIBRARY_EXPORT_NAMES {
+            let old = single_walk_library_may_export_other(&library, root, name);
+            assert_eq!(
+                library_may_export_other(&library, root, name),
+                old,
+                "{label}: {name}"
+            );
+        }
+        for (name, answer) in expected {
+            assert_eq!(
+                library_may_export_other(&library, root, name),
+                *answer,
+                "{label}: {name}"
+            );
+        }
+    }
+    // An `include!` in any library file fails every name closed.
+    let included = "pub fn score() -> i64 { 1 }\ninclude!(\"gen.rs\");\n";
+    let lib = format!("{mods}pub use m::score;\n");
+    let library = index(&[
+        (LIB, lib.as_str()),
+        ("src/m.rs", m),
+        ("src/helpers.rs", included),
+        ("src/widget.rs", widget),
+    ]);
+    for name in LIBRARY_EXPORT_NAMES {
+        assert!(
+            single_walk_library_may_export_other(&library, root, name),
+            "{name}"
+        );
+        assert!(
+            library_may_export_other(&library, root, name),
+            "include: {name}"
+        );
+    }
+    // A file with no established crate root fails every name closed.
+    let library = index(&[
+        (LIB, "pub mod m;\n"),
+        ("src/m.rs", m),
+        ("src/orphan.rs", widget),
+    ]);
+    for name in LIBRARY_EXPORT_NAMES {
+        assert!(
+            single_walk_library_may_export_other(&library, root, name),
+            "{name}"
+        );
+        assert!(
+            library_may_export_other(&library, root, name),
+            "orphan: {name}"
+        );
+    }
+}
+
+#[test]
+fn library_export_summary_is_computed_once_per_owner_root_across_names() {
+    let library = index(&[
+        (LIB, "pub mod m;\npub use m::score;\n"),
+        ("src/m.rs", "pub fn score() -> i64 { 1 }\n"),
+    ]);
+    assert_eq!(library.files().len(), 2);
+    LIBRARY_EXPORT_SUMMARIES.with(|count| count.set(0));
+    for name in LIBRARY_EXPORT_NAMES {
+        library_may_export_other(&library, Path::new(LIB), name);
+    }
+    assert_eq!(
+        LIBRARY_EXPORT_SUMMARIES.with(std::cell::Cell::get),
+        1,
+        "every name reuses one summary of the owner's library"
+    );
+    // A second owner root is its own summary.
+    library_may_export_other(&library, Path::new("other/src/lib.rs"), "score");
+    assert_eq!(LIBRARY_EXPORT_SUMMARIES.with(std::cell::Cell::get), 2);
+}
+
 #[test]
 fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
     // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
