@@ -481,6 +481,7 @@ pub(crate) fn probes_for_file_with_relations(
             || added_attribute_lines.contains(&added.new_side_line)
             || added_use_lines.contains(&added.new_side_line)
             || is_item_level_closing_brace(index, &changed.path, added.new_side_line, text)
+            || is_slid_function_closer(index, changed, added_index)
         {
             continue;
         }
@@ -1816,14 +1817,82 @@ fn join_tokens(lines: &[&str]) -> String {
 /// (#4216); so does a file with no indexed functions or no file facts, where
 /// "outside every function" is not established.
 fn is_item_level_closing_brace(index: &RustIndex, path: &Path, line: usize, text: &str) -> bool {
+    is_closers_only(text)
+        && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
+        && find_owner_function(index, path, line).is_none()
+}
+
+/// A function's own closing `}` that git's diff slider reported as added
+/// (#15270). Appending an item after a function (`agent stub --write` adds
+/// `#[cfg(test)] mod ripr_tests { .. }`) lets git align the function's old
+/// closer with the new item's closer, so the function's `}` reads as the
+/// first line of the added run and the item's closer as unchanged context.
+/// Both alignments describe the same two files; this one is chosen only when
+/// the alternative leaves nothing to probe:
+///
+/// - the line is closers only and is its owner function's `end_line`;
+/// - the added lines run contiguously from it to some line `b`;
+/// - line `b + 1` is unchanged context with the same text; and
+/// - that context line is an item-level closer, which seeds no probe either
+///   way (#10090).
+///
+/// Then sliding the added run down one line makes the function's closer
+/// context and the item's closer the added line, so no behavior changed on
+/// this line. A closer that ends a new branch inside a function is not its
+/// function's `end_line`, so it keeps its probe (#4216).
+fn is_slid_function_closer(index: &RustIndex, changed: &ChangedFile, added_index: usize) -> bool {
+    let Some(added) = changed.added_lines.get(added_index) else {
+        return false;
+    };
+    let line = added.new_side_line;
+    if !is_closers_only(&added.text)
+        || find_owner_function(index, &changed.path, line).is_none_or(|f| f.end_line != line)
+    {
+        return false;
+    }
+    let mut run_end = line;
+    for next in changed.added_lines.iter().skip(added_index + 1) {
+        if next.new_side_line != run_end + 1 {
+            break;
+        }
+        run_end = next.new_side_line;
+    }
+    if run_end == line {
+        return false;
+    }
+    let context_line = run_end + 1;
+    if changed
+        .added_lines
+        .iter()
+        .any(|other| other.new_side_line == context_line)
+    {
+        return false;
+    }
+    let Some(context_text) = find_file_facts(index, &changed.path).and_then(|facts| {
+        facts
+            .source
+            .lines()
+            .nth(context_line - 1)
+            .map(str::to_string)
+    }) else {
+        return false;
+    };
+    // A slide needs byte-identical lines: indentation must match, so a nested
+    // closer never pairs with an outer one. Only a CRLF carriage return is
+    // ignored (`lines()` already strips it from the context side).
+    context_text.trim_end_matches('\r') == added.text.trim_end_matches('\r')
+        && is_item_level_closing_brace(index, &changed.path, context_line, &context_text)
+}
+
+/// Text that is only closing delimiters (`}`, `};`, `},`, `)`, `]`) once
+/// comments and strings are masked.
+fn is_closers_only(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let body = masked.trim().trim_end_matches([';', ',']).trim_end();
     !body.is_empty()
         && body
             .chars()
             .all(|ch| matches!(ch, '}' | ')' | ']') || ch.is_whitespace())
-        && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
-        && find_owner_function(index, path, line).is_none()
 }
 
 /// 1-based lines of `source` that continue a multi-line outer or inner
@@ -3927,6 +3996,115 @@ mod tests {
         // Nor can a file with no file facts at all.
         let lines = probe_lines(&RustIndex::default(), &[(9, "}")]);
         assert!(lines.contains(&9), "{lines:?}");
+    }
+
+    #[test]
+    fn a_function_closer_slid_ahead_of_an_appended_item_seeds_no_probe() {
+        // #15270: `agent stub --write` appends `mod ripr_tests { .. }` after
+        // `is_adult`. git reports the function's own `}` (line 3) as the first
+        // added line and the module's `}` (line 11) as unchanged context.
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n\n#[cfg(test)]\nmod ripr_tests {\n    #[test]\n    fn t() {\n        assert!(super::is_adult(18));\n    }\n}\n";
+        let function = |name: &str, start_line: usize, end_line: usize| FunctionFact {
+            id: SymbolId(name.to_string()),
+            name: name.to_string(),
+            file: path.clone(),
+            start_line,
+            end_line,
+            body: String::new().into(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
+            returns: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let index = |functions: Vec<FunctionFact>| {
+            RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: source.into(),
+                        functions,
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            })
+        };
+        // `closer` overrides the added text of line 3 (the function closer).
+        let probe_lines_with = |index: &RustIndex, added: &[usize], closer: &str| {
+            let lines = source.lines().collect::<Vec<_>>();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: added
+                    .iter()
+                    .map(|&line| ChangedLine {
+                        line,
+                        new_side_line: line,
+                        text: if line == 3 {
+                            closer.to_string()
+                        } else {
+                            lines.get(line - 1).copied().unwrap_or_default().to_string()
+                        },
+                    })
+                    .collect(),
+                removed_lines: vec![],
+            };
+            probes_for_file(Path::new("workspace"), &changed, index)
+                .iter()
+                .map(|probe| probe.location.line)
+                .collect::<Vec<_>>()
+        };
+        let probe_lines = |index: &RustIndex, added: std::ops::RangeInclusive<usize>| {
+            probe_lines_with(index, &added.collect::<Vec<_>>(), "}")
+        };
+
+        let appended = index(vec![function("is_adult", 1, 3), function("t", 8, 10)]);
+        let lines = probe_lines(&appended, 2..=10);
+        assert!(
+            lines.contains(&2),
+            "control: the changed predicate stays: {lines:?}"
+        );
+        assert!(!lines.contains(&3), "the slid function closer: {lines:?}");
+
+        // Without a following context closer the function's closer stays
+        // probed (the run ends at the file's last added line).
+        let lines = probe_lines(&appended, 2..=11);
+        assert!(
+            lines.contains(&3),
+            "no context closer to slide onto: {lines:?}"
+        );
+        // A context closer inside a function span is not item-level: sliding
+        // onto it would move a probe-worthy closer, so line 3 keeps its probe.
+        let enclosing = index(vec![function("is_adult", 1, 3), function("t", 8, 11)]);
+        let lines = probe_lines(&enclosing, 2..=10);
+        assert!(
+            lines.contains(&3),
+            "context closer inside a function: {lines:?}"
+        );
+        // A closer that is not its function's `end_line` (a branch closer)
+        // keeps its probe even when the same context follows.
+        let longer = index(vec![function("is_adult", 1, 4), function("t", 8, 10)]);
+        let lines = probe_lines(&longer, 2..=10);
+        assert!(
+            lines.contains(&3),
+            "a closer before the function's end: {lines:?}"
+        );
+        // A slide needs identical lines: an indented closer never pairs with
+        // the item-level `}` that follows, so it keeps its probe.
+        let lines = probe_lines_with(&appended, &(2..=10).collect::<Vec<_>>(), "    }");
+        assert!(lines.contains(&3), "indentation differs: {lines:?}");
+        // A gap ends the added run early (at line 5), so the context closer
+        // after the last added line is not the one the run slides onto.
+        let gapped = [2, 3, 4, 5, 7, 8, 9, 10];
+        let lines = probe_lines_with(&appended, &gapped, "}");
+        assert!(lines.contains(&3), "gap in the added run: {lines:?}");
     }
 
     #[test]
