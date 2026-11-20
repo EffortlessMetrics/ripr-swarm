@@ -254,7 +254,7 @@ impl ConftestRules {
         if self.evaluate(stmt, branch) {
             return;
         }
-        if mentions_collection_name(source, stmt.range()) {
+        if mentions_collection_name(source, range_with_decorators(stmt)) {
             self.unevaluated = true;
         }
     }
@@ -343,6 +343,26 @@ impl ConftestRules {
         }
         excluded.then_some(COLLECT_IGNORE)
     }
+}
+
+/// A statement's range, widened to its decorators: a `def` or `class` range
+/// starts at the keyword, so `@pytest.hookimpl(specname="pytest_ignore_collect")`
+/// would otherwise fall outside the collection-name scan.
+fn range_with_decorators(stmt: &Stmt) -> rustpython_parser::text_size::TextRange {
+    let range = stmt.range();
+    let decorators = match stmt {
+        Stmt::FunctionDef(node) => &node.decorator_list,
+        Stmt::AsyncFunctionDef(node) => &node.decorator_list,
+        Stmt::ClassDef(node) => &node.decorator_list,
+        _ => return range,
+    };
+    let start = decorators
+        .iter()
+        .map(|decorator| decorator.range().start())
+        .chain(std::iter::once(range.start()))
+        .min()
+        .unwrap_or_else(|| range.start());
+    rustpython_parser::text_size::TextRange::new(start, range.end())
 }
 
 fn mentions_collection_name(source: &str, range: rustpython_parser::text_size::TextRange) -> bool {

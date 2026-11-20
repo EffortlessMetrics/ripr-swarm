@@ -271,6 +271,14 @@ fn unevaluable_conftest_collection_forms_withhold_credit() -> Result<(), String>
             "conditional-hook",
             "if SLOW:\n    def pytest_ignore_collect(collection_path):\n        return True\n",
         ),
+        (
+            "conditional-decorated-hook",
+            "import sys\nimport pytest\n\nif sys.platform == 'linux':\n    @pytest.hookimpl(specname='pytest_ignore_collect')\n    def platform_skip(collection_path, config):\n        return True\n",
+        ),
+        (
+            "decorated-hook",
+            "import pytest\n\n\n@pytest.hookimpl(specname='pytest_ignore_collect')\ndef platform_skip(collection_path, config):\n    return True\n",
+        ),
         ("name-in-guard", "if collect_ignore:\n    pass\n"),
         (
             "branch-remove",
