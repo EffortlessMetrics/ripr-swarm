@@ -4242,12 +4242,7 @@ impl Backend {
         quarantine: Option<(PathBuf, DocumentStalenessReason)>,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
         let (path, reason) = quarantine?;
-        if reason == DocumentStalenessReason::NoAnalyzedSavedContent
-            && let Some(root) = self.effective_root()
-            && !path_is_within_root(&root, &path)
-        {
-            return Some((path, DocumentStalenessReason::OutsideAnalyzedRoot));
-        }
+        let reason = disclosed_staleness_reason(self.effective_root().as_deref(), &path, reason);
         Some((path, reason))
     }
 
@@ -8459,6 +8454,9 @@ impl Backend {
         &self,
         snapshot: Option<&AnalysisSnapshot>,
     ) -> serde_json::Value {
+        // Read the root before the document lock so the status projection
+        // discloses the same out-of-root reason as hover and pull (#15462).
+        let effective_root = self.effective_root();
         let Ok(documents) = self.quarantine.documents.lock() else {
             return serde_json::json!([]);
         };
@@ -8536,10 +8534,14 @@ impl Backend {
                     } else {
                         serde_json::Value::Null
                     },
-                    "staleness_reason": state
-                        .quarantine
-                        .as_ref()
-                        .map(|quarantine| quarantine.reason.as_str()),
+                    "staleness_reason": state.quarantine.as_ref().map(|quarantine| {
+                        disclosed_staleness_reason(
+                            effective_root.as_deref(),
+                            &state.path,
+                            quarantine.reason,
+                        )
+                        .as_str()
+                    }),
                     "last_saved_content_identity": state.saved_digest,
                     "analyzed_saved_content_identity": state.analyzed_saved_digest,
                     "analyzed_input_identity": state.analyzed_input_identity,
@@ -15587,4 +15589,22 @@ mod disk_bytes_equal_text_tests {
         }
         Ok(())
     }
+}
+
+/// The staleness reason a surface discloses (#15462): a never-saved document
+/// outside the analyzed root can never gain analyzed saved content in this
+/// session, so it reads `outside_analyzed_root` instead of the save-then-
+/// refresh route. Fails closed to the stored reason without a root.
+fn disclosed_staleness_reason(
+    root: Option<&Path>,
+    path: &Path,
+    reason: DocumentStalenessReason,
+) -> DocumentStalenessReason {
+    if reason == DocumentStalenessReason::NoAnalyzedSavedContent
+        && let Some(root) = root
+        && !path_is_within_root(root, path)
+    {
+        return DocumentStalenessReason::OutsideAnalyzedRoot;
+    }
+    reason
 }

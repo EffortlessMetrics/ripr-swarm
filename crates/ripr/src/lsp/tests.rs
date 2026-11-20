@@ -24848,6 +24848,22 @@ async fn out_of_root_document_names_the_root_instead_of_save_then_refresh() -> R
             "inside new file keeps save-then-refresh: {inside_report}"
         ));
     }
+    // #15462 review: workspace status (read by agents and MCP) discloses the
+    // same reason as the pull marker, not the stored save-then-refresh one.
+    let status = workspace_status_json(backend).await?;
+    for (uri, expected) in [
+        (&outside, "outside_analyzed_root"),
+        (&inside, "no_analyzed_saved_content"),
+    ] {
+        let entry = open_document_entry(&status, uri.as_str())?;
+        if entry
+            .get("staleness_reason")
+            .and_then(serde_json::Value::as_str)
+            != Some(expected)
+        {
+            return Err(format!("status must disclose {expected}: {entry}"));
+        }
+    }
     drop(other);
     Ok(())
 }
