@@ -301,19 +301,20 @@ These native receipts are also accepted as-is:
 
 The `agent` board has no nightly lane, because the agent-as-user harness needs an agent. The committed receipt is gated instead: the xtask test `committed_agent_receipt_does_not_regress_the_agent_baseline` ingests `metrics/public-proof/agent-as-user.json` against `metrics/dx-scoreboard/agent-baseline.json` (same `--baseline`/gate comparison), and `agent_gate_fails_the_receipt_from_before_the_rerun` keeps the 2026-10-04 receipt as the negative control. After a rerun that improves a metric, rebuild the baseline with `cargo xtask dx-scoreboard --boards agent --ingest metrics/public-proof/agent-as-user.json` and copy `target/ripr/reports/dx-scoreboard.json` to `metrics/dx-scoreboard/agent-baseline.json`. A rerun is one run per target with different agents, so the margins (the larger of 25 percent of the baseline and 3 steps for commands and tool steps; no allowance for weak findings or white-box tests) absorb run-to-run variation. The receipt also carries scripted measurements (#11816): bytes the first `ripr check` writes in the human, `--format agent` and `--json` formats per target (`--format agent` may grow by the larger of 10 percent and 300 bytes), and the gaps `--format agent` names on the unfixed gap commit (no fall allowed). The test also fails when the receipt stops reporting a metric or a repository the baseline measured, because the generic gate lists missing evidence as uncompared and passes it.
 
-`.github/workflows/pilot-ranking.yml` runs nightly, on demand, and once when a
-pull request touching pilot ranking, seam grading or the answer key leaves
-draft. It never runs cargo-mutants; the labels are committed:
+`.github/workflows/pilot-ranking.yml` runs nightly and on demand. It scores
+against committed labels. To reproduce the ranking check locally:
 
 ```bash
 cargo xtask pilot-ranking fetch --allow-network
 cargo xtask pilot-ranking score --ripr target/release/ripr
 cargo xtask dx-scoreboard --boards ranking --ingest target/ripr/reports/pilot-ranking.json \
-  --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json --gate
+  --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json --gate --strict-completeness
 ```
 
 The ranking gate is advisory and compares pooled counts and rates with the
-committed baseline. The refuted counts (`ranking.pilot_refuted_top5` and
+committed baseline. Missing, partial or uncompared ranking evidence fails this
+lane. A below-target result with complete evidence still uses the existing
+regression rules. The refuted counts (`ranking.pilot_refuted_top5` and
 `ranking.pilot_refuted_top10`) set `pick_growth_allowance` in
 `scoreboards.toml`: besides their zero worsening margin they may rise by the
 number of picks the run admitted beyond the baseline's, read from the
