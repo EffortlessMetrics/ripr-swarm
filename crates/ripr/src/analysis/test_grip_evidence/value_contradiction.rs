@@ -1213,9 +1213,9 @@ fn constructor_payload_function(body: &str) -> Option<(String, String)> {
         return None;
     };
     let name = function.name()?;
-    // Keep the payload's declared type (`T` of `Result<T, _>` or `Option<T>`)
-    // so the fold still refuses a result outside that integer width; a
-    // missing or other return type keeps exact arithmetic as before.
+    // Keep the payload's declared type so the fold still refuses a result
+    // outside that integer width; a missing or other return type keeps exact
+    // arithmetic as before.
     let payload_type = function
         .ret_type()
         .and_then(|ret| ret.ty())
@@ -1225,10 +1225,14 @@ fn constructor_payload_function(body: &str) -> Option<(String, String)> {
         })
         .and_then(|segment| {
             let wrapper = segment.name_ref()?.text().to_string();
-            if !matches!(wrapper.as_str(), "Result" | "Option") {
-                return None;
-            }
-            match segment.generic_arg_list()?.generic_args().next()? {
+            // `Ok` carries `T` and `Err` carries `E` of `Result<T, E>`;
+            // `Some` carries `T` of `Option<T>`.
+            let position = match (wrapper.as_str(), constructor.as_str()) {
+                ("Result", "Ok") | ("Option", "Some") => 0,
+                ("Result", "Err") => 1,
+                _ => return None,
+            };
+            match segment.generic_arg_list()?.generic_args().nth(position)? {
                 ast::GenericArg::TypeArg(arg) => Some(arg.ty()?.syntax().text().to_string()),
                 _ => None,
             }

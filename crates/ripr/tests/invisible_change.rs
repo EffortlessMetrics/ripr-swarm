@@ -504,3 +504,19 @@ fn an_agreeing_input_wrapped_at_the_payload_width_is_not_read_as_the_same_value(
     assert!(!same_value(finding), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn an_err_payload_keeps_the_error_type_width() -> Result<(), String> {
+    // Control: an `Err` payload folds at `E` of `Result<T, E>`, not at `T`.
+    // In `u64` the products below do not overflow and agree; in the real
+    // `u32` error type they wrap, so the fold must refuse.
+    let lib = "pub fn fee(x: u32) -> Result<u64, u32> {\n    Err(x * 3 / 3 + x % 2)\n}\n";
+    let findings = findings(
+        lib,
+        "    Err(x * 2 / 2)",
+        "#[test]\nfn big() {\n    assert_eq!(invisible::fee(3_000_000_000), Err(3_000_000_000));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
