@@ -1883,6 +1883,9 @@ fn apply_probe_and_oracle_limits(
     classify::withhold_mixed_refusal_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
+    // #15237: after every limit and gap decision, so the rewritten row miss
+    // never feeds one; it only withdraws a false "has no assertion" claim.
+    oracles::name_unread_assertion_macro_rows(finding, index);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a
@@ -3322,11 +3325,9 @@ impl RustAdapter {
                             // lexical test keeps a file the index could not
                             // parse, which then reads as unreadable.
                             !facts.module_declarations.is_empty()
-                                || facts.source.lines().any(|line| {
-                                    line.contains("mod ") && line.trim_end().ends_with(';')
-                                })
+                                || crate::analysis::diff::may_declare_module(&facts.source)
                         })
-                        .map(|(_, facts)| facts.data().source.as_ref()),
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
                     changed_files.iter().map(|changed| {
                         (
                             changed,
@@ -3751,7 +3752,10 @@ impl RustAdapter {
                 .count(),
             limitations: limitations
                 .into_iter()
-                .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(limitations_for_absent_changed_files(
+                    &options.root,
+                    &absent_changed_files,
+                )?)
                 .chain(workspace::limitations_for_unreadable_unchanged_paths(
                     &unreadable_unchanged_paths,
                 )?)
@@ -4946,7 +4950,10 @@ mod tests {
                 > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
             "fixture must exceed the detail budget when the path is interpolated"
         );
-        let limitations = limitations_for_absent_changed_files(&[std::path::PathBuf::from(&deep)])?;
+        let limitations = limitations_for_absent_changed_files(
+            std::path::Path::new("/nonexistent-ripr-root"),
+            &[std::path::PathBuf::from(&deep)],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some(deep.as_str()));
         let detail = limitations[0].bounded_detail.as_deref().unwrap_or_default();
@@ -10350,7 +10357,7 @@ fn absent_delimiter_boundary_returns_head() {
                 context.production_like_targets.insert(file.clone());
             }
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10376,7 +10383,7 @@ fn absent_delimiter_boundary_returns_head() {
         ] {
             let loaded = vec![(file.clone(), source.to_vec())];
             let remaining = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10409,7 +10416,7 @@ fn absent_delimiter_boundary_returns_head() {
                 Vec::new()
             };
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &harnesses,

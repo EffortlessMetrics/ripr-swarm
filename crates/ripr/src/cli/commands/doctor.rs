@@ -101,7 +101,25 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
             }
         }
     }
-    let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let root_explicit = root.is_some();
+    let mut root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // #15304: diagnose the root `ripr check` would analyze from here. Without
+    // `--root`, check widens to the enclosing workspace, package or Git top
+    // level (#4610, #8767), so a doctor that stayed at the invocation
+    // directory detected languages and suggested an `enabled` list for a
+    // tree check never analyzes. The shared resolver prints the same stderr
+    // disclosure as check; `--root .` still diagnoses this directory alone.
+    if let Err(error) = super::check::resolve_implicit_command_root(&mut root, root_explicit) {
+        // Doctor diagnoses rather than refuses: report on the current
+        // directory, whose own checks name what is wrong with it.
+        eprintln!(
+            "{}",
+            crate::output::human::terminal_safe(format!(
+                "ripr: could not resolve the root `ripr check` would analyze ({error}); diagnosing the current directory"
+            ))
+        );
+        root = PathBuf::from(".");
+    }
     // #8540: one clock for the whole run, shared by both surfaces, so the
     // total the human screen prints is the total the JSON document carries.
     let run_started = std::time::Instant::now();
@@ -671,6 +689,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             Some(_) => {}
         }
     }
+    // #14114: `ripr check` refuses this root's output location, so the
+    // cache lines below would describe a run that cannot happen.
+    let output_location_refused = match check_named(report, output::doctor::OUTPUT_LOCATION_CHECK) {
+        Some(check) if check.status == output::doctor::DoctorCheckStatus::Fail => {
+            let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+            lines.extend(failure_block(evidence));
+            true
+        }
+        _ => false,
+    };
     if let Err(err) = config {
         let path = display_path(&root.join(CONFIG_FILE_NAME));
         lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
@@ -883,6 +911,11 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         output::doctor::root_unusable_skip_reason(root)
     };
+    let cache_skip_reason = cache_skip_reason.or(if output_location_refused {
+        Some("the default output location is refused (see the `!` line above)")
+    } else {
+        None
+    });
     if let Some(reason) = cache_skip_reason {
         // The default cache lives under the unusable root; a ✓ would claim
         // a usable cache for a root that cannot hold one.
@@ -896,8 +929,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     }
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
-    if !cache.relocated_by_env && !root.is_dir() {
-        // A missing root already failed `root_directory`; do not probe.
+    if (!cache.relocated_by_env && !root.is_dir()) || output_location_refused {
+        // A missing root already failed `root_directory`, and a refused
+        // output location already has its `!` line; do not probe.
     } else if let Some(reason) =
         cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
     {
@@ -1199,7 +1233,20 @@ fn doctor_start_here_lines(
     // first commands on one screen, one of which bounces straight back to the
     // other, is not a route.
     let md = root.join("target/ripr/reports/start-here.md");
-    if md.is_file() {
+    // A blocking recovery outranks packet advice, as on the compact screen:
+    // opening or refreshing the packet cannot help while a `!` check (for
+    // example a refused output location, #14114) stops every command.
+    let packet_recovery = md
+        .is_file()
+        .then(|| output::doctor::safe_next_action_recovery_line(report, first, root))
+        .flatten();
+    if let Some(line) = packet_recovery {
+        lines.push(
+            "- Start-here packet: target/ripr/reports/start-here.md (present; refresh it after the `!` checks pass)"
+                .to_string(),
+        );
+        lines.push(line.to_string());
+    } else if md.is_file() {
         lines.extend(doctor_packet_status_lines(root));
         if root
             .canonicalize()
@@ -1688,7 +1735,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
     // enabled that belong in this repo: a per-language `["typescript"]`
     // snippet would disable Python in a mixed repository, so following one
     // tip would produce the other. Default `rust` is kept only when Rust is
-    // actually detected (#7648).
+    // actually detected (#7648) or the user enabled it explicitly (#15304).
     let names = gaps
         .iter()
         .map(|gap| gap.label.as_str())
@@ -1769,12 +1816,33 @@ fn preview_languages_to_enable(
     if gaps.is_empty() {
         return None;
     }
+    // #15304 review: only the built-in default `rust` is dropped when no Rust
+    // marker is found (#7648). A `rust` the user wrote into
+    // `[languages].enabled` is their selection, and the replacement list must
+    // keep it.
+    let keep_rust = detected.contains(&LanguageId::Rust) || languages_enabled_is_explicit(config);
     let suggestion = crate::domain::enablement_tip_languages(
         &enabled,
-        detected.contains(&LanguageId::Rust),
+        keep_rust,
         gaps.iter().map(|gap| gap.entry),
     );
     Some(PreviewEnablement { gaps, suggestion })
+}
+
+/// Whether the loaded `ripr.toml` sets `[languages].enabled` itself, rather
+/// than leaving the built-in default in place. Reads the exact text the
+/// config was parsed from, so a config-free run and a `[languages]` table
+/// without `enabled` both read as the default.
+fn languages_enabled_is_explicit(config: &RiprConfig) -> bool {
+    config
+        .source_text()
+        .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+        .is_some_and(|document| {
+            document
+                .get("languages")
+                .and_then(|languages| languages.get("enabled"))
+                .is_some()
+        })
 }
 
 /// The `[languages].enabled` entries a doctor tip may add, each paired with the
@@ -8909,7 +8977,11 @@ mod tests {
     /// A mixed repository must get one snippet that keeps the languages
     /// already enabled: a `["rust", "typescript"]` snippet would switch off
     /// Python, and the next doctor run would then suggest `["rust",
-    /// "python"]`, undoing the first edit.
+    /// "python"]`, undoing the first edit. The `rust` written in
+    /// `[languages].enabled` is kept too, though no Rust marker is found:
+    /// markers are shallow, and dropping an explicit entry would switch off
+    /// Rust in a repository that keeps it below `rust/` (#15304). Only the
+    /// built-in default is left out (#7648).
     #[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
     #[test]
     fn doctor_enable_tip_keeps_already_enabled_languages() -> Result<(), String> {
@@ -8936,13 +9008,8 @@ mod tests {
             suggestions[0]
         );
         assert!(
-            suggestions[0].contains(r#"enabled = ["python", "typescript"]"#),
-            "the snippet must keep python and omit undetected rust; got:\n{}",
-            suggestions[0]
-        );
-        assert!(
-            !suggestions[0].contains(r#""rust""#),
-            "no Rust markers means the tip must not name rust; got:\n{}",
+            suggestions[0].contains(r#"enabled = ["rust", "python", "typescript"]"#),
+            "the snippet must keep the explicitly enabled rust and python; got:\n{}",
             suggestions[0]
         );
         assert_eq!(
@@ -9302,5 +9369,159 @@ mod tests {
         assert!(!is_workspace_relative_value("../tmp"));
         assert!(!is_workspace_relative_value("a/../../tmp"));
         assert!(!is_workspace_relative_value("/var/tmp"));
+    }
+
+    /// #14114: end to end through evaluation and the human screen, a root
+    /// outside a Git work tree with a refused output location prints the
+    /// `output_location` failure and no `ripr pilot --root` command. The same
+    /// root with a usable output location keeps the pilot route as control.
+    /// The fixture is a broken `.git` gitfile, which Git refuses the same way
+    /// as a plain directory outside any checkout.
+    #[cfg(unix)]
+    #[test]
+    fn outside_git_root_with_refused_output_prints_no_pilot_command() -> Result<(), String> {
+        let screen = |root: &Path| -> (output::doctor::DoctorReport, String) {
+            let evaluation = output::doctor::evaluate_doctor_core_with_config(root, &[]);
+            let config = evaluation.config.clone();
+            let environment = empty_environment();
+            let binary = quiet_binary();
+            let text = render_doctor_human_screen(DoctorHumanScreen {
+                root,
+                profile: output::doctor::DoctorProfile::Analysis,
+                report: &evaluation.report,
+                config: &config,
+                environment: &environment,
+                binary: &binary,
+                verbose: false,
+                passed: false,
+            })
+            .join("\n");
+            (evaluation.report, text)
+        };
+        let has_check = |report: &output::doctor::DoctorReport, name: &str| {
+            report.checks.iter().any(|check| {
+                check.name == name && check.status == output::doctor::DoctorCheckStatus::Fail
+            })
+        };
+
+        let usable = unique_command_test_dir("outside-git-usable-output");
+        let refused = unique_command_test_dir("outside-git-refused-output");
+        for root in [&usable, &refused] {
+            std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
+            std::fs::write(root.join(".git"), "not a gitfile\n")
+                .map_err(|error| error.to_string())?;
+        }
+        std::os::unix::fs::symlink(refused.join("no-such-directory"), refused.join("target"))
+            .map_err(|error| error.to_string())?;
+
+        let (usable_report, usable_text) = screen(&usable);
+        let (refused_report, refused_text) = screen(&refused);
+
+        // Fixture premises: both roots are outside Git; only one is refused.
+        assert!(has_check(&usable_report, "git_repository"), "{usable_text}");
+        assert!(
+            has_check(&refused_report, "git_repository"),
+            "{refused_text}"
+        );
+        assert!(
+            !has_check(&usable_report, output::doctor::OUTPUT_LOCATION_CHECK),
+            "{usable_text}"
+        );
+        assert!(
+            has_check(&refused_report, output::doctor::OUTPUT_LOCATION_CHECK),
+            "{refused_text}"
+        );
+
+        assert!(usable_text.contains("ripr pilot --root"), "{usable_text}");
+        assert!(
+            refused_text.contains("not inside a Git work tree"),
+            "{refused_text}"
+        );
+        assert!(
+            refused_text.contains("! `ripr check` and `ripr pilot` refuse to run here"),
+            "{refused_text}"
+        );
+        assert!(
+            !refused_text.contains("ripr pilot --root"),
+            "{refused_text}"
+        );
+        for root in [&usable, &refused] {
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// #14114: the verbose start-here block follows the same rule as the
+    /// compact screen. A present packet is the next artifact only while no
+    /// `!` check blocks every command; a refused output location gets the
+    /// recovery line, not packet-opening or refresh advice.
+    #[test]
+    fn verbose_packet_advice_yields_to_a_refused_output_location() -> Result<(), String> {
+        let root = unique_command_test_dir("packet-refused-output");
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports).map_err(|error| error.to_string())?;
+        std::fs::write(reports.join("start-here.md"), "# start here\n")
+            .map_err(|error| error.to_string())?;
+
+        let healthy = doctor_start_here_lines(&root, &passing_report(), None).join("\n");
+        let mut refused_report = passing_report();
+        refused_report.add_check(
+            output::doctor::OUTPUT_LOCATION_CHECK,
+            output::doctor::DoctorStatus::Fail,
+            Some("`ripr check` and `ripr pilot` refuse to run here: refused".to_string()),
+        );
+        let refused = doctor_start_here_lines(&root, &refused_report, None).join("\n");
+
+        assert!(healthy.contains("ripr first-pr --root"), "{healthy}");
+        assert!(!refused.contains("ripr first-pr"), "{refused}");
+        assert!(!refused.contains("open that packet"), "{refused}");
+        assert!(
+            refused.contains("- Safe next action: fix the `!` checks above"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains("refresh it after the `!` checks pass"),
+            "{refused}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// #14114: when `ripr check` refuses the output location, the screen
+    /// shows the `!` line with its fix and drops the cache lines that
+    /// described a run that cannot happen.
+    #[test]
+    fn refused_output_location_replaces_the_cache_lines_with_a_failure() {
+        let environment = empty_environment();
+        let healthy = render_screen(&passing_report(), &environment, false, true).join("\n");
+        assert!(healthy.contains("✓ Cache:"), "{healthy}");
+        assert!(!healthy.contains("refuse to run here"), "{healthy}");
+
+        let mut report = passing_report();
+        report.add_check(
+            output::doctor::OUTPUT_LOCATION_CHECK,
+            output::doctor::DoctorStatus::Fail,
+            Some(
+                "`ripr check` and `ripr pilot` refuse to run here: ./target cannot be resolved; replace it with a real directory"
+                    .to_string(),
+            ),
+        );
+        let text = render_screen(&report, &environment, false, false).join("\n");
+        assert!(
+            text.contains(
+                "! `ripr check` and `ripr pilot` refuse to run here: ./target cannot be resolved"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("  Fix: replace it with a real directory"),
+            "{text}"
+        );
+        assert!(!text.contains("✓ Cache:"), "{text}");
+        assert!(!text.contains("Cache not writable"), "{text}");
+        assert!(
+            text.contains("- Cache check skipped: the default output location is refused"),
+            "{text}"
+        );
     }
 }

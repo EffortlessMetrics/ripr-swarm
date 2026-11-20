@@ -10,6 +10,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod help_contract;
 #[cfg(test)]
 mod inventory_tests;
 mod producer;

@@ -17,6 +17,9 @@
 //! Non-regular files are deliberately not refused: `--diff <(git diff ...)`
 //! passes a FIFO, and stdin (`-`) is a pipe; both are legitimate and are
 //! bounded by the same cap instead.
+//! Fixed-path reads of checkout-supplied artifacts (`read_metadata_toml`,
+//! `read_repository_artifact`) are the exception: nothing legitimate puts a
+//! FIFO or device there, so they refuse non-regular files (#15275).
 
 use std::io::Read;
 use std::path::Path;
@@ -111,6 +114,30 @@ fn metadata_oversize_error(limit: u64) -> std::io::Error {
             limit / (1024 * 1024)
         ),
     )
+}
+
+/// Bounded read of a JSON or text artifact at a fixed path inside a checkout
+/// (`target/ripr/reports/...`), which the analyzed tree itself can supply,
+/// for example as a committed symlink to `/dev/zero`. Like
+/// [`read_metadata_toml`] it refuses anything that is not a regular file
+/// (following symlinks) before opening it, so a FIFO cannot block an editor
+/// session forever, and it caps the read at [`MAX_CLI_INPUT_BYTES`].
+pub(crate) fn read_repository_artifact(path: impl AsRef<Path>) -> std::io::Result<String> {
+    read_repository_artifact_with_limit(path, MAX_CLI_INPUT_BYTES)
+}
+
+pub(crate) fn read_repository_artifact_with_limit(
+    path: impl AsRef<Path>,
+    limit: u64,
+) -> std::io::Result<String> {
+    let path = path.as_ref();
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "is not a regular file; ripr reads repository artifacts only from regular files",
+        ));
+    }
+    read_to_string_with_limit(path, limit)
 }
 
 /// Bounded replacement for `std::fs::read` on a user-named input.
@@ -474,6 +501,61 @@ mod tests {
             .err()
             .ok_or("a directory must be refused")?;
         assert!(err.to_string().contains("is a directory"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn repository_artifact_reads_a_regular_file_within_its_cap() -> Result<(), String> {
+        let path = temp_file("artifact-limit", b"{\"a\":1}")?;
+        let text = read_repository_artifact_with_limit(&path, 7).map_err(|err| err.to_string())?;
+        assert_eq!(text, "{\"a\":1}");
+        let oversize = read_repository_artifact_with_limit(&path, 6)
+            .err()
+            .ok_or("an artifact over its cap must be refused")?;
+        assert_eq!(oversize.kind(), std::io::ErrorKind::InvalidData);
+        let missing = read_repository_artifact(path.with_file_name("absent"))
+            .err()
+            .ok_or("a missing artifact must stay an error")?;
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_artifact_refuses_fifo_device_and_links_to_them() -> Result<(), String> {
+        let path = temp_file("artifact-fifo", b"")?;
+        let fifo = path.with_file_name("fifo");
+        let _ = std::fs::remove_file(&fifo);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map_err(|err| format!("mkfifo: {err}"))?;
+        assert!(made.success(), "mkfifo failed");
+        let link = path.with_file_name("zero-link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink("/dev/zero", &link).map_err(|err| err.to_string())?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probes = [
+            fifo.clone(),
+            link.clone(),
+            std::path::PathBuf::from("/dev/zero"),
+        ];
+        std::thread::spawn(move || {
+            let outcomes = probes
+                .iter()
+                .map(|probe| read_repository_artifact(probe).map_err(|err| err.to_string()))
+                .collect::<Vec<_>>();
+            let _ = tx.send(outcomes);
+        });
+        let outcomes = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|err| format!("reading a non-regular artifact blocked: {err}"))?;
+        for outcome in outcomes {
+            let err = outcome
+                .err()
+                .ok_or("a non-regular artifact must be refused")?;
+            assert!(err.contains("is not a regular file"), "{err}");
+        }
         Ok(())
     }
 

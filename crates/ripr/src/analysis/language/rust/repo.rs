@@ -158,6 +158,9 @@ impl RustAdapter {
                     related_test_candidate_index.get_or_insert_with(|| {
                         classify::RelatedTestCandidateIndex::new(&index)
                             .with_analysis_root(&options.root)
+                            // #15104: a repo scan has no diff, so no
+                            // declaration changed.
+                            .with_unchanged_module_declarations(&index)
                     });
                 let (mut finding, pre_cap_syntax_only) =
                     classifier::classify_probe_with_candidate_index_and_origins_with_direct_rows(

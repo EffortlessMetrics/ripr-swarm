@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-14158-message-only",
+  "origin": "authored",
+  "version_label": "authored 2026-11-19 for a let-bound result named only in the assertion's message arguments (#14158)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "fc169492505b8a235b6988ac76f1a606c442861c3bf44d66e535c686814cdd21"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "635edabfe5e5029615fabb1dc966fa4cb167878b428332b9c9fb389d950a174e"
+    }
+  ]
+}

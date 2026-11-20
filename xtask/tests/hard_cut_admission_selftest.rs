@@ -37,13 +37,21 @@ fn size_fixture_total() -> Result<u64, String> {
 }
 
 fn run_python_control(script: &str, argument: &str, expected: &str) -> Result<(), String> {
+    run_python_args(script, &[std::ffi::OsStr::new(argument)], expected)
+}
+
+fn run_python_args(
+    script: &str,
+    arguments: &[&std::ffi::OsStr],
+    expected: &str,
+) -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let path = root
         .join(".github/actions/pr-candidate-admission")
         .join(script);
     let output = Command::new("python3")
         .arg(&path)
-        .arg(argument)
+        .args(arguments)
         .output()
         .map_err(|error| format!("python3 must be available for {script}: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -73,6 +81,39 @@ fn history_sync_scope_real_bash_controls_pass() -> Result<(), String> {
 #[test]
 fn history_sync_live_authorization_controls_pass() -> Result<(), String> {
     run_python_control("test_history_sync_live.py", "-q", "Ran 26 tests in")
+}
+
+#[cfg(unix)]
+#[test]
+fn mechanical_relocation_result_controls_pass() -> Result<(), String> {
+    // #15217: the verified-relocation evidence rules of the Result block.
+    run_python_control("test_relocation_scope.py", "-q", "Ran 7 tests in")
+}
+
+#[test]
+fn mechanical_relocation_verifier_self_test_passes() -> Result<(), String> {
+    run_python_control(
+        "mechanical_relocation.py",
+        "self-test",
+        "mechanical relocation self-test: pass",
+    )
+}
+
+/// #15217: the verifier refuses owners another file loads through `#[path]`
+/// or `include!`; the checked-in list must match a fresh scan of the tree.
+#[test]
+fn mechanical_relocation_indirect_owner_list_is_current() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    run_python_args(
+        "mechanical_relocation.py",
+        &[
+            "indirect-owners".as_ref(),
+            "--check".as_ref(),
+            "--repo".as_ref(),
+            root.as_os_str(),
+        ],
+        "policy/relocation-indirect-owners.txt: current",
+    )
 }
 
 #[test]

@@ -101,7 +101,7 @@ start-here.md and start-here.json), naming a single next step. A gap is
 changed behavior that no current test appears to check. By default first-pr runs no analysis: for a missing report
 it prints the command that creates it. Pass --run-chain to run those commands.
 
-Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
+Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--output-dir <path>] [--check] [--run-chain]
 
 Options:
   --root <path>              Workspace root. Defaults to .
@@ -117,7 +117,7 @@ Options:
   --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
   --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
-  --out-dir <path>           Output directory. Defaults to target/ripr/reports.
+  --output-dir <path>           Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here page is up to date; write nothing.
   --run-chain                Run the commands for missing reports first, each only when its
                              report is missing and each exactly the command first-pr prints,

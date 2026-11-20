@@ -766,6 +766,111 @@ fn unresolved_assertion_macro_invocations(
     unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
 }
 
+/// Evidence prefix of an unread assertion-like macro row line (#15237).
+pub(crate) const UNREAD_ASSERTION_MACRO_PREFIX: &str = "assertion-like macro not read: ";
+
+/// #15237: a related-test row read as `no_assertion` whose test body invokes
+/// an assertion-like macro ripr does not classify (`assert_delta!`, a
+/// test-local `macro_rules!` built from `if bad { panic!(..) }`) does have a
+/// check; what it observes is unknown. The row becomes the analyzer-limit miss
+/// `assertion_admission_unproven` and the finding names the test and macro.
+///
+/// This runs after every limit and gap decision of the post-classify pass, so
+/// it never feeds one: a refusal miss reads as "an assertion ripr judged" to
+/// those decisions (#7089), which this macro is not. It grants no oracle,
+/// strength, class or limit, and leaves the stage summaries alone; only the
+/// false absence claim is withdrawn. Macros are read from comment- and
+/// string-masked text with the #7089 witness's spelling rule.
+pub(super) fn name_unread_assertion_macro_rows(finding: &mut Finding, index: &RustIndex) {
+    let mut lines = Vec::new();
+    for row in &mut finding.related_tests {
+        if row.oracle.is_some()
+            || row.miss != Some(crate::domain::RelatedTestMiss::NoAssertion)
+            || row.file.extension().is_none_or(|ext| ext != "rs")
+        {
+            continue;
+        }
+        let Some(macro_name) = index
+            .tests()
+            .iter()
+            .chain(index.files().values().flat_map(|file| file.tests.iter()))
+            .find(|test| {
+                test.name == row.name && test.file == row.file && test.start_line == row.line
+            })
+            .and_then(|test| first_executed_unread_assertion_macro(&test.body))
+        else {
+            continue;
+        };
+        row.miss = Some(crate::domain::RelatedTestMiss::AssertionAdmissionUnproven);
+        lines.push(format!(
+            "{UNREAD_ASSERTION_MACRO_PREFIX}`{}` checks through `{macro_name}!`, an assertion-like macro ripr does not read, so whether it observes the changed behavior is not established",
+            row.name
+        ));
+    }
+    for line in lines {
+        if !finding.evidence.contains(&line) {
+            finding.evidence.push(line);
+        }
+    }
+}
+
+/// The first assertion-like macro ripr does not classify that `body` invokes
+/// as code: not inside another macro's input (`stringify!(assert_x!(..))`
+/// never evaluates it) and not inside a `macro_rules!` definition, which only
+/// defines it. Read from comment- and string-masked text (#15237).
+fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
+    let masked = mask_rust_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    // One entry per open delimiter: whether it opens macro input, where
+    // nothing nested runs as code.
+    let mut inert: Vec<bool> = Vec::new();
+    // The previous significant token was `macro_rules!` (then its name).
+    let mut after_macro_rules = 0u8;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let ch = bytes[index];
+        match ch {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..index].trim_end();
+                let opens_macro_input = before.ends_with('!') || after_macro_rules == 2;
+                if opens_macro_input && !inert.iter().any(|frame| *frame) && before.ends_with('!') {
+                    let bang = before.len() - 1;
+                    if let Some(name) = macro_name_before_bang(&masked, bang)
+                        && is_unresolved_assertion_like_macro(&name)
+                    {
+                        return Some(name);
+                    }
+                }
+                inert.push(opens_macro_input);
+                after_macro_rules = 0;
+            }
+            b')' | b']' | b'}' => {
+                inert.pop();
+                after_macro_rules = 0;
+            }
+            b'!' => {
+                if masked[..index].trim_end().ends_with("macro_rules") {
+                    after_macro_rules = 1;
+                }
+            }
+            c if c.is_ascii_alphanumeric() || c == b'_' => {
+                if after_macro_rules == 1 {
+                    after_macro_rules = 2;
+                }
+                while index + 1 < bytes.len()
+                    && (bytes[index + 1].is_ascii_alphanumeric() || bytes[index + 1] == b'_')
+                {
+                    index += 1;
+                }
+            }
+            c if c.is_ascii_whitespace() => {}
+            _ => after_macro_rules = 0,
+        }
+        index += 1;
+    }
+    None
+}
+
 fn unresolved_assertion_macro_invocations_among(
     body: &str,
     start_line: usize,

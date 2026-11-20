@@ -114,8 +114,8 @@ fn write_pr_evidence_with_runner(
     options: &PrEvidenceOptions,
     run_check: impl FnOnce(&Path, &PrEvidenceOptions) -> Result<String, String>,
 ) -> Result<(), String> {
-    verify_revision(repo, &options.base)?;
-    verify_revision(repo, &options.head)?;
+    verify_revision(repo, "--base", &options.base)?;
+    verify_revision(repo, "--head", &options.head)?;
     let changed_files = changed_files(repo, options)?;
     write_diff(repo, options)?;
     match run_check(repo, options) {
@@ -140,8 +140,8 @@ fn write_pr_evidence_from_check_json(
     options: &PrEvidenceOptions,
     check_json: &str,
 ) -> Result<(), String> {
-    verify_revision(repo, &options.base)?;
-    verify_revision(repo, &options.head)?;
+    verify_revision(repo, "--base", &options.base)?;
+    verify_revision(repo, "--head", &options.head)?;
 
     let changed_files = changed_files(repo, options)?;
     write_diff(repo, options)?;
@@ -241,8 +241,8 @@ pub fn reject_pr_evidence_error_packet(packet: &Value) -> Option<String> {
 }
 
 fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
-    verify_revision(repo, &options.base)?;
-    verify_revision(repo, &options.head)?;
+    verify_revision(repo, "--base", &options.base)?;
+    verify_revision(repo, "--head", &options.head)?;
     let changed_files = changed_files(repo, options)?;
     let json_path = repo.join(PR_EVIDENCE_JSON);
     let markdown_path = repo.join(PR_EVIDENCE_MD);
@@ -274,11 +274,42 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
     ))
 }
 
-fn verify_revision(repo: &Path, rev: &str) -> Result<(), String> {
+/// Refuse a `--base` / `--head` that git cannot resolve to a commit (#14076
+/// follow-up). The refusal names the flag and the next step. It does not
+/// print the Debug-formatted git argv or empty stdout/stderr blocks; the one
+/// useful line of git's own stderr is kept so a non-repository or a broken
+/// object store is still visible.
+fn verify_revision(repo: &Path, flag: &str, rev: &str) -> Result<(), String> {
     let commit = format!("{rev}^{{commit}}");
-    run_git_output(repo, &["rev-parse", "--verify", commit.as_str()])
-        .map(|_| ())
-        .map_err(|err| format!("bad base/head revision {rev:?}: {err}"))
+    let output = crate::git::run_git_output_with_deadline(
+        repo,
+        &["rev-parse", "--verify", commit.as_str()],
+        Some(PR_EVIDENCE_GIT_DEADLINE),
+    )
+    .map_err(|err| {
+        format!(
+            "pr-evidence could not run git to resolve {flag} `{rev}`: {err}; check that git is installed and on PATH, then rerun"
+        )
+    })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("not a git repository") {
+        return Err(format!(
+            "pr-evidence needs a git repository, and {} is not inside one; run it from inside the repository, or pass `--root <path>` naming a directory inside it",
+            repo.display()
+        ));
+    }
+    let detail = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| format!(" (git: {line})"))
+        .unwrap_or_default();
+    Err(format!(
+        "pr-evidence {flag} `{rev}` does not resolve to a commit{detail}; check the spelling (`git branch --list` shows local branches), fetch the ref if it lives on a remote, or pass `{flag} <rev>` naming a commit this repository has"
+    ))
 }
 
 fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>, String> {
@@ -409,9 +440,12 @@ fn command_root_path(repo: &Path, root: &str) -> PathBuf {
     }
 }
 
+/// Strict UTF-8 git capture for this file's tests; production callers decode
+/// bytes at the call site.
+#[cfg(test)]
 fn run_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
     String::from_utf8(run_git_output_bytes(repo, args)?)
-        .map_err(|err| format!("git {args:?} produced non-UTF-8 output: {err}"))
+        .map_err(|err| format!("git {} produced non-UTF-8 output: {err}", args.join(" ")))
 }
 
 /// Cooperative deadline for every git probe in this file (#2303, #4363).
@@ -422,7 +456,7 @@ const PR_EVIDENCE_GIT_DEADLINE: Duration = Duration::from_mins(1);
 
 /// Capture raw git stdout bytes through this file's single git call site
 /// (#4006). Path inventories decode through the shared NUL authority at
-/// the call site; other callers keep the strict UTF-8 wrapper above. The
+/// the call site; tests keep the strict UTF-8 wrapper above. The
 /// spawn goes through the shared `crate::git` deadline and process-owner
 /// authority (#4363).
 fn run_git_output_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -437,14 +471,15 @@ fn run_git_output_bytes_within(
     deadline: Duration,
 ) -> Result<Vec<u8>, String> {
     let output = crate::git::run_git_output_with_deadline(repo, args, Some(deadline))
-        .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
+        .map_err(|err| format!("failed to run git {}: {err}", args.join(" ")))?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         Err(format!(
-            "git {args:?} failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            "git {} failed\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            args.join(" ")
         ))
     }
 }
