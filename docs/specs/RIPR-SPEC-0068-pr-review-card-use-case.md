@@ -412,8 +412,10 @@ and is `null` only when the domain marks a seam ineligible for canonical identit
 
 - Card-level `oracle_kind` / `oracle_strength` on every working-set card,
   projecting the representative related test's oracle (the nearest strong
-  related test, else the top-ranked related test) from the closed domain
-  vocabulary. When no related test observes the seam they degrade honestly to
+  related test, else the top-ranked eligible test) from the closed domain
+  vocabulary. An explicit negative reach or observation stage withholds this
+  credit, and a proximity-only row supplies neither the oracle nor an existing
+  test to imitate. When no related test observes the seam they degrade honestly to
   `oracle_kind = "unknown"` / `oracle_strength = "none"`, never a fabricated
   observer. The review card projects the same oracle facts agent briefs and
   seam packets carry; it computes no oracle of its own. The gap-ledger artifact

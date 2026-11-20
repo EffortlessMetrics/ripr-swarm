@@ -3376,17 +3376,20 @@ pub(crate) fn nearest_strong_test_to_imitate(
     seam_kind: SeamKind,
     evidence: &TestGripEvidence,
 ) -> Option<&crate::analysis::test_grip_evidence::RelatedTestGrip> {
-    evidence
-        .related_tests
-        .iter()
-        .find(|test| {
-            test.oracle_strength == crate::domain::OracleStrength::Strong
-                && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
-                    seam_kind,
-                    &test.oracle_kind,
-                )
-        })
-        .map(std::sync::Arc::as_ref)
+    first_strong_test_to_imitate(seam_kind, evidence.related_tests.iter().map(AsRef::as_ref))
+}
+
+pub(super) fn first_strong_test_to_imitate<'a>(
+    seam_kind: SeamKind,
+    mut tests: impl Iterator<Item = &'a crate::analysis::test_grip_evidence::RelatedTestGrip>,
+) -> Option<&'a crate::analysis::test_grip_evidence::RelatedTestGrip> {
+    tests.find(|test| {
+        test.oracle_strength == crate::domain::OracleStrength::Strong
+            && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
+                seam_kind,
+                &test.oracle_kind,
+            )
+    })
 }
 
 fn push_related_test_reference(

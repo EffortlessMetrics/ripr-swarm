@@ -4101,6 +4101,69 @@ mod tests {
     }
 
     #[test]
+    fn working_set_card_withholds_an_unrelated_assertion_and_keeps_a_weaker_observer()
+    -> Result<(), String> {
+        let mut seam = classified(88);
+        let mut direct = seam
+            .evidence
+            .related_tests
+            .first()
+            .ok_or("missing fixture test")?
+            .as_ref()
+            .clone();
+        let mut unrelated = direct.clone();
+        unrelated.test_name = "unrelated_exact_value".to_string();
+        unrelated.relation_reason = RelationReason::SameTestFile;
+        direct.oracle_strength = OracleStrength::Weak;
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        for (reach, observe, rows, kind, strength) in [
+            (
+                StageState::No,
+                StageState::Yes,
+                vec![unrelated.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Yes,
+                StageState::No,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Yes,
+                StageState::Yes,
+                vec![unrelated, direct],
+                "exact_value",
+                "weak",
+            ),
+        ] {
+            seam.evidence.reach = stage(reach);
+            seam.evidence.observe = stage(observe);
+            seam.evidence.related_tests = rows.into_iter().map(std::sync::Arc::new).collect();
+            let report = render_value(&working_set, std::slice::from_ref(&seam))?;
+            let card = all_cards(&report)
+                .into_iter()
+                .find(|row| row.get("seam").is_some())
+                .ok_or("missing working-set card")?;
+            if card["oracle_kind"] != kind
+                || card["oracle_strength"] != strength
+                || !card["suggested_test"]["near_test"].is_null()
+                || !card["suggested_test"]["related_test"].is_null()
+            {
+                return Err(format!(
+                    "unexpected oracle or existing test recommendation: {card}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn working_set_card_reports_no_oracle_without_related_tests() -> Result<(), String> {
         // With no related tests, the card-level oracle degrades honestly to
         // unknown / none rather than claiming an observer that does not exist.
