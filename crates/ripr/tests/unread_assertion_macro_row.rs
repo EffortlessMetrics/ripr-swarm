@@ -135,6 +135,39 @@ fn an_unread_assertion_macro_is_not_read_as_missing_an_assertion() -> Result<(),
 }
 
 #[test]
+fn a_called_local_wrapper_names_only_its_unconditional_check() -> Result<(), String> {
+    let plain = read("    #[test]\n    fn holds() { let _ = bump(1); }\n")?;
+    for (definition, call, named) in [
+        ("() => { assert_near!(bump(1), 3) };", "check!();", true),
+        ("() => { bump(1) };", "check!();", false),
+        (
+            "() => { if false { assert_near!(bump(1), 3) } };",
+            "check!();",
+            false,
+        ),
+        (
+            "(yes) => { assert_near!(bump(1), 3) }; () => { bump(1) };",
+            "check!();",
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "    #[test]\n    fn holds() {{\n        macro_rules! check {{ {definition} }}\n        {call}\n    }}\n"
+        );
+        let expected = if named {
+            "assertion_admission_unproven"
+        } else {
+            "no_assertion"
+        };
+        let actual = read(&tests)?;
+        if actual != (Some(expected), named, plain.2) {
+            return Err(format!("unexpected wrapper row {actual:?}\n{tests}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn other_shapes_keep_the_absence_claim() -> Result<(), String> {
     for tests in [
         // A macro that is not assertion-like.

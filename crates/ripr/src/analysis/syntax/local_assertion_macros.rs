@@ -73,6 +73,54 @@ pub(crate) fn local_macro_calls_many(sources: &[&str]) -> Vec<Vec<LocalMacroCall
     )
 }
 
+/// Read a test consisting of a local definition followed by its empty call.
+/// The single empty matcher must transcribe exactly one bare macro invocation.
+pub(crate) fn test_local_wrapper_target(source: &str) -> Option<String> {
+    let parse = parse_clean_source_file(source)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let statements = function.body()?.stmt_list()?;
+    let mut children = statements.syntax().children();
+    let definition = ast::MacroRules::cast(children.next()?)?;
+    let invocation = children.next()?;
+    if children.next().is_some() || definition.attrs().next().is_some() {
+        return None;
+    }
+    let call = invocation.descendants().find_map(ast::MacroCall::cast)?;
+    if !is_plain_statement_of(call.syntax(), &function)
+        || call.path()?.syntax().text() != definition.name()?.text()
+        || !inner_elements(call.token_tree()?.syntax()).is_empty()
+    {
+        return None;
+    }
+
+    let arm = inner_elements(definition.token_tree()?.syntax());
+    let arm = match arm.as_slice() {
+        [arm @ .., semi] if semi.kind() == SyntaxKind::SEMICOLON => arm,
+        arm => arm,
+    };
+    let [matcher, eq, gt, transcriber] = arm else {
+        return None;
+    };
+    if !inner_elements(matcher.as_node()?).is_empty()
+        || eq.kind() != SyntaxKind::EQ
+        || gt.kind() != SyntaxKind::R_ANGLE
+    {
+        return None;
+    }
+    let expansion = inner_elements(transcriber.as_node()?);
+    let expansion = match expansion.as_slice() {
+        [tokens @ .., semi] if semi.kind() == SyntaxKind::SEMICOLON => tokens,
+        tokens => tokens,
+    };
+    let [name, bang, args] = expansion else {
+        return None;
+    };
+    (name.kind() == SyntaxKind::IDENT
+        && bang.kind() == SyntaxKind::BANG
+        && args.as_node().is_some())
+    .then(|| name.to_string())
+}
+
 /// Every attributable statement-level call of a same-file macro.
 pub(crate) fn local_macro_calls(source: &str) -> Vec<LocalMacroCall> {
     if !source.contains("macro_rules") {

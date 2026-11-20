@@ -187,6 +187,11 @@ macro not read:" and names the test and the macro. strsim's
 `assert_delta!(0.767, jaro("dixon", "dicksonx"), 0.001)`, whose body is
 `if ($x - $y).abs() > $d { panic!(..) }`, is the motivating case.
 
+A test consisting of a local `macro_rules!` definition followed by its
+unconditional, unqualified empty call also names the inner assertion-like
+macro when the only arm has an empty matcher and transcribes just that call.
+An unrelated transcriber, a branch or multiple arms supplies no such evidence.
+
 Only the false absence claim is withdrawn. The rewrite runs after every
 limit and gap decision of the Rust post-classify pass, so the refusal miss
 never reads as an assertion ripr judged to the #7089 limit or a withhold gate.

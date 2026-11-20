@@ -56,7 +56,7 @@ pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
 pub(crate) use local_assertion_macros::{
-    LocalMacroCall, MacroArm, local_macro_calls, local_macro_calls_many,
+    LocalMacroCall, MacroArm, local_macro_calls, local_macro_calls_many, test_local_wrapper_target,
 };
 #[cfg(test)]
 pub(crate) use local_test_macros::expand_local_test_macros;

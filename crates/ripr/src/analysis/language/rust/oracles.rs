@@ -849,7 +849,12 @@ fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
                 after_macro_rules = 0;
             }
             b'!' => {
-                if masked[..index].trim_end().ends_with("macro_rules") {
+                if masked[..index]
+                    .trim_end()
+                    .rsplit(|ch| !unicode_ident::is_xid_continue(ch))
+                    .next()
+                    == Some("macro_rules")
+                {
                     after_macro_rules = 1;
                 }
             }
@@ -867,6 +872,10 @@ fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
             _ => after_macro_rules = 0,
         }
         index += 1;
+    }
+    if masked.contains("macro_rules") {
+        return crate::analysis::syntax::test_local_wrapper_target(body)
+            .filter(|name| is_unresolved_assertion_like_macro(name));
     }
     None
 }
