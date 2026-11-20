@@ -10454,6 +10454,7 @@ tests = [
   "crates/ripr/src/analysis/diff/parse/stream/tests.rs::an_incomplete_hunk_still_reads_blank_and_signature_lines_as_body",
   "crates/ripr/src/analysis/diff/parse/stream/repeated_section_tests.rs::a_file_edited_in_two_sections_reads_none_of_its_lines",
   "crates/ripr/src/analysis/diff/parse/stream/repeated_section_tests.rs::one_section_per_path_is_read_as_before",
+  "crates/ripr/src/analysis/diff/parse/stream/repeated_section_tests.rs::sections_of_one_diff_that_repeat_a_path_are_read",
   "crates/ripr/src/analysis/diff/parse/stream/repeated_section_tests.rs::a_later_rename_copy_or_delete_of_an_edited_path_refuses_its_lines",
   "crates/ripr/src/analysis/pipeline.rs::tests::a_scope_keeping_only_a_refused_series_file_reports_its_limitation",
   "crates/ripr/src/analysis/pipeline.rs::tests::a_series_editing_artifacts_or_docs_twice_is_not_a_limitation",

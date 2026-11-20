@@ -9737,8 +9737,9 @@ index 0000000..1111111 100644
                 "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n{hunk}"
             )
         };
+        // `git log -p` output: a commit header separates the two edits.
         format!(
-            "{}{}diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -1 +1 @@\n-pub fn big_0() -> u32 {{ 1 }}\n+pub fn big_0() -> u32 {{ 0 }}\n",
+            "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -1 +1 @@\n-pub fn big_0() -> u32 {{ 1 }}\n+pub fn big_0() -> u32 {{ 0 }}\n",
             edit(
                 "@@ -1 +1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n"
             ),
@@ -9788,7 +9789,7 @@ index 0000000..1111111 100644
                 format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}")
             };
             let diff = format!(
-                "{}{}",
+                "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}",
                 section("@@ -1 +1 @@\n-old\n+new\n"),
                 section("@@ -0,0 +1 @@\n+added\n")
             );

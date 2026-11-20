@@ -3104,7 +3104,7 @@ mod tests {
         // #15268: a series that edits one file in two sections parses as a
         // diff and names the refused file; "not a valid unified diff" would
         // contradict that. Garbage input keeps the generic hint.
-        let series = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-old\n+new\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+pub const A: u8 = 1;\n";
+        let series = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-old\n+new\ncommit 0123456789abcdef0123456789abcdef01234567\n\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+pub const A: u8 = 1;\n";
         for (name, text, expect_hedge) in [
             ("hedge-repeated-section", series, false),
             ("hedge-garbage", "not a diff at all\n", true),
