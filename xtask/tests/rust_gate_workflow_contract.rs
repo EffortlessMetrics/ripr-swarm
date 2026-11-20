@@ -3,6 +3,7 @@
 
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const SHARDS: &str = include_str!("../../.github/workflows/rust-test-shards.yml");
+const PACKED_SCRIPT: &str = include_str!("../../tools/ci/run-packed-partitions.sh");
 const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
 const POLICY_SOURCE: &str = include_str!("../src/main.rs");
 const COLLECT_ALL_SOURCE: &str = include_str!("../src/policy/all.rs");
@@ -947,7 +948,7 @@ fn rust_gate_workflow_rejects_missing_unlocked_suppressed_or_duplicate_property_
     }
 }
 
-fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
+fn shard_contract_violations(shards: &str, script: &str, routed: &str) -> Vec<String> {
     let mut findings = Vec::new();
     let count = |text: &str, needle: &str| {
         text.lines()
@@ -960,7 +961,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
         ("list", SHARDED_LIST_COMMAND),
         ("receipt", SHARDED_RECEIPT_COMMAND),
     ] {
-        if shards.lines().filter(|line| line.trim() == command).count() != 1 {
+        if script.lines().filter(|line| line.trim() == command).count() != 1 {
             findings.push(format!(
                 "shards: expected exactly one {label} hash-partition command"
             ));
@@ -968,7 +969,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     }
     // The partition lists come from the prepared binaries before the run. Taken after
     // it, one shard spent four to six minutes in the listing on every run (#12915).
-    let line_of = |needle: &str| shards.lines().position(|line| line.trim() == needle);
+    let line_of = |needle: &str| script.lines().position(|line| line.trim() == needle);
     match (line_of(SHARDED_LIST_COMMAND), line_of(SHARDED_TEST_COMMAND)) {
         (Some(list), Some(test)) if list < test => {}
         _ => findings.push("shards: the partition list must precede the test run".to_string()),
@@ -984,13 +985,17 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     if count(shards, "continue-on-error") != 0 {
         findings.push("shards: no step may continue on error".to_owned());
     }
-    if !shards.contains("          for partition in 1 2; do\n") {
+    if !script
+        .lines()
+        .any(|line| line == "for partition in 1 2; do")
+    {
         findings
             .push("shards: the packed producer must execute native partitions 1 and 2".to_owned());
     }
     // `verify` is what makes two partitions equal the one command: a missing,
     // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
     for required in [
+        "        id: packed-partitions\n        timeout-minutes: 45\n        run: exec bash tools/ci/run-packed-partitions.sh\n\n      - name: Upload partition 1 results",
         "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
         "python3 tools/ci/shard-verifier-artifact.py launch \\\n",
         "            --prefix \"$ARTIFACT_PREFIX\" --runner-temp \"$RUNNER_TEMP\" \\\n",
@@ -1048,14 +1053,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
 
 #[test]
 fn packed_partition_selector_reaches_the_native_runner() -> Result<(), String> {
-    let producer = SHARDS
-        .split_once("id: packed-partitions")
-        .ok_or("missing packed step")?
-        .1
-        .split_once("      - name: Upload partition 1 results")
-        .ok_or("missing end of packed step")?
-        .0;
-    let lines: Vec<_> = producer.lines().map(str::trim).collect();
+    let lines: Vec<_> = PACKED_SCRIPT.lines().map(str::trim).collect();
     let run = lines
         .iter()
         .position(|line| *line == SHARDED_TEST_COMMAND)
@@ -1070,7 +1068,7 @@ fn packed_partition_selector_reaches_the_native_runner() -> Result<(), String> {
 
 #[test]
 fn sharded_hosted_tests_keep_the_one_command_selection() {
-    let findings = shard_contract_violations(SHARDS, ROUTED);
+    let findings = shard_contract_violations(SHARDS, PACKED_SCRIPT, ROUTED);
     assert!(findings.is_empty(), "{findings:?}");
 }
 
@@ -1083,25 +1081,25 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
             ("receipt", SHARDED_RECEIPT_COMMAND),
         ] {
             let replacement = command.replace("--partition hash:", &format!("--partition {mode}:"));
-            let changed = SHARDS.replace(command, &replacement);
+            let changed = PACKED_SCRIPT.replace(command, &replacement);
             assert_ne!(
-                changed, SHARDS,
+                changed, PACKED_SCRIPT,
                 "{label}/{mode} did not change the workflow"
             );
             let expected = format!("shards: expected exactly one {label} hash-partition command");
             assert!(
-                shard_contract_violations(&changed, ROUTED).contains(&expected),
+                shard_contract_violations(SHARDS, &changed, ROUTED).contains(&expected),
                 "{label}/{mode} was not rejected"
             );
             let decoy = format!("{changed}\n# {command}\n");
             assert!(
-                shard_contract_violations(&decoy, ROUTED).contains(&expected),
+                shard_contract_violations(SHARDS, &decoy, ROUTED).contains(&expected),
                 "a comment hid the {label}/{mode} drift"
             );
         }
-        let changed = SHARDS.replace("--partition hash:", &format!("--partition {mode}:"));
-        assert_ne!(changed, SHARDS);
-        let findings = shard_contract_violations(&changed, ROUTED);
+        let changed = PACKED_SCRIPT.replace("--partition hash:", &format!("--partition {mode}:"));
+        assert_ne!(changed, PACKED_SCRIPT);
+        let findings = shard_contract_violations(SHARDS, &changed, ROUTED);
         for label in ["test", "list", "receipt"] {
             assert!(findings.contains(&format!(
                 "shards: expected exactly one {label} hash-partition command"
@@ -1113,15 +1111,15 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
 #[test]
 fn sharded_hosted_tests_list_the_partition_before_the_run() {
     let expected = "shards: the partition list must precede the test run".to_string();
-    assert!(!shard_contract_violations(SHARDS, ROUTED).contains(&expected));
+    assert!(!shard_contract_violations(SHARDS, PACKED_SCRIPT, ROUTED).contains(&expected));
     // Swap the two commands: the run then precedes the listing again.
-    let swapped = SHARDS
+    let swapped = PACKED_SCRIPT
         .replace(SHARDED_LIST_COMMAND, "\u{0}")
         .replace(SHARDED_TEST_COMMAND, SHARDED_LIST_COMMAND)
         .replace('\u{0}', SHARDED_TEST_COMMAND);
-    assert_ne!(swapped, SHARDS);
+    assert_ne!(swapped, PACKED_SCRIPT);
     assert!(
-        shard_contract_violations(&swapped, ROUTED).contains(&expected),
+        shard_contract_violations(SHARDS, &swapped, ROUTED).contains(&expected),
         "a listing after the run was not rejected"
     );
 }
@@ -1132,12 +1130,12 @@ fn sharded_hosted_tests_reject_a_changed_nextest_version() {
         let changed = SHARDS.replace("tool: nextest@0.9.149", replacement);
         assert_ne!(changed, SHARDS);
         assert!(
-            shard_contract_violations(&changed, ROUTED)
+            shard_contract_violations(&changed, PACKED_SCRIPT, ROUTED)
                 .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
         );
         let decoy = format!("{changed}\n# tool: nextest@0.9.149\n");
         assert!(
-            shard_contract_violations(&decoy, ROUTED)
+            shard_contract_violations(&decoy, PACKED_SCRIPT, ROUTED)
                 .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
         );
     }
@@ -1176,11 +1174,18 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             SHARDED_TEST_COMMAND,
             "cargo nextest run --workspace --profile ci",
         ),
+        ("for partition in 1 2; do", "for partition in 1; do"),
+    ] {
+        let changed = PACKED_SCRIPT.replace(from, to);
+        assert_ne!(changed, PACKED_SCRIPT);
+        assert!(!shard_contract_violations(SHARDS, &changed, ROUTED).is_empty());
+    }
+    for (from, to) in [
+        ("exec bash tools/ci/run-packed-partitions.sh", "true"),
         (
             "id: packed-partitions",
             "id: packed-partitions\n        continue-on-error: true",
         ),
-        ("for partition in 1 2; do", "for partition in 1; do"),
         ("-- verify-test-shards", "-- other-command"),
         (
             "python3 tools/ci/shard-verifier-artifact.py launch",
@@ -1231,10 +1236,32 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             "fixture must change the shard workflow: {from}"
         );
         assert!(
-            !shard_contract_violations(&changed, ROUTED).is_empty(),
+            !shard_contract_violations(&changed, PACKED_SCRIPT, ROUTED).is_empty(),
             "softening `{from}` was not rejected"
         );
     }
+}
+
+#[test]
+fn packed_verifier_downloads_only_the_current_pair() -> Result<(), String> {
+    let job = workflow_job(SHARDS, "rust-test-shards-verify").ok_or("missing verifier")?;
+    let downloads: Vec<_> = job
+        .split("\n      - ")
+        .filter(|step| step.starts_with("uses: actions/download-artifact@"))
+        .collect();
+    let [download] = downloads.as_slice() else {
+        return Err("expected a single receipt download before verification".into());
+    };
+    let block = download.split("\n\n").next().ok_or("empty download step")?;
+    let (_, inputs) = block
+        .trim_end()
+        .split_once("\n        with:\n")
+        .ok_or("missing download inputs")?;
+    assert_eq!(
+        inputs,
+        "          pattern: ${{ inputs.artifact-name }}-nextest-shard-[12]-${{ github.run_attempt }}\n          path: shards"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1245,7 +1272,7 @@ fn sharded_verifier_rejects_obsolete_download_or_selector_beside_bound_handoff()
     ] {
         let changed = format!("{SHARDS}\n{obsolete}\n");
         assert!(
-            shard_contract_violations(&changed, ROUTED)
+            shard_contract_violations(&changed, PACKED_SCRIPT, ROUTED)
                 .iter()
                 .any(|finding| finding.contains("obsolete executable selection")),
             "obsolete executable selection was not rejected: {obsolete}"
@@ -1273,7 +1300,7 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
         let changed = ROUTED.replace(from, to);
         assert_ne!(changed, ROUTED, "fixture must change the caller: {from}");
         assert!(
-            !shard_contract_violations(SHARDS, &changed).is_empty(),
+            !shard_contract_violations(SHARDS, PACKED_SCRIPT, &changed).is_empty(),
             "weakening `{from}` was not rejected"
         );
     }
@@ -1399,7 +1426,9 @@ fn hosted_build_metrics_keep_commands_and_the_existing_artifact_root() -> Result
         "GNU time's exit field is not native status"
     );
     assert!(!script.contains("$RUNNER_TEMP"));
-    assert!(SHARDS.contains("cp -R -- target/nextest/ci/build-metrics \"$stage/nextest/ci/\""));
+    assert!(
+        PACKED_SCRIPT.contains("cp -R -- target/nextest/ci/build-metrics \"$stage/nextest/ci/\"")
+    );
     assert!(SHARDS.contains("            target/nextest/ci/junit.xml\n"));
     assert!(SHARDS.contains("            target/nextest/ci/run-context.txt\n"));
     Ok(())

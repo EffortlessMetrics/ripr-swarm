@@ -1381,6 +1381,15 @@ reason = "Pinned Python package list (full SHAs, mutmut version, module paths, t
 covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "tools/ci/run-packed-partitions.sh"
+kind = "packed_test_runner"
+owner = "ci/rust-test-shards"
+surface = "ci"
+classification = "tooling"
+reason = "#8194: run both native Nextest partitions in the prepared hosted Bash environment and retain per-partition receipts and exit statuses."
+covered_by = ["cargo test -p xtask --test rust_gate_workflow_contract"]
+
+[[allow]]
 glob = "tools/ci/shard-verifier-artifact.py"
 kind = "shard_verifier_bootstrap"
 owner = "ci/shard-verifier"
