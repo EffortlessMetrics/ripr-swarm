@@ -1090,6 +1090,282 @@ entries below are the complete record.
 - Python diff mode is faster on large workspaces: per-class fact grouping and package re-export lookup are now indexed instead of scanning every owner against every class or exporter, and the foreign-module index scans each file in the parallel stage. On a 5,855-file workspace built from two copies of Django, draft analysis drops from about 14 s to about 9 s with byte-identical output (#10735).
 - Python diff mode finds an owner's related tests once per run instead of once per changed line, scans large test sets on all cores, and checks an import's module before scanning the test body for rebinding. A two-file pandas diff drops from about 290 s to about 15 s, and sympy from about 31 s to about 12 s, with byte-identical output (#10750).
 - The DX scoreboard pins `h3-typescript`, a Vitest-based TypeScript repository that completes under `--mode draft`, as a third non-Rust row (#10780).
+- `ripr check` on a branch that is behind its base, or already merged into it, now says HEAD is already contained in the comparison base and that the diff is empty, and its next action names the branch switch or `ripr check --base HEAD~1`, instead of blaming analyzed languages and suggesting a commit or `--worktree` (#14265).
+- Every command accepts the `--name=value` spelling as well as `--name value`
+  (`ripr check --format=json`, `--base=origin/main`, `ripr context --at=ID`);
+  tokens after a literal `--` stay as written. Switches take no value, so
+  `--quiet=false` is still refused as typed rather than read as `--quiet`.
+  Before, every command refused the `=` spelling as an unknown argument
+  (#14292). `ripr help --json` now reports `agent repair --phase`, documented as a
+  choice list, as a value-taking flag. `--verbose`, `--help` and
+  `--version` stay switches (`--verbose=check` is refused) (#14292).
+- The `ripr init --agents` loop now skips the DETAIL step (`ripr explain`, then `ripr context`) when a gap row's `missing=` is one code value (for example `total == 100`) rather than `-`, a sentence, a clipped value or a row marked `(+N more)`; agent-format gap rows now print `(+N more)` when a gap has further missing facts. On the agent-eval scenarios the loop reads about 70% fewer estimated tokens for the same answers (#14298).
+- `ripr check` human output: omitted findings that share file, function,
+  class and reason print as one `Hidden:` row naming the line span, count and
+  kinds, so a diff that changes one function lists a few rows instead of one
+  per changed line, and the 20-row window counts rows (#14299).
+- Generated GitHub workflow: a pull request uploads only the diff findings SARIF. The repo-wide seam SARIF, whose alerts repeated the findings on the same changed lines, now renders and uploads only on a manual run (#14300).
+- Generated GitHub workflow: the job summary names each full report in the `ripr-reports` artifact instead of inlining it, so a three-line pull request's summary drops from about 50 KB (1,010 lines) to about 13 KB (210 lines) (#14301).
+- `ripr check --format github`: two probes of one class on one changed line (for example the predicate and return-value probes of `a.len() == 0`) now render one annotation that says it covers the other, like SARIF's one alert per line (a finding with its own repair card or preview actionability keeps its own annotation), instead of two near-identical warnings (#14302).
+- `ripr check src/lib.rs` scopes the run to that changed file, like
+  `ripr check --path src/lib.rs`: a bare argument is a repository-relative
+  file, directory or glob, and one that matches no changed file still fails
+  closed with `scope_filter_matched_nothing`. Before, a bare argument was
+  refused as unknown (#14307).
+- The default `ripr check` card no longer repeats the `Missing check` /
+  `Analyzer limit` line as one of its two evidence-window stage details;
+  the next detail takes the slot. `--format human-full` and every machine
+  format are unchanged (RIPR-SPEC-0122, #14308).
+- The default `ripr check` `Hidden:` list states a long shared reason once:
+  a row whose reason repeats the row above prints `reason: same as above`.
+  Across the 20 affected fixtures this removes 7.8 KB of repeated limit text
+  (#14308). `--format human-full` and machine formats are unchanged.
+- A `ripr repair` refusal for a changed comparison names its stub route in
+  the same short shape as the return-value route ("write the boundary test
+  by hand, or run `ripr agent stub ... --kind predicate` for a fill-in
+  skeleton, then rerun `ripr repair`"), dropping a 110-byte explanation the
+  stub itself shows (#14308).
+- The next step on an unknown-class finding ends with a shorter hedge: "Add
+  or tighten a test only if this finds a gap; compare old and new code with
+  the project's configured test runner (`cargo test` for ordinary Cargo
+  tests). The static class may remain unknown." It is 63 bytes shorter per
+  finding in every format and keeps both caveats (#14308).
+- The default `ripr check` card no longer prints a `Why unknown:` hint when
+  the `Analyzer limit:` line below it says the same sentence word for word;
+  the limit line keeps the fact (#14308).
+- `ripr help <family> <leaf>` and `ripr <family> <leaf> --help` for `reports`, `policy`, `baseline`, `pr-comments` and `assistant-loop` print only that leaf's summary, usage lines, options section and catalog example plus a pointer to `ripr help <family>`, instead of the whole family body; `ripr help --json` rows for those leaves list only the leaf's own flags with `flags_scope: "leaf_section"` and `schema_version` is now 5 (#14314).
+- ripr's default output folder `target/ripr` now ignores itself: the first command that writes there adds `target/ripr/.gitignore` (`*`), so Python and TypeScript projects no longer see `?? target/` in `git status` or get asked to edit their `.gitignore`. Your own `.gitignore` is never touched, and an existing `target/ripr/.gitignore` is kept (#14315).
+- With the opt-in `RIPR_MCP_TEXT_CONTENT=brief`, `ripr_get_gap` text is now the gap's test-author facts, one per line, instead of a field-name digest. It gives class, location, owner, the changed expression, what no test pins (with the reason), related tests, readiness, and the next step. `structuredContent` and the default `full` text are unchanged. On `cargo xtask agent-eval`, the eight gap reads cost 3,083 estimated tokens instead of 12,294 as JSON, and the new `mcp-brief` route still answers every scenario (#14327).
+- `ripr_list_gaps` without a `class` filter now leaves out `exposed` items the shared seam gate refused as `seam_already_gripped` (existing tests already check the seam), and discloses them as `exposed_omitted` with an `exposed_route` hint instead of inviting a `ripr_get_gap` read per item. `filtered` counts the narrowed set; `total`, `eligible`, `selected` and `outcome` still describe the whole snapshot, and `class: "exposed"` lists them as before (#14327).
+- `ripr check --staged` and `--cached` are still refused. The message now says
+  that check already reads staged and unstaged changes together, and gives
+  `git diff --cached | ripr check --diff -` to limit findings to the staged
+  lines, noting that source is still read from the working tree (#14350).
+- LSP: hovering a TypeScript, JavaScript or Perl preview finding whose
+  repair packet is not ready now shows one line,
+  "Repair instructions for an AI agent: not ready — <why>", instead of the
+  packet contract's state, category, route, missing-field list, promotion
+  criteria and a second "advisory only" line. Diagnostic `data`, check JSON
+  and the context packet still carry those fields; the ready case is
+  unchanged (#14353).
+- LSP: preview-language diagnostics say "preview" once. The Problems panel row
+  read `python preview evidence (syntax-first, advisory): Python preview: …`;
+  it now reads `Python preview (advisory): …`, with product casing. The hover
+  still names the syntax-first evidence boundary (#14353).
+- Editor code lenses: changed lines of one function that would show the same
+  lens text now share one lens on the topmost line instead of repeating it
+  above every line. Diagnostics and hover still cover each line. (#14362)
+- TypeScript checks: each import specifier is resolved once per importing file per run instead of once per changed owner; a 23-file check on `colinhacks/zod` uses about 18% less CPU with identical findings (#14364).
+- The configuration reference now matches what the code reads. It says where
+  `[severity.seams]` and `[suppressions] path` actually apply (seam severities
+  also drive SARIF, review-comments and agent results; the suppressions file
+  is also applied by `--format sarif` and `sarif-compact`), that
+  `[profiles.bun_ub]` is read only by `ripr doctor`, that SARIF, `ripr context`
+  and `missed-txt` also follow `[severity.findings]`, and that
+  `analysis.production_like_targets` takes source file paths. The `ripr init`
+  template now shows the `diagnostic_profile` setting under `[lsp]` as a
+  commented default (#14383, #14397).
+- `ripr mcp --stdio` sends less fixed context per session: the
+  instructions name each route once, read-tool descriptions no longer
+  restate the read-only boundary the annotations and instructions already
+  carry, and `ripr_list_gaps`/`ripr_refresh` argument descriptions drop
+  implementation detail (about 210 fewer estimated tokens before the first
+  call). Tools, failure codes and pinned contract wording are unchanged (#14461).
+- Editors: Python and TypeScript code lens titles name the preview tier once,
+  for example `preview: 1 related test (weak)` instead of
+  `preview: 1 related test (preview, weak)`. (#14462)
+- Editors: a finding's Problems-panel text now leads with the missing check,
+  for example ``Missing check: `weight == 25`. Add a meaningful assertion ...``,
+  so a row cut to its first words still says what to test. (#14465)
+- `ripr gate evaluate --mode calibrated-gate` now blocks (status `blocked`,
+  exit `3`) when a changed file could not be parsed, because no seam was
+  judged for it. Other modes keep the `advisory` warning added in #14082
+  (#14485).
+- `ripr pr-review front-panel --assistant-proof <path>` names the read cause on
+  stderr and in the JSON warning when the path exists but cannot be read,
+  instead of reporting it as missing; a genuinely absent path still says
+  missing (#14553).
+- Seam evidence work is ordered largest-first before the parallel pass, and the
+  module-tree scan and corpus-fingerprint cache entries are written without
+  pretty-printing, so they are smaller on disk (#5363, #14660).
+- `ripr check` human output: a grouped `Hidden:` row names its members'
+  lines as runs (`3, 5`, `10-12, 15`) instead of a covering range that
+  implies lines no finding is on; more than three runs print the span with
+  its distinct line count (`1078-1241 (31 distinct lines)`) (#14682).
+- The Rust gap ID (`canonical_gap.normalized_discriminator`) of a changed predicate with exactly one top-level comparison, such as `s.starts_with('-') && s.len() > 1`, now names that comparison's boundary (`s.len==1`), matching the finding's evidence and missing-check advice, instead of the whole conjunction. Repair by that ID picks the most-specific spot on the line, the inner comparison. Other predicate shapes keep their existing IDs (#14719).
+- The `ripr-check` composite Action now works with `actions/checkout`'s default shallow checkout. On `pull_request` it deepens the history until HEAD meets the base branch. It also restores ripr's analysis cache (`cache` input, on by default), writes the report to the job summary, and sets `exit-code` and `report` outputs. A check that could not complete fails with one error annotation that names the exit meaning and ripr's reason. docs/CI.md shows a complete copy-paste workflow and states fork and Dependabot behavior (#14800).
+- `docs/INTEGRATIONS.md` states how long a commit-time hook takes (about
+  0.07 s on a small crate, 36 s warm on ripr's own 3,700-file workspace), how
+  to add `--mode instant` for large workspaces, and what `instant` misses
+  (tests outside the changed files and their parent modules). The lefthook snippet shows the
+  Python and TypeScript glob (#14806).
+- JSON refusals: under an explicit JSON request, an empty value refused by a command's own parser (`ripr agent status --json --attempt ""`, `ripr repair --json --base ""`, `ripr swarm queue --json --root ""`) now writes the `cli_refusal` document with code `missing_value` and the flag as `token`, like a missing value already did; a global `-v`/`--verbose` between command words (`ripr agent -v status ...`) no longer drops the `next` help command. Wording, exit code `2` and stderr are unchanged, and without a JSON request stdout stays empty (#14859).
+- JSON refusals: under an explicit JSON request, a required flag the invocation left out (`ripr agent verify --json` without `--before`, `ripr swarm ingest --json` without `--result`, `ripr context --json` without `--at`) now writes the `cli_refusal` document with code `missing_required`, the flag to add as `token`, and the command's help route as `next`, instead of leaving stdout empty. The required-flag refusals whose wording #14076 is revising keep empty stdout for now. Wording, exit code `2` and stderr are unchanged, and without a JSON request stdout stays empty (#14877).
+- Python: a test whose only check is `wrapper(lambda: helper(...))`, where
+  the test module's `wrapper` provably swallows the `AssertionError` its
+  assert-only `helper` raises (an `except Exception: return None`, a
+  partial or `isinstance`-guarded re-raise, or a `finally: return`), is now
+  read as holding no assertion. The changed behavior reports a gap instead
+  of an unreadable custom assertion helper. A re-raising wrapper keeps its
+  credit, and any wrapper or helper shape RIPR cannot bound stays limited
+  (#13723).
+- A boundary local preceded only by `let flag = !flag;` rebindings or function-local integer `const` items now resolves to the boundary the comparison actually reads, so a test that misses it is reported as a gap instead of `infection_unknown`. Any other prelude shape keeps the earlier refusal (#12771).
+- JSON refusals: under an explicit JSON request, two flags that cannot be used together (`ripr context --json --base main --diff a.diff`, `ripr rerun --json --changed-test tests/a.rs --gap tests::x`, `ripr agent packet --json --seam-id s --gap-id g`) now write the `cli_refusal` document with code `conflicting_flags`, one of the conflicting flags as `token`, and the command's help route as `next`, instead of leaving stdout empty. `rerun --changed-test` with `--gap-ledger` now types as this conflict rather than staying untyped, `capabilities --markdown` beside `--json` or `--language` types the same way, and `agent repair --phase after` with neither `--attempt` nor `--seam-id` types as `missing_required` naming `--attempt`. `check` conflicts keep their own check refusal. Wording, exit code `2` and stderr are unchanged, and without a JSON request stdout stays empty (#14925).
+- JSON refusals: under `--json`, a typed `ripr repair`, `ripr continue` or `ripr status` refusal that stops before any check (for example `ripr continue --json` with no attempt, `ripr repair --json` with no eligible seam, or an unanchored directory) now writes the `cli_refusal` document on stdout with the reason `code` and a new `disposition` field (`retryable`, `terminal`, `needs_selection` or `not_started`), instead of leaving stdout empty. Exit code `3`, the stderr prose and the `ripr: refusal code=` line are unchanged; without `--json` stdout stays empty (#14931).
+- Contributor landing guidance now leads with the live native merge queue:
+  `docs/MERGE_FLOW.md`, the finish-pr skill copies, `AGENTS.md`, `CLAUDE.md`
+  and the agent-context docs no longer offer the direct expected-head squash or
+  `.agents/skills/finish-pr/scripts/guarded_merge.py` as a fallback, the
+  queue-only CI claim matches the triggers that are still installed, and the
+  rollout note no longer reads as a live imperative (#14947).
+- JSON refusals: `ripr repair --json` with several eligible seams and `ripr continue --json` with several current attempts now list their choices in the `cli_refusal` document as `error.choices` (`total` plus items with a `label`, the runnable `command`, and a `powershell_command` when PowerShell needs a different line), so a script can pick one without parsing stderr (#14980).
+- `ripr explain <file:line>` and `ripr context --at <file:line>` now say
+  which reason applies when the file has no finding in a complete run: the
+  diff changes no text line of the file, the named line is not one the diff
+  changed (the nearest changed lines are listed), or the line changed and
+  has no finding. The message used to list all three and leave the
+  choice to the reader (#15039).
+- LSP: suppress unchanged diagnostic delivery (#1580).
+- Review-comments: emit bounded phase receipts (#1670).
+- LSP: add 200ms debounce for interactive refresh triggers (#1908, #2041).
+- VS Code extension: normalize command title casing to lowercase ripr: prefix (#2020, #2052).
+- VS Code extension: color the status bar by state — red errors, yellow warnings (#2014, #2053).
+- CLI: group the ~20 --format values by category in check --help (#2011, #2054).
+- VS Code extension: offer a Show Output action on ripr warnings (#2004, #2062).
+- VS Code extension: show download progress and disclose the release fetch (#2002, #2065).
+- VS Code extension: actionable message when agent loop commands run from the palette (#2083, #2152).
+- CLI: group the --help overview under task headers (#2114, #2153).
+- VS Code extension: surface the real server failure in the error popup (#2078, #2167).
+- VS Code extension: apply ripr.trace.server changes live instead of restarting (#2082, #2168).
+- reframe discriminator guidance for assertion-shaped owners (#2131, #2170).
+- Analysis: cap the repo-scoped working set like the diff path (#2109, #2171).
+- Analysis: stat-only corpus fingerprint for the seam cache key (#2108, #2175).
+- CLI: report missing scope before the --json requirement in agent subcommands (#2073, #2178).
+- VS Code extension: quick-pick workspace root for ambiguous multi-root starts (#2077, #2180).
+- VS Code extension: editor/context menus, default keybindings, and manifest contract tests (#2081, #2199).
+- LSP: resolve Git inputs once per refresh (#2000, #2260).
+- LSP: LoaderDefault workspaces carry the resolved default-base SHA (#2261, #2266).
+- Analysis: disclose when diff contains only non-source files (#2304, #2308).
+- VS Code extension: disambiguate 'Copy Receipt Command' palette collision (#2440, #2471).
+- CLI: make 'ripr cache status' discoverable in --help and doctor (#2426, #2474).
+- CLI: auto-retry pilot at 240s when default 30s timeout fires (#2424, #2508).
+- fix ripr plus error loop, check/diff format hints (#2587).
+- fix fixtures --help, discoverability, explain/context selector hints (#2588).
+- init next-action, gate hint, reports overview, config docs (#2607).
+- disclose lexical fallback in repo mode (#2702).
+- Release packaging: single-source the release version in [workspace.package] (#2783).
+- CLI: warn when --mode fast is used (#2644, #2851).
+- CLI: point cache status to xtask cache gc for cleanup (#2609, #2852).
+- Gate output: name the configured acknowledgement label on waiver mismatch (#2640, #2863).
+- install readiness from packaged crate (#2910).
+- clarify gate naming, Perl preview status, and FNV parity docs (#2643, #2645, #1722) (#2979).
+- Classify: whitespace-stable wildcard-discard detection (#3233, #3243).
+- Classify: recognize tuple-like enum-variant error constructors (#3232, #3244).
+- Classify: strip block comments in assertion-owner shape inference (#3234, #3245).
+- Classify: fail closed on unscopable absolute related-test paths (#3235, #3247).
+- Rust checks: bind target evidence to workspace authority (#3411).
+- name CLI subprocess binary reach limitation (#3426).
+- #3602: demote harness target tests by span overlap; cover warm cache (#3627).
+- Rust checks: parser-backed shadow facts for seam-callee defeat (#3727 slice A) (#3739).
+- `ripr cache`: retain bounded store-failure rows with path, stage, error (#3837).
+- VS Code extension: disclose limited and deferred run statuses instead of completed (#4326, #4338).
+- Python checks: index line starts once per source for fact extraction (#4495, #4580).
+- TypeScript checks: reuse one SourceText index for computed test titles (#4739).
+- CLI / Analysis: name Windows trailing-dot path conditions and disclose EOL-only churn (#4956).
+- CLI / Analysis: disclose interior stripped components and stop misdisclosing BOM-only churn (#4961).
+- `ripr check --diff` with `-v`/`--verbose` now projects bounded Rust file-fact cache reuse/recompute/store-failure facts into stderr and into additive `file_fact_cache` JSON; default JSON is unchanged (#4975).
+- Analysis: batch candidate-tree materialization through one cat-file --batch session (#5105).
+- Analysis: release review source corpus before evidence (#5132).
+- Argument parsing and `--help` for `ripr annotations`, `pr-evidence`, `pr-summary`, `plus` and `impacted-evidence` moved from `app` into CLI adapters; the `app` use cases now take parsed options. Flags, errors and output are unchanged, and the xtask `impacted-evidence` compatibility entry moved to `ripr::cli::run_impacted_evidence_at` (#5193).
+- Analysis: stream workspace source bytes through bounded file-fact builds (#4996, #5220).
+- Analysis: precompute function-name counts once per grip context (#5231).
+- Observability: report ripr's own CPU time and peak memory (#5213, #5282).
+- `ripr init --ci github` now installs ripr through the release's `ripr-check`
+  composite Action (`EffortlessMetrics/ripr/.github/actions/ripr-check@v<version>`
+  with `install-only: true`) instead of copying the installer shell into the
+  workflow, which brings the generated file from 216 to 150 lines. The
+  installer is unchanged, its checksum and archive checks included.
+  `ripr doctor` reads the pin from the Action tag, and the Action gains an
+  `install-only` input. (#5409)
+- The related-test miss `assertion_not_credited` is split into `assertion_inert` (the assertion has a shape that can keep it from running as a standard check) and `assertion_admission_unproven` (ripr could not establish admission, an analyzer limit under RIPR-SPEC-0221) for Rust (#5446).
+- `ripr pilot`: order dispatch-root callees by precomputed position (#6797).
+- Analysis: bound seam-object retention during capped inventory construction (#4997, #6836).
+- Verify: parse each snapshot twice per verify instead of four times (#6901).
+- Rust effect-carrier analysis reuses workspace method names across probes in
+  the same analysis instead of collecting them for each carrier (#7049).
+- MCP `ripr_refresh` over a committed diff already withheld repair cards when a
+  gitignored non-generated Rust file (including a vendored Rust tree) exists,
+  because the findings producer has no captured observation of it. The docs
+  claimed gitignored Rust files were not claimed; they now say so and a test
+  pins the refusal. Gitignored non-Rust files still keep the card. The remedy
+  text now offers `git add -f` plus a commit, or removing the file (#7357).
+- `ripr gate evaluate` in visible-only mode still reads `advisory` when it
+  recorded nothing, and its Markdown report now says that the status reflects
+  the non-enforcing mode, not a finding, and names the modes that give an
+  enforcing `pass` or `blocked`; the gate help and policy docs say the same.
+  The JSON report is unchanged (#7445).
+- `ripr doctor`: print Perl adapter recovery once on the human screen (#7481).
+- Index: reuse module-scope descendant traversal (#8263).
+- `ripr agent stub` builds a method's receiver from a constructor instead of
+  a `todo!()` when the impl establishes one: the first all-literal call an
+  existing test in the target module makes (`TokenBucket::new(5)`), else a
+  no-argument `new`/`empty`/`default` constructor, else a derived `Default`. Human output names the
+  source on a `Receiver:` line. On the 34-case stub corpus this removes the
+  receiver fill-in from 4 of the 13 offered stubs (#8361).
+- Avoid cleaning qualified-helper call text when its name has no indexed helper candidate (#8629).
+- Rust file-fact cache entries use compact JSON to reduce disk usage while
+  preserving existing cache entries and integrity checks (#9216).
+- Rust checks: warm file-fact cache reads verify each entry by hashing the bytes already read instead of re-serializing the decoded facts; existing cache entries are rebuilt once under schema 1.61 (#9216).
+- Selected-root recovery text no longer tells PowerShell users to switch to Bash; it says to use the Bash form in Git Bash (not WSL) or a Unix shell, and how to run the raw command in PowerShell (#9375).
+- Generated agent instructions use bounded discovery and reuse one complete
+  post-edit check report for verification and the done decision (#13125).
+- `ripr check` spends less time deciding whether a test's opaque macro is an
+  admitted Bolero runner: the file-wide `use bolero::check` scan now runs only
+  for a bare `check!` path, not once per test function for every opaque macro.
+  On a warm ripr-swarm `check --base HEAD~1` the probe classification window
+  dropped from about 15.4 s to 11.7 s and the whole run from about 39.6 s to
+  37.1 s, with byte-identical JSON (#12947).
+- A bare human `ripr check` on a clean checkout of the comparison base branch (HEAD has a parent, nothing uncommitted) now analyzes the last commit (`--base HEAD~1`) and says so on stderr, instead of reporting "nothing in scope" and leaving a caller to rerun with `--base`. `human-full`, JSON, SARIF and GitHub formats, explicit `--base`/`--diff`/`--worktree` runs, and dirty trees are unchanged (#13644).
+- `ripr explain` now says in plain words why a finding got its verdict: the
+  `Static exposure` section adds the same `Why <verdict>:` line the check
+  summary prints (for example `Why weak: a related test reaches this change,
+  but no assertion tells the old and new behavior apart`). For findings ripr
+  could not settle statically (unclear findings and unresolved call edges),
+  the "Why this verdict" block no longer repeats the
+  paragraph-long Next step or the stop-reason list the finding block already
+  shows; it points at Next step instead. `Tests examined: 1 listed (3
+  assertion row(s) of 3)` now reads `Tests examined: 1 (3 assertions)`,
+  counting only assertions ripr recorded (an assertion-free test reads `no
+  assertion recorded`).
+  Verdicts, classes, evidence and next steps are unchanged;
+  `--format human-full` is unchanged (#14811).
+- `ripr explain` no longer renders the same fact twice: each related test's
+  assertion lives once in its Evidence row, the "Why this verdict" block
+  references that row ("see Evidence above") instead of re-listing the
+  assertion and miss sentence, and a test judged by several assertion rows
+  states a repeated miss sentence once per test rather than once per row.
+  Rows beyond the Evidence window keep their full verdict and checked
+  assertion there, so no fact is lost; verdicts, classes and next steps are
+  unchanged. Measured on the agent-efficiency study's scenario subjects, the
+  explain output shrank 7.7-12.8% (mean 3,881 -> 3,461 bytes) with every
+  needed-subset fact still present (#13307).
+- Handler-level tests now prove a `didOpen` beyond the 4,096-document or 512 MiB document-store cap is refused with the URI quarantined (empty text, withdrawal marker served) while later `didChange`/`didClose` keep working (#11666).
+- `ripr_refresh` with no `source` now makes the same input choice as `ripr check`: it analyzes saved staged and unstaged tracked edits when any exist, and the committed diff otherwise, so an agent that just edited code no longer gets an empty `no_scope` snapshot and a retry hint. The result reports `requested_source: "default"` beside `captured_source`; `source: "committed"` or `"worktree"` still forces one (#13096).
+- Repair starts and agent packets for a changed predicate boundary now draft
+  the concrete assertion their own evidence supports — for example
+  `assert_eq!(discounted_total(100, 100), 90)` instead of
+  `assert_eq!(discounted_total(/* boundary input where ... */), /* expected */)`
+  — when the related tests' own call rows pin the equality-boundary input to
+  one value and the owner's branch value folds there under bounded integer
+  arithmetic. Where the expected value is not statically derivable the
+  assertion keeps its `/* expected */` placeholder while still emitting the
+  concrete input side, and every draft carries the standing honesty note:
+  drafted from the current behavior; ripr has not run or verified anything,
+  and the developer confirms the expected value before relying on the test.
+  The packet JSON marks such assertions with the new `drafted_static_fold`
+  assertion basis and carries the typed parts as `drafted_boundary` on the
+  missing-discriminator fact (#12414).
+- An explicit `--base` on a repository with no commits yet now says the repository has no commits, instead of asking for a spelling check or a remote (#13664).
 - Python diff mode now fills the workspace-file cap with the files that can reach the diff (files naming what it changes, the modules their tests import, `conftest.py` and package `__init__.py` files) instead of the earliest paths, and a refused file that names nothing the diff changes no longer makes the run partial. On home-assistant (about 20,000 `.py` files), measured at candidate da31ce07629f532d7bc3e474e930a6c0e41702d4 and not rerun after the later review fixes, a Forecast.Solar edit completed in about 7 s and 380 MiB with the same findings as an uncapped run (43 s, 3 GiB), where it had been partial and found 3 of the 6 related tests (#10785).
 - The DX scoreboard pins `execa-typescript`, a JavaScript edit analyzed by the TypeScript/JavaScript adapter that completes under `--mode draft`, as a fourth non-Rust row (#10816).
 - Python diffs that change many files no longer rebuild the whole workspace's write sets once per changed file. The module-value index counts the sources behind each write once and subtracts the excluded file. On Django 5c13b5a with a 20-commit diff (138 changed `.py` files), a release build at b6ec552 took 16 s where main at 51c542e took 86 to 93 s, and the two JSON reports were byte-identical (#10857).
