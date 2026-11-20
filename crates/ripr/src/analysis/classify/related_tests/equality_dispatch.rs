@@ -313,8 +313,9 @@ pub(super) fn test_asserts_equality_through_owner(
 /// #15277 review: a value item of the same name (`fn Key(..) -> Other`,
 /// `const Unit: Other`, also local to a test body) shadows a tuple-struct
 /// constructor or a unit struct's value in its scope without touching the
-/// type namespace, so `Key(1)` there is an `Other`. Any `fn`, `const` or
-/// `static` of that name anywhere in the file refuses.
+/// type namespace, so `Key(1)` there is an `Other`. A `let` binding does
+/// the same for a braced struct, which has no value of its own. Any `fn`,
+/// `const`, `static` or `let` of that name anywhere in the file refuses.
 pub(super) fn type_scope_is_clear(
     test: &TestSummary,
     owner: &FunctionSummary,
@@ -374,9 +375,9 @@ const VALUE_BINDER_KEYWORDS: [&str; 4] = ["fn", "const", "static", "let"];
 
 /// A raw-text superset of [`declares_value_named`]: some whole-word `name`
 /// (or `r#name`) whose preceding code, past whitespace and an optional
-/// `mut`, ends with `fn`, `const`, `static` or `let`, or with a comment (`*/`, or a
-/// line holding `//`) that masking would turn into whitespace between the
-/// keyword and the name.
+/// `mut`, ends with `fn`, `const`, `static` or `let`, or with a comment
+/// (`*/`, or a line holding `//`) that masking would turn into whitespace
+/// between the keyword and the name.
 fn may_declare_value_named(raw: &str, name: &str) -> bool {
     if name.is_empty() || !raw.contains(name) {
         return false;
@@ -405,8 +406,9 @@ fn may_declare_value_named(raw: &str, name: &str) -> bool {
     })
 }
 
-/// Whether the masked source declares a `fn`, `const`, `static` or `let` binding (also
-/// `static mut`, `const fn`) named `name` or `r#name`, at any depth.
+/// Whether the masked source binds a `fn`, `const`, `static` or `let` (also
+/// `static mut`, `const fn`, `let mut`) named `name` or `r#name`, at any
+/// depth.
 pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
     if name.is_empty() {
         return false;
