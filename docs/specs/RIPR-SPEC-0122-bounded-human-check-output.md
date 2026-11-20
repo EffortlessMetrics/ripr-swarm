@@ -204,6 +204,15 @@ unrooted relative paths retain the shared renderer's fallback spelling and
 encoding. This presentation rule also applies when no finding is selected;
 it does not re-coordinate base-side findings or change their currentness.
 
+When `ripr check` runs from a directory strictly below an absolute analysis
+root, the human location rows (the `File:` digest row, the arm-head note,
+owner opt-out and suppression-selector rows, and triage rows) replace the
+leading `./` with one `../` per directory between the invocation directory and
+the root, so a copied path opens from where the command ran (#15473). At the
+root, with a relative root, or for a path outside the root, the text is the
+shared renderer's byte for byte. The finding header line, `--format agent`,
+JSON, MCP, LSP and selector identities keep the shared `./` spelling.
+
 When the hidden identity list exceeds its 20-row window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit
