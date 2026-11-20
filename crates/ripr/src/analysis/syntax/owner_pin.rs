@@ -4668,7 +4668,11 @@ mod module_gate_memo_tests {
             "inside a scope each distinct query parses once"
         );
         let delta = super::super::run_memo::memo_stats().since(before);
-        assert_eq!((delta.misses, delta.hits), (9, 18));
+        // Process-wide counters: parallel tests may add to the delta.
+        assert!(
+            delta.misses >= 9 && delta.hits >= 18,
+            "memo delta {delta:?}"
+        );
     }
 }
 
