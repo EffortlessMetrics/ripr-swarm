@@ -8783,6 +8783,39 @@ fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Resu
 }
 
 #[test]
+fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no() -> Result<(), String>
+{
+    // #15339: the dynamic_dispatch limit says ripr "does not claim that no
+    // test reaches the owner"; the reach stage must not claim it either.
+    let owner_file = Path::new("src/cachetools/__init__.py");
+    let owner_source = "class FIFOCache:\n    def __setitem__(self, key, value):\n        self.data[key] = value\n\n\ndef plain_helper(x):\n    return x + 1\n";
+    let owners = extract_owners(owner_file, owner_source);
+    let tests = extract_tests(
+        Path::new("tests/test_fifo.py"),
+        "import cachetools\n\n\nclass TestFifo:\n    Cache = cachetools.FIFOCache\n\n    def test_insert(self):\n        cache = self.Cache(maxsize=2)\n        cache[1] = 1\n        assert cache[1] == 1\n",
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse the test");
+    let finding = classify_change(owner_file, 3, "        self.data[key] = value", &owners, &tests)
+        .ok_or("dunder edit must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding.missing.iter().any(|l| l.contains("dynamic_dispatch")),
+        "limit must be present: {:?}",
+        finding.missing
+    );
+    let reach = &finding.ripr.reach;
+    assert_eq!(reach.state, StageState::Unknown, "{}", reach.summary);
+    assert!(!reach.summary.contains("0 related"), "{}", reach.summary);
+
+    // Negative control: an ordinary untested function keeps `reach no`.
+    let finding = classify_change(owner_file, 7, "    return x + 1", &owners, &tests)
+        .ok_or("plain edit must produce a finding")?;
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.ripr.reach.summary.contains("0 related"));
+    Ok(())
+}
+
+#[test]
 fn structural_lines_of_a_multi_line_def_header_carry_no_behavior() {
     use super::no_behavior::{is_structural_def_header_line, is_structural_def_header_text};
     // cachetools c0fdf6a reflowed `TLRUCache.__setitem__`'s signature.

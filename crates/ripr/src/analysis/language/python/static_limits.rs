@@ -429,6 +429,16 @@ pub(super) fn contains_lambda_keyword(text: &str) -> bool {
 /// claim. Returns `None` when a test relates, or when no test imports the
 /// owner's class or module and none names the class (such a class keeps
 /// `no_static_path`).
+/// Whether `limit` is the implicit-dunder `dynamic_dispatch` limit: the one
+/// that states ripr "does not claim that no test reaches the owner". Its reach
+/// stage must read `unknown`, never `no` (#15339).
+pub(super) fn is_implicit_dunder_dispatch_limit(limit: &PythonStaticLimit) -> bool {
+    matches!(limit.kind, StaticLimitKind::DynamicDispatch)
+        && limit.evidence.contains(IMPLICIT_DUNDER_EVIDENCE_MARKER)
+}
+
+const IMPLICIT_DUNDER_EVIDENCE_MARKER: &str = "implicitly by";
+
 pub(super) fn implicit_dunder_dispatch_limit(
     owner: &PythonOwner,
     all_tests: &[PythonTest],
