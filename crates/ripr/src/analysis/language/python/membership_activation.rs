@@ -679,12 +679,18 @@ fn subject_rebinding(
             (trimmed.starts_with("for ") || trimmed.starts_with("while "))
                 && leading_whitespace(raw) < compare_indent
         });
+    // A `while` comparison re-reads the subject after its own body runs.
+    let compare_is_loop = lines.get(compare_index)?.trim_start().starts_with("while ");
     let mut normalization: Option<Normalization> = None;
     for (index, line) in owner_binding_lines(owner_source, owner, subject) {
-        if loop_enclosed {
+        if loop_enclosed || index == compare_index {
+            // Inside a loop, or a walrus on the comparison line itself.
             return Some(Rebinding::Unmodelled);
         }
-        if index >= compare_index {
+        if index > compare_index && compare_is_loop {
+            return Some(Rebinding::Unmodelled);
+        }
+        if index > compare_index {
             // Runs after the comparison, outside any loop around it.
             continue;
         }
