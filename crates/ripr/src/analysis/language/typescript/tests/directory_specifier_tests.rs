@@ -308,53 +308,74 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
         "src/ambiguous.tsx",
     ];
     let changes = paths.map(|file| changed_with_lines(file, &[(2, "  return 42;")]));
-    for (label, entries, tracked, credits) in [
+    let bundle = "dist/emitter.js";
+    for (label, main, entries, tracked, credits) in [
         (
             "declared source",
+            bundle,
             r#""source":"src/index.ts","module":"dist/emitter.mjs""#,
             true,
             true,
         ),
         (
             "two sources",
+            bundle,
             r#""source":["src/index.ts","src/other.ts"]"#,
             true,
             false,
         ),
         (
             "divergent exports",
+            bundle,
             r#""source":"src/index.ts","exports":{".":{"import":"./dist/emitter.mjs","require":"./dist/different.js"}}"#,
             true,
             false,
         ),
         (
             "ambiguous files",
+            bundle,
             r#""source":"src/ambiguous""#,
             true,
             false,
         ),
         (
             "different module",
+            bundle,
             r#""source":"src/index.ts","module":"src/other.ts""#,
             true,
             false,
         ),
         (
             "missing source",
+            bundle,
             r#""source":"src/missing.ts""#,
             true,
             false,
         ),
-        ("no counterpart", r#""version":"1.0.0""#, true, false),
+        (
+            "tracked source mirror",
+            "dist/index.js",
+            r#""version":"1.0.0""#,
+            true,
+            true,
+        ),
+        (
+            "no counterpart",
+            bundle,
+            r#""version":"1.0.0""#,
+            true,
+            false,
+        ),
         (
             "untracked source",
+            bundle,
             r#""source":"src/index.ts""#,
             false,
             false,
         ),
     ] {
         let manifest = format!(
-            r#"{{"name":"tiny-emitter","main":"dist/emitter.js","devDependencies":{{"mocha":"*","chai":"*"}},{entries}}}"#
+            r#"{{"name":"tiny-emitter","main":"{main}","devDependencies":{{"mocha":"*","chai":"*"}},{entries}}}"#
         );
         ts_write_file(&root.join("package.json"), &manifest)?;
         fixture_git_ok(&root, &["add", "package.json"])?;
@@ -397,7 +418,8 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
                     finding
                         .evidence
                         .iter()
-                        .any(|line| line.contains("loaded bundle is unverified")),
+                        .any(|line| line.contains("one tracked source candidate")
+                            && line.contains("loaded bundle is unverified")),
                     "{:?}",
                     finding.evidence
                 );
