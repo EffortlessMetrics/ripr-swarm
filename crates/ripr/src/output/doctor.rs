@@ -3012,11 +3012,48 @@ mod tests {
 
         // A spaced root pins the paste-safety of the pilot command in the
         // evidence: it must be shell-quoted, not a bare `root.display()`.
+        // An unreadable gitfile, not a bare repository: since #15297 a bare
+        // repository is named as bare, with its own work-tree repair.
         let spaced = unique_test_dir("outside work tree spaced");
         std::fs::create_dir_all(&spaced).map_err(|error| format!("create fixture: {error}"))?;
-        git_in(&spaced, &["init", "--bare", "."])?;
+        std::fs::write(spaced.join(".git"), "not a gitfile\n")
+            .map_err(|error| format!("write fixture gitfile: {error}"))?;
 
-        for fixture in [&bare, &gitfile, &spaced] {
+        // #15297: the bare repository is not a work tree either, but it is
+        // a repository with no checked-out source, so its evidence names a
+        // work tree and no whole-repository pilot (there is no source).
+        let bare_report = evaluate_doctor_core_with_config(&bare, &[]).report;
+        match bare_report
+            .checks
+            .iter()
+            .find(|check| check.name == "git_repository")
+        {
+            Some(check) if check.status == DoctorStatus::Fail.into() => {
+                let evidence = check.evidence.as_deref().unwrap_or_default();
+                for expected in ["bare Git repository", "git worktree add"] {
+                    if !evidence.contains(expected) {
+                        failures.push(format!("`{evidence}` does not say `{expected}`"));
+                    }
+                }
+                if evidence.contains("ripr pilot") {
+                    failures.push(format!("`{evidence}` names pilot for a bare repository"));
+                }
+            }
+            other => failures.push(format!(
+                "{}: a bare repository reported {other:?}",
+                bare.display()
+            )),
+        }
+        if DoctorFirstCommand::resolve_for_report(&bare_report, || false)
+            != DoctorFirstCommand::BareRepository
+        {
+            failures.push(format!(
+                "{}: a bare repository does not resolve to the work-tree recovery",
+                bare.display()
+            ));
+        }
+
+        for fixture in [&gitfile, &spaced] {
             let inside =
                 git_in(fixture, &["rev-parse", "--is-inside-work-tree"]).unwrap_or_default();
             if inside == "true" {
