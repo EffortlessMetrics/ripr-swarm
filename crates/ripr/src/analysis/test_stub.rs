@@ -2000,10 +2000,13 @@ fn format_trait_spec(
         "Pointer" => ":p",
         _ => return None,
     };
-    if trait_name == trait_path && !bare_name_is_std_fmt_trait(source, trait_name) {
-        return None;
-    }
-    Some(spec)
+    let names_std_trait = match trait_path.strip_prefix("fmt::") {
+        // `fmt::Display` is the std trait only when `fmt` is the std module.
+        Some(_) => fmt_module_is_std(source),
+        None if trait_name == trait_path => bare_name_is_std_fmt_trait(source, trait_name),
+        None => true,
+    };
+    names_std_trait.then_some(spec)
 }
 
 /// Whether a bare `name` in an impl header can be the `std::fmt` trait: the
@@ -2020,7 +2023,7 @@ fn bare_name_is_std_fmt_trait(source: &str, name: &str) -> bool {
         .descendants()
         .filter_map(ast::Trait::cast)
         .any(|declared| declared.name().is_some_and(|n| n.text() == name));
-    if declares {
+    if declares || !fmt_module_is_std_in(&root) {
         return false;
     }
     root.syntax()
@@ -2039,21 +2042,7 @@ fn bare_name_is_std_fmt_trait(source: &str, name: &str) -> bool {
             bound == name
         })
         .all(|tree| {
-            // The full imported path, from the outermost tree inward.
-            let mut segments: Vec<String> = tree
-                .syntax()
-                .ancestors()
-                .filter_map(ast::UseTree::cast)
-                .filter_map(|ancestor| ancestor.path())
-                .map(|path| path.syntax().text().to_string())
-                .collect();
-            segments.reverse();
-            let full: String = segments
-                .join("::")
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let full = full.trim_start_matches("::");
+            let full = full_use_path(&tree);
             ["std::fmt::", "core::fmt::", "alloc::fmt::", "fmt::"]
                 .iter()
                 .any(|prefix| {
@@ -2061,6 +2050,59 @@ fn bare_name_is_std_fmt_trait(source: &str, name: &str) -> bool {
                         .is_some_and(|rest| !rest.contains("::"))
                 })
         })
+}
+
+/// Whether a `fmt` path segment in this file can be the `std::fmt` module:
+/// the file declares no `mod fmt` and binds `fmt` (directly or renamed) only
+/// from `std::fmt`, `core::fmt` or `alloc::fmt`. A file that does not parse
+/// cleanly fails closed.
+fn fmt_module_is_std(source: &str) -> bool {
+    parse_clean_source_file(source).is_some_and(|parse| fmt_module_is_std_in(&parse.tree()))
+}
+
+fn fmt_module_is_std_in(root: &ast::SourceFile) -> bool {
+    let declares = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| module.name().is_some_and(|n| n.text() == "fmt"));
+    if declares {
+        return false;
+    }
+    root.syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
+        .filter_map(|tree| {
+            // `use std::fmt::{self}` binds `fmt` through `self`.
+            let full = full_use_path(&tree);
+            let full = full.strip_suffix("::self").unwrap_or(&full).to_string();
+            let bound = match tree.rename().and_then(|rename| rename.name()) {
+                Some(alias) => alias.text().to_string(),
+                None => full.rsplit("::").next().unwrap_or_default().to_string(),
+            };
+            (bound == "fmt").then_some(full)
+        })
+        .all(|full| matches!(full.as_str(), "std::fmt" | "core::fmt" | "alloc::fmt"))
+}
+
+/// The full imported path of a leaf `use` tree, from the outermost tree
+/// inward, without whitespace or a leading `::`.
+fn full_use_path(tree: &ast::UseTree) -> String {
+    let mut segments: Vec<String> = tree
+        .syntax()
+        .ancestors()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|ancestor| ancestor.path())
+        .map(|path| path.syntax().text().to_string())
+        .collect();
+    segments.reverse();
+    let full: String = segments
+        .join("::")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    full.trim_start_matches("::").to_string()
 }
 
 fn name_suffix(kind: SeamKind) -> &'static str {

@@ -412,7 +412,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // with the concrete `String` / `&str` the argument accepts (#8361).
         ("n > 15", Expect::StopsAtRiprTodo),
         // A `Display::fmt` owner is observed by formatting the value
-        // (`subject.to_string()`): a test cannot build a `Formatter`.
+        // (`std::format!("{subject}")`): a test cannot build a `Formatter`.
         ("self.max > 3", Expect::StopsAtRiprTodo),
     ]
     .map(|(needle, expect)| (FIXTURE, needle, expect));

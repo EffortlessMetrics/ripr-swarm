@@ -1424,6 +1424,70 @@ impl Display for Own {
 }
 
 #[test]
+fn a_user_fmt_module_trait_keeps_the_direct_call() -> Result<(), String> {
+    let user_trait =
+        "pub trait Display { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result; }";
+    let body = "pub struct Own(pub u8);
+impl fmt::Display for Own {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, \"{}\", self.0 + 9)
+    }
+}
+";
+    for source in [
+        // `fmt` is a module declared in the file.
+        format!("mod fmt {{ {user_trait} }}\n{body}"),
+        // `fmt` is imported from a non-std path.
+        format!("mod mine {{ pub mod fmt {{ {user_trait} }} }}\nuse mine::fmt;\n{body}"),
+        // A bare `Display` imported through a user `fmt` module.
+        format!(
+            "mod fmt {{ {user_trait} }}\nuse fmt::Display;\n{}",
+            body.replace("impl fmt::Display", "impl Display")
+        ),
+    ] {
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "self.0 + 9",
+            SeamKind::ReturnValue,
+            return_value("self.0 + 9"),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert!(!stub.text.contains("std::format!"), "{}", stub.text);
+        assert!(
+            stub.text.contains("::fmt(&subject, &mut f)"),
+            "{}",
+            stub.text
+        );
+    }
+    // `use std::fmt;` keeps `fmt::Display` the formatting trait, and the
+    // changed code's braces and quotes are escaped inside the `todo!` text.
+    let source = format!("use std::fmt;\n{body}").replace("self.0 + 9", "\"{\", self.0 + 9");
+    let seam = seam_at(
+        "src/lib.rs",
+        &source,
+        "self.0 + 9",
+        SeamKind::ReturnValue,
+        return_value("\"{\", self.0 + 9"),
+    )?;
+    let stub = rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("assert_eq!(std::format!(\"{subject}\"), expected);"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains("(the changed code is `\\\"{{\\\", self.0 + 9`)\");"),
+        "{}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
 fn return_value_guidance_leaves_mut_output_targets_out_of_the_chosen_inputs() -> Result<(), String>
 {
     let source = "pub struct Seed(pub u8);
