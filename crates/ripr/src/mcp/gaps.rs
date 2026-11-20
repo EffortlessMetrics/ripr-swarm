@@ -595,12 +595,10 @@ pub(crate) fn canonical_id_of(finding: &Finding) -> String {
 }
 
 impl GapItem {
-    /// `root` is the analyzed workspace root: item locations render through
-    /// the shared finding-location owner (#5996), so an MCP item names the
-    /// finding's file with the same workspace-relative string the check,
-    /// context and LSP surfaces emit. Related-test and fix-site files keep
-    /// the repository-relative renderer (#5254 item 6), which additionally
-    /// tolerates verbatim/UNC/case spelling drift.
+    /// `root` is the analyzed workspace root. Item locations use the shared
+    /// finding-location renderer with a bare workspace-relative spelling.
+    /// Related tests and fix sites use the repository-relative renderer
+    /// (#5254 item 6), which also tolerates verbatim/UNC/case spelling drift.
     #[cfg(test)]
     pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Result<Self, String> {
         Self::from_finding_admitted(finding, root, &SeamAdmission::unevaluated())
@@ -617,6 +615,8 @@ impl GapItem {
     ) -> Result<Self, String> {
         let canonical_id = canonical_id_of(finding);
         let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
+        let served_file =
+            crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
         let language = finding
             .language
@@ -632,7 +632,7 @@ impl GapItem {
             "canonical_id": canonical_id,
             "class": class,
             "language": language,
-            "file": file,
+            "file": served_file,
             "line": line,
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
@@ -999,7 +999,7 @@ fn gap_evidence_core(
         "class": finding.class.as_str(),
         "language": finding.language.as_ref().map(|language| language.as_str()),
         "location": {
-            "file": crate::analysis::finding_location_text(root, &finding.probe.location.file),
+            "file": crate::analysis::finding_location_text_bare(root, &finding.probe.location.file),
             "line": finding.probe.location.line,
             "column": finding.probe.location.column,
         },
@@ -1062,6 +1062,7 @@ pub(crate) fn budget_items(
         .iter()
         .map(|item| DiagnosticBudgetItem {
             canonical_id: item.canonical_id.clone(),
+            // Budget buckets keep the shared finding-location spelling.
             document: item.file.clone(),
             payload_bytes: item.list_summary_bytes(),
             inline_detail_bytes: item
@@ -1528,13 +1529,9 @@ mod tests {
         Ok(())
     }
 
-    /// #5996: one finding, one location string on every surface. The MCP
-    /// item file must join byte-for-byte with the check JSON `probe.file`,
-    /// the context packet `probe.file` and the human finding header for the
-    /// same finding — including when the analyzed root is a verbatim Windows
-    /// path (the MCP server's root spelling), which previously leaked the
-    /// raw `//?/` producer join no other surface produced and no editor
-    /// resolves.
+    /// #5996: a verbatim Windows analysis root must not leak into finding
+    /// locations. MCP gap locations use the bare spelling (#15645). Check
+    /// JSON, context and the human header keep their `./` spelling.
     ///
     /// #8743 scope note: the packet here is rendered with the default
     /// configuration, and this test claims parity only for fields that are
@@ -1544,8 +1541,7 @@ mod tests {
     /// carry a different `severity` value under a user override; full-packet
     /// parity is only claimed when the effective configurations match.
     #[test]
-    fn one_finding_renders_one_location_string_on_every_surface_under_default_config()
-    -> Result<(), String> {
+    fn finding_location_keeps_each_surface_spelling_under_default_config() -> Result<(), String> {
         // check-local-context forbids drive-letter path literals; assemble
         // the verbatim root from parts (the `//?/` text lives in the owner's
         // own unit tests).
@@ -1562,7 +1558,7 @@ mod tests {
         let item = GapItem::from_finding(&finding, &root)?;
         if item.file != expected {
             return Err(format!(
-                "MCP item file must be workspace-relative: {}",
+                "MCP diagnostic budget key must keep the shared spelling: {}",
                 item.file
             ));
         }
@@ -1577,7 +1573,7 @@ mod tests {
                     item.evidence_core
                 )
             })?;
-        if location_file != expected {
+        if location_file != "src/main.rs" {
             return Err(format!(
                 "MCP gap location file must be workspace-relative: {location_file}"
             ));
@@ -3328,32 +3324,31 @@ mod tests {
 
     #[test]
     fn gap_projection_renders_every_served_file_root_relative() -> Result<(), String> {
-        // #5254 item 6: the observed wire leak was a canonicalized finding
-        // file served verbatim. Every served file renders relative to the
-        // analyzed root: the item, the list summary, and the evidence
-        // location through the shared finding-location owner (#5996, with
-        // its `./` prefix), related tests and the fix site through the
-        // repository-relative renderer. Host-native absolute roots (no
-        // filesystem touch) so the test pins the threading on every host;
-        // the verbatim/case spelling matrix lives portably with the
-        // renderer in `output::path`.
+        // #5254 item 6 and #15645: the list and evidence spell the same
+        // file under an absolute root and with both relative input forms.
         let root = std::env::temp_dir().join("ripr-gap-path-root");
         let mut finding = finding()?;
-        finding.probe.location.file = root.join("src/lib.rs");
         finding.related_tests[0].file = root.join("tests/checkout.rs");
 
+        for (root, file) in [
+            (root.as_path(), root.join("src/lib.rs")),
+            (Path::new("."), PathBuf::from("./src/lib.rs")),
+            (Path::new("."), PathBuf::from("src/lib.rs")),
+        ] {
+            finding.probe.location.file = file;
+            let item = GapItem::from_finding(&finding, root)?;
+            let expected =
+                crate::analysis::finding_location_text(root, &finding.probe.location.file);
+            let budget = budget_items(std::slice::from_ref(&item));
+            assert_eq!(budget[0].document, expected);
+            assert_eq!(item.list_summary["file"], "src/lib.rs");
+            assert_eq!(item.evidence_core["location"]["file"], "src/lib.rs");
+            assert_eq!(item.list_summary["canonical_id"], "gap:test:1");
+            assert_eq!(item.evidence_core["canonical_id"], "gap:test:1");
+        }
+
+        finding.probe.location.file = root.join("src/lib.rs");
         let item = GapItem::from_finding(&finding, &root)?;
-        assert_eq!(item.file, "./src/lib.rs");
-        assert_eq!(
-            item.list_summary.pointer("/file").and_then(Value::as_str),
-            Some("./src/lib.rs")
-        );
-        assert_eq!(
-            item.evidence_core
-                .pointer("/location/file")
-                .and_then(Value::as_str),
-            Some("./src/lib.rs")
-        );
         assert_eq!(
             item.evidence_core
                 .pointer("/related_tests/0/file")
@@ -3388,11 +3383,10 @@ mod tests {
         finding.probe.location.file = elsewhere.join("lib.rs");
 
         let item = GapItem::from_finding(&finding, &root)?;
-        assert!(
-            item.file.contains("ripr-gap-path-elsewhere") && item.file.ends_with("lib.rs"),
-            "an out-of-root file must keep its full stable spelling, got: {}",
-            item.file
-        );
+        let expected = crate::analysis::finding_location_text(&root, &finding.probe.location.file);
+        assert_eq!(item.file, expected);
+        assert_eq!(item.list_summary["file"], expected.as_str());
+        assert_eq!(item.evidence_core["location"]["file"], expected.as_str());
         Ok(())
     }
 
