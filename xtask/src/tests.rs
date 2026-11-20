@@ -49167,6 +49167,44 @@ fn vsix_inventory_rejects_cargo_artifacts_outside_target() -> Result<(), String>
 }
 
 #[test]
+fn vsix_inventory_rejects_extension_development_tests() -> Result<(), String> {
+    for name in [
+        "extension/out/test/suite/required_journeys.test.js",
+        "extension/out/test/clientLaunch.js",
+        "extension/out/src/test/helper.js",
+        "extension/test/fixtures/workspace/Cargo.toml",
+        "extension/test-fixtures/tls/a.pem",
+        "extension/out/src/client.spec.js",
+        "extension/out/src/__tests__/client.js",
+        "extension/tsconfig.setup.json",
+    ] {
+        let entries = vec![
+            vsix_entry("extension/package.json", 2),
+            vsix_entry(name, 10),
+        ];
+        let Err(error) = super::check_vsix_inventory(&entries, 10, 1_000) else {
+            return Err(format!(
+                "{name} must be rejected as an extension test entry"
+            ));
+        };
+        assert!(error.contains(name), "{error}");
+        assert!(error.contains("1 extension test entries"), "{error}");
+    }
+    // The shipped runtime and a production dependency's own layout pass:
+    // names that merely contain "test" are not test directories.
+    let shipped = vec![
+        vsix_entry("extension/package.json", 2),
+        vsix_entry("extension/out/src/attemptStatus.js", 2),
+        vsix_entry("extension/out/src/latestRelease.js", 2),
+        vsix_entry("extension/walkthrough/setup.md", 2),
+        vsix_entry("extension/node_modules/semver/test/index.js", 2),
+        vsix_entry("extension/node_modules/dep/lib/a.test.js", 2),
+        vsix_entry("extension.vsixmanifest", 2),
+    ];
+    super::check_vsix_inventory(&shipped, 10, 1_000)
+}
+
+#[test]
 fn vsix_inventory_fails_closed_on_missing_or_non_zip_package() -> Result<(), String> {
     with_temp_cwd("vsix-inventory-unreadable", |root| {
         // A package step that produced no archive must fail, not pass an empty inventory.
