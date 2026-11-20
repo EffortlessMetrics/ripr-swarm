@@ -5724,10 +5724,10 @@ fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosit
     // identity alias of exactly one (`const a = p;`, `const a = Math.abs(p);`).
     // Any other initializer (`Math.abs(p) / 2`, `-p`, `p + other`) can move
     // the value away from the argument, so no position is credited.
-    // An owner with neither parameter facts nor recorded text keeps the
-    // legacy every-position reading.
-    if is_bare_identifier(operand.trim()) && (owner.arity.is_some() || owner.source_text.is_some())
-    {
+    // Only a name the owner's own text declares as a `const`/`let`/`var`
+    // local is a derived local; any other bare name (a destructured or rest
+    // parameter binding, a module name) keeps the legacy position reading.
+    if is_bare_identifier(operand.trim()) && declared_as_local(operand.trim(), owner) {
         return match identity_alias_parameter(operand.trim(), owner) {
             Some(idx) => ReadPosition::Index(idx),
             None => ReadPosition::Unknown,
@@ -5785,9 +5785,48 @@ fn identity_alias_parameter(name: &str, owner: &TypeScriptOwner) -> Option<usize
         // The signature's own `p = default` is an assignment-looking token
         // before the body opens; a default never rewrites the argument.
         let in_signature = before.rfind('{').is_none() && before.contains('(');
-        (assign && !in_signature) || compound || prefixed || (!in_signature && destructured(after))
+        // A loop or catch binding (`for (p of xs)`, `for (p in o)`,
+        // `catch (p)`) or a redeclaration rebinds the name too.
+        let head = before.trim_end();
+        let rebound = after.starts_with("of ")
+            || after.starts_with("in ")
+            || ["let", "var", "const", "catch (", "catch("]
+                .iter()
+                .any(|keyword| head.ends_with(keyword));
+        (assign && !in_signature)
+            || compound
+            || prefixed
+            || rebound
+            || (!in_signature && destructured(after))
     });
-    (declarations == 1 && !parameter_written).then_some(idx)
+    // A nested function or arrow in the body may bind its own parameter of
+    // the same name, so the alias may read that one instead (fail closed).
+    let nested_function = source
+        .find('{')
+        .and_then(|open| source.get(open..))
+        .is_some_and(|body| {
+            body.contains("=>") || identifier_occurrences(body, "function").next().is_some()
+        });
+    (declarations == 1 && !parameter_written && !nested_function).then_some(idx)
+}
+
+/// `true` when the owner's own text declares `name` with `const`, `let` or
+/// `var`: the operand is a local derived inside the owner, not a parameter
+/// binding (#15358 review).
+fn declared_as_local(name: &str, owner: &TypeScriptOwner) -> bool {
+    owner.source_text.as_deref().is_some_and(|source| {
+        identifier_occurrences(source, name).any(|(before, _)| {
+            let head = before.trim_end();
+            ["const", "let", "var"].iter().any(|keyword| {
+                head.strip_suffix(keyword).is_some_and(|rest| {
+                    !rest
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+                })
+            })
+        })
+    })
 }
 
 /// The initializer of a declaration whose binding name was just consumed:

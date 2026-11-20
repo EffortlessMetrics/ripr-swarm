@@ -218,6 +218,14 @@ fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String
         ),
         ("destructured-array", "[ms] = other;\n  const msAbs = ms;"),
         ("typed-transform", "const msAbs: number = ms / 2;"),
+        ("for-of", "for (ms of [other]) {}\n  const msAbs = ms;"),
+        ("for-in", "for (ms in { a: 1 }) {}\n  const msAbs = ms;"),
+        ("catch", "try {} catch (ms) {}\n  const msAbs = ms;"),
+        ("closure", "const msAbs = ms;\n  [other].map((ms) => ms);"),
+        (
+            "nested-function",
+            "const msAbs = ms;\n  [other].map(function (ms) { return ms; });",
+        ),
     ];
     for (label, local) in cases {
         let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);
@@ -229,5 +237,20 @@ fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String
             finding.evidence
         );
     }
+    Ok(())
+}
+
+/// A destructured parameter binding is not a derived local, so an object pin
+/// at that field still witnesses the folded boundary (#15358 review).
+#[test]
+fn a_destructured_parameter_binding_keeps_the_object_pin() -> Result<(), String> {
+    let source = duration_source_with(CHAIN, "{ msAbs }: { msAbs: number }", "const ms = 0;");
+    let finding = folded_finding("destructured-owner", &source, "{ msAbs: 3_600_000 }")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }
