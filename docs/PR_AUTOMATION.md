@@ -1380,6 +1380,26 @@ pre-existing hook is already ripr-managed, the command updates it idempotently.
 If a pre-existing hook is not ripr-managed, the command refuses to overwrite it
 so local user hooks are not clobbered.
 
+## Release milestone fixture comparison
+
+Run `cargo xtask check-release-targets --fixture <path>` to compare a local JSON
+snapshot with `policy/release-targets.toml`. The snapshot uses `schema_version: 1`,
+`repository: "EffortlessMetrics/ripr-swarm"`, and an explicit `complete` boolean.
+It contains three arrays.
+
+- `milestones` records have `number`, `title`, and `description`.
+- `issues` records have `number`, `closed`, `milestone`, and `labels` (strings).
+- `pull_requests` records have `number`, `closed`, `milestone`, and `closes`
+  (issue numbers in the same repository).
+
+Use a milestone number or `null` for each `milestone` field. Include every
+manifest issue with a milestone role, all issues in the observed candidate
+milestones, every PR that closes committed work, and all referenced milestones.
+Use `complete: false` when coverage is uncertain. The command writes
+`target/ripr/reports/release-milestone-fixture.{json,md}` and exits successfully
+only when the local comparison is `in_sync`. The report is evidence about the
+supplied fixture alone.
+
 ## CI Reports
 
 CI uploads review artifacts from the Rust workflow when reports are present:
