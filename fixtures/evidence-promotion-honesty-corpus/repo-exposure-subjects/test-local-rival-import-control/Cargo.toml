@@ -1,0 +1,8 @@
+[package]
+name = "test_local_rival_import_control_subject"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "test_local_rival_import_control_subject"
+path = "src/lib.rs"
