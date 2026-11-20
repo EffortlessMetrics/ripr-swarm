@@ -563,3 +563,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_swallowed_ok (32)
+
+Reason:
+RIPR-SPEC-0162: the check digest states the analyzer limit once; a Why hint that the Analyzer limit line repeats word for word is dropped (#14308)
+
+Command:
+`cargo xtask goldens bless propagate_swallowed_ok --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — propagate_swallowed_ok (33)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless propagate_swallowed_ok --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

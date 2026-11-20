@@ -44,9 +44,9 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 Evidence
   shared evidence: E1, E2
-  - propagation yes: Changed behavior appears to influence match arm result: Ok(p) if p > 0 =>
+  - propagation yes: Changed behavior appears to influence match arm result: Ok(p)
   shared evidence: E3, E4
-  - local flow reaches match arm result: Ok(p) if p > 0 => (line 3)
+  - local flow reaches match arm result: Ok(p) (line 3)
   shared evidence: E5, E6, E7
 Weakness
   - No strong discriminator was detected

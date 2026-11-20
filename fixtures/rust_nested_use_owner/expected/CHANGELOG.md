@@ -206,3 +206,27 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (17)
+
+Reason:
+RIPR-SPEC-0197: a same-name path qualifier is not the owner passed as a function value, so the indirect-owner limit no longer withholds the weak-oracle gap
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (18)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`

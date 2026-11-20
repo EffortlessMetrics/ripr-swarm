@@ -20,8 +20,10 @@ import {
   ResolveFailure,
   ResolveFailureKind,
   ResolvedServer,
-  resolutionFailureRecovery
+  resolutionFailureRecovery,
+  serverLaunchCommand
 } from './serverResolver';
+import { windowsShellArguments } from './lspCompatibility';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
@@ -836,13 +838,12 @@ export class RiprClientController {
     });
 
     const serverOptions: ServerOptions = {
-      command: server.command,
-      args: config.serverArgs,
+      command: serverLaunchCommand(server.command, server.needsShell),
+      args: server.needsShell ? windowsShellArguments(config.serverArgs) : config.serverArgs,
       options: {
         cwd: this.workspaceRoot,
-        // A win32 PATH shim resolved through the shell probe must be spawned
-        // with the same launch semantics (#2079 review); explicit paths keep
-        // shell-free spawns.
+        // A win32 PATH or .cmd/.bat shim resolved through the shell probe must
+        // be spawned with the same launch semantics (#2079, #14647).
         ...(server.needsShell ? { shell: true } : {})
       }
     };
@@ -2281,7 +2282,7 @@ export class RiprClientController {
         kind: 'analysisFailed',
         summary: 'ripr analysis refresh failed.',
         detail: message,
-        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
+        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Full Analysis.'
       });
     }
   }
@@ -2347,10 +2348,10 @@ export class RiprClientController {
       : 'The last analysis attempt failed.';
     const retry = status.retry_command === 'ripr.refresh'
       || status.retry_command === 'ripr.refreshDiagnostics'
-      ? 'ripr: Refresh Diagnostics'
+      ? 'ripr: Refresh Full Analysis'
       : typeof status.retry_command === 'string' && status.retry_command.trim()
         ? status.retry_command
-        : 'ripr: Refresh Diagnostics';
+        : 'ripr: Refresh Full Analysis';
     const retained = status.snapshot_id ? ' The last completed snapshot remains available but is stale.' : '';
     switch (status.state) {
       case 'queued':
@@ -2375,7 +2376,7 @@ export class RiprClientController {
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
           nextStep: isBaseUnresolvableFailure(failure?.kind, failureMessage)
-            ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
+            ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Full Analysis.'
             : `Run ${retry} to retry the saved-workspace analysis.`
         });
         return;
@@ -2875,8 +2876,17 @@ export class RiprClientController {
 
   async showTopLimitation(): Promise<void> {
     const client = this.client;
-    if (!client) {
-      this.runtime.showInformationMessage('RIPR has not completed an analysis snapshot yet.');
+    // A stopped client can stay bound after the crash circuit opens, so treat
+    // any client that is not actively running as missing (#15303).
+    if (!client || !this.clientIsActivelyRunning(client)) {
+      const enabled = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      ).enabled;
+      this.runtime.showInformationMessage(
+        enabled
+          ? 'ripr top limitation requires a running server; the server is not running. Run ripr: Restart Server, then try again.'
+          : `ripr top limitation requires a running server; ripr is disabled. ${disabledStatus().nextStep}`
+      );
       return;
     }
     let response: Record<string, unknown> | null = null;
@@ -2921,7 +2931,8 @@ export class RiprClientController {
       this.output.appendLine(`  unlock_condition: ${unlock}`);
     }
     this.output.show();
-    const summary = status || category || repairRoute || 'See ripr output for limitation details.';
+    const rawSummary = status || category || repairRoute;
+    const summary = rawSummary ? rawSummary.replace(/_/g, ' ') : 'See ripr output for limitation details.';
     this.runtime.showInformationMessage(`ripr top limitation: ${summary}`);
   }
 
@@ -3547,7 +3558,7 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
     case 'stale':
       return 'stale; save or refresh before acting';
     case 'analysisLimited':
-      return 'limited; run ripr: Refresh Diagnostics for full evidence';
+      return 'limited; run ripr: Refresh Full Analysis for full evidence';
     case 'analysisQueued':
     case 'analysisRunning':
     case 'starting':
@@ -4225,7 +4236,7 @@ function analysisStatusDetail(status: RiprAnalysisStatusPayload): string {
 }
 
 /** Palette title of the registered `ripr.refreshDiagnostics` command. */
-const REFRESH_DIAGNOSTICS_COMMAND_TITLE = 'ripr: Refresh Diagnostics';
+const REFRESH_DIAGNOSTICS_COMMAND_TITLE = 'ripr: Refresh Full Analysis';
 
 /**
  * Per-status disclosure for the limited run-status family (#4326). The server
@@ -4240,7 +4251,7 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
   cache_limited: {
     summary: 'ripr analysis completed with a limited evidence cache.',
     detail: 'Gap-artifact cache entries were rejected this refresh, so cache-derived evidence is missing.',
-    nextStep: 'Rerun ripr check to regenerate the rejected gap-artifact reports, then run ripr: Refresh Diagnostics.'
+    nextStep: 'Rerun ripr check to regenerate the rejected gap-artifact reports, then run ripr: Refresh Full Analysis.'
   },
   limited: {
     summary: 'ripr analysis completed with limited evidence.',

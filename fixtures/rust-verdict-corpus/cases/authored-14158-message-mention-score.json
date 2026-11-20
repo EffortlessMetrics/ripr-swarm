@@ -1,0 +1,45 @@
+{
+  "case_id": "authored-14158-message-mention-score",
+  "subject_id": "authored-14158-message-mention",
+  "diff": "cases/authored-14158-message-mention-score.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "let_bound_exact_pin_with_message_mention",
+  "hard_case": "The bound result `v` is named twice in the assertion text, once as the compared operand and once as a message argument; only the compared operand decides the test.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n * 3",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::pins_score_with_message",
+        "equivalence_review": "not equivalent: `score(2)` becomes 6 and `assert_eq!(v, 4, ...)` fails. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_failed in tests::pins_score_with_message."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`let v = score(2); assert_eq!(v, 4, \"got {}\", v);` pins the result exactly; the message is formatted only after the comparison fails, so its mention of `v` cannot decide the test (#14158). Before the fix the second mention made ripr read the pin as weakly_exposed, a false gap.",
+  "labeling_observation": {
+    "ripr_commit": "332729ac",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

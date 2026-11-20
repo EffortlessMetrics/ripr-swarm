@@ -458,8 +458,22 @@ fn apply_macro_assertion_witness(finding: &mut Finding, witness: RustMacroAssert
 /// what ripr could not resolve instead of prescribing an assertion the suite
 /// may already contain. Classification (already `weakly_exposed` via the
 /// unconfirmed-observation rule in reveal) is unchanged.
-pub(super) fn apply_wrapper_error_binding_limit(finding: &mut Finding, probe: &Probe) {
-    if finding.class != ExposureClass::WeaklyExposed || finding.static_limit_kind.is_some() {
+///
+/// #14968: `literal_only_related` says every related test asserts only
+/// dropped literal-only assertions. Such a finding read `weakly_exposed` from
+/// the literal alone; dropping that credit lowers the class to
+/// `reachable_unrevealed`, never the limitation or the typed next step it
+/// named (RIPR-SPEC-0094).
+pub(super) fn apply_wrapper_error_binding_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    literal_only_related: bool,
+) {
+    let literal_only_unrevealed =
+        literal_only_related && finding.class == ExposureClass::ReachableUnrevealed;
+    if (finding.class != ExposureClass::WeaklyExposed && !literal_only_unrevealed)
+        || finding.static_limit_kind.is_some()
+    {
         return;
     }
     if !matches!(
@@ -473,6 +487,10 @@ pub(super) fn apply_wrapper_error_binding_limit(finding: &mut Finding, probe: &P
     }
 
     finding.static_limit_kind = Some(StaticLimitKind::WrapperErrorBindingUnresolved);
+    if literal_only_unrevealed {
+        finding.recommended_next_step =
+            Some(crate::analysis::classify::WRAPPER_ERROR_BINDING_NEXT_STEP.to_string());
+    }
     finding.evidence.push(
         "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel".to_string(),
     );
@@ -1815,7 +1833,7 @@ let _ = (result, note, raw);"##,
         finding.probe.family = ProbeFamily::ErrorPath;
         finding.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = finding.probe.clone();
-        apply_wrapper_error_binding_limit(&mut finding, &probe);
+        apply_wrapper_error_binding_limit(&mut finding, &probe, false);
         assert_eq!(
             finding.static_limit_kind,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved)
@@ -1827,7 +1845,7 @@ let _ = (result, note, raw);"##,
         returned.probe.family = ProbeFamily::ReturnValue;
         returned.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = returned.probe.clone();
-        apply_wrapper_error_binding_limit(&mut returned, &probe);
+        apply_wrapper_error_binding_limit(&mut returned, &probe, false);
         assert_eq!(
             returned.static_limit_kind,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved)
@@ -1839,7 +1857,7 @@ let _ = (result, note, raw);"##,
         predicate.probe.family = ProbeFamily::Predicate;
         predicate.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = predicate.probe.clone();
-        apply_wrapper_error_binding_limit(&mut predicate, &probe);
+        apply_wrapper_error_binding_limit(&mut predicate, &probe, false);
         assert_eq!(predicate.static_limit_kind, None);
 
         let mut already_named =
@@ -1850,11 +1868,40 @@ let _ = (result, note, raw);"##,
         already_named.static_limit_kind =
             Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
         let probe = already_named.probe.clone();
-        apply_wrapper_error_binding_limit(&mut already_named, &probe);
+        apply_wrapper_error_binding_limit(&mut already_named, &probe, false);
         assert_eq!(
             already_named.static_limit_kind,
             Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
         );
+
+        // #14968: a `reachable_unrevealed` seam keeps the limit and its typed
+        // next step only when every related test asserts dropped literals.
+        for literal_only in [true, false] {
+            let mut unrevealed =
+                reachable_unrevealed_finding_with_related_test("wraps", "tests/it.rs", 4);
+            unrevealed.probe.family = ProbeFamily::ErrorPath;
+            unrevealed.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
+            unrevealed.recommended_next_step = Some("Add a meaningful assertion".to_string());
+            let probe = unrevealed.probe.clone();
+            apply_wrapper_error_binding_limit(&mut unrevealed, &probe, literal_only);
+            assert_eq!(unrevealed.class, ExposureClass::ReachableUnrevealed);
+            if literal_only {
+                assert_eq!(
+                    unrevealed.static_limit_kind,
+                    Some(StaticLimitKind::WrapperErrorBindingUnresolved)
+                );
+                assert_eq!(
+                    unrevealed.recommended_next_step.as_deref(),
+                    Some(crate::analysis::classify::WRAPPER_ERROR_BINDING_NEXT_STEP)
+                );
+            } else {
+                assert_eq!(unrevealed.static_limit_kind, None);
+                assert_eq!(
+                    unrevealed.recommended_next_step.as_deref(),
+                    Some("Add a meaningful assertion")
+                );
+            }
+        }
     }
 
     #[test]

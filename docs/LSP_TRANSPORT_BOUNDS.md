@@ -137,7 +137,15 @@ These bounds compose with, and do not duplicate, the existing authorities:
   the outstanding handler tasks pinned tower-lsp-server's task pipeline.
   The server→client request liveness bound above removes that wedge; the
   documented recovery rule for any desynced transport is: **restart the
-  process**.
+  process**. Because that exit is code 0, `ripr lsp --stdio` writes one
+  stderr line naming it ("stopped while input was still open, typically
+  after a message it could not decode ... restart the language server")
+  whenever the read loop stops while input is still open, so the client's
+  server log shows why the session ended (#14219). That is a catch-all: a
+  refused message is the usual cause, but any other stop with input open
+  (such as a failed write to the client) prints the same line. A closed input, the write-stall trip and `exit` stay silent.
+  Recovering a well-framed body that is not a JSON-RPC message (for example
+  a lone surrogate escape in `didOpen` text) is still open in #14219.
 - **Duplicate `Content-Length` headers are last-wins** in the vendored codec;
   `BoundedStdinReader` mirrors last-wins so both layers agree on which value
   governs the cap.
@@ -170,6 +178,8 @@ These bounds compose with, and do not duplicate, the existing authorities:
   instead of wedging it; and a mid-session framing violation with a
   `workspace/configuration` request left unanswered ends the session (#5278,
   the stage that previously wedged).
+  `refused_framed_body_is_the_only_ending_with_a_stderr_notice` pins which
+  endings carry the stderr notice (#14219).
 - `crates/ripr/src/lsp/payload_bounds.rs::tests` — typed bound unit tests.
 - `crates/ripr/tests/lsp_lifecycle.rs` section 9 (issue #2034) — real-binary
   adversarial cases: oversized declared `Content-Length` with no body,
