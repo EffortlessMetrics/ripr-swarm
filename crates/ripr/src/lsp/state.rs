@@ -2039,11 +2039,16 @@ impl DocumentState {
         if let (Some(_), Some(next_quarantine)) = (&self.quarantine, &mut next) {
             next_quarantine.withdrawal_disclosed = was_disclosed;
         }
-        let was = self.quarantine.is_some();
+        let prior_reason = self.quarantine.as_ref().map(|quarantine| quarantine.reason);
         self.quarantine = next;
-        match (was, self.quarantine.is_some()) {
-            (false, true) => QuarantineTransition::Entered,
-            (true, false) => QuarantineTransition::Exited { was_disclosed },
+        let reason = self.quarantine.as_ref().map(|quarantine| quarantine.reason);
+        match (prior_reason, reason) {
+            (None, Some(_)) => QuarantineTransition::Entered,
+            (Some(_), None) => QuarantineTransition::Exited { was_disclosed },
+            // A held quarantine whose reason moved (for example a divergent
+            // buffer that is then saved, #15316) must replace the marker the
+            // client holds, versioned client or not.
+            (Some(prior), Some(current)) if prior != current => QuarantineTransition::ReasonChanged,
             _ => QuarantineTransition::Unchanged,
         }
     }
@@ -3272,7 +3277,17 @@ mod tests {
             return Err("an unsaved digest must keep the divergent-buffer reason".to_string());
         }
         state.saved_after_analysis = true;
-        state.refresh_quarantine();
+        // The held quarantine's reason moves, so the client's marker must be
+        // replaced even when diagnostic versions were not negotiated.
+        let transition = state.refresh_quarantine();
+        if transition != QuarantineTransition::ReasonChanged {
+            return Err(format!(
+                "a reason move inside a held quarantine must report ReasonChanged: {transition:?}"
+            ));
+        }
+        if state.refresh_quarantine() != QuarantineTransition::Unchanged {
+            return Err("recomputing an unchanged reason must stay Unchanged".to_string());
+        }
         if state
             .quarantine
             .as_ref()
@@ -4581,11 +4596,14 @@ mod tests {
             },
             &PositionEncodingKind::UTF16,
         );
-        if recovered != QuarantineTransition::Unchanged {
+        if recovered != QuarantineTransition::ReasonChanged {
             // The document remains quarantined because the recovered buffer
             // still differs from the analyzed saved digest. What changes is
-            // the reason: buffer authority is known again.
-            return Err("recovery must continue the existing quarantine episode".to_string());
+            // the reason: buffer authority is known again, so the episode
+            // continues and only the marker text is replaced (#15316).
+            return Err(format!(
+                "recovery must continue the existing quarantine episode under a new reason: {recovered:?}"
+            ));
         }
         let Some(state) = store.state_for_uri(&uri) else {
             return Err("missing recovered document state".to_string());
