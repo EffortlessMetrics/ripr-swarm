@@ -4,14 +4,13 @@ use std::fs;
 use std::path::Path;
 
 use super::identity::sha256_file;
-use super::isolation::{require_clean_consumer_path, require_project_python_idle};
+use super::isolation::require_project_python_idle;
 use super::oracles::require_explicit_rust_only_is_limited_not_clean;
 use super::support::{
     TempRoot, copy_tree, require_success, run_bash_script, stdout_text, workspace_root,
     write_executable,
 };
 
-const BASE_PATH: &str = "/usr/bin:/bin";
 const NODE: &str = "tests/test_pricing.py::test_calculate_discount_smoke";
 const PROJECT_PYTHON: &str = r#"#!/bin/sh
 [ "$(pwd -P)" = "$EXPECTED_PROJECT" ] || exit 71
@@ -74,17 +73,14 @@ fn installed_check_prints_a_verify_command_for_the_selected_project_environment(
         "foreign project python",
         77,
     )?;
-    require_clean_consumer_path(BASE_PATH, Some(&project))?;
-    let tool_path = format!(
-        "{}:{}:{BASE_PATH}",
-        tool_bin.display(),
-        ambient_bin.display()
-    );
-    let ambient_path = format!(
-        "{}:{}:{BASE_PATH}",
-        ambient_bin.display(),
-        tool_bin.display()
-    );
+    // Bash and the stand-in interpreters use absolute shell paths. The
+    // explicit-diff checks and Bash replay need only the two fixture bins.
+    let tool_path = format!("{}:{}", tool_bin.display(), ambient_bin.display());
+    let ambient_path = format!("{}:{}", ambient_bin.display(), tool_bin.display());
+    let host_bin = root.join("host/bin");
+    for tool in ["cargo", "rustc", "ripr"] {
+        write_decoy(&host_bin.join(tool), tool, 78)?;
+    }
     let sentinel = root.join("project-python-ran");
     let env = [
         ("HOME", utf8(&root)?),
@@ -92,11 +88,31 @@ fn installed_check_prints_a_verify_command_for_the_selected_project_environment(
         ("EXPECTED_NODE", NODE),
         ("PROJECT_PYTHON_RAN", utf8(&sentinel)?),
     ];
+    let host_path = utf8(&host_bin)?;
+    let script_file = root.join("command.sh");
+    let host_tools = run_bash_script(
+        &script_file,
+        "command -v cargo && command -v rustc && command -v ripr",
+        &foreign,
+        host_path,
+        &env,
+    )?;
+    require_success(&host_tools, "find all three simulated host tools")?;
     let run = |script: &str, path: &str| {
-        run_bash_script(&root.join("command.sh"), script, &foreign, path, &env)
+        let mut env = env.to_vec();
+        env.push(("FIXTURE_PATH", path));
+        // Start from the simulated host PATH and replace it for every
+        // consumer action. The guard catches accidental PATH inheritance.
+        let script = format!(
+            "export PATH=\"$FIXTURE_PATH\"\n\
+             if command -v cargo || command -v rustc; then exit 79; fi\n{script}"
+        );
+        run_bash_script(&script_file, &script, &foreign, host_path, &env)
     };
 
     let check = r#"ripr check --root "$EXPECTED_PROJECT" --diff "$EXPECTED_PROJECT/diff.patch""#;
+    let leaked = run(check, &format!("{tool_path}:{host_path}"))?;
+    assert_eq!(leaked.status.code(), Some(79), "host PATH leak: {leaked:?}");
     let checked = run(check, &tool_path)?;
     require_success(&checked, "installed Python check from the foreign project")?;
     let report = stdout_text(&checked);
@@ -146,7 +162,7 @@ fn installed_check_prints_a_verify_command_for_the_selected_project_environment(
     })?;
     assert_eq!(selected.trim_end(), NODE);
     eprintln!(
-        "source-built install-layout payload sha256={installed_sha}; action={action}; selected={NODE}; controls=74,75,76,77"
+        "source-built install-layout payload sha256={installed_sha}; action={action}; selected={NODE}; controls=74,75,76,77; host PATH leak rejected with 79"
     );
     Ok(())
 }
