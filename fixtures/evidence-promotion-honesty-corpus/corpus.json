@@ -2775,6 +2775,9 @@
           "class": "reachable_unrevealed"
         },
         {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
           "type": "expected_finding_owner",
           "owner": "typescript:src/price.ts::price"
         },
@@ -2806,6 +2809,9 @@
         {
           "type": "expected_class",
           "class": "static_unknown"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
         },
         {
           "type": "expected_finding_owner",
