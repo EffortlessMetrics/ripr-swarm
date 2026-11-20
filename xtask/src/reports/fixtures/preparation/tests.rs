@@ -124,6 +124,13 @@ impl RejectingDistribution {
             while !done.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        // Winsock hands back accepted sockets in the
+                        // listener's non-blocking mode, so the read below
+                        // returned WouldBlock before the request arrived,
+                        // went uncounted, and the early 503 aborted the
+                        // client (os error 10053) on loaded native Windows
+                        // runs (#9272). Block, bounded by the read timeout.
+                        let _ = stream.set_nonblocking(false);
                         let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
                         let mut request = [0; 4096];
                         if stream.read(&mut request).is_ok_and(|n| n > 0) {

@@ -20,6 +20,7 @@ pub(crate) mod kani_import;
 mod navigation;
 pub mod pr_evidence;
 mod progress;
+pub(crate) mod verbose_trace;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 pub(crate) mod feedback;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
@@ -75,8 +76,11 @@ pub use check::{check_workspace, check_workspace_repo, repo_seam_inventory_input
 /// `crate::app::PERL_FACT_PACKET_SCHEMA`.
 pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 /// Consumer-side v2 wire schema accepted alongside v1 during the #3216 train.
+/// Only the lang-perl packet reader (and unit tests) consult it (#14796).
+#[cfg(any(test, feature = "lang-perl"))]
 pub(crate) const PERL_FACT_PACKET_V2_SCHEMA: &str = "ripr-perl-facts-v2";
 
+#[cfg(any(test, feature = "lang-perl"))]
 pub(crate) fn is_supported_perl_fact_packet_schema(schema: &str) -> bool {
     matches!(schema, PERL_FACT_PACKET_SCHEMA | PERL_FACT_PACKET_V2_SCHEMA)
 }
@@ -121,7 +125,8 @@ pub(crate) use explain::{
 pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use navigation::{
     CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
-    RepairRoute, RepairRouteRefusal, finding_navigation, finding_navigation_with_worktree,
+    RepairRoute, RepairRouteRefusal, commit_prerequisite_command, finding_navigation,
+    finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -231,6 +236,51 @@ pub(crate) const DEFAULT_CLI_GIT_TIMEOUT_SECS: u64 = 300;
 
 pub(crate) fn default_cli_git_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(DEFAULT_CLI_GIT_TIMEOUT_SECS)
+}
+
+/// Parse one git-deadline value in whole seconds, `0` disabling the
+/// deadline (#2613). `source` names the flag or env var in the refusal, so a
+/// typo never runs with a silently different bound. Shared by the CLI
+/// `--git-timeout` flag and every `RIPR_GIT_TIMEOUT` reader (#14386).
+pub(crate) fn parse_git_timeout_seconds(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    let secs: u64 = value.parse().map_err(|_parse_err| {
+        format!("{source} requires a non-negative integer (seconds); got {value:?}")
+    })?;
+    let timeout = std::time::Duration::from_secs(secs);
+    if std::time::Instant::now().checked_add(timeout).is_none() {
+        return Err(format!(
+            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
+        ));
+    }
+    Ok((secs > 0).then_some(timeout))
+}
+
+/// Read one `RIPR_GIT_TIMEOUT` value (#2613, #14386). `Ok(None)` means the
+/// variable is unset, so the caller keeps its own default; `Ok(Some(None))`
+/// disables the deadline. A present but unreadable or invalid value is a
+/// misconfiguration and refuses (#4374).
+pub(crate) fn git_timeout_from_env_value(
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<Option<std::time::Duration>>, String> {
+    match env_value {
+        Ok(value) => parse_git_timeout_seconds("RIPR_GIT_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
+}
+
+/// The git deadline a long-lived adapter without a `--git-timeout` flag
+/// (`ripr mcp`) runs with: `RIPR_GIT_TIMEOUT` when set, else the CLI default
+/// (#14386). Same parser and default as `ripr check`.
+pub(crate) fn env_or_default_git_timeout(
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<std::time::Duration>, String> {
+    Ok(git_timeout_from_env_value(env_value)?.unwrap_or(Some(default_cli_git_timeout())))
 }
 
 /// Public analysis effort profile used by both CLI flags and library
@@ -377,6 +427,11 @@ pub struct CheckOutput {
     /// every diff-scoped check header. `None` when the input was a diff file,
     /// stdin, a candidate tree, or a repo-scope run.
     pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
+    /// Producer-owned Rust file-fact cache stats for this check run (#4975).
+    /// `None` when the Rust index path did not observe cache work (repo-scope
+    /// stub output, or no Rust analysis). Verbose JSON and `-v` stderr project
+    /// this; default JSON omits it.
+    pub(crate) file_fact_cache: Option<crate::analysis::seam_cache::FileFactCacheStats>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.

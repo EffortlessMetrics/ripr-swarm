@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:5
   Static exposure: unrevealed (severity: warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
@@ -43,8 +43,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (unrevealed); kind: error_path; reason: No detected assertion observes the changed value, error, field, or effect
-    - ./src/lib.rs:5 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
+    - ./src/lib.rs:5 (unrevealed); 2 changed behaviors in `did_save_params`; kinds: error_path, return_value; reason: No detected assertion observes the changed value, error, field, or effect
   Hidden classes:
     unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full

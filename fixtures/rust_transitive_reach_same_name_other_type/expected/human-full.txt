@@ -75,7 +75,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --diff <cwd>/fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast probe:src_queue.rs:predicate:95e16c2d
   ripr context --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --diff <cwd>/fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast --at probe:src_queue.rs:predicate:95e16c2d
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
   test(s). This is not a coverage assessment. A test may already exercise these changes through

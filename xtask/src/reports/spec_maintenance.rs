@@ -2053,25 +2053,9 @@ Status: proposed
         if !text.contains("  workflow_dispatch:") {
             return Err("source-of-truth.yml is missing workflow_dispatch".to_string());
         }
-        // Trigger 3: PR execution only when spec-governance paths change.
-        for event in ["pull_request", "push"] {
-            let paths = workflow_event_paths(&text, event)?;
-            for required in [
-                ".allow/spec-system/**",
-                ".github/workflows/source-of-truth.yml",
-                ".ripr/traceability.toml",
-                ".ripr/traceability.d/**",
-                "docs/specs/**",
-                "docs/status/SUPPORT_TIERS.md",
-                "docs/templates/**",
-            ] {
-                if !paths.iter().any(|path| path == required) {
-                    return Err(format!(
-                        "{event} trigger is missing spec-governance path `{required}`: {paths:?}"
-                    ));
-                }
-            }
-        }
+        // Automatic development subscribers are retired; retain only the
+        // bounded schedule and explicit operator invocation.
+        source_of_truth_event_contract(&text)?;
 
         // The digest job stays advisory: a failed instrument is a failed
         // advisory observation, never a failed required gate.
@@ -2232,53 +2216,27 @@ Status: proposed
         })
     }
 
-    /// Collects the `paths:` entries of one `on:` event block. Deliberate
-    /// line-scanning: check-workflows reads workflows the same way and the
-    /// repo does not take a YAML dependency.
-    fn workflow_event_paths(text: &str, event: &str) -> Result<Vec<String>, String> {
-        let mut paths = Vec::new();
-        let mut in_event = false;
-        let mut in_paths = false;
-        for line in text.lines() {
-            let indent = line.len() - line.trim_start().len();
-            let trimmed = line.trim();
-            if indent == 0 {
-                if in_event {
-                    break;
-                }
-                if trimmed == "on:" {
-                    continue;
-                }
-            }
-            if indent == 2 {
-                if trimmed == format!("{event}:") {
-                    in_event = true;
-                    continue;
-                }
-                if in_event {
-                    break;
-                }
-            }
-            if !in_event {
-                continue;
-            }
-            if indent == 4 {
-                in_paths = trimmed == "paths:";
-                continue;
-            }
-            if in_paths
-                && indent > 4
-                && let Some(entry) = trimmed.strip_prefix("- ")
-            {
-                paths.push(entry.trim_matches('\'').trim_matches('"').to_string());
-            }
+    fn source_of_truth_event_contract(text: &str) -> Result<(), String> {
+        let events = repo_policy::workflow_lifecycle::event_declarations(text)?;
+        if events.keys().map(String::as_str).collect::<Vec<_>>()
+            != ["schedule", "workflow_dispatch"]
+        {
+            return Err(
+                "source-of-truth.yml must retain only schedule and workflow_dispatch".into(),
+            );
         }
-        if !in_event && paths.is_empty() {
-            return Err(format!(
-                "source-of-truth.yml has no `{event}` trigger block"
-            ));
+        Ok(())
+    }
+
+    #[test]
+    fn source_of_truth_rejects_retired_subscribers() -> Result<(), String> {
+        let source = "on:\n  schedule:\n    - cron: '37 6 * * 1'\n  workflow_dispatch:\n";
+        source_of_truth_event_contract(source)?;
+        for event in ["pull_request", "push"] {
+            let changed = format!("{source}  {event}:\n    paths: ['docs/specs/**']\n");
+            assert!(source_of_truth_event_contract(&changed).is_err(), "{event}");
         }
-        Ok(paths)
+        Ok(())
     }
 
     /// Returns the body of one top-level job block (two-space indented key).

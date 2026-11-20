@@ -156,7 +156,17 @@ impl Workspace {
         )?;
         write(
             "a/Cargo.toml",
-            &package("a", "\n[lib]\ntest = false\ndoctest = false\n"),
+            // #14962: with `[lib] test = false` only `b`'s mount of
+            // `shared.rs` runs its tests. `PlainStd` has no `b`, so there
+            // `cargo test` would run 0 tests; it leaves `test` on instead.
+            &package(
+                "a",
+                if placement == Placement::PlainStd {
+                    "\n[lib]\ndoctest = false\n"
+                } else {
+                    "\n[lib]\ntest = false\ndoctest = false\n"
+                },
+            ),
         )?;
         write("a/src/lib.rs", "mod shared;\n")?;
         let before = shared_source(shape, test_statement, "4");
@@ -627,11 +637,17 @@ fn an_unauthoritative_inherent_factory_declaration_keeps_the_gap() -> Result<(),
 }
 
 /// With placement available a rebound root keeps its gap; a plain macro is credited.
+/// The resolved placement mounts the owner's file into `b` by `#[path]`,
+/// so the shared base-owner gate decision also withholds the integer tail's
+/// propagation (#15104): the rebound finding may read `propagation_unknown`
+/// for that reason, and never stronger than a gap.
 #[test]
 fn available_placement_keeps_the_rebound_root_gap_and_the_plain_credit() -> Result<(), String> {
     let rebound = Workspace::create(Placement::Resolved, CONTROL)?.finding()?;
     assert_ne!(limit(&rebound), Some(LIMIT), "{rebound}");
-    assert!(is_gap(&rebound)?, "{rebound}");
+    let mount_gated = text(&rebound, "/classification")? == "propagation_unknown"
+        && text(&rebound, "/ripr/propagate/summary")?.contains("(cfg_gated_owner)");
+    assert!(is_gap(&rebound)? || mount_gated, "{rebound}");
     let plain = Workspace::create(Placement::PlainStd, CONTROL)?.finding()?;
     assert_ne!(limit(&plain), Some(LIMIT), "{plain}");
     assert_eq!(

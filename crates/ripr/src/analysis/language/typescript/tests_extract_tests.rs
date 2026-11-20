@@ -2043,3 +2043,35 @@ fn skipped_suite_bindings_keep_control_flow_function_values_dormant() {
         }
     }
 }
+
+/// #14083 T6: each dynamic-load callee is read on its own. The class-level
+/// test for `requireActual` / `importActual` stays withheld with either callee
+/// dropped from the scan, so the recorded specifiers are asserted directly.
+#[test]
+fn every_dynamic_load_callee_records_its_literal_specifier() {
+    let file = Path::new("tests/utils.test.ts");
+    let specifiers_of = |load: &str| -> Vec<String> {
+        let source = format!(
+            "import {{ it, expect }} from 'vitest';\nit('loads', async () => {{\n  const m = {load};\n  expect(m).toBeDefined();\n}});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 1, "{load}: {tests:?}");
+        tests
+            .iter()
+            .flat_map(|test| test.dynamic_load_specifiers_in_file.iter().cloned())
+            .collect()
+    };
+    for load in [
+        "await import('../src/a')",
+        "require('../src/a')",
+        "jest.requireActual('../src/a')",
+        "await vi.importActual('../src/a')",
+    ] {
+        assert_eq!(specifiers_of(load), ["../src/a".to_string()], "{load}");
+    }
+    // Controls: a non-literal argument and a callee outside the list record
+    // nothing.
+    for load in ["require(name)", "jest.requireMock('../src/a')"] {
+        assert!(specifiers_of(load).is_empty(), "{load}");
+    }
+}

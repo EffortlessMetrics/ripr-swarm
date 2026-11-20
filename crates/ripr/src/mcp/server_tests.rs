@@ -325,6 +325,8 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
         owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -441,6 +443,8 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -1561,6 +1565,42 @@ fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), Stri
     Ok(())
 }
 
+/// #14186: only the SDK's bare-name `-32601` is rewritten. Every other error
+/// passes through untouched, so the rewrite cannot rename a real diagnostic.
+#[test]
+fn only_the_sdk_bare_method_not_found_is_renamed() {
+    use rmcp::model::{ErrorCode, ErrorData};
+    let bare = ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "prompts/get", None);
+    let renamed = name_missing_method(bare, "prompts/get");
+    assert_eq!(renamed.code, ErrorCode::METHOD_NOT_FOUND);
+    assert_eq!(renamed.message.as_ref(), "Method not found: prompts/get");
+    assert!(renamed.data.is_none());
+
+    for untouched in [
+        // Another code whose message happens to equal the method.
+        ErrorData::new(ErrorCode::INVALID_PARAMS, "prompts/get", None),
+        // A method-not-found that already explains itself.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "Method not found: prompts/get",
+            None,
+        ),
+        // A bare-name message that carries data of its own.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "prompts/get",
+            Some(serde_json::json!({"method": "prompts/get"})),
+        ),
+        // A bare name that is not this request's method.
+        ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "tasks/get", None),
+    ] {
+        assert_eq!(
+            name_missing_method(untouched.clone(), "prompts/get"),
+            untouched
+        );
+    }
+}
+
 /// #13220: preserve the protocol category and ordinary message while making
 /// a long method name a disclosed preview, never a response-sized echo.
 #[test]
@@ -2300,5 +2340,197 @@ async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(),
         "with no snapshot the requested base is the only scope"
     );
     let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+fn invalid_params_data(error: &ErrorData) -> Result<&Value, String> {
+    assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    error
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("refusal lost structured data: {error:?}"))
+}
+
+#[test]
+fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(), String> {
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty = argument_map(serde_json::json!({}));
+    for absent in [&none, &empty] {
+        assert_eq!(optional_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_nonempty_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_bool_argument(absent, "repair_ready"), Ok(None));
+    }
+
+    let text = argument_map(serde_json::json!({"file": "src/lib.rs", "empty": ""}));
+    assert_eq!(
+        optional_string_argument(&text, "file"),
+        Ok(Some("src/lib.rs".to_string()))
+    );
+    // A plain string accepts empty; the non-empty filter variant does not.
+    assert_eq!(
+        optional_string_argument(&text, "empty"),
+        Ok(Some(String::new()))
+    );
+    let error = optional_nonempty_string_argument(&text, "empty")
+        .err()
+        .ok_or("an empty filter string must be refused")?;
+    assert_eq!(error.message, "empty must be a non-empty string");
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("empty"));
+    assert_eq!(data["expected"], serde_json::json!("non-empty string"));
+
+    for wrong in [
+        serde_json::json!(7),
+        serde_json::json!(true),
+        serde_json::json!(null),
+        serde_json::json!(["a"]),
+    ] {
+        let arguments = argument_map(serde_json::json!({"file": wrong.clone()}));
+        let error = optional_string_argument(&arguments, "file")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a string"))?;
+        assert_eq!(error.message, "file must be a string");
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("file"));
+        assert_eq!(data["expected"], serde_json::json!("string"));
+    }
+
+    let flags = argument_map(serde_json::json!({"on": true, "off": false}));
+    assert_eq!(optional_bool_argument(&flags, "on"), Ok(Some(true)));
+    assert_eq!(optional_bool_argument(&flags, "off"), Ok(Some(false)));
+    for wrong in [
+        serde_json::json!("true"),
+        serde_json::json!(1),
+        serde_json::json!(0),
+        serde_json::json!(null),
+    ] {
+        let arguments = argument_map(serde_json::json!({"repair_ready": wrong.clone()}));
+        let error = optional_bool_argument(&arguments, "repair_ready")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a boolean"))?;
+        assert_eq!(error.message, "repair_ready must be a boolean");
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("repair_ready"));
+        assert_eq!(data["expected"], serde_json::json!("boolean"));
+    }
+    Ok(())
+}
+
+#[test]
+fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), String> {
+    let present = argument_map(serde_json::json!({"canonical_id": "gap:1"}));
+    assert_eq!(
+        required_string_argument(&present, "canonical_id"),
+        Ok("gap:1".to_string())
+    );
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty_map = argument_map(serde_json::json!({}));
+    let other_key = argument_map(serde_json::json!({"unrelated": "value"}));
+    let empty = argument_map(serde_json::json!({"canonical_id": ""}));
+    let numeric = argument_map(serde_json::json!({"canonical_id": 5}));
+    for (arguments, message, expected) in [
+        (
+            &none,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &empty_map,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &other_key,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &empty,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (&numeric, "canonical_id must be a string", "string"),
+    ] {
+        let error = required_string_argument(arguments, "canonical_id")
+            .err()
+            .ok_or("a missing, empty or non-string required argument must be refused")?;
+        assert_eq!(error.message, message);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("canonical_id"));
+        assert_eq!(data["expected"], serde_json::json!(expected));
+    }
+
+    for absent in [&none, &empty_map, &other_key] {
+        assert_eq!(
+            refresh_source_argument(absent),
+            Ok(None),
+            "an omitted source defers to the session default"
+        );
+    }
+    for (value, expected) in [
+        ("committed", workspace::RefreshSource::Committed),
+        ("worktree", workspace::RefreshSource::Worktree),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": value}));
+        assert_eq!(refresh_source_argument(&arguments), Ok(Some(expected)));
+    }
+    for (wrong, message, expected) in [
+        (
+            serde_json::json!(""),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!("Worktree"),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!("HEAD"),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!(1),
+            "source must be a string",
+            serde_json::json!("string"),
+        ),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": wrong.clone()}));
+        let error = refresh_source_argument(&arguments)
+            .err()
+            .ok_or_else(|| format!("{wrong} must not select a refresh source"))?;
+        assert_eq!(error.message, message, "{wrong}");
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("source"), "{wrong}");
+        assert_eq!(data["expected"], expected, "{wrong}");
+    }
+    Ok(())
+}
+
+#[test]
+fn list_cursors_are_refused_and_absent_cursors_pass() -> Result<(), String> {
+    assert_eq!(reject_pagination_cursor(None, "tools/list"), Ok(()));
+    let without: PaginatedRequestParams =
+        serde_json::from_value(serde_json::json!({})).map_err(|error| error.to_string())?;
+    assert_eq!(
+        reject_pagination_cursor(Some(without), "tools/list"),
+        Ok(())
+    );
+    let with: PaginatedRequestParams = serde_json::from_value(serde_json::json!({"cursor": "x"}))
+        .map_err(|error| error.to_string())?;
+    let error = reject_pagination_cursor(Some(with), "resources/list")
+        .err()
+        .ok_or("a client-supplied cursor must be refused")?;
+    assert_eq!(
+        error.message,
+        "resources/list does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+    );
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("cursor"));
+    assert_eq!(
+        data["expected"],
+        serde_json::json!("omit; the complete list fits one page")
+    );
     Ok(())
 }

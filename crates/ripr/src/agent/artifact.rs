@@ -6,6 +6,7 @@
 //! commitment is calculated over the exact JSON bytes with the digest field
 //! replaced by the fixed placeholder described by this module.
 
+use crate::analysis::stale_raised_type_pin::StaleRaisedTypePin;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
@@ -335,7 +336,7 @@ fn analysis_artifact_metadata(
         // from its own bytes (#7369). It is stamped once, here, so the
         // two-pass content-hash scheme keeps it fixed across both passes
         // (unlike `content_sha256`, it never changes after hashing).
-        "generated_at": artifact_generated_at_unix_ms(),
+        "generated_at": artifact_generated_at_unix_ms()?,
         "producer": {
             "tool": "ripr",
             "version": env!("CARGO_PKG_VERSION"),
@@ -362,14 +363,57 @@ fn repo_exposure_snapshot_identity(input_identity: &str, repository_head: &str) 
     format!("snapshot:{input_identity};revision:{repository_head}")
 }
 
+/// Environment variable that pins `artifact.generated_at` (#14230).
+const GENERATED_AT_ENV: &str = "RIPR_GENERATED_AT";
+
 /// The artifact's wall-clock generation stamp, `unix_ms:<millis>` like the
 /// gap-decision ledger. A clock that predates the Unix epoch reports an
 /// explicit `unavailable` instead of failing artifact production: the
 /// timestamp is disclosure, not integrity authority.
-fn artifact_generated_at_unix_ms() -> String {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(duration) => format!("unix_ms:{}", duration.as_millis()),
-        Err(_) => "unavailable".to_string(),
+///
+/// `RIPR_GENERATED_AT` replaces the clock with a caller-chosen stamp so two
+/// runs over the same inputs produce the same artifact bytes, digest
+/// included (#14230).
+fn artifact_generated_at_unix_ms() -> Result<String, String> {
+    artifact_generated_at_from(
+        std::env::var(GENERATED_AT_ENV),
+        || match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => format!("unix_ms:{}", duration.as_millis()),
+            Err(_) => "unavailable".to_string(),
+        },
+    )
+}
+
+/// Resolve the stamp from the override value, falling back to `clock` only
+/// when the variable is unset or empty. A set value that is not the canonical
+/// `unix_ms:<millis>` spelling is refused: silently stamping the wall clock
+/// would hand a caller who asked for reproducible bytes a differing artifact.
+fn artifact_generated_at_from(
+    override_value: Result<String, std::env::VarError>,
+    clock: impl FnOnce() -> String,
+) -> Result<String, String> {
+    let value = match override_value {
+        Err(std::env::VarError::NotPresent) => return Ok(clock()),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!(
+                "{GENERATED_AT_ENV} is not valid Unicode; set it to unix_ms:<milliseconds since the Unix epoch> or unset it"
+            ));
+        }
+        Ok(value) => value,
+    };
+    if value.is_empty() {
+        return Ok(clock());
+    }
+    let canonical = value
+        .strip_prefix("unix_ms:")
+        .and_then(|digits| digits.parse::<u64>().ok())
+        .map(|millis| format!("unix_ms:{millis}"));
+    if canonical.as_deref() == Some(value.as_str()) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{GENERATED_AT_ENV} must be unix_ms:<milliseconds since the Unix epoch>, for example unix_ms:1778179200000; got {value:?}. Unset it to stamp the current time"
+        ))
     }
 }
 
@@ -624,10 +668,68 @@ fn check_findings_producer_stamp_refusal(
     }
 }
 
-fn repo_exposure_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+fn repo_exposure_parse_refusal(label: &str, detail: &str) -> String {
     format!(
-        "agent verify {label} artifact is not a canonical repo-exposure artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+        "agent verify {label} artifact is not a canonical repo-exposure artifact: {detail}; expected a repo-exposure JSON object (from `ripr pilot` or `ripr check --format repo-exposure-json`). Regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
     )
+}
+
+/// The file is not JSON at all (#14313): keep serde's line/column position,
+/// which is user-meaningful, behind a plain-words cause.
+fn invalid_json_detail(err: &serde_json::Error) -> String {
+    format!("the file is not valid JSON ({err})")
+}
+
+/// Name the top-level JSON kind when a document is not an object (#14313),
+/// so `[]` reads "holds a JSON array" instead of a serde struct mismatch.
+fn non_object_detail(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Object(_) => None,
+        Value::Array(_) => Some("the file holds a JSON array"),
+        Value::String(_) => Some("the file holds a JSON string"),
+        Value::Number(_) => Some("the file holds a JSON number"),
+        Value::Bool(_) => Some("the file holds a JSON boolean"),
+        Value::Null => Some("the file holds JSON null"),
+    }
+}
+
+/// Field-level problem in an object, for typing failures: the top-level
+/// kind first, then serde's message with internal type names removed.
+fn typed_shape_detail(non_object: Option<&'static str>, err: &serde_json::Error) -> String {
+    non_object.map_or_else(
+        || without_serde_type_names(&err.to_string()),
+        str::to_string,
+    )
+}
+
+/// Replace `struct Name` / `enum Name` in a serde message with plain words so
+/// internal Rust type names never reach the user.
+fn without_serde_type_names(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        // serde phrases type names as `expected struct Name`; anchoring on
+        // that phrase leaves user text such as "construct x" untouched.
+        let next = [
+            ("expected struct ", "expected an object"),
+            ("expected enum ", "expected a documented value"),
+        ]
+        .into_iter()
+        .filter_map(|(marker, words)| rest.find(marker).map(|at| (at, marker, words)))
+        .min_by_key(|(at, _, _)| *at);
+        let Some((at, marker, words)) = next else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        out.push_str(words);
+        let after = &rest[at + marker.len()..];
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn repo_exposure_cut_refusal(subject: &str, document: &Value) -> Option<String> {
@@ -653,7 +755,10 @@ pub(crate) fn validate_repo_exposure_artifact(
     let parsed_value = match serde_json::from_str::<Value>(raw) {
         Ok(document) => document,
         Err(err) => {
-            return Err(repo_exposure_parse_refusal(label, err));
+            return Err(repo_exposure_parse_refusal(
+                label,
+                &invalid_json_detail(&err),
+            ));
         }
     };
     if let Some(refusal) = repo_exposure_cut_refusal(&subject, &parsed_value) {
@@ -662,8 +767,9 @@ pub(crate) fn validate_repo_exposure_artifact(
     if let Some(mismatch) = producer_stamp_mismatch(&parsed_value) {
         return Err(producer_stamp_refusal(root, &subject, &mismatch));
     }
+    let non_object = non_object_detail(&parsed_value);
     let document: RepoExposureDocument = serde_json::from_value(parsed_value)
-        .map_err(|err| repo_exposure_parse_refusal(label, err))?;
+        .map_err(|err| repo_exposure_parse_refusal(label, &typed_shape_detail(non_object, &err)))?;
     let RepoExposureDocument {
         schema_version,
         scope,
@@ -775,6 +881,10 @@ pub(crate) struct CheckFindingsGap {
     /// The discriminator the finding says no test supplies, as the artifact
     /// states it (`missing_discriminators[0].value`); `None` when it names none.
     pub(crate) missing_discriminator: Option<String>,
+    /// Related assertions the finding's evidence says still pin the old raised
+    /// type after a raised-type replacement (#13622). Advisory evidence that
+    /// never changes the class; closure refuses on it.
+    pub(crate) stale_raised_type_pins: Vec<StaleRaisedTypePin>,
 }
 
 /// A `check-findings-json` artifact whose producer envelope, content
@@ -797,7 +907,8 @@ pub(crate) fn validate_check_findings_artifact(
 ) -> Result<ValidatedCheckFindings, String> {
     let subject = format!("agent verify {label} artifact");
     let parsed_value = serde_json::from_str::<Value>(raw)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
+        .map_err(|err| check_findings_parse_refusal(label, &invalid_json_detail(&err)))?;
+    let non_object = non_object_detail(&parsed_value);
     refuse_check_findings_producer_stamp_before_shape(root, &subject, &parsed_value)?;
     let CheckFindingsDocument {
         artifact: identity,
@@ -806,8 +917,9 @@ pub(crate) fn validate_check_findings_artifact(
         run_limitations,
         findings,
         ..
-    } = serde_json::from_value(parsed_value)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
+    } = serde_json::from_value(parsed_value).map_err(|err| {
+        check_findings_parse_refusal(label, &typed_shape_detail(non_object, &err))
+    })?;
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
@@ -815,9 +927,9 @@ pub(crate) fn validate_check_findings_artifact(
     Ok(ValidatedCheckFindings { artifact, gaps })
 }
 
-fn check_findings_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+fn check_findings_parse_refusal(label: &str, detail: &str) -> String {
     format!(
-        "agent verify {label} artifact is not a canonical check-findings artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+        "agent verify {label} artifact is not a canonical check-findings artifact: {detail}; expected a check-findings JSON object (from `{CHECK_FINDINGS_PRODUCER_COMMAND}`). Regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
     )
 }
 
@@ -827,9 +939,11 @@ fn parse_check_findings_document(
     label: &str,
 ) -> Result<CheckFindingsDocument, String> {
     let parsed_value = serde_json::from_str::<Value>(raw)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
-    let document: CheckFindingsDocument = serde_json::from_value(parsed_value)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
+        .map_err(|err| check_findings_parse_refusal(label, &invalid_json_detail(&err)))?;
+    let non_object = non_object_detail(&parsed_value);
+    let document: CheckFindingsDocument = serde_json::from_value(parsed_value).map_err(|err| {
+        check_findings_parse_refusal(label, &typed_shape_detail(non_object, &err))
+    })?;
     if document.schema_version.trim().is_empty() {
         return Err(format!(
             "agent verify {label} artifact has an empty check schema version"
@@ -930,6 +1044,9 @@ pub(crate) fn evaluate_gap_closure(
                 + &python_assertion_form_hint(&after_gap)
         )));
     }
+    if let Some(reason) = stale_raised_type_refusal(&after_gap) {
+        return Err(refuse(reason));
+    }
     Ok(GapClosure {
         gap_id: gap_id.to_string(),
         before_classification: before_gap.classification,
@@ -937,6 +1054,29 @@ pub(crate) fn evaluate_gap_closure(
         file: after_gap.file,
         line: after_gap.line,
     })
+}
+
+/// #13622: a Python gap that reads `exposed` only through assertions that
+/// still pin the old raised type is not closed: the new code raises another
+/// type, so those tests fail against it. The exposure class is unchanged (a
+/// pre-existing old-type assertion does notice the edit, RIPR-SPEC-0238
+/// example 14); only the repair outcome refuses to call the gap closed.
+fn stale_raised_type_refusal(gap: &CheckFindingsGap) -> Option<String> {
+    if !gap.file.ends_with(".py") {
+        return None;
+    }
+    let first = gap.stale_raised_type_pins.first()?;
+    let assertions = gap
+        .stale_raised_type_pins
+        .iter()
+        .map(|pin| format!("`{}` in `{}`", pin.assertion, pin.test))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "reads `{GAP_CLOSED_CLASSIFICATION}` in the after artifact, but its crediting assertion ({assertions}) pins the old raised type `{old}`, and the changed code now raises `{new}`, which is not `{old}` or a known subclass of it, so that assertion is expected to fail against the new `{new}` raise wherever the test reaches it, and is not closure evidence. Next: assert the new type (for example `pytest.raises({new}, ...)`), then rerun",
+        old = first.old_type,
+        new = first.new_type,
+    ))
 }
 
 /// #13620: a Python gap that stays open may be open only because of the
@@ -1058,12 +1198,18 @@ fn check_findings_gaps(
             .map(str::trim)
             .find(|value| !value.is_empty())
             .map(str::to_string);
+        let stale_raised_type_pins = finding
+            .evidence
+            .iter()
+            .filter_map(|line| StaleRaisedTypePin::parse(line))
+            .collect();
         gaps.push(CheckFindingsGap {
             gap_id,
             classification,
             file,
             line,
             missing_discriminator,
+            stale_raised_type_pins,
         });
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -1548,6 +1694,29 @@ pub(crate) fn validate_pair_lineage(
     ))
 }
 
+/// Verify-layer movement refusal (#14021). The class travels with the error
+/// so the CLI exit mapping and the repair-after narration read the variant
+/// instead of a message prefix; a reworded rendering can no longer flip the
+/// class. The rendered message stays byte-identical to the prose it
+/// replaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AgentVerifyMovementError {
+    /// A fully current same-revision pair cannot contain movement (#2922
+    /// PR A): nothing has changed since the before phase.
+    NoMovement { head: String },
+}
+
+impl std::fmt::Display for AgentVerifyMovementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentVerifyMovementError::NoMovement { head } => write!(
+                f,
+                "no repository movement between before and after artifacts: the repository is still at {head}, so nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot"
+            ),
+        }
+    }
+}
+
 /// Verify-layer movement contract (#2922 PR A). A pair of fully current
 /// artifacts bound to the same revision cannot contain movement: the input
 /// identity is equal and the observed clean state is identical, so any
@@ -1558,21 +1727,21 @@ pub(crate) fn validate_pair_lineage(
 pub(crate) fn validate_verify_movement(
     before: &ValidatedArtifact,
     after: &ValidatedArtifact,
-) -> Result<(), String> {
+) -> Result<(), AgentVerifyMovementError> {
     if before.repository_head == after.repository_head
         && before.currentness == ArtifactCurrentness::Current
         && after.currentness == ArtifactCurrentness::Current
     {
-        // #11026: the leading clause is matched by the CLI as a named refusal
-        // (`AGENT_VERIFY_NO_MOVEMENT_PREFIX`), so only the tail is plain
-        // language: the repository has not changed since the before phase.
+        // #14021: the CLI reads the typed `AgentVerifyMovementError` variant,
+        // not this message, so only the tail is plain language: the
+        // repository has not changed since the before phase.
         let short = before
             .repository_head
             .get(..7)
             .unwrap_or(&before.repository_head);
-        return Err(format!(
-            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot"
-        ));
+        return Err(AgentVerifyMovementError::NoMovement {
+            head: short.to_string(),
+        });
     }
     Ok(())
 }
@@ -1678,6 +1847,8 @@ struct CheckFindingsFinding {
     probe: Option<CheckFindingsProbe>,
     #[serde(default)]
     missing_discriminators: Vec<CheckFindingsMissingDiscriminator>,
+    #[serde(default)]
+    evidence: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -2338,6 +2509,67 @@ fn replace_content_commitment(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn generated_at_override_is_exact_or_refused_and_only_unset_reads_the_clock() {
+        use std::env::VarError;
+        let clock = || "unix_ms:42".to_string();
+        // Unset and empty fall back to the clock.
+        assert_eq!(
+            super::artifact_generated_at_from(Err(VarError::NotPresent), clock),
+            Ok("unix_ms:42".to_string())
+        );
+        assert_eq!(
+            super::artifact_generated_at_from(Ok(String::new()), clock),
+            Ok("unix_ms:42".to_string())
+        );
+        // A canonical value is used verbatim and the clock is not consulted.
+        for accepted in [
+            "unix_ms:0",
+            "unix_ms:1778179200000",
+            "unix_ms:18446744073709551615",
+        ] {
+            assert_eq!(
+                super::artifact_generated_at_from(Ok(accepted.to_string()), || {
+                    "clock-consulted".to_string()
+                }),
+                Ok(accepted.to_string()),
+                "{accepted}"
+            );
+        }
+        // Anything else is refused by name, never replaced by the clock.
+        for refused in [
+            "1778179200000",
+            "unix_ms:",
+            "unix_ms:-1",
+            "unix_ms:+1",
+            "unix_ms:007",
+            "unix_ms:1.5",
+            "unix_ms:18446744073709551616",
+            " unix_ms:1",
+            "unix_ms:1 ",
+            "UNIX_MS:1",
+            "unix_s:1",
+            "2026-05-08T00:00:00Z",
+            "unavailable",
+        ] {
+            let result = super::artifact_generated_at_from(Ok(refused.to_string()), clock);
+            assert!(
+                matches!(&result, Err(message) if message.contains("RIPR_GENERATED_AT") && message.contains(&format!("{refused:?}"))),
+                "{refused:?} must be refused naming the variable and value, got {result:?}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let raw = std::ffi::OsString::from_vec(vec![0xff]);
+            let result = super::artifact_generated_at_from(Err(VarError::NotUnicode(raw)), clock);
+            assert!(
+                matches!(&result, Err(message) if message.contains("RIPR_GENERATED_AT")),
+                "{result:?}"
+            );
+        }
+    }
     fn findings_fixture(
         document: serde_json::Value,
     ) -> Result<(Option<CheckFindingsOutcome>, Vec<CheckFindingsFinding>), String> {
@@ -2507,6 +2739,7 @@ mod tests {
     fn gap(id: &str, classification: &str) -> CheckFindingsGap {
         CheckFindingsGap {
             missing_discriminator: None,
+            stale_raised_type_pins: Vec::new(),
             gap_id: id.to_string(),
             classification: classification.to_string(),
             file: "src/pricing.ts".to_string(),
@@ -2675,6 +2908,48 @@ mod tests {
         if !bare.ends_with("still reads `weakly_exposed` in the after artifact") {
             return Err(format!("invented a reason: `{bare}`"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn stale_raised_type_pin_refuses_python_closure_and_names_both_types() -> Result<(), String> {
+        let pin = StaleRaisedTypePin {
+            assertion: "pytest.raises(ValueError, match=\"neg\")".to_string(),
+            old_type: "ValueError".to_string(),
+            new_type: "TypeError".to_string(),
+            test: "test_neg".to_string(),
+        };
+        let python = |classification: &str, pins: Vec<StaleRaisedTypePin>| CheckFindingsGap {
+            file: "src/shop.py".to_string(),
+            stale_raised_type_pins: pins,
+            ..gap("gap:a", classification)
+        };
+        let before = [python("weakly_exposed", Vec::new())];
+        let Err(error) =
+            evaluate_gap_closure("gap:a", &before, &[python("exposed", vec![pin.clone()])])
+        else {
+            return Err("a stale old-type pin closed the gap".to_string());
+        };
+        for fragment in [
+            GAP_BINDING_REFUSAL_PREFIX,
+            "pins the old raised type `ValueError`",
+            "is expected to fail against the new `TypeError` raise",
+            "pytest.raises(TypeError, ...)",
+            "then rerun",
+            "`test_neg`",
+        ] {
+            if !error.contains(fragment) {
+                return Err(format!("`{error}` lacks `{fragment}`"));
+            }
+        }
+        // Negative controls: no pin closes, and a pin on a non-Python gap is
+        // not read.
+        evaluate_gap_closure("gap:a", &before, &[python("exposed", Vec::new())])?;
+        let rust = CheckFindingsGap {
+            stale_raised_type_pins: vec![pin],
+            ..gap("gap:a", "exposed")
+        };
+        evaluate_gap_closure("gap:a", &[gap("gap:a", "weakly_exposed")], &[rust])?;
         Ok(())
     }
 
@@ -2987,6 +3262,32 @@ mod tests {
 
     /// Matching current `producer.version` is not a substitution refusal.
     /// An incomplete envelope still fails as a canonical shape error.
+    /// The check-findings recovery names the producer that writes the
+    /// envelope verification requires; plain `--format json` lacks it.
+    #[test]
+    fn check_findings_refusal_names_the_enveloped_producer() {
+        let refusal = check_findings_parse_refusal("before", "the file holds a JSON array");
+        assert!(
+            refusal.contains("(from `ripr check --format check-findings-json`)"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("--format json`"), "{refusal}");
+    }
+
+    #[test]
+    fn serde_type_names_are_replaced_only_in_serde_phrasing() {
+        assert_eq!(
+            without_serde_type_names(
+                "invalid type: string \"construct x\", expected struct RepoExposure at line 1"
+            ),
+            "invalid type: string \"construct x\", expected an object at line 1"
+        );
+        assert_eq!(
+            without_serde_type_names("unknown variant `x`, expected enum Mode_v2"),
+            "unknown variant `x`, expected a documented value"
+        );
+    }
+
     #[test]
     fn matching_producer_stamp_keeps_canonical_shape_errors() -> Result<(), String> {
         let version = env!("CARGO_PKG_VERSION");
@@ -3002,7 +3303,7 @@ mod tests {
                 "matching stamp must keep the canonical shape error: {error}"
             ));
         }
-        if !error.contains("regenerate the before snapshot")
+        if !error.contains("Regenerate the before snapshot")
             || !error.contains("`ripr agent verify --help`")
         {
             return Err(format!(
@@ -4238,16 +4539,21 @@ mod tests {
         // The comparability authority deliberately keeps the same-revision
         // pair valid; movement is a verify-layer requirement (#2922 PR A).
         assert_eq!(validate_comparable_pair(&before, &after), Ok(()));
-        assert!(matches!(
-            validate_verify_movement(&before, &after),
-            Err(error) if error.contains("no repository movement")
-                && error.contains("the repository is still at aaaaaaa")
-                && error.contains("nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot")
+        let refusal = validate_verify_movement(&before, &after);
+        assert!(
+            matches!(&refusal, Err(AgentVerifyMovementError::NoMovement { .. })),
+            "expected the typed no-movement refusal, got {refusal:?}"
+        );
+        if let Err(error) = refusal {
+            let text = error.to_string();
+            assert!(text.contains("no repository movement")
+                && text.contains("the repository is still at aaaaaaa")
+                && text.contains("nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot")
                 // The old internal wording and the full 40-character
                 // revision must not come back.
-                && !error.contains("both are current")
-                && !error.contains(&"a".repeat(40))
-        ));
+                && !text.contains("both are current")
+                && !text.contains(&"a".repeat(40)));
+        }
 
         // A disclosed non-current observation stays admissible at this layer.
         let mut dirty_after = after.clone();

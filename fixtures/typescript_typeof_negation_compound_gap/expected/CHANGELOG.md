@@ -59,3 +59,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_typeof_negation_compound_gap (6)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_typeof_negation_compound_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

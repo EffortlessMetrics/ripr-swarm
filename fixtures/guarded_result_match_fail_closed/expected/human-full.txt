@@ -50,6 +50,7 @@ Evidence
   - source function argument value raw = "42" at line 36
   - source assertion argument value "42" at line 37
   - source values (showing 8 of 14 read from related tests; full list in --format json)
+  - assertion not credited: `assert_eq!` in message_only_error_predicate_never_pins at tests/protocol.rs:45: the assertion is inside a `match` arm
 
 Weakness
   - No exact error variant discriminator was detected
@@ -100,6 +101,7 @@ Evidence
   - source function argument value raw = "42" at line 36
   - source assertion argument value "42" at line 37
   - source values (showing 8 of 14 read from related tests; full list in --format json)
+  - assertion not credited: `assert_eq!` in message_only_error_predicate_never_pins at tests/protocol.rs:45: the assertion is inside a `match` arm
 
 Weakness
   - No strong discriminator was detected

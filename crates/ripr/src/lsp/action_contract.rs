@@ -55,6 +55,12 @@ pub(super) enum ActionDisabledReason {
     /// check (#13716). Distinct from a static
     /// limitation, which names something ripr cannot trace.
     RepairRouteNotReady,
+    /// The seam repair start would be refused right now because tracked
+    /// source files differ from HEAD (#13636): the shared before-phase
+    /// dirty-premise preflight
+    /// (`app::repair_attempt::seam_start_dirty_premise`) names them. The
+    /// emitted human text carries the commit step.
+    UncommittedProductionChange,
     // Reserved below: closed-vocabulary members with named future producers.
     // The emit guard (`disabled_reason_emittable`) keeps every reserved
     // reason unemitted until its producer lands — real producers only.
@@ -91,6 +97,7 @@ impl ActionDisabledReason {
             Self::ReceiptRouteUnavailable => "receipt_route_unavailable",
             Self::PreviewOrStaticLimitation => "preview_or_static_limitation",
             Self::RepairRouteNotReady => "repair_route_not_ready",
+            Self::UncommittedProductionChange => "uncommitted_production_change",
             Self::WorkspaceRootBlocked => "workspace_root_blocked",
             Self::FixSiteUnavailable => "fix_site_unavailable",
             Self::ExactReplacementUnavailable => "exact_replacement_unavailable",
@@ -120,10 +127,13 @@ impl ActionDisabledReason {
                 "This gap record has no safe receipt command; run the verify step first, then refresh analysis"
             }
             Self::PreviewOrStaticLimitation => {
-                "Static preview limitation: this finding crosses a language boundary ripr cannot trace; inspect the test target by hand"
+                "Static limitation: ripr has no bounded repair route for this finding yet; inspect the test target by hand"
             }
             Self::RepairRouteNotReady => {
                 "ripr does not have a complete repair route for this finding yet (a test to extend and the exact value it must check); copy the context packet and inspect it by hand"
+            }
+            Self::UncommittedProductionChange => {
+                "Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted."
             }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",
@@ -136,6 +146,13 @@ impl ActionDisabledReason {
     }
 }
 
+/// `CodeAction.disabled.reason` text for the one `PreviewOrStaticLimitation`
+/// producer whose cause is a cross-language test target the analysis could
+/// not resolve. Same-language static limitations use
+/// [`ActionDisabledReason::human_reason`] instead, so the editor never claims
+/// a language boundary the finding does not cross (#13797).
+pub(super) const CROSS_LANGUAGE_LIMITATION_REASON: &str = "Static preview limitation: this finding crosses a language boundary ripr cannot trace; inspect the test target by hand";
+
 /// Reasons a real producer emits today (#1892).
 pub(super) const EMITTED_DISABLED_REASONS: &[ActionDisabledReason] = &[
     ActionDisabledReason::AnalysisNotCurrent,
@@ -145,6 +162,7 @@ pub(super) const EMITTED_DISABLED_REASONS: &[ActionDisabledReason] = &[
     ActionDisabledReason::ReceiptRouteUnavailable,
     ActionDisabledReason::PreviewOrStaticLimitation,
     ActionDisabledReason::RepairRouteNotReady,
+    ActionDisabledReason::UncommittedProductionChange,
 ];
 
 /// Reserved reasons with named future producers. Never emitted until the
@@ -515,6 +533,7 @@ mod tests {
             ActionDisabledReason::ReceiptRouteUnavailable,
             ActionDisabledReason::PreviewOrStaticLimitation,
             ActionDisabledReason::RepairRouteNotReady,
+            ActionDisabledReason::UncommittedProductionChange,
             ActionDisabledReason::WorkspaceRootBlocked,
             ActionDisabledReason::FixSiteUnavailable,
             ActionDisabledReason::ExactReplacementUnavailable,

@@ -436,7 +436,7 @@ fn check_with_progress_and_origins_run(
         languages.push(LanguageId::Perl);
     }
 
-    if crate::is_verbose() {
+    if crate::stderr_diagnostics() {
         eprintln!(
             "ripr: analyzing {} language(s): {}",
             languages.len(),
@@ -446,7 +446,14 @@ fn check_with_progress_and_origins_run(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        eprintln!("ripr: mode = {:?}", scope);
+        // The report header calls the effort profile "mode" (`mode: draft`),
+        // so this line uses the same word for the same value and names the
+        // diff scope separately, with the token the progress lines print.
+        eprintln!(
+            "ripr: mode = {}; scope = {}",
+            input.mode.as_str(),
+            scope.as_str()
+        );
     }
 
     progress.emit(AnalysisProgressStage::Analyzing);
@@ -504,6 +511,7 @@ fn check_with_progress_and_origins_run(
 
     if let Some(outcome) = analysis.analysis_outcome.as_mut() {
         outcome.language_view = analysis.language_view.clone();
+        outcome.changed_lines = analysis.changed_lines.take();
         outcome.check_findings_inputs = Some(crate::analysis_outcome::CheckFindingsInputs {
             config_identity: crate::config::check_artifact_config_identity_hash(config),
             include_unchanged_tests: input.include_unchanged_tests,
@@ -512,7 +520,7 @@ fn check_with_progress_and_origins_run(
         });
     }
 
-    if crate::is_verbose() {
+    if crate::stderr_diagnostics() {
         let finding_count = analysis.findings.len();
         let probe_count = analysis.summary.probes;
         // #7753: count-aware nouns — a single-probe run says "1 probe, 1 finding".
@@ -531,6 +539,14 @@ fn check_with_progress_and_origins_run(
                 eprintln!("ripr: {line}");
             }
         }
+        if let Some(stats) = analysis.rust_consumed_sources.file_fact_cache.as_ref() {
+            if let Some(line) = crate::output::check_file_fact_cache::render_verbose_line(stats) {
+                eprintln!("ripr: {line}");
+            }
+            for line in crate::analysis::file_fact_store_failure_summary(stats) {
+                eprintln!("{}", terminal_safe(line));
+            }
+        }
     }
 
     progress.emit(AnalysisProgressStage::BuildingOutput);
@@ -540,6 +556,7 @@ fn check_with_progress_and_origins_run(
     let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
+    output.file_fact_cache = consumed_sources.file_fact_cache.clone();
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
     // refreshes and other machine consumers never read the note.
     if human_output && python_test_note_possible(&output.findings) {
@@ -554,6 +571,30 @@ fn check_with_progress_and_origins_run(
     // #13819: after the policy, so a finding the policy already suppressed
     // is neither listed nor decremented twice.
     apply_owner_opt_outs(&mut output);
+    // Why each reported finding landed in its class, after suppression and
+    // owner opt-outs so the trace names exactly the findings the output
+    // reports (stderr diagnostics only; bounded per run).
+    if crate::stderr_diagnostics() {
+        // Suppression and owner opt-outs keep the finding in
+        // `output.findings` and record its id; filter them out before the
+        // per-run bound so a withheld finding never displaces a reported one.
+        let withheld = output.withheld_finding_ids();
+        let reported: Vec<&crate::domain::Finding> = output
+            .findings
+            .iter()
+            .filter(|finding| !withheld.contains(finding.id.as_str()))
+            .collect();
+        let left_out = output.findings.len() - reported.len();
+        if left_out > 0 {
+            eprintln!(
+                "ripr: {left_out} finding(s) withheld by suppressions or owner opt-outs; verdict lines cover the {} reported",
+                reported.len()
+            );
+        }
+        for line in super::verbose_trace::verdict_lines(&reported) {
+            eprintln!("{line}");
+        }
+    }
     progress.complete();
     Ok((output, origins, consumed_sources, language_view))
 }
@@ -622,6 +663,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             rust_consumed_sources: Default::default(),
             owner_opt_outs: Vec::new(),
             language_view: None,
+            changed_lines: None,
             preview_fact_caches: Vec::new(),
         },
     )
@@ -801,13 +843,6 @@ fn perl_facts_export_argv(
     argv
 }
 
-/// Maximum age (seconds) a cached Perl facts packet may be reused before it is
-/// regenerated. Currently unused — cache reuse is disabled (item 4b) until the
-/// cache key includes real content/diff identity. Retained for the future
-/// content-keyed implementation.
-#[allow(dead_code, reason = "retained for future content-keyed cache reuse")]
-const PERL_FACTS_MAX_AGE_SECS: u64 = 86_400;
-
 /// The Perl facts cache directory under the analyzed root. Config validation
 /// keeps `[perl].cache_dir` repository-relative; joining it to the root (not
 /// the process directory) keeps `--root <checkout>` from writing elsewhere.
@@ -984,11 +1019,12 @@ impl PerlProducerStaging {
 ///
 /// Managed producer mode (Campaign 31 Phase D #1407; hardened in item 4).
 /// Invokes the producer with the SPEC-0064-canonical arg surface, enforcing a
-/// real timeout with process kill, writing atomically, using a cache key that
-/// includes content/diff/schema/producer/config (not root only), and validating
-/// cached-packet freshness before reuse. Returns the final packet path on
-/// success. The canonical producer is `perl-ripr-facts`; `perllsp` and
-/// `perl-lsp` are compatibility wrappers.
+/// real timeout with process kill and writing atomically. The packet path is
+/// keyed on root/base/the literal `HEAD`/schema/producer/timeout; that key
+/// omits diff content and the resolved head commit, so no cached packet is
+/// ever reused and every run regenerates (item 4b). Returns the final packet
+/// path on success. The canonical producer is `perl-ripr-facts`; `perllsp`
+/// and `perl-lsp` are compatibility wrappers.
 ///
 /// Capability handshake: DEFERRED. Requires a defined exporter probe surface
 /// (`--version`/`--capabilities`); do not fabricate a capability taxonomy.
@@ -1038,9 +1074,10 @@ fn invoke_perl_lsp_producer(
     let timeout_ms = perl_config.timeout_ms();
     let executable_str = executable.display().to_string();
 
-    // Cache key: content/diff/schema/producer/config, not root only. A packet
-    // built for a different base/diff/producer/timeout must not be reused for
-    // this run. FNV-1a, non-crypto, cache-naming only (see `simple_hash` doc).
+    // Packet path key: root/base/literal "HEAD"/schema/producer (executable
+    // path)/timeout. It only names the final packet and its staging; it omits
+    // diff content, so it is never used to reuse a packet (item 4b below).
+    // FNV-1a, non-crypto, naming only (see `simple_hash` doc).
     let cache_key = format!(
         "{}|{}|{}|{}|{}|{}",
         root_str,
@@ -1053,14 +1090,10 @@ fn invoke_perl_lsp_producer(
     let packet_hash = format!("{:016x}", simple_hash(&cache_key));
     let packet_path = cache_dir.join(format!("{packet_hash}.json"));
 
-    // Item 4b: cache reuse is DISABLED until the cache key includes real
-    // content/diff identity (not just root|base|head|schema|exec|timeout).
-    // The current key does not capture the actual diff content, so a stale
-    // packet for a different diff sharing the same base/head could be
-    // reused. Always regenerate until a content-hash key is implemented.
-    // if cached_packet_is_fresh(&packet_path) {
-    //     return Ok(packet_path);
-    // }
+    // Item 4b: a cached packet is never reused. The key above omits the
+    // actual diff content, so a packet for a different diff that shares the
+    // same base/head could be served stale. Every run regenerates; any
+    // future reuse must key on content identity, not mtime age.
 
     // Atomic publication still uses the existing final packet key. Each
     // invocation owns separate staging, including after an interrupted run;
@@ -1239,44 +1272,6 @@ fn root_relative_arg(root: &Path, path: &Path) -> Result<String, String> {
     })?;
     let text = relative.to_string_lossy().replace('\\', "/");
     Ok(text.trim_start_matches("./").to_string())
-}
-
-/// Whether the cached packet at `path` is fresh enough to reuse: the file
-/// exists, its `schema_version` field equals the current schema, and its mtime
-/// is within `PERL_FACTS_MAX_AGE_SECS`. Any failure → not fresh (regenerate).
-/// Currently unused — cache reuse is disabled (item 4b). Retained for the
-/// future content-keyed implementation.
-#[allow(dead_code, reason = "retained for future content-keyed cache reuse")]
-fn cached_packet_is_fresh(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    // mtime within the max-age window.
-    let Ok(modified) = metadata.modified() else {
-        return false;
-    };
-    let Ok(elapsed) = modified.elapsed() else {
-        // Item 4b: mtime in the future (clock skew): treat as STALE, not
-        // fresh. A future-dated cached packet could mask a real change.
-        return false;
-    };
-    if elapsed.as_secs() > PERL_FACTS_MAX_AGE_SECS {
-        return false;
-    }
-    // schema_version field must match the current schema.
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return false;
-    };
-    value
-        .get("schema_version")
-        .and_then(|v| v.as_str())
-        .is_some_and(crate::app::is_supported_perl_fact_packet_schema)
 }
 
 /// Simple deterministic hash for cache file naming (not cryptographic).
@@ -1587,6 +1582,7 @@ mod tests {
             rust_consumed_sources: Default::default(),
             owner_opt_outs: Vec::new(),
             language_view: None,
+            changed_lines: None,
             preview_fact_caches: Vec::new(),
         }
     }
@@ -1888,9 +1884,9 @@ mod tests {
 
     #[test]
     fn perl_facts_cache_key_is_deterministic_and_input_sensitive() {
-        // The cache key MUST differ across different base/diff/producer/config
-        // inputs so a stale packet for one analysis is never reused for
-        // another. Same inputs MUST hash identically.
+        // The packet path key MUST differ across different base/producer
+        // inputs so concurrent analyses never share a final packet name.
+        // Same inputs MUST hash identically.
         let k1 = simple_hash(".|origin/main|HEAD|ripr-perl-facts-v1|perllsp|30000");
         let k1_again = simple_hash(".|origin/main|HEAD|ripr-perl-facts-v1|perllsp|30000");
         let k2 = simple_hash(".|feature/x|HEAD|ripr-perl-facts-v1|perllsp|30000");
@@ -1898,39 +1894,6 @@ mod tests {
         assert_eq!(k1, k1_again, "same inputs must hash identically");
         assert_ne!(k1, k2, "different base must change the cache key");
         assert_ne!(k1, k3, "different producer must change the cache key");
-    }
-
-    #[test]
-    fn cached_packet_freshness_rejects_missing_and_stale_schema() -> Result<(), String> {
-        let tmp = std::env::temp_dir().join(format!("ripr-perl-freshness-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).map_err(|e| format!("mkdir: {e}"))?;
-
-        // Missing file → not fresh.
-        let missing = tmp.join("missing.json");
-        assert!(!cached_packet_is_fresh(&missing));
-
-        // Stale schema_version → not fresh.
-        let stale_schema = tmp.join("stale-schema.json");
-        std::fs::write(&stale_schema, r#"{"schema_version":"ripr-perl-facts-v0"}"#)
-            .map_err(|e| format!("write: {e}"))?;
-        assert!(!cached_packet_is_fresh(&stale_schema));
-
-        // Current schema_version → fresh.
-        let fresh = tmp.join("fresh.json");
-        std::fs::write(&fresh, r#"{"schema_version":"ripr-perl-facts-v1"}"#)
-            .map_err(|e| format!("write: {e}"))?;
-        assert!(
-            cached_packet_is_fresh(&fresh),
-            "a current-schema packet must be reused"
-        );
-
-        // Malformed JSON → not fresh.
-        let malformed = tmp.join("malformed.json");
-        std::fs::write(&malformed, "{ not json").map_err(|e| format!("write: {e}"))?;
-        assert!(!cached_packet_is_fresh(&malformed));
-
-        let _ = std::fs::remove_dir_all(&tmp);
-        Ok(())
     }
 
     #[test]

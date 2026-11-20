@@ -35,6 +35,11 @@ says those files are not analyzed and points at `ripr doctor` instead of
 promising a loop. `--force` also refreshes the Cursor front matter, but only
 when it is exactly the one ripr wrote; your own front matter is kept.
 
+Every language variant uses the same compact post-edit `check --format agent`
+report for VERIFY and DONE. The final `verify=` record applies the full-count,
+scope and source-currentness checks; preview results remain advisory. No
+variant requires a full JSON report for ordinary completion.
+
 ## What `--agents` does to your files
 
 - It writes a short block (about 700 tokens) between `<!-- ripr:agents:begin ... -->`
@@ -66,7 +71,8 @@ Keep the same --base and source options for every check below.
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
-2. DETAIL  Follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
+2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
+           Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
            Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
 3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
@@ -105,12 +111,13 @@ not edit source or tests, run verification, or create a durable CLI attempt.
 See the [progressive MCP flow](interop/mcp.md#progressive-flow) for repair
 cards, attempt and receipt inspection, and snapshot-pinned reads.
 
-Refresh explicitly after edits. For saved tracked changes, pass
-`source: "worktree"` to `ripr_refresh` and repeat any explicit `base` on each
+Refresh explicitly after edits. Like `ripr check`, `ripr_refresh` reads saved
+tracked edits when any exist; pass `source: "committed"` or
+`source: "worktree"` to force one, and repeat any explicit `base` on each
 refresh. The server does not watch the worktree.
 
 The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
-(11,884 bytes on the wire) at every session start. Register it only if your
+(12,075 bytes on the wire) at every session start. Register it only if your
 agent prefers tools. `ripr` must be on
 `PATH`.
 
@@ -161,9 +168,10 @@ For one finding, pick by what the consumer is:
 `ripr check --quiet --format agent` for the same root, base and saved source
 used by the loop. Use that single report for both verification and the done
 decision; if inputs change, run the check again. Read its last line, not just
-`done=`, an empty gap list or the human message `State: no gap selected for
-repair`. That `verify=` record is projected from the producer's outcome and
-full summary counts, never from the displayed subset:
+`done=`, an empty gap list or the human messages `State: no test gap found`
+and `State: no gap selected for repair`. That `verify=` record is projected
+from the producer's outcome and full summary counts, never from the displayed
+subset:
 
 - `verify=complete|outcome=O|findings=N|exposed=N` means the outcome is
   `complete_no_findings` or `complete_with_findings`, the full
@@ -174,7 +182,7 @@ full summary counts, never from the displayed subset:
   Gitignored source is named in the notes but does not refuse.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
-  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
   `partial_scope`, `no_scope`).
   `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
   analyses of an empty scope; they do not establish completion of the

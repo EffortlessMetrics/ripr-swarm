@@ -479,7 +479,9 @@ fn a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit() -> Resul
         "{:?}",
         finding.related_tests
     );
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // #14968: the related test's only assertion is `assert!(true)`, which
+    // earns no credit, yet the generated test keeps its named limit.
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(
         finding.static_limit_kind,
         Some(StaticLimitKind::RustMacroReachUnresolved),
@@ -502,6 +504,46 @@ fn a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit() -> Resul
 }
 
 #[test]
+fn a_same_package_generator_limits_reachable_unrevealed_only_for_dropped_literals()
+-> Result<(), String> {
+    // #10127 keeps a same-package witness off a `reachable_unrevealed`
+    // finding; only a finding whose every related test asserts nothing but
+    // dropped literals (#14968) keeps the limit its weak reading named.
+    for (key, replacement) in [
+        ("no-assertion", "let _ = 1;"),
+        (
+            "mixed",
+            "assert!(true);\n    }\n    #[test]\n    fn unrelated_has_none() {\n        let _ = 1;",
+        ),
+    ] {
+        let lib = GENERATED.replacen("assert!(true);", replacement, 1);
+        assert_ne!(lib, GENERATED, "{key}");
+        let fixture = Fixture::new(key, &lib)?;
+        let finding = fixture.rate_finding()?;
+        assert!(
+            all_relations(&finding, crate::analysis::classify::is_proximity_only),
+            "{key}: {:?}",
+            finding.related_tests
+        );
+        // Fixture construction: the mixed variant relates both tests.
+        let expected_rows = if key == "mixed" { 2 } else { 1 };
+        assert_eq!(
+            finding.related_tests.len(),
+            expected_rows,
+            "{key}: {:?}",
+            finding.related_tests
+        );
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed, "{key}");
+        assert_eq!(
+            finding.static_limit_kind, None,
+            "{key}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_generator_without_a_test_attribute_names_no_limit() -> Result<(), String> {
     // The same macro emitting a plain fn generates no test.
     let fixture = Fixture::new(
@@ -513,7 +555,7 @@ fn a_generator_without_a_test_attribute_names_no_limit() -> Result<(), String> {
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
@@ -572,7 +614,7 @@ fn a_generator_invoked_only_inside_a_macro_body_names_no_limit() -> Result<(), S
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
@@ -590,7 +632,7 @@ fn a_generator_with_a_second_same_named_definition_names_no_limit() -> Result<()
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
@@ -1803,6 +1845,10 @@ mod tests {
 const WEAK_OWNER_NAMED_ASSERTION: &str = "assert!(Version::parse(\"1x\").is_err());";
 const STRONG_OWNER_NAMED_ASSERTION: &str =
     "assert_eq!(Version::parse(\"1x\").unwrap_err(), \"bad digit\");";
+const WEAK_UNREACHING_OWNER_NAMED_ASSERTION: &str =
+    "assert!(u64::from_str_radix(\"1x\", 10).is_err());";
+const STRONG_UNREACHING_OWNER_NAMED_ASSERTION: &str =
+    "assert_eq!(format!(\"bad {}\", \"digit\"), \"bad digit\");";
 
 /// `proximity_tests` same-file tests sorted ahead of the owner-named test by
 /// name, each with an exact-value assertion, then the owner-named test
@@ -1832,8 +1878,9 @@ fn owner_named_row(finding: &Finding) -> Option<(usize, &crate::domain::RelatedT
         .find(|(_, test)| test.name == "numeric_identifier_rejects_garbage")
 }
 
-/// The selection `triage::weak_assertion_row` makes: the first contributing row
-/// whose oracle is `weak` or `smoke`.
+/// The rows `triage::weak_assertion_row` chooses from, simplified: the first
+/// contributing row whose oracle is `weak` or `smoke`. It skips the
+/// observation-tier order the real picker applies (#14483).
 fn weak_bound_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
     finding.related_tests.iter().find(|test| {
         test.is_contributing()
@@ -1879,10 +1926,10 @@ fn eight_proximity_rows_do_not_displace_the_owner_named_weak_row() -> Result<(),
         .ok_or_else(|| format!("owner-named row was displaced: {:?}", finding.related_tests))?;
     assert_eq!(row.relation_reason, Some(RelationReason::OwnerNamedTest));
     assert_eq!(row.oracle_strength, crate::domain::OracleStrength::Weak);
-    // Row 0 is not rescored: the primary related test is still the first
-    // proximity row by name.
-    assert_ne!(index, 0, "{:?}", finding.related_tests);
-    assert_eq!(finding.related_tests[0].name, "aa_unrelated_00");
+    // #15026: the row calls `Version::parse`, which reaches the owner through
+    // `from_str`, so it leads the proximity rows that share only the file.
+    assert_eq!(index, 0, "{:?}", finding.related_tests);
+    assert_eq!(finding.related_tests[1].name, "aa_unrelated_00");
     // The row `weak_assertion_row` inspects exists.
     assert_eq!(
         weak_bound_row(&finding).map(|test| test.name.as_str()),
@@ -1892,11 +1939,52 @@ fn eight_proximity_rows_do_not_displace_the_owner_named_weak_row() -> Result<(),
 }
 
 #[test]
-fn eight_proximity_rows_still_cap_when_the_owner_named_oracle_is_strong() -> Result<(), String> {
+fn eight_proximity_rows_do_not_displace_a_weak_owner_named_row_that_never_reaches_the_owner()
+-> Result<(), String> {
+    // #12098 lift in isolation: the weak owner-named row calls nothing on the
+    // owner's caller chain, so near-owner ordering (#15026) cannot move it. It
+    // is still kept in the window, and row 0 is not rescored.
+    let finding = crowded_owner_named_fixture(10, WEAK_UNREACHING_OWNER_NAMED_ASSERTION)?;
+    assert_eq!(finding.related_tests_total(), 11);
+    assert_eq!(
+        finding.related_tests.len(),
+        8,
+        "{:?}",
+        finding.related_tests
+    );
+    let (index, row) = owner_named_row(&finding)
+        .ok_or_else(|| format!("owner-named row was displaced: {:?}", finding.related_tests))?;
+    assert_eq!(row.relation_reason, Some(RelationReason::OwnerNamedTest));
+    assert_eq!(row.oracle_strength, crate::domain::OracleStrength::Weak);
+    assert_ne!(index, 0, "{:?}", finding.related_tests);
+    assert_eq!(finding.related_tests[0].name, "aa_unrelated_00");
+    Ok(())
+}
+
+#[test]
+fn eight_proximity_rows_still_cap_a_strong_owner_named_row_that_never_reaches_the_owner()
+-> Result<(), String> {
     // Discriminating negative: only a weak or smoke owner-named row is lifted,
-    // so a strong owner-named row stays behind the cap like any proximity row.
-    let finding = crowded_owner_named_fixture(10, STRONG_OWNER_NAMED_ASSERTION)?;
-    assert_crowded_premises(&finding, 10);
+    // so a strong owner-named row that calls nothing on the owner's caller
+    // chain stays behind the cap like any proximity row.
+    let finding = crowded_owner_named_fixture(10, STRONG_UNREACHING_OWNER_NAMED_ASSERTION)?;
+    // Premises without the transitive-reach limit: nothing calls the owner's
+    // caller chain, so the producer records no unresolved reach.
+    assert_eq!(finding.related_tests_total(), 11);
+    assert_eq!(
+        finding.related_tests.len(),
+        8,
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.relation_reason == Some(RelationReason::SameTestFile)),
+        "{:?}",
+        finding.related_tests
+    );
     assert!(
         owner_named_row(&finding).is_none(),
         "{:?}",
@@ -1907,8 +1995,26 @@ fn eight_proximity_rows_still_cap_when_the_owner_named_oracle_is_strong() -> Res
 }
 
 #[test]
-fn an_uncrowded_window_keeps_its_name_order_with_the_owner_named_weak_row() -> Result<(), String> {
-    // Discriminating negative: under the cap nothing is cut, so nothing moves.
+fn a_strong_owner_named_row_that_calls_an_owner_caller_leads_its_tier() -> Result<(), String> {
+    // #15026: the strong owner-named test calls `Version::parse`, which reaches
+    // `numeric_identifier` through `from_str`. That row is near the owner, so
+    // it leads the same-strength proximity rows. The weak lift is not what
+    // moves it: no weak or smoke row exists.
+    let finding = crowded_owner_named_fixture(10, STRONG_OWNER_NAMED_ASSERTION)?;
+    assert_crowded_premises(&finding, 10);
+    let (index, row) = owner_named_row(&finding)
+        .ok_or_else(|| format!("owner-near row was capped out: {:?}", finding.related_tests))?;
+    assert_eq!(index, 0, "{:?}", finding.related_tests);
+    assert_eq!(row.relation_reason, Some(RelationReason::OwnerNamedTest));
+    assert_eq!(row.oracle_strength, crate::domain::OracleStrength::Strong);
+    assert!(weak_bound_row(&finding).is_none());
+    Ok(())
+}
+
+#[test]
+fn an_uncrowded_window_leads_with_the_owner_reaching_weak_row() -> Result<(), String> {
+    // Under the cap nothing is cut. #15026: the only row that reaches the
+    // owner still leads its tier; the proximity rows keep their name order.
     let finding = crowded_owner_named_fixture(3, WEAK_OWNER_NAMED_ASSERTION)?;
     assert_eq!(finding.related_tests_total(), 4);
     let names: Vec<&str> = finding
@@ -1919,10 +2025,10 @@ fn an_uncrowded_window_keeps_its_name_order_with_the_owner_named_weak_row() -> R
     assert_eq!(
         names,
         [
+            "numeric_identifier_rejects_garbage",
             "aa_unrelated_00",
             "aa_unrelated_01",
-            "aa_unrelated_02",
-            "numeric_identifier_rejects_garbage"
+            "aa_unrelated_02"
         ]
     );
     Ok(())
