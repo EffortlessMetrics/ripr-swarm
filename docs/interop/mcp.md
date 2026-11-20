@@ -806,7 +806,7 @@ its edit at the current HEAD). It answers the refusal shape with
 `next.mcp` routing to `ripr_get_repair_attempt`; a session transaction would
 be superseded by the refresh that follows the edit, and only a durable
 attempt can reach `improved` (#15244).
-The refusal's `ineligibility.reason` is `durable_attempt_awaiting`. A ready
+A ready
 item whose seam binding is missing, or whose HEAD or durable store cannot be
 read, fails closed (`no_snapshot`, `seam_not_found`, or `analysis_failed`) and
 creates no session transaction, because a rival attempt could not be ruled out.
