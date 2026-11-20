@@ -63,13 +63,16 @@ the pinned Cargo and local cache, without compiling.
   source tools/activate-rust.sh --pinned
   rustc -V
   cargo -V
+  cargo nextest --version
   cargo metadata --locked --offline --format-version 1 >/dev/null
 )
 ```
 
 Compare the Node and uv version lines with the same two lines from this
-environment's setup log. A missing or different version indicates an
-incomplete restore. After both match, use the printed executable paths for
+environment's setup log. Compare the pinned and stable release/host names
+printed by activation and the Nextest version with the provisioner's
+`Provisioned Rust` summary from that same run. A missing or different
+version indicates an incomplete restore. Use the printed executable paths for
 general tooling and keep the editor's Node on PATH. Rust activation checks
 the installed compiler with `rustup which` before running it and checks that
 Cargo comes from the same sysroot.
