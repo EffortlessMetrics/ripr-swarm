@@ -723,7 +723,23 @@ pub fn load_suppressions_for_root_at(
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let text = std::fs::read_to_string(&path)
+    // The checkout controls this file, and a link inside it can point
+    // anywhere: refuse one that resolves outside the root before reading,
+    // naming only the configured path, because the parser echoes the keys of
+    // whatever it reads (#15546). The read itself is regular-file-only and
+    // bounded like the other repository metadata TOML.
+    let contained = root
+        .canonicalize()
+        .ok()
+        .zip(path.canonicalize().ok())
+        .is_some_and(|(root, path)| path.starts_with(root));
+    if !contained {
+        return Err(vec![format!(
+            "refusing to read suppressions manifest {}: it resolves outside the repository root; replace the link with a regular file inside the repository",
+            relative_path.display()
+        )]);
+    }
+    let text = crate::bounded_input::read_metadata_toml(&path)
         .map_err(|err| vec![format!("failed to read {}: {err}", path.display())])?;
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
@@ -2649,6 +2665,69 @@ mod audit_controls {
             .err()
             .ok_or("missing explicit policy must fail closed")?;
         std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A checkout can make its suppressions manifest a link to a file outside
+    /// the repository; the parser would echo that file's keys (#15546). The
+    /// loader must refuse it by configured path only, while an in-root link
+    /// keeps working.
+    #[cfg(unix)]
+    #[test]
+    fn root_loader_refuses_a_manifest_link_that_leaves_the_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-suppression-link-escape-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("repo");
+        std::fs::create_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
+        let outside = base.join("outside-secret.toml");
+        std::fs::write(&outside, "outside_secret_key = \"value\"\n").map_err(|e| e.to_string())?;
+        let manifest = Path::new(".ripr/suppressions.toml");
+        std::os::unix::fs::symlink(&outside, root.join(manifest)).map_err(|e| e.to_string())?;
+
+        let refused = load_suppressions_for_root_at(&root, manifest)
+            .err()
+            .ok_or("a manifest link out of the root must be refused")?;
+        let text = refused.join("\n");
+        assert!(
+            text.contains("resolves outside the repository root"),
+            "{text}"
+        );
+        assert!(text.contains(".ripr/suppressions.toml"), "{text}");
+        assert!(!text.contains("outside_secret_key"), "{text}");
+        assert!(!text.contains("outside-secret"), "{text}");
+
+        // Control: the same link target inside the root is read and parsed,
+        // so the refusal above is containment, not a broken link.
+        let inside = root.join("policy.toml");
+        std::fs::write(&inside, VALID).map_err(|e| e.to_string())?;
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&inside, root.join(manifest)).map_err(|e| e.to_string())?;
+        assert_eq!(
+            load_suppressions_for_root_at(&root, manifest)
+                .map_err(|e| e.join("\n"))?
+                .len(),
+            1
+        );
+        // An in-root FIFO is refused instead of blocking the read.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        let made = std::process::Command::new("mkfifo")
+            .arg(root.join(manifest))
+            .status()
+            .map_err(|e| format!("mkfifo: {e}"))?;
+        assert!(made.success(), "mkfifo failed");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = root.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(load_suppressions_for_root_at(&probe, manifest).is_err());
+        });
+        let refused = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|e| format!("a FIFO manifest blocked the loader: {e}"))?;
+        assert!(refused, "a FIFO manifest must be refused");
+        std::fs::remove_dir_all(&base).map_err(|e| e.to_string())?;
         Ok(())
     }
 
