@@ -2032,6 +2032,15 @@ impl TypeScriptAssertionBindings {
         }
     }
 
+    /// Runners such as tap do not supply Jest's ambient `expect`. Explicit
+    /// assertion imports retain their own independently established bindings.
+    pub(crate) fn without_ambient_expect(mut self) -> Self {
+        if self.expect_binding == ExpectBinding::Global {
+            self.expect_binding = ExpectBinding::Other;
+        }
+        self
+    }
+
     /// These bindings minus every local name `is_shadowed` reports as
     /// re-declared closer to the assertion (#4638 review): a test-body
     /// declaration, a test or describe callback parameter, or an enclosing
