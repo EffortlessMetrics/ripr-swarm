@@ -86,6 +86,8 @@ mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
+#[path = "cli_smoke/json_refusal_next_steps.rs"]
+mod json_refusal_next_steps;
 #[path = "cli_smoke/leftover_check_honesty.rs"]
 mod leftover_check_honesty;
 #[path = "cli_smoke/leftover_hints.rs"]
@@ -125,8 +127,6 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
-#[path = "cli_smoke/json_refusal_next_steps.rs"]
-mod json_refusal_next_steps;
 // Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
@@ -27471,10 +27471,12 @@ fn receipt_check_rejects_present_invalid_canonical_gap_id() -> Result<(), Box<dy
         write(identity)?;
         let bad = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
         assert_eq!(bad.status.code(), Some(2), "{label}: should exit 2");
-        assert!(
-            bad.stdout.is_empty(),
-            "{label}: stdout must be empty, got {}",
-            String::from_utf8_lossy(&bad.stdout)
+        // #15260: under `--json` the refusal is the shared document on stdout.
+        let refusal: serde_json::Value = serde_json::from_slice(&bad.stdout)?;
+        assert_eq!(refusal["status"], "refused", "{label}: {refusal:#}");
+        assert_eq!(
+            refusal["error"]["code"], "input_unusable",
+            "{label}: {refusal:#}"
         );
         let stderr = String::from_utf8_lossy(&bad.stderr);
         assert!(
