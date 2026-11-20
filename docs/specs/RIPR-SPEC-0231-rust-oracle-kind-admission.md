@@ -657,7 +657,8 @@ Two pattern terms are used below.
    Row cells are also the function's inputs (#6641). Each row runs the
    body with its cells bound to the parameters positionally, so activation
    reads a `test_case` row's literal cells as it reads an rstest `#[case]`
-   row: `#[test_case(10, 90)]`, `#[test_case(10 => 90)]` and
+   row (a named rstest row, `#[case::ten(10, 90)]` or `#[case :: ten(..)]`,
+   binds like `#[case(10, 90)]`; #15341): `#[test_case(10, 90)]`, `#[test_case(10 => 90)]` and
    `#[test_case(10, 90 ; "ten")]` each pass `10` to `q`. The cells are the
    text before the one top-level `=>` or the `;` that starts the name;
    strings and brackets do not split. A row binds nothing when its cell
@@ -1257,6 +1258,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/tests/test_case_row_boundary_inputs.rs` (rule 9 row inputs,
   examples 45 to 47) and the `test_case_*` unit tests in
   `crates/ripr/src/analysis/value_resolution/tests.rs`.
+- `crates/ripr/tests/rstest_named_case_rows.rs` (rule 9 named rstest rows,
+  #15341) and `extract_rstest_cases_reads_named_case_rows`.
 
 ## Implementation Mapping
 
