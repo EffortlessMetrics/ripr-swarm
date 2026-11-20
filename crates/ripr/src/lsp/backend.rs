@@ -4346,13 +4346,15 @@ impl Backend {
     /// Register one save of `uri` (a client `didSave`, or the save implied
     /// by an external rewrite the client reloaded). `prior_change` is the
     /// quarantine edge of a buffer change registered in the same lifecycle
-    /// step and not yet published; it is folded into the save's edge so that
-    /// step publishes once (#15316).
+    /// step and not yet published, with the version captured for its
+    /// decision; it is folded into the save's edge so that step publishes
+    /// once (#15316). If the save cannot be registered, the change edge is
+    /// still published on its own so a withdrawal is never lost.
     async fn register_save(
         &self,
         uri: Uri,
         save_text: Option<String>,
-        prior_change: Option<QuarantineTransition>,
+        prior_change: Option<(QuarantineTransition, Option<i32>)>,
     ) {
         // Deduplicate by saved-content input identity (#1908): a save whose
         // bytes did not change since the last recorded save cannot change
@@ -4379,6 +4381,10 @@ impl Backend {
         // dedup ledger, and the committed snapshot cannot diverge.
         let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
         else {
+            if let Some((change, change_version)) = prior_change {
+                self.handle_document_quarantine_transition(&uri, change, change_version)
+                    .await;
+            }
             self.client
                 .log_message(
                     MessageType::ERROR,
@@ -4387,7 +4393,7 @@ impl Backend {
                 .await;
             return;
         };
-        let transition = prior_change.map_or(transition, |change| change.then(transition));
+        let transition = prior_change.map_or(transition, |(change, _)| change.then(transition));
         if let Some(digest) = &digest
             && self.saved_content_digest_matches(&uri, digest)
         {
@@ -7357,7 +7363,8 @@ impl LanguageServer for Backend {
         // version, naming the saved-content state (#15316), instead of a
         // "buffer diverges" marker followed by a same-version re-clear.
         if self.buffer_equals_unanalyzed_disk_content(&uri) {
-            self.register_save(uri, None, Some(transition)).await;
+            self.register_save(uri, None, Some((transition, decision_version)))
+                .await;
             return;
         }
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
