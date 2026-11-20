@@ -136,6 +136,22 @@ fn an_inline_branch_value_edit_is_a_return_value_not_a_boundary() -> Result<(), 
 }
 
 #[test]
+fn a_threshold_assertion_misses_the_changed_branch_value() -> Result<(), String> {
+    let found = line_one(
+        "pub fn f(n: u32) -> u32 { if n > 5 { 1 } else { 2 } }",
+        "pub fn f(n: u32) -> u32 { if n > 5 { 3 } else { 2 } }",
+        "assert_eq!(f(5), 2);",
+    )?;
+    let rows = summary(&found);
+    assert!(
+        matches!(rows.as_slice(), [(ProbeFamily::ReturnValue, value, class)]
+            if value == "3" && *class != ExposureClass::Exposed),
+        "{rows:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn an_inline_condition_edit_stays_the_predicate() -> Result<(), String> {
     let found = line_one(
         "pub fn f(n: u32) -> u32 { if n > 5 { 1 } else { 2 } }",
