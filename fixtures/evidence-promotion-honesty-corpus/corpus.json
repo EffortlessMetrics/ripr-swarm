@@ -6506,6 +6506,30 @@
       ]
     },
     {
+      "id": "py_match_or_missing_alternative",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_match_or_missing_alternative",
+      "vector": "strong_rows_on_an_unchanged_literal_and_fallback_do_not_observe_the_removed_alternative",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "py_unreached_match_arm_no_exposed_credit",
       "language": "python",
       "tier": "pure",

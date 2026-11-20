@@ -153,6 +153,8 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             owners,
             tests,
             PythonNoBehaviorContext {
+                sole_unpaired_line: changed.added_lines.is_empty()
+                    && changed.removed_lines.len() == 1,
                 compound_loop_edit: compound_loop_owners.contains(&owner.symbol_id()),
                 ..Default::default()
             },

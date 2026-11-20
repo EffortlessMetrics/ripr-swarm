@@ -200,7 +200,10 @@ fn direct_integer_pin(
 
 /// The shared binding reader inventories values, but deliberately tolerates
 /// unmatched arguments. The range model needs a call that actually binds.
-fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall) -> bool {
+pub(super) fn valid_owner_call(
+    owner: &PythonOwner,
+    call: &rustpython_parser::ast::ExprCall,
+) -> bool {
     let Some(skip) = receiver_skip(owner) else {
         return false;
     };
@@ -239,7 +242,7 @@ fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall
         .all(|p| bound.contains(p.name.as_str()) || p.default.is_some())
 }
 
-fn receiver_skip(owner: &PythonOwner) -> Option<usize> {
+pub(super) fn receiver_skip(owner: &PythonOwner) -> Option<usize> {
     use crate::domain::OwnerKind;
     match owner.owner_kind {
         Some(OwnerKind::Method) => Some(1),
