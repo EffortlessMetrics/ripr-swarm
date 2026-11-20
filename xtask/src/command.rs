@@ -209,6 +209,7 @@ pub(crate) enum XtaskCommand {
     VscodeTestE2e,
     Package,
     PublishDryRun,
+    PublishPrecheck,
     Help(Vec<String>),
     IssueIntake(Vec<String>),
     WorkPortfolio(Vec<String>),
@@ -452,6 +453,7 @@ impl XtaskCommand {
             "vscode-test-e2e" => Self::VscodeTestE2e,
             "package" => Self::Package,
             "publish-dry-run" => Self::PublishDryRun,
+            "publish-precheck" => Self::PublishPrecheck,
             "issue-intake" => Self::IssueIntake(rest),
             "work" => match rest.first().map(|arg| arg.as_str()) {
                 Some("portfolio") => Self::WorkPortfolio(rest[1..].to_vec()),
@@ -830,6 +832,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "vscode-test-e2e",
         "package",
         "publish-dry-run",
+        "publish-precheck",
         "issue-intake --issue <number>",
         "work portfolio [--captured <dir>] [--json]",
         "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
@@ -2865,6 +2868,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Rehearses the ripr/ripr-contract lockstep publish (contract dry-run, multi-package packaging from the publish stage, packaged check) without publishing.",
+        ),
+        command_entry(
+            "publish-precheck",
+            "non_mutating_check",
+            "target/publish-precheck packaging output",
+            false,
+            false,
+            "Refuses to proceed unless a fresh registry-mode ripr package from the retained stage matches the rehearsal receipt's ripr_sha256.",
         ),
         command_entry(
             "issue-intake --issue <number>",
