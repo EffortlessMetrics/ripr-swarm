@@ -1965,8 +1965,16 @@ mod tests {
             );
         }
         // A local that may shadow `Array` makes `Array.isArray` unreadable.
-        let shadowed = "function f(x) {\n  const Array = { isArray: () => true };\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
-        assert!(!excludes_plain(shadowed, 4, "a();", &["5"]));
+        for shadow in ["const Array = makeArray();", "const { Array } = o;"] {
+            let shadowed = format!(
+                "function f(x) {{\n  {shadow}\n  if (Array.isArray(x)) {{\n    a();\n  }}\n}}\n"
+            );
+            assert!(!excludes_plain(&shadowed, 4, "a();", &["5"]), "{shadow}");
+        }
+        // The same body without the shadow excludes, so the row above
+        // discriminates the shadow check.
+        let unshadowed = "function f(x) {\n  const y = makeArray();\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
+        assert!(excludes_plain(unshadowed, 4, "a();", &["5"]));
         let typed = "function f(x: Array<number> | number) {\n  if (Array.isArray(x)) {\n    a();\n  }\n}\n";
         assert!(excludes_plain(typed, 3, "a();", &["5"]));
         // A body that rebinds the parameter is not read.
