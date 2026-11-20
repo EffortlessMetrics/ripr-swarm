@@ -2405,7 +2405,7 @@ fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_onl
 }
 
 /// The package a file belongs to. A relative path keeps
-/// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
+/// [`super::related_tests::package_prefix`] (`[<dirs>/]crates/<name>/`, the directory
 /// above `src/` or `tests/`, or `None` for the root package). That leaves an
 /// absolute path outside a `crates/` layout unscoped (#3235) and drops the
 /// workspace directory from an absolute `crates/<name>/`, so two packages
@@ -2578,6 +2578,24 @@ pub(super) fn under_tests_dir(file: &Path) -> bool {
     let normalized = super::related_tests::normalize_path(file);
     !(normalized.contains("/src/") || normalized.starts_with("src/"))
         && super::super::rust_index::is_test_file(file)
+}
+
+/// An integration-test crate root: a file under `tests/` ([`under_tests_dir`]),
+/// or the entry file of a `[[test]]` target whose manifest `path` puts it
+/// outside both `tests/` and `src/` (`checks/score.rs`, #15332), declared by
+/// the analysis root's own package (the one package whose path-shape key is
+/// `None`, like the file's). Only the declared entry file itself is
+/// admitted; a module it mounts keeps the path-shape reading. Without
+/// manifest authority the answer is the path-shape one.
+pub(super) fn integration_test_root(index: &RustIndex, file: &Path) -> bool {
+    if under_tests_dir(file) {
+        return true;
+    }
+    let normalized = super::related_tests::normalize_path(file);
+    !(normalized.contains("/src/") || normalized.starts_with("src/"))
+        && index
+            .member_crates
+            .is_declared_test_target_entry(file, true)
 }
 
 /// Module segments of a file below its crate root: `src/lib.rs` and
@@ -2863,7 +2881,7 @@ fn own_crate_names_of(
     let test_package = package_key(&test.file);
     let same_package = test_package.as_deref() == owner_package;
     let mut names = BTreeSet::new();
-    if same_package && !under_tests_dir(&test.file) {
+    if same_package && !integration_test_root(index, &test.file) {
         return names;
     }
     // An integration test of the owner's own package names that package's
@@ -6729,6 +6747,72 @@ fn integration_rename_case() {
                 "{name}: the owner call keeps its direct relation"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_macro_reusing_a_std_name_takes_no_invocation_scopes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-shadow-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub mod a;\npub mod b;\n#[macro_export]\nmacro_rules! hostile_assertion { ($actual:expr, $expected:expr) => { use modules::b::render; ::core::assert_eq!($actual, $expected); }; }\n",
+        )?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\npub use crate::hostile_assertion as assert_eq;\npub use crate::hostile_assertion;\n",
+        )?;
+        // The invocation scope imports a macro named `assert_eq` next to
+        // `a::render`: that import may expand to a rebinding `use`, so the
+        // generated test must not be credited to `a` from its scopes. (A
+        // local `macro_rules! assert_eq` is already refused earlier: the
+        // generated test is not indexed at all.)
+        for import in [
+            "use modules::b::assert_eq;",
+            "use modules::b::r#assert_eq;",
+            "use modules::b::hostile_assertion as r#assert_eq;",
+        ] {
+            let source = format!(
+                "macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
+            );
+            std::fs::write(root.join("tests/gen.rs"), source)?;
+            let index = crate::analysis::facts::build_index(
+                &root,
+                &[
+                    PathBuf::from("src/lib.rs"),
+                    PathBuf::from("src/a.rs"),
+                    PathBuf::from("src/b.rs"),
+                    PathBuf::from("tests/gen.rs"),
+                ],
+            )?;
+            assert!(
+                index
+                    .tests()
+                    .iter()
+                    .any(|test| test.name == "shadowed_case"),
+                "the shadowed case must be indexed, or the assertion below is vacuous"
+            );
+            assert_ne!(
+                settle(&index, "/a.rs::render", "shadowed_case"),
+                Some(CallTarget::Owner)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 

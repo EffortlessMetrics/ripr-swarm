@@ -114,8 +114,8 @@ fn write_pr_evidence_with_runner(
     options: &PrEvidenceOptions,
     run_check: impl FnOnce(&Path, &PrEvidenceOptions) -> Result<String, String>,
 ) -> Result<(), String> {
-    verify_revision(repo, &options.base)?;
-    verify_revision(repo, &options.head)?;
+    verify_revision(repo, "--base", &options.base)?;
+    verify_revision(repo, "--head", &options.head)?;
     let changed_files = changed_files(repo, options)?;
     write_diff(repo, options)?;
     match run_check(repo, options) {
@@ -140,8 +140,8 @@ fn write_pr_evidence_from_check_json(
     options: &PrEvidenceOptions,
     check_json: &str,
 ) -> Result<(), String> {
-    verify_revision(repo, &options.base)?;
-    verify_revision(repo, &options.head)?;
+    verify_revision(repo, "--base", &options.base)?;
+    verify_revision(repo, "--head", &options.head)?;
 
     let changed_files = changed_files(repo, options)?;
     write_diff(repo, options)?;
@@ -241,8 +241,8 @@ pub fn reject_pr_evidence_error_packet(packet: &Value) -> Option<String> {
 }
 
 fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
-    verify_revision(repo, &options.base)?;
-    verify_revision(repo, &options.head)?;
+    verify_revision(repo, "--base", &options.base)?;
+    verify_revision(repo, "--head", &options.head)?;
     let changed_files = changed_files(repo, options)?;
     let json_path = repo.join(PR_EVIDENCE_JSON);
     let markdown_path = repo.join(PR_EVIDENCE_MD);
@@ -274,11 +274,42 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
     ))
 }
 
-fn verify_revision(repo: &Path, rev: &str) -> Result<(), String> {
+/// Refuse a `--base` / `--head` that git cannot resolve to a commit (#14076
+/// follow-up). The refusal names the flag and the next step. It does not
+/// print the Debug-formatted git argv or empty stdout/stderr blocks; the one
+/// useful line of git's own stderr is kept so a non-repository or a broken
+/// object store is still visible.
+fn verify_revision(repo: &Path, flag: &str, rev: &str) -> Result<(), String> {
     let commit = format!("{rev}^{{commit}}");
-    run_git_output(repo, &["rev-parse", "--verify", commit.as_str()])
-        .map(|_| ())
-        .map_err(|err| format!("bad base/head revision {rev:?}: {err}"))
+    let output = crate::git::run_git_output_with_deadline(
+        repo,
+        &["rev-parse", "--verify", commit.as_str()],
+        Some(PR_EVIDENCE_GIT_DEADLINE),
+    )
+    .map_err(|err| {
+        format!(
+            "pr-evidence could not run git to resolve {flag} `{rev}`: {err}; check that git is installed and on PATH, then rerun"
+        )
+    })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("not a git repository") {
+        return Err(format!(
+            "pr-evidence needs a git repository, and {} is not inside one; run it from inside the repository, or pass `--root <path>` naming a directory inside it",
+            repo.display()
+        ));
+    }
+    let detail = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| format!(" (git: {line})"))
+        .unwrap_or_default();
+    Err(format!(
+        "pr-evidence {flag} `{rev}` does not resolve to a commit{detail}; check the spelling (`git branch --list` shows local branches), fetch the ref if it lives on a remote, or pass `{flag} <rev>` naming a commit this repository has"
+    ))
 }
 
 fn changed_files(repo: &Path, options: &PrEvidenceOptions) -> Result<Vec<String>, String> {
@@ -409,9 +440,12 @@ fn command_root_path(repo: &Path, root: &str) -> PathBuf {
     }
 }
 
+/// Strict UTF-8 git capture for this file's tests; production callers decode
+/// bytes at the call site.
+#[cfg(test)]
 fn run_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
     String::from_utf8(run_git_output_bytes(repo, args)?)
-        .map_err(|err| format!("git {args:?} produced non-UTF-8 output: {err}"))
+        .map_err(|err| format!("git {} produced non-UTF-8 output: {err}", args.join(" ")))
 }
 
 /// Cooperative deadline for every git probe in this file (#2303, #4363).
@@ -422,7 +456,7 @@ const PR_EVIDENCE_GIT_DEADLINE: Duration = Duration::from_mins(1);
 
 /// Capture raw git stdout bytes through this file's single git call site
 /// (#4006). Path inventories decode through the shared NUL authority at
-/// the call site; other callers keep the strict UTF-8 wrapper above. The
+/// the call site; tests keep the strict UTF-8 wrapper above. The
 /// spawn goes through the shared `crate::git` deadline and process-owner
 /// authority (#4363).
 fn run_git_output_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -437,14 +471,15 @@ fn run_git_output_bytes_within(
     deadline: Duration,
 ) -> Result<Vec<u8>, String> {
     let output = crate::git::run_git_output_with_deadline(repo, args, Some(deadline))
-        .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
+        .map_err(|err| format!("failed to run git {}: {err}", args.join(" ")))?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         Err(format!(
-            "git {args:?} failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            "git {} failed\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            args.join(" ")
         ))
     }
 }
@@ -1105,12 +1140,13 @@ fn string_field<'a>(packet: &'a Value, key: &str, fallback: &'a str) -> &'a str 
     packet.get(key).and_then(Value::as_str).unwrap_or(fallback)
 }
 
+/// Publish one packet file through the shared atomic writer: the bytes go to
+/// a same-directory temporary file that then replaces the destination. An
+/// interrupted or failed run leaves the previous complete file (or none), so
+/// a reader such as `ripr pr-evidence check` or a later CI step never sees a
+/// truncated packet, panel or diff.
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create parent dir for {label}: {err}"))?;
-    }
-    fs::write(path, contents).map_err(|err| format!("failed to write {label}: {err}"))
+    crate::atomic_file::write(path, contents.as_ref(), label)
 }
 
 #[cfg(test)]
@@ -1748,6 +1784,110 @@ mod tests {
         assert_eq!(packet["warnings"][0]["kind"], "tool_error");
         assert!(repo.join(PR_DIFF).exists());
         assert!(repo.join(PR_EVIDENCE_MD).exists());
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    /// A rerun replaces each packet file instead of rewriting it in place: a
+    /// reader still holding the previous file (modelled by a hard link taken
+    /// between two runs) keeps the complete previous bytes while the published
+    /// path carries the complete new ones. An in-place truncate-and-write
+    /// changes the held bytes too, and is what leaves a truncated packet
+    /// behind when a run is interrupted.
+    #[test]
+    fn rerun_replaces_packet_files_without_rewriting_them_in_place() -> Result<(), String> {
+        let repo = temp_repo("ripr-pr-evidence-atomic-rerun")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, "README.md", "# sample\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 1 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "add rust"])?;
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        let run = |error: &'static str| -> Result<(), String> {
+            match write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
+                Err(error.to_string())
+            }) {
+                Ok(()) => Err("producer failure did not fail closed".to_string()),
+                Err(_) => Ok(()),
+            }
+        };
+        let read = |path: &Path| -> Result<String, String> {
+            fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))
+        };
+
+        run("first run marker")?;
+        let outputs = [PR_EVIDENCE_JSON, PR_EVIDENCE_MD, PR_DIFF];
+        let mut held = Vec::new();
+        for output in outputs {
+            let published = repo.join(output);
+            let link = repo.join(format!("{output}.held"));
+            fs::hard_link(&published, &link).map_err(|err| format!("hold {output}: {err}"))?;
+            held.push((output, published.clone(), link, read(&published)?));
+        }
+        assert!(held[0].3.contains("first run marker"), "{}", held[0].3);
+        assert!(held[1].3.contains("first run marker"), "{}", held[1].3);
+
+        assert!(held[2].3.contains("value() -> u8 { 1 }"), "{}", held[2].3);
+
+        // Move HEAD so the second run's diff differs from the first: an
+        // in-place rewrite of the diff then changes the held bytes too.
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 2 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "change rust"])?;
+
+        run("second run marker")?;
+        for (output, published, link, first_bytes) in &held {
+            // The held file is the previous complete output, untouched.
+            assert_eq!(&read(link)?, first_bytes, "{output} was rewritten in place");
+            // The published path carries a complete new output.
+            let second = read(published)?;
+            if *output != PR_DIFF {
+                assert!(second.contains("second run marker"), "{output}: {second}");
+                assert!(!second.contains("first run marker"), "{output}: {second}");
+            } else {
+                assert!(second.contains("value() -> u8 { 2 }"), "{output}: {second}");
+                assert_ne!(
+                    &second, first_bytes,
+                    "{output} diff did not change between runs"
+                );
+            }
+        }
+        let packet: Value = serde_json::from_str(&read(&repo.join(PR_EVIDENCE_JSON))?)
+            .map_err(|err| format!("parse packet: {err}"))?;
+        assert_eq!(packet["status"], "error");
+        // No temporary file is left next to the outputs.
+        let dir = repo
+            .join(PR_EVIDENCE_JSON)
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "packet has no parent".to_string())?;
+        let mut names = fs::read_dir(&dir)
+            .map_err(|err| format!("list {}: {err}", dir.display()))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        let mut expected = outputs
+            .iter()
+            .flat_map(|output| {
+                let name = Path::new(output)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                [name.clone(), format!("{name}.held")]
+            })
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(names, expected);
 
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())

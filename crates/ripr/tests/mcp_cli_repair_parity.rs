@@ -1328,10 +1328,27 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
         assert_eq!(rows[0]["receipt_status"], "improved", "{listing}");
         assert_eq!(rows[0]["currentness"]["head_current"], true, "{listing}");
     }
+    // The finish does not bind the derived module-tree scan bundle (#15060),
+    // which every check rewrites in place.
+    let bound = manifest("after finish")?;
+    let bound_paths = &bound["after"]["verdict"]["changed_paths"];
+    assert!(
+        bound_paths
+            .as_array()
+            .is_some_and(|paths| !paths.iter().any(|path| path == SCAN_BUNDLE)),
+        "{bound}"
+    );
+    let bundle_before_recheck = read(SCAN_BUNDLE)?;
     let verify = agent_check_verify_line(&fixture, true)?;
     assert!(
         verify.starts_with("verify=complete|") && verify.ends_with("findings=1|exposed=1"),
         "{verify}"
+    );
+    // The re-check really rewrote the bundle, so the reads below exercise it.
+    assert_ne!(
+        read(SCAN_BUNDLE)?,
+        bundle_before_recheck,
+        "the re-check did not rewrite {SCAN_BUNDLE}"
     );
     let refresh = mcp.tool("ripr_refresh", json!({ "source": "worktree" }))?;
     assert_eq!(refresh["attempt"]["state"], "completed", "{refresh}");
@@ -1423,10 +1440,10 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
     assert_eq!(rows.len(), 1, "{listing}");
     assert_eq!(rows[0]["attempt_id"], id.as_str(), "{listing}");
     assert_eq!(rows[0]["validation"], "valid", "{listing}");
-    // `receipt_status` is not asserted here: the re-check in step 4 rewrites a
-    // shared analysis cache file the finish bound, so this read is `stale`
-    // until #15060 is fixed. The same read before the re-check is asserted
-    // `improved` above.
+    // The re-check in step 4 rewrote the derived scan bundle; the finished
+    // attempt is still current (#15060).
+    assert_eq!(rows[0]["receipt_status"], "improved", "{listing}");
+    assert_eq!(rows[0]["currentness"]["head_current"], true, "{listing}");
     let attempt = restarted.tool("ripr_get_repair_attempt", json!({ "attempt_id": id }))?;
     assert_eq!(attempt["origin"], "durable_store", "{attempt}");
     assert_eq!(attempt["terminal_receipt"], "issued", "{attempt}");
@@ -1458,8 +1475,42 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
         edited,
         "the test file changed after the edit"
     );
+    drop(restarted);
+
+    // Controls: the bundle exception covers only its unstaged bytes, and every
+    // other bound path keeps its binding. HEAD does not move in any of them.
+    let receipt_status = || -> Result<Value, String> {
+        let mut fresh = Mcp::spawn(&fixture.0)?;
+        let listing = fresh.tool("ripr_list_repair_attempts", json!({}))?;
+        Ok(listing["items"][0]["receipt_status"].clone())
+    };
+    let head = ripr_fixture_head(&fixture)?;
+    fixture.git(&["add", "-f", SCAN_BUNDLE])?;
+    assert_eq!(
+        receipt_status()?,
+        "stale",
+        "a staged bundle must break the binding"
+    );
+    fixture.git(&["reset", "-q", "--", SCAN_BUNDLE])?;
+    assert_eq!(
+        receipt_status()?,
+        "improved",
+        "unstaging restores the binding"
+    );
+    let mut later = edited.clone();
+    later.extend_from_slice(b"// a later edit\n");
+    std::fs::write(fixture.0.join(TEST_FILE), &later).map_err(|e| e.to_string())?;
+    assert_eq!(
+        receipt_status()?,
+        "stale",
+        "a later test edit must break the binding"
+    );
+    assert_eq!(ripr_fixture_head(&fixture)?, head, "a control moved HEAD");
     Ok(())
 }
+
+/// The derived module-tree scan bundle every Rust check rewrites in place.
+const SCAN_BUNDLE: &str = "target/ripr/cache/repo-module-tree-scans/0.1/scans.json";
 
 /// The fixture repository's HEAD, read from its git metadata without another
 /// process: `.git/HEAD` names the branch ref the fixture committed on.
