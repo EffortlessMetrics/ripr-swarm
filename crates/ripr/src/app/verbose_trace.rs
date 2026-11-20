@@ -52,7 +52,7 @@ fn verdict_line(finding: &Finding) -> String {
         .join(" ");
     let mut line = format!(
         "ripr: verdict {}:{} {} [{states}]",
-        finding.probe.location.file.display(),
+        crate::analysis::stable_path_text(&finding.probe.location.file),
         finding.probe.location.line,
         finding.class.as_str(),
     );
@@ -116,6 +116,25 @@ mod tests {
                 discriminate: stage(StageState::Unknown, "later reason"),
             },
         }
+    }
+
+    #[test]
+    fn a_verdict_line_prints_the_file_with_forward_slashes_on_every_platform() {
+        let mut f = finding(
+            ExposureClass::Exposed,
+            evidence(
+                stage(StageState::Yes, "reached"),
+                stage(StageState::Yes, "observed"),
+            ),
+        );
+        // A Windows-joined spelling: `.\src` plus a forward-slash tail.
+        f.probe.location.file = std::path::PathBuf::from(".\\src/lib.rs");
+        let line = verdict_line(&f);
+        assert!(
+            line.starts_with("ripr: verdict ./src/lib.rs:7 "),
+            "the verdict line must not carry a native backslash: {line}"
+        );
+        assert!(!line.contains('\\'), "{line}");
     }
 
     #[test]
