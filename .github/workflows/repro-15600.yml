@@ -5,7 +5,7 @@ on:
 jobs:
   repro:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
@@ -24,22 +24,22 @@ jobs:
           set -euo pipefail
           curl -LsSf https://get.nexte.st/0.9.121/linux | tar zxf - -C "$HOME/.cargo/bin"
           cargo nextest --version
-      - name: Three nextest passes of the lib suite
+      - name: Three shard-2 passes
         run: |
           set +e
           set -uo pipefail
           for pass in 1 2 3; do
-            cargo nextest run -p ripr --lib --no-fail-fast > "pass-$pass.log" 2>&1
+            cargo nextest run --workspace --profile ci --partition hash:2/2 --no-fail-fast > "pass-$pass.log" 2>&1
             status=$?
             echo "pass=$pass exit=$status"
-            grep -n "switch_literal_return_controls" "pass-$pass.log" | head -3
-            grep -n "DIAG" "pass-$pass.log" | head -3
-            grep -n "Summary" "pass-$pass.log" | tail -1
+            grep -a "switch_literal_return_controls" "pass-$pass.log" | head -3
+            grep -a "DIAG" "pass-$pass.log" | head -3
+            grep -a "Summary" "pass-$pass.log" | tail -1
           done
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: repro-15600-nextest-logs
+          name: repro-15600-shard-logs
           path: pass-*.log
           retention-days: 7
