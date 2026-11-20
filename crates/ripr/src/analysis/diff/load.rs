@@ -894,7 +894,7 @@ pub(crate) fn resolve_effective_base_core_with_commit(
     if explicit.starts_with('-') {
         return Err(CoreError::base_unresolvable(format!(
             "the base `{explicit}` starts with `-`, which no Git revision does (the analysis \
-             did not run). Pass `--base <ref>` for a ref this repository has."
+             did not run). Choose a ref this repository has (`git branch --all` lists its branches)."
         )));
     }
     if explicit.trim().is_empty() {
@@ -916,7 +916,8 @@ pub(crate) fn resolve_effective_base_core_with_commit(
             let fetch = missing_ref_repair(root, explicit, "--base", git_timeout);
             Err(CoreError::base_unresolvable(format!(
                 "the base `{explicit}` does not resolve to a commit (the analysis did not \
-                 run). {fetch}, or pass `--base <ref>` for a ref this repository has."
+                 run). {fetch}, or choose another ref this repository has (`git branch --all` \
+                 lists its branches)."
             )))
         }
         Some(output) => {
@@ -4781,6 +4782,9 @@ mod tests {
         assert!(!planted_exists, "git diff must not write an --output file");
         let err = resolved.expect_err("an option-shaped base must be refused");
         assert!(err.contains("starts with `-`"), "{err}");
+        // The bad value came from `--base` (or the LSP setting), so the advice
+        // must not answer it with the same flag (#15338).
+        assert!(!err.contains("--base <ref>"), "{err}");
         assert!(identity.is_none());
         Ok(())
     }
@@ -5263,12 +5267,14 @@ mod tests {
         // #9277: the repair sentence and the alternative join with a comma, not
         // a bare "or" that fuses onto the previous clause.
         assert!(
-            err.contains(", or pass `--base <ref>` for a ref this repository has."),
+            err.contains(", or choose another ref this repository has (`git branch --all` lists its branches)."),
             "expected the repair and the alternative to be separate clauses, got: {err}"
         );
+        // The user's own input was the bad `--base`, so the closing advice
+        // must not tell them to pass `--base <ref>` again.
         assert!(
-            err.contains("--base <ref>"),
-            "expected the next action, got: {err}"
+            !err.contains("pass `--base <ref>`"),
+            "the failing --base must not be answered with the same flag, got: {err}"
         );
         // Discriminator: git's usage advice for a different mistake must be gone.
         assert!(

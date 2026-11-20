@@ -119,8 +119,10 @@ The SARIF layer should:
   findings (#14302).
 - bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
   `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
-  the leading results in both diff-scoped and repo-scoped runs, always
-  keeping the first result. When the budget omits results, the run records
+  the highest-priority results in both diff-scoped and repo-scoped runs
+  (errors, then warnings, then notes, original order as the tiebreak; kept
+  results stay in their original order), always keeping the first admitted
+  result. When the budget omits results, the run records
   `runs[].properties.results_rendered`, `results_total`, `results_omitted`,
   `results_byte_budget`, `limited_results_bound: true` and
   `document_complete: false` (absent when nothing was omitted), so a bounded
