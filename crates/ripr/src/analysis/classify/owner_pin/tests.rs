@@ -14335,6 +14335,11 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "use ::vstd::prelude::*;\n",
         ),
         (
+            "owner-pin-prelude-external-beside-import",
+            vstd,
+            "use other::vstd;\nuse ::vstd::prelude::*;\n",
+        ),
+        (
             "owner-pin-prelude-workspace-dep",
             "creusot-std = { version = \"0.14\", features = [\"std\"] }\n",
             "use creusot_std::prelude::*;\n",
@@ -14419,6 +14424,16 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "owner-pin-prelude-rename",
             vstd,
             "extern crate other as vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import",
+            vstd,
+            "use other::vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import-self",
+            prusti,
+            "use other::prusti_contracts::{self};\nuse prusti_contracts::*;\n",
         ),
     ] {
         assert!(
