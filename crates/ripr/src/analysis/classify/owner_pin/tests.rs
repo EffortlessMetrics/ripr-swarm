@@ -13532,6 +13532,27 @@ fn walked_parameter_refuses_an_empty_literal_argument() {
     }
 }
 
+/// #15277 review: a turbofish call reads its arguments like a plain call, so
+/// the empty-walk refusal still sees an empty literal through `count::<u8>`.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_through_a_turbofish() {
+    let tail = "xs.iter().count()";
+    let lib = format!(
+        "pub fn count<T>(xs: &[T]) -> usize {{\n    {tail}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{}\n}}\n",
+        adaptor_test(
+            "        assert_eq!(count::<u8>(&[]), 0);\n        assert_eq!(count::<u8>(&[3, 4]), 2);"
+        )
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count", tail);
+    assert!(pin.is_some(), "the turbofish walk must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(count::<u8>(&[3, 4]), 2);".to_string()]
+    );
+}
+
 /// #9444 review: the refusal also reads a call wrapped in a rendered or
 /// indexed comparison, a spaced method call, and leaves a field receiver
 /// or a rebound parameter alone.
@@ -15267,6 +15288,46 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     assert_eq!(proofs(), before + 1, "a read-time proof is not repeated");
     let matches = StdRootedCalls::of(sources[3]);
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
+}
+
+/// #15277: a turbofish names the same function, so `doubled::<u8>(5)` and
+/// `s.apply::<u8>(4)` are the owner calls their plain spellings are. An
+/// unclosed turbofish, a path value without a call, anything chained after
+/// the call, a turbofish this reading refuses (fn-pointer or const-block
+/// arguments) and a turbofish call that mentions the name again in its
+/// arguments are no owner call.
+#[test]
+fn a_turbofish_call_has_the_plain_call_shape() {
+    assert!(matches!(
+        owner_call_shape("doubled::<u8>(5)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("doubled::<Vec<u8>>(v)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("s.apply::<u8>(4)", "apply"),
+        Some(CallShape::Method("s"))
+    ));
+    for operand in [
+        "doubled::<u8(5)",
+        "doubled::<u8>",
+        "doubled::<u8>(5).min(3)",
+        "doubled::<u8> (5)",
+        "doubled::other(5)",
+        "doubled::<fn(u8) -> u8>(f)",
+        "doubled::<{ N + 1 }>(5)",
+        "doubled::<u8>(doubled(5))",
+    ] {
+        assert!(owner_call_shape(operand, "doubled").is_none(), "{operand}");
+    }
+    assert_eq!(
+        crate::analysis::extract::turbofish_len("::<u8>(5)"),
+        "::<u8>".len()
+    );
+    assert_eq!(crate::analysis::extract::turbofish_len("(5)"), 0);
+    assert_eq!(crate::analysis::extract::turbofish_len("::<u8(5)"), 0);
 }
 
 /// #15263: a test module that imports a standard macro at its own path

@@ -11818,6 +11818,60 @@
       ]
     },
     {
+      "id": "rust_trait_qualified_associated_call",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_qualified_associated_call",
+      "vector": "trait_dispatch_identity_qualified_associated",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "makes",
+          "file": "src/lib.rs",
+          "line": 14,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_turbofish_owner_call",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_turbofish_owner_call",
+      "vector": "owner_call_turbofish",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "doubles",
+          "file": "src/lib.rs",
+          "line": 8,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
       "id": "rust_trait_impl_import",
       "language": "rust",
       "tier": "pure",

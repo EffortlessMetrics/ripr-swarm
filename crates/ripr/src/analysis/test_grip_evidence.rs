@@ -6834,14 +6834,22 @@ fn call_arguments(text: &str, callee: &str) -> Option<Vec<String>> {
 }
 
 fn named_call_open_paren_index(text: &str, callee: &str) -> Option<usize> {
+    named_call_span(text, callee).map(|(_, open)| open)
+}
+
+/// The byte offsets of the callee's name and of its call's `(` for the first
+/// call of `callee` in `text`. A turbofish call (`callee::<u8>(..)`) is the
+/// same call (#15277), so value and visibility gates read it like the plain
+/// spelling instead of leaving it not evaluable.
+fn named_call_span(text: &str, callee: &str) -> Option<(usize, usize)> {
     text.match_indices(callee).find_map(|(start, _)| {
         let before = text[..start].chars().next_back();
         if before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
             return None;
         }
-        let after_start = start + callee.len();
-        let after = &text[after_start..];
-        after.starts_with('(').then_some(after_start)
+        let after_name = start + callee.len();
+        let open = after_name + crate::analysis::extract::turbofish_len(&text[after_name..]);
+        text[open..].starts_with('(').then_some((start, open))
     })
 }
 

@@ -9006,6 +9006,13 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
     )
 }
 
+/// Whether `operand` is exactly a bare (unqualified) call of `name`, plain or
+/// through a turbofish (`name::<u8>(..)`, #15277). A module-path call
+/// (`m::name(..)`) is excluded: a local binding cannot capture it.
+pub(super) fn is_bare_owner_call(operand: &str, name: &str) -> bool {
+    matches!(owner_call_shape(operand, name), Some(CallShape::Bare))
+}
+
 /// #12796: the tuple struct `T` when the changed tail is exactly `T(e)` or
 /// `Self(e)`, the owner declares that type (or `Self`) as its return, and the
 /// constructor takes one argument. A tuple constructor's arity is its field
@@ -9125,12 +9132,20 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         };
         (dot + 1, constructed)
     };
-    let after_name = &operand[call_start + name.len()..];
-    if !after_name.starts_with('(') {
+    // #15277: a turbofish (`name::<u8>(..)`, `recv.name::<u8>(..)`) names
+    // the same function; it only fixes the generic arguments.
+    let turbofish = crate::analysis::extract::turbofish_len(&operand[call_start + name.len()..]);
+    let opening = call_start + name.len() + turbofish;
+    if !operand[opening..].starts_with('(') {
         return None;
     }
     let masked = mask_comments_and_strings(operand);
-    let opening = call_start + name.len();
+    // Argument readers find the call by its literal `name(`, so a turbofish
+    // call whose arguments mention the name again (`f::<u8>(f(15))`) would
+    // lend them the inner call's arguments: refuse it.
+    if turbofish > 0 && whole_word_count(&masked, name) != 1 {
+        return None;
+    }
     let closing = matching_close(&masked, opening, b'(', b')')?;
     if !operand[closing + 1..].trim().is_empty() {
         return None;
