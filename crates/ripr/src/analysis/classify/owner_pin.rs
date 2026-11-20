@@ -11405,7 +11405,7 @@ fn derived_equality<'a>(
 /// - every one of them is a declared variant of `qualifier`, not an
 ///   associated constant or function that may build any variant;
 /// - its `==` is the derived one over fields that each compare by value
-///   ([`error_enum_compares_payload`]).
+///   ([`derived_fields_compare_by_value`]).
 fn error_enum_admits_variant_pin(
     qualifier: &str,
     variant: &str,
@@ -11419,7 +11419,7 @@ fn error_enum_admits_variant_pin(
                 .chain(siblings.iter().map(String::as_str))
                 .all(|name| facts.variants.iter().any(|declared| declared == name))
         })
-        && error_enum_compares_payload(qualifier, index)
+        && derived_fields_compare_by_value(qualifier, index)
 }
 
 /// #7063: whether the owner's file names the one workspace declaration of
@@ -11470,10 +11470,12 @@ fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustI
     })
 }
 
-/// #7063: whether `qualifier` names one workspace type whose `==` is the
-/// derived one over fields that each compare by value, so an equality
-/// against one constructed variant compares that variant's payload.
-pub(super) fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
+/// Whether the unique workspace type uses derived equality over fields that
+/// compare by value. A handwritten comparison can execute arbitrary code.
+pub(in crate::analysis) fn derived_fields_compare_by_value(
+    qualifier: &str,
+    index: &RustIndex,
+) -> bool {
     derived_equality(qualifier, index).is_some_and(|(facts, declaring)| {
         facts.fields.iter().all(|field| {
             !field.has_attributes && type_compares_by_value(&field.ty, declaring, index, 0)

@@ -131,7 +131,7 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
-    drop_is_plain_in_closed_sources, observes_returned_element_field,
+    drop_is_plain, drop_is_plain_in_closed_sources, observes_returned_element_field,
     returned_array_construction_plain, workspace_has_visible_non_plain_drop,
 };
 pub(in crate::analysis) use facade_reach::{
@@ -167,7 +167,7 @@ pub(in crate::analysis) use helper_transfer::{
     chain_forwards_return_to_observed_hops, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, helper_only_reach,
     hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
-    returned_ledger_caller_is_observed, selected_inherent_calls,
+    returned_ledger_caller_is_observed, selected_inherent_calls, single_tuple_field_type,
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
@@ -202,7 +202,9 @@ pub(in crate::analysis) use owner_pin::{
     returned_closure_pin_required, targeted_free_call_reaches_owner, targeted_name_is_alias,
     targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
-pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
+pub(in crate::analysis) use owner_pin::{
+    FallibleCheckReceipt, derived_fields_compare_by_value, fallible_check_receipt,
+};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use owner_value_sink::{
     bool_field_assertion, owner_record_read_masked_anywhere, use_may_rebind_owner,
