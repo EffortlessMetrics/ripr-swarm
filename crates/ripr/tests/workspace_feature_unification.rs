@@ -450,6 +450,12 @@ fn a_strong_chain_turns_on_the_optional_dependency_feature() -> Result<(), Strin
         "\n[dependencies]\nb = { path = \"../b\", features = [\"x\"] }\n",
     )?
     .expect_credited("t", "strong chain enables feature `a`")?;
+    // With a required dependency the same strong chain only enables other.
+    abc_workspace(
+        "\n[dependencies]\na = { path = \"../a\" }\n\n[features]\nx = [\"a/other\"]\na = [\"a/special\"]\n",
+        "\n[dependencies]\nb = { path = \"../b\", features = [\"x\"] }\n",
+    )?
+    .expect_withheld("t", "required dependency shares a local feature name")?;
     abc_workspace(b, "")?.expect_withheld("t", "nothing enables `x`")?;
     Ok(())
 }

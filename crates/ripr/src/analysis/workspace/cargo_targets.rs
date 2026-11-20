@@ -836,7 +836,7 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
 /// any part of it could not be read: a present non-object table, a
 /// non-array entry, or a non-string item. Unreadable parts are left out.
 fn feature_table_with_doubt(package: &serde_json::Value) -> (BTreeMap<String, Vec<String>>, bool) {
-    let mut map = BTreeMap::new();
+    let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let features = match package.get("features") {
         None | Some(serde_json::Value::Null) => return (map, false),
         Some(serde_json::Value::Object(features)) => features,
@@ -857,6 +857,25 @@ fn feature_table_with_doubt(package: &serde_json::Value) -> (BTreeMap<String, Ve
                 .map(str::to_string)
                 .collect(),
         );
+    }
+    // Cargo activates a same-named local feature for a strong request on an
+    // optional dependency. A required dependency can share a feature's name
+    // without enabling it. Metadata uses the rename as the manifest key.
+    let optional_keys: BTreeSet<&str> = package["dependencies"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|dep| dep["optional"].as_bool() == Some(true))
+        .filter_map(|dep| dep["rename"].as_str().or_else(|| dep["name"].as_str()))
+        .filter(|key| map.contains_key(*key))
+        .collect();
+    for enables in map.values_mut() {
+        let implicit: Vec<String> = enables.iter()
+            .filter_map(|item| item.split_once('/'))
+            .filter(|(key, _)| optional_keys.contains(key))
+            .map(|(key, _)| key.to_string())
+            .collect();
+        enables.extend(implicit);
     }
     (map, doubt)
 }
@@ -1149,7 +1168,7 @@ fn expand_features_into(
 ) {
     let mut stack: Vec<String> = requests
         .iter()
-        .filter_map(|request| local_feature_enable(request, table))
+        .filter_map(|request| local_feature_enable(request))
         .filter(|request| request != "default" || table.contains_key("default"))
         .collect();
     while let Some(name) = stack.pop() {
@@ -1160,7 +1179,7 @@ fn expand_features_into(
             stack.extend(
                 enables
                     .iter()
-                    .filter_map(|item| local_feature_enable(item, table)),
+                    .filter_map(|item| local_feature_enable(item)),
             );
         }
     }
@@ -1180,7 +1199,7 @@ fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet
         }
         if let Some(enables) = features.get(&name) {
             for item in enables {
-                if let Some(local) = local_feature_enable(item, features) {
+                if let Some(local) = local_feature_enable(item) {
                     stack.push(local);
                 }
             }
@@ -1189,20 +1208,10 @@ fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet
     enabled
 }
 
-/// The local feature one enable turns on, if any. A plain name is itself.
-/// A strong `key/feature` enable also turns on the package's own feature
-/// named `key` when one exists (cargo enables it with the optional
-/// dependency, #15079 review); `dep:key` and weak `key?/feature` do not.
-fn local_feature_enable(item: &str, table: &BTreeMap<String, Vec<String>>) -> Option<String> {
+/// A plain local feature name in the expanded metadata table.
+fn local_feature_enable(item: &str) -> Option<String> {
     let item = item.trim();
-    if item.is_empty() || item.starts_with("dep:") {
-        return None;
-    }
-    match item.split_once('/') {
-        None => Some(item.to_string()),
-        Some((key, _)) if !key.ends_with('?') && table.contains_key(key) => Some(key.to_string()),
-        Some(_) => None,
-    }
+    (!item.is_empty() && !item.starts_with("dep:") && !item.contains('/')).then(|| item.to_string())
 }
 
 /// Whether every `required-features` name is in the member's analyzed
