@@ -47,6 +47,20 @@ pub(super) fn analysis_outcome_exit_result(
     Ok(())
 }
 
+fn root_metadata_refusal(root: &Path, command_name: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        return format!(
+            "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
+            root.display()
+        );
+    }
+    format!(
+        "{command_name} root {} could not be inspected ({:?}: {error}), so it is not confirmed to be a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
+        root.display(),
+        error.kind()
+    )
+}
+
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
     // Detected once: every branch below keys on the same typed components.
     let stripped = windows_stripped_components(root);
@@ -121,10 +135,16 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
                 ))
             }
         }
-        Ok(_) | Err(_) => Err(format!(
+        // The path exists but is not a directory.
+        Ok(_) => Err(format!(
             "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             root.display()
         )),
+        // Metadata failed. NotFound proves absence, so the existing wording
+        // stands; any other kind (a file-typed parent, permissions, a
+        // transient sharing violation) does not prove the path is a
+        // non-directory, so the refusal names the actual io error.
+        Err(error) => Err(root_metadata_refusal(root, command_name, &error)),
     }
 }
 
@@ -336,6 +356,20 @@ pub(super) fn refuse_json_envelope_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_metadata_failure_other_than_not_found_names_the_io_error() {
+        let root = Path::new("fx");
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "sharing violation");
+        let message = root_metadata_refusal(root, "check", &denied);
+        assert!(message.contains("PermissionDenied"), "{message}");
+        assert!(message.contains("sharing violation"), "{message}");
+        assert!(!message.contains("is not a directory;"), "{message}");
+
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let message = root_metadata_refusal(root, "check", &missing);
+        assert!(message.contains("is not a directory; pass the directory"), "{message}");
+    }
 
     struct Guard(std::path::PathBuf);
     impl Drop for Guard {
