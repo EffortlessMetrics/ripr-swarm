@@ -1630,7 +1630,10 @@ fn run_agent_attempt_status(options: &AgentStatusOptions, attempt: &str) -> Resu
             crate::cli::usage_refusal::invalid_value_with_next(
                 attempt,
                 &format!("agent status --attempt: {error}"),
-                &format!("ripr agent status --root {root}"),
+                &format!(
+                    "ripr agent status --root {root}{}",
+                    crate::app::repair_attempt::quoted_store_flag(options.store.as_deref())
+                ),
             )
         })?;
     let report = app::agent_status::build_agent_attempt_status(

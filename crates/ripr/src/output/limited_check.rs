@@ -284,11 +284,21 @@ fn machine_notice(error: &CoreError, root: &std::path::Path) -> crate::core_erro
     if notice.identity == CONFIG_INVALID_IDENTITY
         && let Some(recovery) = crate::config::working_tree_config_recovery(&error.to_string())
     {
-        notice.message = format!(
-            "{}; {recovery}, then check it with `{}`",
-            notice.message,
-            config_validate_command(root)
-        );
+        // A root holding a backtick cannot round-trip through the
+        // backtick-delimited prose the remedy parser reads, so the step is
+        // named without the command and `next` stays null (fail closed).
+        let command = config_validate_command(root);
+        notice.message = if command.contains('`') {
+            format!(
+                "{}; {recovery}, then check it with ripr config validate --root <repository root>",
+                notice.message
+            )
+        } else {
+            format!(
+                "{}; {recovery}, then check it with `{command}`",
+                notice.message
+            )
+        };
         notice.remedy = crate::domain::RefusalRemedy::from_prose(&notice.message);
     }
     notice

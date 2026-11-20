@@ -232,13 +232,21 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // the mode analysis actually ran with, not the pre-merge default
     // (#7331 review).
     let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
-    // #15260: the listing command a selector miss names, composed from the
-    // typed run (root, base, scope; the artifact route's own spelling), never
-    // from the selector, so `error.next` can carry it.
-    let miss_list_command = if from_artifact.is_some() {
-        "ripr check --json".to_string()
+    // #15260: the listing commands a selector miss can name, composed from
+    // the typed run (root, base, both scopes; the artifact route's own
+    // spelling), never from the selector, so `error.next` can carry the one
+    // the owner's prose leads with. A dirty-default worktree miss leads with
+    // the committed listing (#9015), so the scope this run used is not
+    // assumed.
+    let miss_list_commands = if from_artifact.is_some() {
+        vec!["ripr check --json".to_string()]
     } else {
-        app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree).list_command()
+        vec![
+            app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree)
+                .list_command(),
+            app::finding_navigation_with_worktree(&input, None, explicit.mode, !worktree)
+                .list_command(),
+        ]
     };
     let refuse = |error: crate::core_error::CoreError, selector: &str| -> String {
         // A selector miss is usage-class, not an operational refusal: it
@@ -250,9 +258,15 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             let message = error.to_string();
             // Only a miss whose own prose names the listing carries it as
             // `next` (a seam-id miss points at `repair` instead).
-            let list_next = message
-                .contains(&format!("`{miss_list_command}`"))
-                .then_some(miss_list_command.as_str());
+            let list_next = miss_list_commands
+                .iter()
+                .filter_map(|command| {
+                    message
+                        .find(&format!("`{command}`"))
+                        .map(|at| (at, command.as_str()))
+                })
+                .min_by_key(|(at, _)| *at)
+                .map(|(_, command)| command);
             crate::cli::usage_refusal::note_selector_miss(selector, &message, list_next);
             return message;
         }

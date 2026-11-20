@@ -127,6 +127,31 @@ fn agent_status_json_refuses_a_malformed_attempt_id_with_the_listing_command() -
         next.starts_with("ripr agent status --root ") && !next.contains("--attempt"),
         "{value}"
     );
+    assert!(!next.contains("--store"), "{value}");
+
+    // An explicit store is kept, so the listing reads the same inventory.
+    let value = document(
+        &run_ripr(&[
+            "agent",
+            "status",
+            "--attempt",
+            "nope",
+            "--json",
+            "--root",
+            &root_arg,
+            "--store",
+            "target/ripr/alt-attempts",
+        ]),
+        2,
+    )?;
+    let next = value["error"]["next"]["command"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        next.starts_with("ripr agent status --root ")
+            && next.ends_with(" --store target/ripr/alt-attempts"),
+        "{value}"
+    );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
@@ -198,5 +223,29 @@ fn invalid_config_json_refusals_carry_the_human_next_step() -> TestResult {
         "{cont}"
     );
     let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A root holding a backtick cannot round-trip through the backtick-delimited
+/// prose the remedy parser reads, so the config step is named without a
+/// runnable command and `next` stays null rather than a truncated command.
+#[cfg(unix)]
+#[test]
+fn invalid_config_under_a_backticked_root_leaves_next_null() -> TestResult {
+    let base = unique_temp_workspace("config-backtick-15260");
+    let root = base.join("repo``name");
+    std::fs::create_dir_all(&root)?;
+    let seeded = broken_config_repo("config-backtick-seed-15260")?;
+    std::fs::remove_dir_all(&root)?;
+    std::fs::rename(&seeded, &root)?;
+    let root_arg = root.display().to_string();
+    let check = document(&run_ripr(&["check", "--json", "--root", &root_arg]), 2)?;
+    assert!(check["error"]["next"].is_null(), "{check}");
+    let message = check["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("fix the error in ripr.toml and rerun"),
+        "{message}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
     Ok(())
 }
