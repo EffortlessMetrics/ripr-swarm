@@ -1581,7 +1581,10 @@ impl TestScope {
                     Some((ScopeValue::Factory(factory), Phase::BeforeEach))
                         if found.iter().any(|(value, phase)| {
                             *phase == Phase::Declaration && matches!(value, ScopeValue::Declared)
-                        }) => Some(factory.clone()),
+                        }) =>
+                    {
+                        Some(factory.clone())
+                    }
                     _ => None,
                 };
                 resolved.push(TypeScriptScopeBinding {
@@ -1732,10 +1735,18 @@ fn collect_scope_bindings(
                 let synchronous = phase == Phase::BeforeEach
                     && call.arguments.len() == 1
                     && match argument {
-                        Argument::ArrowFunctionExpression(f) => !f.r#async && !f.expression
-                            && f.params.items.is_empty() && f.params.rest.is_none(),
-                        Argument::FunctionExpression(f) => !f.r#async && !f.generator
-                            && f.params.items.is_empty() && f.params.rest.is_none(),
+                        Argument::ArrowFunctionExpression(f) => {
+                            !f.r#async
+                                && !f.expression
+                                && f.params.items.is_empty()
+                                && f.params.rest.is_none()
+                        }
+                        Argument::FunctionExpression(f) => {
+                            !f.r#async
+                                && !f.generator
+                                && f.params.items.is_empty()
+                                && f.params.rest.is_none()
+                        }
                         _ => false,
                     };
                 let writes: Vec<ScopeEntry> = writes
@@ -1978,7 +1989,11 @@ fn withhold_rebound_scope_receivers(
         }
         let mut bindings = test.scope_bindings.to_vec();
         for binding in &mut bindings {
-            let Some(constructor) = binding.constructed_by.as_ref().or(binding.hook_factory.as_ref()) else {
+            let Some(constructor) = binding
+                .constructed_by
+                .as_ref()
+                .or(binding.hook_factory.as_ref())
+            else {
                 continue;
             };
             let root = constructor.split('.').next().unwrap_or(constructor);

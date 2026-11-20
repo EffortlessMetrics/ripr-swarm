@@ -204,7 +204,9 @@ fn assert_relative_import_disclosed(specifier: &str) -> Result<(), String> {
     )?;
     ts_write_file(
         &root.join("test/calc.test.js"),
-        &format!("const {{ isAdult }} = require('{specifier}');\n\ntest('adult', () => {{\n  expect(isAdult(18)).toBe(true);\n}});\n"),
+        &format!(
+            "const {{ isAdult }} = require('{specifier}');\n\ntest('adult', () => {{\n  expect(isAdult(18)).toBe(true);\n}});\n"
+        ),
     )?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -286,26 +288,74 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
             ("src/other.ts", owner),
             ("src/ambiguous.ts", owner),
             ("src/ambiguous.tsx", owner),
-            ("test/public.test.ts", "import emitter from '..';\nimport { expect } from 'chai';\nit('returns a value', () => { expect(emitter()).to.equal(42); });\n"),
+            (
+                "test/public.test.ts",
+                "import emitter from '..';\nimport { expect } from 'chai';\nit('returns a value', () => { expect(emitter()).to.equal(42); });\n",
+            ),
             (".gitignore", "dist/\n"),
-            ("dist/emitter.js", "throw new Error('local build artifact');\n"),
+            (
+                "dist/emitter.js",
+                "throw new Error('local build artifact');\n",
+            ),
         ],
     )?;
     fixture_git_ok(&root, &["init", "-q"])?;
     fixture_git_ok(&root, &["add", ".gitignore", "src", "test"])?;
-    let paths = ["src/index.ts", "src/other.ts", "src/ambiguous.ts", "src/ambiguous.tsx"];
+    let paths = [
+        "src/index.ts",
+        "src/other.ts",
+        "src/ambiguous.ts",
+        "src/ambiguous.tsx",
+    ];
     let changes = paths.map(|file| changed_with_lines(file, &[(2, "  return 42;")]));
     for (label, entries, tracked, credits) in [
-        ("declared source", r#""source":"src/index.ts","module":"dist/emitter.mjs""#, true, true),
-        ("two sources", r#""source":["src/index.ts","src/other.ts"]"#, true, false),
-        ("divergent exports", r#""source":"src/index.ts","exports":{".":{"import":"./dist/emitter.mjs","require":"./dist/different.js"}}"#, true, false),
-        ("ambiguous files", r#""source":"src/ambiguous""#, true, false),
-        ("different module", r#""source":"src/index.ts","module":"src/other.ts""#, true, false),
-        ("missing source", r#""source":"src/missing.ts""#, true, false),
+        (
+            "declared source",
+            r#""source":"src/index.ts","module":"dist/emitter.mjs""#,
+            true,
+            true,
+        ),
+        (
+            "two sources",
+            r#""source":["src/index.ts","src/other.ts"]"#,
+            true,
+            false,
+        ),
+        (
+            "divergent exports",
+            r#""source":"src/index.ts","exports":{".":{"import":"./dist/emitter.mjs","require":"./dist/different.js"}}"#,
+            true,
+            false,
+        ),
+        (
+            "ambiguous files",
+            r#""source":"src/ambiguous""#,
+            true,
+            false,
+        ),
+        (
+            "different module",
+            r#""source":"src/index.ts","module":"src/other.ts""#,
+            true,
+            false,
+        ),
+        (
+            "missing source",
+            r#""source":"src/missing.ts""#,
+            true,
+            false,
+        ),
         ("no counterpart", r#""version":"1.0.0""#, true, false),
-        ("untracked source", r#""source":"src/index.ts""#, false, false),
+        (
+            "untracked source",
+            r#""source":"src/index.ts""#,
+            false,
+            false,
+        ),
     ] {
-        let manifest = format!(r#"{{"name":"tiny-emitter","main":"dist/emitter.js","devDependencies":{{"mocha":"*","chai":"*"}},{entries}}}"#);
+        let manifest = format!(
+            r#"{{"name":"tiny-emitter","main":"dist/emitter.js","devDependencies":{{"mocha":"*","chai":"*"}},{entries}}}"#
+        );
         ts_write_file(&root.join("package.json"), &manifest)?;
         fixture_git_ok(&root, &["add", "package.json"])?;
         if !tracked {
@@ -317,23 +367,50 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
             &changes,
         )?;
         for file in paths {
-            let finding = result.findings.iter().find(|finding| {
-                finding.probe.location.file == Path::new(file)
-                    && finding.probe.owner.as_ref().is_some_and(|name| name.0.ends_with("emitter"))
-            }).ok_or_else(|| format!("{label}: missing emitter finding in {file}"))?;
+            let finding = result
+                .findings
+                .iter()
+                .find(|finding| {
+                    finding.probe.location.file == Path::new(file)
+                        && finding
+                            .probe
+                            .owner
+                            .as_ref()
+                            .is_some_and(|name| name.0.ends_with("emitter"))
+                })
+                .ok_or_else(|| format!("{label}: missing emitter finding in {file}"))?;
             assert_eq!(
-                finding.related_tests.iter().any(|test| test.file == Path::new("test/public.test.ts")),
+                finding
+                    .related_tests
+                    .iter()
+                    .any(|test| test.file == Path::new("test/public.test.ts")),
                 credits && file == "src/index.ts",
-                "{label}, {file}: {:?}", finding.related_tests,
+                "{label}, {file}: {:?}",
+                finding.related_tests,
             );
             if credits && file == "src/index.ts" {
-                assert!(!matches!(finding.class, ExposureClass::Exposed), "{finding:?}");
-                assert!(finding.evidence.iter().any(|line| line.contains("loaded bundle is unverified")), "{:?}", finding.evidence);
+                assert!(
+                    !matches!(finding.class, ExposureClass::Exposed),
+                    "{finding:?}"
+                );
+                assert!(
+                    finding
+                        .evidence
+                        .iter()
+                        .any(|line| line.contains("loaded bundle is unverified")),
+                    "{:?}",
+                    finding.evidence
+                );
             }
             if !credits && file == "src/index.ts" {
                 assert!(
-                    finding.evidence.iter().any(|line| line.contains("dist/emitter.js") && line.contains("tracked source")),
-                    "{label}: {:?}", finding.evidence,
+                    finding
+                        .evidence
+                        .iter()
+                        .any(|line| line.contains("dist/emitter.js")
+                            && line.contains("tracked source")),
+                    "{label}: {:?}",
+                    finding.evidence,
                 );
             }
         }
@@ -342,7 +419,8 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
 }
 
 #[test]
-fn before_each_factory_relation_is_specific_to_the_changed_method_and_receiver() -> Result<(), String> {
+fn before_each_factory_relation_is_specific_to_the_changed_method_and_receiver()
+-> Result<(), String> {
     use crate::testing::fixture_git::fixture_git_ok;
 
     let owner = r#"export default function emitter() {
@@ -357,29 +435,55 @@ fn before_each_factory_relation_is_specific_to_the_changed_method_and_receiver()
   };
 }
 "#;
-    let root = with_tree("hook-factory-method", &[
-        ("src/index.ts", owner),
-        ("package.json", r#"{"name":"events","source":"src/index.ts","main":"dist/emitter.js","devDependencies":{"mocha":"*","chai":"*"}}"#),
-        (".gitignore", "dist/\n"),
-    ])?;
+    let root = with_tree(
+        "hook-factory-method",
+        &[
+            ("src/index.ts", owner),
+            (
+                "package.json",
+                r#"{"name":"events","source":"src/index.ts","main":"dist/emitter.js","devDependencies":{"mocha":"*","chai":"*"}}"#,
+            ),
+            (".gitignore", "dist/\n"),
+        ],
+    )?;
     fixture_git_ok(&root, &["init", "-q"])?;
     fixture_git_ok(&root, &["add", "src", "package.json", ".gitignore"])?;
-    let changes = [changed_with_lines("src/index.ts", &[
-        (5, "      items.push(value);"),
-        (8, "      return items.slice();"),
-    ])];
+    let changes = [changed_with_lines(
+        "src/index.ts",
+        &[
+            (5, "      items.push(value);"),
+            (8, "      return items.slice();"),
+        ],
+    )];
     for (specifier, hook, factory_expected) in [
         ("../src", "beforeEach(() => { inst = make(); });", true),
         ("..", "beforeEach(() => { inst = make(); });", true),
-        ("..", "beforeEach(() => { if (ready) inst = make(); });", false),
+        (
+            "..",
+            "beforeEach(() => { if (ready) inst = make(); });",
+            false,
+        ),
         ("..", "beforeEach(() => { let inst = make(); });", false),
         ("..", "beforeEach(async () => { inst = make(); });", false),
-        ("..", "beforeEach(() => { const make = unrelated; inst = make(); });", false),
-        ("..", "beforeEach(() => { inst = make(); inst = other(); });", false),
+        (
+            "..",
+            "beforeEach(() => { const make = unrelated; inst = make(); });",
+            false,
+        ),
+        (
+            "..",
+            "beforeEach(() => { inst = make(); inst = other(); });",
+            false,
+        ),
         ("..", "afterEach(() => { inst = make(); });", false),
-        ("../elsewhere", "beforeEach(() => { inst = make(); });", false),
+        (
+            "../elsewhere",
+            "beforeEach(() => { inst = make(); });",
+            false,
+        ),
     ] {
-        let test = format!(r#"import make from '{specifier}';
+        let test = format!(
+            r#"import make from '{specifier}';
 import {{ expect }} from 'chai';
 describe('collection', () => {{
   let inst;
@@ -389,22 +493,37 @@ describe('collection', () => {{
   it('another object', () => {{ expect(other.values()).to.deep.equal([]); }});
   it('nested receiver', () => {{ holder. inst.values(); }});
 }});
-"#);
+"#
+        );
         ts_write_file(&root.join("test/public.test.ts"), &test)?;
         fixture_git_ok(&root, &["add", "test"])?;
         let result = TypeScriptAdapter.analyze_diff(
-            &ts_analysis_options(root.clone()), &OraclePolicy::default(), &changes,
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &changes,
         )?;
         for (line, label) in [(5, "adds one"), (8, "reads order")] {
-            let finding = result.findings.iter().find(|finding| finding.probe.location.line == line)
+            let finding = result
+                .findings
+                .iter()
+                .find(|finding| finding.probe.location.line == line)
                 .ok_or_else(|| format!("missing changed method at src/index.ts:{line}"))?;
-            let rows: Vec<_> = finding.evidence.iter()
+            let rows: Vec<_> = finding
+                .evidence
+                .iter()
                 .filter(|line| line.starts_with("related_test_relation: hook_factory_method ("))
                 .collect();
-            assert_eq!(rows.len(), usize::from(factory_expected), "{specifier} {hook}: {finding:?}");
+            assert_eq!(
+                rows.len(),
+                usize::from(factory_expected),
+                "{specifier} {hook}: {finding:?}"
+            );
             if factory_expected {
                 assert!(rows[0].contains(label), "{rows:?}");
-                assert!(!matches!(finding.class, ExposureClass::Exposed), "{finding:?}");
+                assert!(
+                    !matches!(finding.class, ExposureClass::Exposed),
+                    "{finding:?}"
+                );
             }
         }
     }

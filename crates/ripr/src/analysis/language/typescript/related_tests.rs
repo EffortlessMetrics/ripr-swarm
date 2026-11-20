@@ -2090,8 +2090,9 @@ pub(crate) fn related_test_candidates<'a>(
         candidates = indexed
             .into_iter()
             .filter_map(|test| {
-                build_entry_call(test, owner, reexport_index, map, scope.workspace_root)
-                    .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
+                build_entry_call(test, owner, reexport_index, map, scope.workspace_root).map(
+                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
+                )
             })
             .collect();
     }
@@ -4939,7 +4940,10 @@ pub(crate) fn owner_path_disposition(
     if let Some(view) = test.reach_view() {
         return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
     }
-    if matches!(relation, TypeScriptRelationKind::PackageBuildSource | TypeScriptRelationKind::HookFactoryMethod) {
+    if matches!(
+        relation,
+        TypeScriptRelationKind::PackageBuildSource | TypeScriptRelationKind::HookFactoryMethod
+    ) {
         return TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport;
     }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
@@ -4987,30 +4991,31 @@ fn ts_relation_to_domain(
     Option<crate::domain::RelationConfidence>,
 ) {
     use crate::domain::{RelationConfidence, RelationReason};
-    let reason = match kind {
-        TypeScriptRelationKind::DirectOwnerCall => RelationReason::DirectOwnerCall,
-        // Alias-rename import (`{ X as local }`) + verified body call: the
-        // rename is syntactically explicit and the call is to the local alias —
-        // same certainty as DirectOwnerCall.
-        TypeScriptRelationKind::ImportAliasOwnerCall => RelationReason::DirectOwnerCall,
-        TypeScriptRelationKind::ImportedOwnerCall | TypeScriptRelationKind::PackageBuildSource => {
-            RelationReason::ImportPathAffinity
-        }
-        TypeScriptRelationKind::ModuleValueReference => RelationReason::DirectOwnerCall,
-        TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
-        TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
-        TypeScriptRelationKind::ReExportChainFollowed => RelationReason::ReExportChainFollowed,
-        // The test calls a same-module export that calls the owner: the
-        // TypeScript form of a production helper that delegates to the owner.
-        TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
-        TypeScriptRelationKind::DecoratedMethodCall | TypeScriptRelationKind::HookFactoryMethod => RelationReason::HelperOwnerCall,
-        // Heuristic relations: no strong domain mapping — emit None to preserve
-        // the existing behaviour for these lower-confidence relation kinds.
-        TypeScriptRelationKind::ModuleValueUse
-        | TypeScriptRelationKind::SameFileProximity
-        | TypeScriptRelationKind::DescribeName
-        | TypeScriptRelationKind::TestName => return (None, None),
-    };
+    let reason =
+        match kind {
+            TypeScriptRelationKind::DirectOwnerCall => RelationReason::DirectOwnerCall,
+            // Alias-rename import (`{ X as local }`) + verified body call: the
+            // rename is syntactically explicit and the call is to the local alias —
+            // same certainty as DirectOwnerCall.
+            TypeScriptRelationKind::ImportAliasOwnerCall => RelationReason::DirectOwnerCall,
+            TypeScriptRelationKind::ImportedOwnerCall
+            | TypeScriptRelationKind::PackageBuildSource => RelationReason::ImportPathAffinity,
+            TypeScriptRelationKind::ModuleValueReference => RelationReason::DirectOwnerCall,
+            TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
+            TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
+            TypeScriptRelationKind::ReExportChainFollowed => RelationReason::ReExportChainFollowed,
+            // The test calls a same-module export that calls the owner: the
+            // TypeScript form of a production helper that delegates to the owner.
+            TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
+            TypeScriptRelationKind::DecoratedMethodCall
+            | TypeScriptRelationKind::HookFactoryMethod => RelationReason::HelperOwnerCall,
+            // Heuristic relations: no strong domain mapping — emit None to preserve
+            // the existing behaviour for these lower-confidence relation kinds.
+            TypeScriptRelationKind::ModuleValueUse
+            | TypeScriptRelationKind::SameFileProximity
+            | TypeScriptRelationKind::DescribeName
+            | TypeScriptRelationKind::TestName => return (None, None),
+        };
     let confidence = match kind {
         TypeScriptRelationKind::DirectOwnerCall
         | TypeScriptRelationKind::ImportAliasOwnerCall

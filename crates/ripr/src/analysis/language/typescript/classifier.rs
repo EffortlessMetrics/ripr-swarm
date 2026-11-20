@@ -7256,7 +7256,11 @@ pub(crate) fn owner_line_context<'a>(
     let named_limitations_from_spy: Vec<TypeScriptNamedLimitation> =
         named_limitations_for_spy_fabrication_from_candidates(owner, &index_candidates);
     let hook_methods = super::hook_factory_method::candidates(
-        owner, &index_candidates, workspace_root, reexport_index, alias_map,
+        owner,
+        &index_candidates,
+        workspace_root,
+        reexport_index,
+        alias_map,
     );
     OwnerLineContext {
         hook_methods,
@@ -7539,12 +7543,21 @@ pub(crate) fn classify_resolved_owner(
         &context.related_candidates
     };
     let mut with_hook_methods;
-    let related_candidates = if context.hook_methods.iter().any(|row| row.lines.contains(&line)) {
+    let related_candidates = if context
+        .hook_methods
+        .iter()
+        .any(|row| row.lines.contains(&line))
+    {
         with_hook_methods = related_candidates.clone();
-        for row in context.hook_methods.iter().filter(|row| row.lines.contains(&line)) {
-            if let Some(existing) = with_hook_methods.iter_mut().find(|candidate| {
-                std::ptr::eq(candidate.test, row.candidate.test)
-            }) {
+        for row in context
+            .hook_methods
+            .iter()
+            .filter(|row| row.lines.contains(&line))
+        {
+            if let Some(existing) = with_hook_methods
+                .iter_mut()
+                .find(|candidate| std::ptr::eq(candidate.test, row.candidate.test))
+            {
                 if existing.relation.is_uncertain() {
                     *existing = row.candidate;
                 }
