@@ -237,6 +237,8 @@ fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String
             "comment-write",
             "ms /* normalize */ = ms / 2;\n  const msAbs = ms;",
         ),
+        ("destructured-local", "const { msAbs } = { msAbs: ms / 2 };"),
+        ("destructured-array-local", "const [msAbs] = [ms / 2];"),
     ];
     for (label, local) in cases {
         let source = duration_source_with(CHAIN, "ms: number, other: number = 0", local);
@@ -257,6 +259,15 @@ fn a_local_that_transforms_the_parameter_does_not_witness() -> Result<(), String
 fn a_destructured_parameter_binding_keeps_the_object_pin() -> Result<(), String> {
     let source = duration_source_with(CHAIN, "{ msAbs }: { msAbs: number }", "const ms = 0;");
     let finding = folded_finding("destructured-owner", &source, "{ msAbs: 3_600_000 }")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.evidence
+    );
+    let defaulted =
+        duration_source_with(CHAIN, "{ msAbs = 0 }: { msAbs?: number }", "const ms = 0;");
+    let finding = folded_finding("destructured-default", &defaulted, "{ msAbs: 3_600_000 }")?;
     assert_eq!(
         finding.class,
         ExposureClass::Exposed,
