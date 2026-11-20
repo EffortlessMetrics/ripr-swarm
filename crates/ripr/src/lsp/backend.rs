@@ -6015,7 +6015,11 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
 /// The fact content and the recovery route are shared across surfaces; the
 /// LSP names its own configuration surface rather than MCP's `ripr_refresh`
 /// arguments.
-pub(super) const EMPTY_SCOPE_LSP_RETRY_ROUTE: &str = "Set the analysis base to the revision your change branches from (the `baseRef` session option or `[lsp] base_ref` in `ripr.toml`) and run ripr.refresh to re-analyze.";
+///
+/// The base is a session setting only: `ripr.toml` has no base key (its
+/// `[lsp]` table rejects `base_ref`, and a rejected `ripr.toml` pauses all
+/// analysis), so the route must not name one.
+pub(super) const EMPTY_SCOPE_LSP_RETRY_ROUTE: &str = "Set the analysis base to the revision your change branches from (the `baseRef` initialization option; in VS Code, the `ripr.baseRef` setting) and run ripr.refresh to re-analyze.";
 
 /// #12416: the not-all-clear scope sentence for an empty-scope snapshot,
 /// `Some` exactly under the MCP `empty_scope_hint` gate: an empty-scope
@@ -13423,6 +13427,39 @@ mod work_done_progress_guard_tests {
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod empty_scope_retry_route_tests {
+    use super::*;
+
+    /// The route must name only base settings the server accepts: the
+    /// `baseRef` session option (VS Code `ripr.baseRef`). Following a route
+    /// to a `ripr.toml` key the config owner rejects would pause analysis.
+    #[test]
+    fn empty_scope_retry_route_names_only_accepted_base_settings() -> Result<(), String> {
+        let rejected = crate::config::parse_config_diagnostic("[lsp]\nbase_ref = \"main\"\n");
+        if rejected.is_ok() {
+            return Err("ripr.toml now accepts [lsp] base_ref; revisit the route".to_string());
+        }
+        let route = EMPTY_SCOPE_LSP_RETRY_ROUTE;
+        if route.contains("base_ref") || route.contains("ripr.toml") {
+            return Err(format!("route names a rejected ripr.toml key: {route}"));
+        }
+        if !route.contains("`baseRef`") || !route.contains("`ripr.baseRef`") {
+            return Err(format!(
+                "route must name the accepted base settings: {route}"
+            ));
+        }
+        let mut options = serde_json::Map::new();
+        options.insert("baseRef".to_string(), serde_json::json!("origin/release"));
+        let mut config = LspAnalysisConfig::default();
+        super::super::config::apply_session_options(&mut config, &options)?;
+        if config.base_ref.as_deref() != Some("origin/release") {
+            return Err(format!("baseRef must set the base: {:?}", config.base_ref));
+        }
+        Ok(())
     }
 }
 
