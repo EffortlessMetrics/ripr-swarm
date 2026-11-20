@@ -3,8 +3,9 @@
 use crate::cli::help;
 use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
-use crate::config::load_for_root;
+use crate::config::{RiprConfig, load_for_root};
 use crate::output::path::human_path;
+use crate::output::suppressions::load_suppressions_for_root_at;
 use std::path::{Path, PathBuf};
 
 pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
@@ -70,13 +71,19 @@ fn validate_config(root: &Path) -> Result<String, String> {
     // discovery can also validate a parent's file the user did not point at,
     // so the success line names the file that actually governed (#9604).
     match load_for_root(root) {
-        Ok(config) => Ok(match &config.source_path {
-            // `human_path` is the lossless renderer: the escaping display
-            // renderer would rewrite a real `%` or `\` in the filename and
-            // name a file that does not exist (#9604 review).
-            Some(path) => format!("✓ ripr.toml valid ({})", human_path(path)),
-            None => "✓ no ripr.toml found; built-in defaults apply".to_string(),
-        }),
+        Ok(config) => {
+            let config_line = match &config.source_path {
+                // `human_path` is the lossless renderer: the escaping display
+                // renderer would rewrite a real `%` or `\` in the filename and
+                // name a file that does not exist (#9604 review).
+                Some(path) => format!("✓ ripr.toml valid ({})", human_path(path)),
+                None => "✓ no ripr.toml found; built-in defaults apply".to_string(),
+            };
+            Ok(match validate_suppressions_manifest(root, &config)? {
+                Some(manifest_line) => format!("{config_line}\n{manifest_line}"),
+                None => config_line,
+            })
+        }
         // Marker detection can refuse a root that has no config file at all
         // (Python markers in a binary without `lang-python`). That is a
         // setup advisory about a file the user never wrote, not a validation
@@ -94,6 +101,51 @@ fn validate_config(root: &Path) -> Result<String, String> {
             ))
         }
         Err(error) => Err(error),
+    }
+}
+
+/// #15308: the suppressions manifest the config selects is part of the
+/// config. A configured file that does not exist is a typo or an uncommitted
+/// file, and every consumer would otherwise read it as an empty manifest
+/// without a word; a present manifest is parsed with the same parser `check`
+/// uses. An absent default manifest is the normal first run and stays silent.
+fn validate_suppressions_manifest(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<Option<String>, String> {
+    let relative = config.suppressions().path();
+    let display = config.suppressions().display_path();
+    let manifest = root.join(relative);
+    if crate::config::config_entry_present(&manifest) && !manifest.exists() {
+        // A dangling link is an entry the loader would read as an empty
+        // manifest without a word, at the default path too.
+        return Err(format!(
+            "[suppressions] path `{display}` is a link that names no file under {}; fix or remove the link, then re-run `ripr config validate`",
+            human_path(root),
+        ));
+    }
+    if !manifest.exists() {
+        if config.suppressions().is_default() {
+            return Ok(None);
+        }
+        return Err(format!(
+            "[suppressions] path `{display}` does not exist under {}; create the file, fix the path in ripr.toml, or remove the key to use the default `{}`",
+            human_path(root),
+            crate::config::DEFAULT_SUPPRESSIONS_PATH,
+        ));
+    }
+    match load_suppressions_for_root_at(root, relative) {
+        // The path is repository text that reaches stdout through a plain
+        // `println!`; failures are escaped by the CLI error sink instead.
+        Ok(entries) => Ok(Some(crate::terminal_text::terminal_safe(format!(
+            "✓ suppressions valid ({display}, {} entr{})",
+            entries.len(),
+            if entries.len() == 1 { "y" } else { "ies" }
+        )))),
+        Err(violations) => Err(format!(
+            "{display} validation failed:\n{}\nfix the lines above, then re-run `ripr config validate`",
+            violations.join("\n")
+        )),
     }
 }
 
@@ -459,3 +511,7 @@ path = ".ripr/suppressions\u0000.toml"
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "config/suppressions_manifest_tests.rs"]
+mod suppressions_manifest_tests;
