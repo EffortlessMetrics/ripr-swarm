@@ -293,7 +293,7 @@ mod tests {
             "#[derive(Debug, Clone, PartialEq)]\nstruct S;",
             "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}",
             "#[cfg_attr(test, derive(Debug))]\nstruct S;",
-            "#![allow(dead_code)]\n#[rustfmt::skip]\nfn f() {}",
+            "#![warn(missing_docs)]\n#[rustfmt::skip]\nfn f() {}",
             "/// docs\n#[doc = \"x\"]\nfn f() {}",
             "fn f() {}",
         ] {
