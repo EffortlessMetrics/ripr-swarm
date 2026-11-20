@@ -5952,6 +5952,166 @@ entries below are the complete record.
 - **CLI and output:** `ripr pilot` ranking and screens match what it did. Inside each current-change group a gap with a repair route outranks one without, so `top_actionable_seams[]` order and `next.repair_command` can change; it no longer lists Python under "Not scanned by pilot" when it analyzed Python, no longer prints a `Python preview` block with `findings: 0` for Python-only files it did not scan, and `ripr doctor` on a non-Rust root prints one "Rust checks skipped" line. `ripr check` no longer treats a cargo-fuzz harness as a production edit target. `ripr repair` and `ripr agent repair` no longer refuse every start on a repository just past the 10,000-seam cap (tokio at 12,754): a default cut up to 20,000 seams reruns once with the cap raised. (#11292, #11310, #11215, #11297, #11293, #1887)
 - **CLI and output:** Repair-attempt currentness holds up under normal cleanup. Gap-bound attempts keep the evidence to stay current when their own workflow projections are removed; temporary workflow backups no longer make repeated attempts immediately noncurrent; currentness notices changed contents or index state on a bound path (legacy path-only bindings report unknown, and receipt reissue requires a fresh before phase); issued gap receipts stay readable with unknown HEAD or a newer reader; and the latest finished attempt stays current across an exact, validated receipt replacement without hiding user-authored output or neighboring drift. A refused start reports when restoring prior workflow artifacts itself fails, and the unbounded git pipe reader propagates a mid-stream read error instead of presenting truncated output as complete. `ripr agent status` no longer reports `incomplete` solely because legacy seam workflow files are absent after a gap-bound attempt finished with its own receipt. (#10988, #11041, #11005, #11092, #11261, #10984)
 - **CLI and output:** Repair text names the test evidence, not the internal stage. The repair advisory and card read "a test input that reaches the changed code" instead of `incomplete evidence stage: activation`, `ripr agent receipt` and the repair after phase say how to proceed when the after verdict binding no longer matches, a gap-bound edit-cage refusal names the gap packet, and `ripr check` names the unbindable operand when a weakly exposed Python boundary finding declines its card and gives a gap-bound card naming the equality input shape for a once-bound `visible = len(text)` local. Gap-bound repair guidance preserves the analyzed diff origin after a required production commit; `ripr check` stops printing a TypeScript gap-bound start while its own analysis is incomplete and names the limitation instead. (#11025, #11337, #4216, #11103, #11040, #11136)
+- Python: `assertRaises` / `assertRaisesRegex` / `pytest.raises` in the callable form with a module-qualified or aliased callable (`self.assertRaisesRegex(ValueError, "blank level", levels.parse, "")`) now links the test to the function it calls, as the bare-name callable already did. Such a test read as a heuristic link with an `unknown` oracle before. (#15078)
+- TypeScript and JavaScript: a method or constructor of a class that is a
+  CommonJS module's whole export (`class Cart {}` then `module.exports =
+  Cart;`) is related to the test that loads it with `const Cart =
+  require('./cart')` and constructs it, instead of reading `no_static_path`
+  (#15092).
+- VS Code status messages, setting descriptions and the editor docs now name the refresh
+  command by its Command Palette title, `ripr: Refresh Full Analysis`, instead of the
+  retired "ripr: Refresh Diagnostics" (#15094).
+- `ripr check --diff` reads a patch file git wrote under
+  `diff.mnemonicPrefix=true` (sides named `i/`, `w/`, `c/` or `o/`) the same
+  as the default `a/`/`b/` patch. It used to report every changed file as
+  absent from the working tree and produce no findings. Prefix-free patches
+  under a real directory with one of those names keep their reading (#15103).
+- `ripr mcp`: a `ripr_refresh` failure whose detail names the CLI's `--base`
+  flag now says which tool argument carries it (`base`, and `source:
+  "worktree"` for `--worktree`), so an agent is not sent to a flag it cannot
+  pass. The docs state why a gap list item's `file` (`./src/lib.rs`) and the
+  path inside its `canonical_id` (`src/lib.rs`) are spelled differently
+  (#15105).
+- `ripr reports gap-ledger` shows verify, inspect, regenerate and receipt
+  commands in its Markdown report exactly as the JSON ledger carries them. A
+  pipe no longer gains a backslash and a backtick no longer becomes an
+  apostrophe, so a command copied from the report runs as written. Warnings
+  and limits no longer open raw HTML or notify an `@name` account when the
+  report is posted (#15119).
+- `ripr check --diff` reads a file a patch creates with `copy from`/`copy to` (git copy detection, `git diff -C`) as new code: every line of the copy is a changed line, the same result as the patch written without copy detection. Before, the run was reported complete with no changed behavior. A copy destination missing from the working tree is disclosed as `changed_file_absent_from_worktree`. (#15121)
+- A git call made after an analysis was cancelled (for example, a superseded
+  editor refresh) now reports the cancellation instead of telling you to
+  correct `.git/config` (#15148).
+- Analysis: credit safe constructor field observers (#1515).
+- `ripr check`: on a changed line that holds several comparisons, such as `a < b && c == d`, the repair-start note now names the spots tied on that line and says ripr will not pick one. It used to say that no spot could be tied to the changed line, quote the count of every spot in the file, and point at a `ripr pilot` summary that ranked nothing (#15157).
+- An unknown flag abbreviated word by word now names the flag it abbreviates,
+  so `ripr check --out-dir` suggests `--output-dir` (#15162).
+- Rust checks: keep changed tests out of probe generation (#1518).
+- Rust checks: recognize exact fallible test oracles (#1519).
+- Rust checks: use parser expressions for reveal analysis (#1522).
+- Rust checks: canonicalize multiline diff probes (#1523).
+- Rust checks: ignore nested constructor return probes (#1525).
+- Rust checks: restrict call deletion to standalone calls (#1526).
+- Probes: stop borrowing before-context from unrelated hunks (#1554).
+- Classify: stop crediting unrelated struct fields as predicate flow sinks (#1555).
+- LSP: cooperatively cancel obsolete refresh analysis (#1592).
+- Gate output: count only causally attributed PR debt (#1595).
+- LSP: reject ambiguous workspace roots (#1612).
+- LSP: in Neovim and other generic pull-diagnostic clients, a save or
+  `ripr.refresh` now updates the open file's diagnostics. ripr advertised
+  workspace diagnostics to every pull client, and Neovim 0.12 answers
+  `workspace/diagnostic/refresh` with a workspace pull only and ignores that
+  report for buffers it pulls by document, so the open file kept its first
+  (often "not analyzed yet") state. Generic pull clients are now offered
+  document pull only and re-pull each open buffer on refresh, so they show
+  diagnostics for open files only; the ripr VS Code extension keeps workspace
+  pull (#1630).
+- LSP: serialize workspace root authority transitions (#1641).
+- Analysis: normalize error variant discriminators (#1668).
+- LSP: retain full analysis input identity (#1671).
+- Rerun: recompute TypeScript gap scopes via TypeScript adapter (#1689).
+- LSP: disclose incomplete top limitation status (#1696).
+- LSP: pass analysis snapshot by reference (#1709).
+- LSP: expose producer-owned input authority in status (#1713).
+- VS Code extension: render structured route-quality summaries (#1842).
+- LSP: preserve diagnostic budget evidence (#1858).
+- CLI: make doctor JSON share core checks (#1860).
+- VS Code extension: enforce restricted settings in Workspace Trust manifest (#1867).
+- 5 quick correctness fixes from deep audit (--no-ext-diff, JSON escape, push_missing trim, dirty-worktree warning, OUTPUT_SCHEMA) (#2037).
+- LSP: enforce diagnostic budget on push delivery (#1911, #2042).
+- Analysis: close three diff-parser gaps — combined, binary, overflow (#1884, #2050).
+- CLI: add `ripr help <command>` subcommand (#2007, #2057).
+- VS Code extension: point retry fallback at the registered 'ripr: Restart Server' command (#2001, #2059).
+- VS Code extension: auto-start when a workspace folder appears after no-workspace start (#2015, #2060).
+- VS Code extension: auto-start the server when a workspace folder appears (#2015, #2063).
+- Outcome: disclose that before/after comparison cannot verify same-repo/same-commit (#1942, #2098).
+- LSP: push budget must distinguish empty-selected from computation-failed (#2042 follow-up) (#2120).
+- LSP: remove dead `select!` arm from debounce; rely on scheduler generation (#2041 follow-up) (#2121).
+- Analysis: drop entire hunk when header start is `usize::MAX` (#2050 follow-up) (#2122).
+- VS Code extension: guard startOnce() against the restart race that leaks server processes (#2123, #2125).
+- Rerun: resolve shifted TypeScript anchors by owner with disclosure (#2118, #2126).
+- Analysis: disclose Perl preview files (#2104, #2148).
+- Analysis: route doctor framework detection through the adapter signals (#2106, #2149).
+- Analysis: attribute summary changed-file counts per language (#2103, #2154).
+- LSP: scope line-local diagnostics to production Rust anchors (#2130, #2158).
+- `ripr doctor`: recommend the config-driven perl route, not a --languages flag (#2105, #2163).
+- VS Code extension: add ripr.showOutput to activationEvents (#2080, #2164).
+- VS Code extension: probe the PATH fallback through the shell on win32 (#2079, #2166).
+- Analysis: guard has_predicate_shape against assertion-shaped probes (#2131, #2200).
+- Analysis: tighten cross-language route detection (#2217).
+- Receipts: make default receipt paths portable for colon-delimited gap IDs (#2229, #2233).
+- Receipts: bound long default paths (#2239).
+- Architecture: keep verification digest serialization out of domain (#2240).
+- Gap-ledger: carry producer seam identity into gate routes (#2249).
+- Output: label the digest discriminator by state and name the real preview_limited blocker (#2273, #2278).
+- Output: document --root/--current-head in receipt help + replace format! obfuscation (#2325, #2326) (#2336).
+- Release packaging: keep example test residue out of the packaged surface (#2422).
+- Output: normalize path separators in check/context JSON to forward slashes (#2473).
+- Agent mode: make agent start Next: instruction path match actual artifact location (#2475).
+- SARIF output: omit region for line-0 findings instead of fabricating startLine:1 (#2407, #2478).
+- Analysis: flow stage now flags typed-wildcard let _: as swallowed (#2401, #2481).
+- Output: 'analyzed' field now reflects actual analysis, not just adapter enabled state (#2403, #2482).
+- Analysis: replace short-token length gate with word-boundary matching (#2397, #2496).
+- Analysis: gate detect_python_test_framework behind lang-python so --features lang-rust compiles (#2503).
+- re-apply clippy fixes reverted by #2522 merge (#2525).
+- suppress unnecessary_to_owned in agent test module (#2538, #2548).
+- LSP: visibly invalidate stale seam evidence (#2572).
+- LSP: normalize null seam evidence identity (#2578).
+- CLI: make agent repair phases executable (#2584).
+- CLI: remove inherited useless format lint (#2590).
+- `ripr doctor`: align rustc schema and root validation (#2606).
+- `ripr doctor`: enforce rustc minimum version (#2594, #2619).
+- Output: show language metadata in finding digests (#2631).
+- VS Code extension: register refresh diagnostics command (#2593, #2633).
+- Agent mode: warn on reversed snapshot order (#2653).
+- CLI: list valid gate modes in errors (#2639, #2666).
+- Diff output: disclose deletion-only changes (#2712).
+- Output: normalize GitHub annotation paths (#2717).
+- Diff output: disclose submodule pointer changes (#2720).
+- CLI: surface first gate config_error or blocking reason inline (#2599, #2721).
+- Diff output: disclose rename-only changes (#2727).
+- `ripr pilot`: cancel analysis after timeout (#2739).
+- TypeScript checks: include copy-to-unshared bridge hints (#2742).
+- Output: project selected Bun bridge group (#2745).
+- Output: retain multiple Bun bridge profiles (#2753).
+- Diff output: disclose interrupted git operations (#2755).
+- CLI: disclose implicit visible-only gate mode (#2756).
+- Badges: apply path suppressions consistently (#2772).
+- Analysis: lexical adapter honestly reports used_lexical_fallback (#2698, #2775).
+- Policy: make suppression-health metadata kind-aware (#2776).
+- Analysis: skip conventional generated Rust files (#2781).
+- Output: wrap advisory prose in human reports (#2786).
+- Output: wrap the human Changed block instead of dumping it at full width (#2787).
+- CLI: resolve implicit workspace roots (#2800).
+- Config: discover ripr.toml from nested roots (#2804).
+- Analysis: configure Rust generated-file patterns (#2808).
+- Analysis: reject decimal literals as field observers (#2812).
+- VS Code extension: restore controller lifecycle production seam (#2862).
+- Review-comments: preserve typed analysis outcomes (#2883).
+- Agent mode: preserve missing discriminator authority (#2896).
+- `ripr doctor`: fail closed on required runtime probes (#2912).
+- LSP: preserve absent discriminator authority (#2917).
+- Output: reconcile context packet next_step through shared helper (#2597, #2925).
+- Receipts: drop invariant-false safe_to_merge field (#2595, #2926).
+- Config: warn when OraclePolicy is customized for non-Rust languages (#2901, #2939).
+- SARIF output: emit top-level fingerprints alongside partialFingerprints (#2627, #2981).
+- Deps: make ra_ap_syntax optional behind lang-rust feature (#2692, #2986).
+- Policy: surface expired suppression warnings on stderr in check (#2642, #2987).
+- Agent mode: central registry for agent-artifact schema versions (#2646, #2988).
+- Agent mode: emit oracle_strength_recipe alongside oracle_strength (#2674, #2990).
+- Agent mode: populate candidate_values from observed activation values (#2673, #2991).
+- Output: add classification hint to digest form (#2614, #2996).
+- Agent mode: add --out flag to agent status for non-default workflow dirs (#2647, #2998).
+- Agent mode: enforce exact-one content commitment at the canonical schema path (#3011).
+- Workspace scan: restore the required gates on main after the instant-merge breakage (#3028).
+- Schema: pin review-comments claim_boundary to the producer authority and surface run causes (#3070) (#3072, #3111).
+- Analysis: retract unused SeamKind ↔ ProbeFamily crosswalk (#3039, #3130).
+- LSP: analyze saved tracked worktree edits (#3187).
+- Output: keep mixed health repairs visible (#3190).
+- VS Code extension: probe resolved servers through standard LSP (#3191).
+- Output: bind receipt fallback to selected proof (#3196).
+- Output: keep orthogonal Python cards advisory (#3200).
+- `ripr repair`: keep ignored caches out of edit-cage ambiguity (#3204).
 - **CLI and output:** The verification-contract validator keeps decimal precision for integer and numeric bound checks and accepts `1.0`, `1e0` and the full `u64` range as a schema `integer`, as Draft 2020-12 does, while rejecting fractions and floats beyond 2^53. Comment-card Why, Repair and fallback text preserve intentional Markdown and render HTML and mentions outside code literally; CI-summary Why values retain backticks and spaces. The "Recommended next test" block no longer reports `No first action for suppressed seam` for a pull request that has a review card to act on. Python pytest verification in human output binds the selected repository for Bash, and TypeScript gap repair warns that test-runner caches can end an attempt. (#11009, #4468, #11179, #4518, #4519)
 - **CLI and output:** `ripr review-comments` stops at its `--timeout-ms` bound while resolving macro-generated tests (a 30-second bound ran about 45 seconds before the timeout receipt) and runs owner attribution under the cancellation token. (#1604)
 - **CLI and output:** Human output stops printing internal markers and reads in words. The producer-appended `(observation_unverified)` marker no longer follows "Discriminator unconfirmed: ..." in `check` evidence blocks, grouped `human-full` rows, the `check` Weakness list, `ripr explain` or LSP hover (JSON stage summaries keep the machine value); `ripr agent card` words snapshot currentness, instruction state and done-when goals plainly and drops the `schema: repair_card.v1` line (`--json` is unchanged); `ripr check` explains the five Evidence stages and conservative state words beside the selected finding; `ripr pilot` labels a suggested assertion containing `/* ... */` as an "assertion shape" to fill in; `--format human-full` keeps a multi-line oracle or observed source value on one row. The `source ... value` evidence lines for equality, element, named-constant, slice-cardinality and Python boundary evidence carry their related test file as `path:line` when the window mixes files. (#9928, #9929, #9244, #9373, #9165, #8389)
