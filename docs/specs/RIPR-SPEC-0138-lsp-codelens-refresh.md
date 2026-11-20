@@ -103,8 +103,9 @@ view that is already cleared sends nothing.
 ### Before `initialized`
 
 No `workspace/codeLens/refresh` is sent before the client's `initialized`
-notification. The client rejects server->client requests until then (-32002),
-and it requests the current lenses itself once the session starts, so the
+notification. tower-lsp-server refuses server->client requests while
+`initialize` is handled (-32002), and the client requests the current lenses
+itself once the session starts, so the
 initialize-time root transition records the cleared identity without sending
 a request or logging a refresh failure.
 

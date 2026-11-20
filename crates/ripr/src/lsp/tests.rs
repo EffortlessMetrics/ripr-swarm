@@ -2049,9 +2049,9 @@ fn framed_lsp_refresh_resolves_git_inputs_once_and_projects_the_record() -> Resu
 
 /// No `workspace/codeLens/refresh` is attempted while `initialize` is still
 /// being handled (RIPR-SPEC-0138). The initialize-time root transition
-/// clears the lens view, but the client rejects server->client requests
-/// before `initialized` (-32002) and requests lenses itself once the session
-/// starts, so an attempt only produced a "code lens refresh request failed"
+/// clears the lens view, but tower-lsp-server refuses server->client
+/// requests while `initialize` is handled (-32002) and the client requests
+/// lenses itself once the session starts, so an attempt only produced a "code lens refresh request failed"
 /// warning on every session start.
 #[test]
 fn framed_code_lens_refresh_is_not_attempted_before_initialized() -> Result<(), String> {
