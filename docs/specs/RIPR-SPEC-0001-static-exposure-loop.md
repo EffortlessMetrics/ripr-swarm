@@ -888,8 +888,9 @@ below. Then:
   through to the compound-predicate reading (#9637, RIPR-SPEC-0158), which
   reads the comparison without its guards and would credit a boundary row
   with `express = true`, a row neither version tells apart;
-- any other compound shape (`||`, a guard that is a call or a comparison,
-  two comparisons) keeps the previous reading unchanged.
+- when a conjunction includes an unreadable guard such as `ready()`,
+  the caller's arguments cannot establish activation;
+- other compound shapes such as `||` and two comparisons retain their existing reading.
 
 Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
 case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
@@ -916,12 +917,15 @@ reachability `check` requires. Such a seam is not offered as a `ripr repair`
 start (a `stock > 0 && blocked` change tested only with `blocked = false`
 starts the whole-line seam, not the boundary). So a row that misses a guard can no longer grip the seam
 while `check` reads the same change as unclear. Both views read the guard
-from the comparison's own `if`/`else if`/`while` line plus any lines rustfmt
-wraps under it that each open with `&&`, up to the opening brace, with
-comments masked; an edit
-whose old line cannot be read with the wrapped guards is declined; a predicate
-written as `let`/`return` is not yet read as guarded (#14874). Honesty-corpus case
-`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
+from a conditional head, a simple let initializer, or a return expression.
+Continuation lines beginning with `&&` belong to that predicate through
+its opening brace or terminating semicolon. Comments do not supply a guard.
+A comparison edit whose old line cannot be read with the wrapped guards is
+declined. Honesty-corpus case
+`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins the
+conditional form. `rust_repo_exposure_guarded_statement_boundaries` pins
+missed guards in single-line and wrapped let statements alongside an asserted
+return with its guard held.
 
 ## Test Mapping
 

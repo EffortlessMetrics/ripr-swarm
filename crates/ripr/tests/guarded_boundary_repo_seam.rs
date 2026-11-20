@@ -254,17 +254,13 @@ fn reversed_seam(test_body: &str) -> Result<Value, String> {
 
 #[test]
 fn a_constant_on_the_left_is_held_by_a_guard_holding_boundary_call() -> Result<(), String> {
-    // The guard gate orients a left-hand constant as `check` does, so a
-    // guard-holding boundary call never reads as missing the guard. (The
-    // seam view does not yet resolve a left-hand constant at all, an
-    // existing fail-closed limitation tracked separately.)
     let seam = reversed_seam(
         "assert_eq!(shipping_cost(100, 5000, false), 0);\n    assert_eq!(shipping_cost(100, 4999, false), 100);",
     )?;
-    let summary = field(&seam, "/evidence_record/evidence_path/activate/summary").unwrap_or("");
-    assert!(
-        !summary.contains("`express = false`"),
-        "the guard is held: {summary}"
+    assert_eq!(
+        field(&seam, "/grip_class"),
+        Some("strongly_gripped"),
+        "{seam}"
     );
     Ok(())
 }
@@ -711,5 +707,115 @@ fn a_head_comment_does_not_swallow_the_wrapped_guard() -> Result<(), String> {
         Some("unknown"),
         "{seam}"
     );
+    Ok(())
+}
+
+#[test]
+fn statement_predicates_require_a_boundary_row_that_holds_every_guard() -> Result<(), String> {
+    use ripr::{CheckInput, Mode, OutputFormat, ProbeFamily, check_workspace};
+
+    for (predicate, supported) in [
+        (
+            "let free = order_cents >= FREE_OVER_CENTS && !express;\n    free",
+            true,
+        ),
+        (
+            "let free =\n        order_cents >= FREE_OVER_CENTS\n        && !express;\n    free",
+            true,
+        ),
+        (
+            "return\n        order_cents >= FREE_OVER_CENTS\n        && !express;",
+            true,
+        ),
+        (
+            "let free = order_cents >= FREE_OVER_CENTS && !express; // threshold\n    free",
+            true,
+        ),
+        (
+            "return order_cents >= FREE_OVER_CENTS && !express; /* threshold */",
+            true,
+        ),
+        ("return order_cents >= FREE_OVER_CENTS && !express;", true),
+        (
+            "let free = order_cents >= FREE_OVER_CENTS\n        && !express;\n    free",
+            true,
+        ),
+        (
+            "return order_cents >= FREE_OVER_CENTS\n        && !express;",
+            true,
+        ),
+        (
+            "if order_cents >= FREE_OVER_CENTS && !express && ready() { true } else { false }",
+            false,
+        ),
+        (
+            "if order_cents >= FREE_OVER_CENTS && !express\n        && ready()\n    { true } else { false }",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "pub const FREE_OVER_CENTS: u32 = 5000;\nfn ready() -> bool {{ true }}\npub fn shipping_cost(order_cents: u32, express: bool) -> bool {{\n    {predicate}\n}}\n"
+        );
+        let (offset, head) = predicate
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(">="))
+            .ok_or("fixture has no comparison")?;
+        let line = 4 + offset;
+        let indent = if offset == 0 { "    " } else { "" };
+        let old = head.replace(">=", ">");
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line} +{line} @@\n-{indent}{old}\n+{indent}{head}\n"
+        );
+        for express in [true, false] {
+            let observed = !express;
+            let repo = TempRepo::create(
+                &source,
+                &format!(
+                    "assert_eq!(shipping_cost(5000, {express}), {observed});\n    assert_eq!(shipping_cost(4999, {express}), false);"
+                ),
+            )?;
+            let seam = repo.comparison_seam()?;
+            let reached = supported && observed;
+            let expected = if reached {
+                "strongly_gripped"
+            } else {
+                "activation_unknown"
+            };
+            assert_eq!(
+                field(&seam, "/grip_class"),
+                Some(expected),
+                "{predicate}, express={express}: {seam}"
+            );
+            let diff = repo.root.join("diff.patch");
+            std::fs::write(&diff, &patch).map_err(|error| error.to_string())?;
+            let report = check_workspace(CheckInput {
+                root: repo.root.clone(),
+                diff_file: Some(diff),
+                mode: Mode::Ready,
+                format: OutputFormat::Json,
+                include_unchanged_tests: true,
+                ..CheckInput::default()
+            })?;
+            let findings: Vec<_> = report
+                .findings
+                .iter()
+                .filter(|finding| {
+                    finding.probe.family == ProbeFamily::Predicate
+                        && finding.probe.location.line == line
+                })
+                .collect();
+            let [finding] = findings.as_slice() else {
+                return Err(format!(
+                    "expected one changed predicate for {predicate}: {findings:?}"
+                ));
+            };
+            assert_eq!(
+                finding.ripr.infect.state.as_str(),
+                if reached { "yes" } else { "unknown" },
+                "{predicate}, express={express}: {finding:?}"
+            );
+        }
+    }
     Ok(())
 }

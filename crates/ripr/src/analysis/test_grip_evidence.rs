@@ -4445,12 +4445,17 @@ fn boundary_constant_operand(
         return None;
     }
     let (left, right) = comparison_operands(seam.expression())?;
-    let name = super::value_resolution::constant_operand_name(&right)?;
     let parameters = function_parameters(owner_fn);
-    if boundary_operand_argument(owner_fn, &parameters, &right).is_some() {
+    let (tested, bound) = if boundary_operand_argument(owner_fn, &parameters, &left).is_some() {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    let name = super::value_resolution::constant_operand_name(bound)?;
+    if boundary_operand_argument(owner_fn, &parameters, bound).is_some() {
         return None;
     }
-    let left_operand = boundary_operand_argument(owner_fn, &parameters, &left)?;
+    let argument = boundary_operand_argument(owner_fn, &parameters, tested)?;
     let lookup = index.files().get(&owner_fn.file).map_or(
         super::value_resolution::NamedConstant::Undeclared,
         |facts| super::value_resolution::named_constant(&facts.source, name),
@@ -4458,7 +4463,7 @@ fn boundary_constant_operand(
     Some(BoundaryConstantOperand {
         name: name.to_string(),
         lookup,
-        argument_index: left_operand.index,
+        argument_index: argument.index,
     })
 }
 
@@ -4497,33 +4502,13 @@ fn guarded_boundary_unheld(
         return Some(describe);
     };
     let position = |name: &str| parameters.iter().position(|parameter| parameter == name);
-    let reversed_value: String;
-    let (tested_at, value) = match position(&boundary.tested) {
-        Some(at) => (
-            at,
-            boundary
-                .local_value()
-                .or_else(|| constant.and_then(|constant| constant.lookup.value()))
-                .unwrap_or(&boundary.token),
-        ),
-        // A boundary constant on the left (`FREE_OVER_CENTS <= order_cents`)
-        // leaves the operand reader's sides swapped: the parameter is the
-        // token and the constant is the value, as `check` orients it.
-        None => {
-            let reversed = position(&boundary.token).and_then(|at| {
-                let name = super::value_resolution::constant_operand_name(&boundary.tested)?;
-                let value = super::value_resolution::named_constant(&source.source, name)
-                    .value()?
-                    .to_string();
-                Some((at, value))
-            });
-            let Some((at, value)) = reversed else {
-                return Some(describe);
-            };
-            reversed_value = value;
-            (at, reversed_value.as_str())
-        }
+    let Some(tested_at) = position(&boundary.tested) else {
+        return Some(describe);
     };
+    let value = boundary
+        .local_value()
+        .or_else(|| constant.and_then(|constant| constant.lookup.value()))
+        .unwrap_or(&boundary.token);
     // A rebound compared parameter, or an earlier branch or return, means a
     // call's boundary argument may never reach this comparison as passed.
     let compared = parameters.get(tested_at).map(String::as_str).unwrap_or("");
@@ -4982,7 +4967,8 @@ fn predicate_boundary_operand(
 /// limit < amount`), the value `check` evaluates per row (#4270). A local
 /// that depends on inputs, or that the evaluator cannot fold, is not one.
 fn left_is_boundary_value(owner_fn: &FunctionSummary, left: &str, predicate_line: usize) -> bool {
-    numeric_boundary_literal(left).is_some()
+    super::value_resolution::constant_operand_name(left).is_some()
+        || numeric_boundary_literal(left).is_some()
         || !scalar_values(left).is_empty()
         || matches!(
             super::classify::local_boundary(

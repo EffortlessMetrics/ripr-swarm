@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust boundary analysis reads boolean guards in simple let initializers and return expressions across line breaks. The repo exposure report also recognizes an asserted boundary row when a named threshold appears on the left of the comparison (#14874).
