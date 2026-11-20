@@ -823,6 +823,19 @@ fn sample_diff() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/example.diff")
 }
 
+/// Make a fixture root its own Git repository. Cargo pins TMPDIR under this
+/// checkout's `target/`, and `init --ci` refuses a root below a Git top level
+/// (#15389), so an adopter-shaped CI fixture must be the repository root.
+fn git_init_root(root: &Path) -> Result<(), String> {
+    let output = run_command("git", Some(root), &["init", "-q"])
+        .map_err(|err| format!("git init {}: {err}", root.display()))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("git init {} failed: {output:?}", root.display()))
+    }
+}
+
 fn unique_temp_workspace(label: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -6884,6 +6897,19 @@ fn pr_review_front_panel_names_an_unreadable_assistant_proof()
         stderr.contains("test-oracle-assistant-proof.json"),
         "{stderr}"
     );
+    // #14631: the promoted line's read cause already names the path, so the
+    // renderer must not append it a second time.
+    let unreadable_line = stderr
+        .lines()
+        .find(|line| line.contains("Assistant proof artifact is unreadable: "))
+        .unwrap_or_default();
+    assert_eq!(
+        unreadable_line
+            .matches("test-oracle-assistant-proof.json")
+            .count(),
+        1,
+        "{stderr}"
+    );
     assert!(!stderr.contains("os error"), "{stderr}");
     std::fs::remove_dir_all(workspace)?;
     Ok(())
@@ -7239,11 +7265,11 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
         .display()
         .to_string()
         .replace('\\', "/");
-    let plain = format!("--out-dir {expected_out_dir}");
-    let quoted = format!("--out-dir '{expected_out_dir}'");
+    let plain = format!("--output-dir {expected_out_dir}");
+    let quoted = format!("--output-dir '{expected_out_dir}'");
     assert!(stderr.contains(&plain) || stderr.contains(&quoted));
-    assert!(!stderr.contains("--out-dir target/ripr/reports"));
-    assert!(!stderr.contains("--out-dir 'target/ripr/reports'"));
+    assert!(!stderr.contains("--output-dir target/ripr/reports"));
+    assert!(!stderr.contains("--output-dir 'target/ripr/reports'"));
     // The missing path renders with stable separators even on Windows.
     assert!(stderr.contains(&format!("Missing:\n  {expected_out_dir}/start-here.json")));
     std::fs::remove_dir_all(workspace)?;
@@ -18289,6 +18315,7 @@ fn init_dry_run_fails_like_the_real_run_when_config_exists_without_force() -> Re
 #[test]
 fn init_dry_run_fails_like_the_real_run_when_workflow_parent_is_a_file() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     std::fs::write(workspace.join(".github"), "not a directory\n")
         .map_err(|e| format!("write .github as a file: {e}"))?;
     let root = workspace.display().to_string();
@@ -18395,6 +18422,7 @@ fn init_dry_run_fails_like_the_real_run_when_root_is_not_a_directory() -> Result
 #[test]
 fn init_dry_run_plan_reports_leave_existing_for_untouched_config() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
         .map_err(|e| format!("write existing ripr.toml: {e}"))?;
     let root = workspace.display().to_string();
@@ -18427,6 +18455,7 @@ fn init_dry_run_plan_reports_leave_existing_for_untouched_config() -> Result<(),
 #[test]
 fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "github", "--dry-run"]);
     assert_success(&output);
@@ -18522,6 +18551,7 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
 #[test]
 fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     assert!(!workspace.join("docs/CI.md").exists());
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "github"]);
@@ -18669,6 +18699,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
 #[test]
 fn init_ci_gitlab_writes_advisory_merge_request_pipeline() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "gitlab"]);
     assert_success(&output);
@@ -18693,6 +18724,7 @@ fn init_ci_gitlab_writes_advisory_merge_request_pipeline() -> Result<(), String>
 #[test]
 fn init_ci_github_refuses_existing_workflow_without_force() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    git_init_root(&workspace)?;
     let workflow_dir = workspace.join(".github/workflows");
     std::fs::create_dir_all(&workflow_dir).map_err(|e| format!("create workflow dir: {e}"))?;
     std::fs::write(workflow_dir.join("ripr.yml"), "name: Existing\n")
