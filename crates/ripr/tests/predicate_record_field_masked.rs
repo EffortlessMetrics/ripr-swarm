@@ -195,7 +195,7 @@ fn bool_comparison_identity_stays_with_the_compared_owner_field() -> Result<(), 
         ("assert_ne!(opts(10).big, false);", "exposed"),
         (
             "let _ = opts(10); assert_eq!(rival::opts(10).big, true);",
-            "weakly_exposed",
+            "infection_unknown",
         ),
         (
             "let mut o = opts(10); o.big = true; assert_eq!(o.big, true);",
