@@ -108,6 +108,19 @@ test.each([[1000, "gold"]])("ordinary", function (points, tier) {
 }
 
 #[test]
+fn only_the_ordinary_table_callback_exposes_the_changed_boundary() -> Result<(), String> {
+    let rows = table_test(r#"  [999, "silver"], [1000, "gold"],"#);
+    let ordinary = rows.replace("(points, tier) =>", "function (points, tier)");
+    let generator = rows.replace("(points, tier) =>", "function* (points, tier)");
+
+    let live = tier_finding("each-ordinary-function-boundary", &ordinary)?;
+    assert_eq!(live.class, ExposureClass::Exposed);
+    let dormant = tier_finding("each-generator-function-boundary", &generator)?;
+    assert_ne!(dormant.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn literal_table_rows_missing_the_boundary_stay_a_gap() -> Result<(), String> {
     let source = table_test("  [500, \"silver\"],\n  [2000, \"gold\"],");
     assert_eq!(
