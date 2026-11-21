@@ -100,12 +100,13 @@ pub(crate) fn note_unknown_value(token: &str, message: &str, pointer: Option<&st
     });
 }
 
-/// Note an unknown top-level command.
+/// Note an unknown top-level command. An empty command name has no token
+/// to report: the published contract requires a non-empty `token` (#15985).
 pub(crate) fn note_unknown_command(token: &str, message: &str) {
     record(RefusalBlock {
         code: CODE_UNKNOWN_COMMAND.to_string(),
         message: message.to_string(),
-        token: Some(token.to_string()),
+        token: (!token.is_empty()).then(|| token.to_string()),
         next: Some(RefusalNext {
             purpose: PURPOSE_LIST_COMMANDS,
             command: "ripr --help".to_string(),
@@ -521,6 +522,22 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&document).map_err(|err| err.to_string())?;
         assert_eq!(value["error"]["code"], CODE_INVALID_VALUE);
+        assert!(value["error"].get("token").is_none(), "{value}");
+        Ok(())
+    }
+
+    /// #15985: `ripr "" --json` used to publish `"token": ""`, which the
+    /// refusal schema rejects (`minLength: 1`). The empty name carries none.
+    #[test]
+    fn an_empty_command_name_publishes_no_token() -> Result<(), String> {
+        reset();
+        note_unknown_command("", "the command name is empty. Run `ripr --help`.");
+        let error = CommandError::Failure("the command name is empty.".to_string());
+        let document = document_for(&args(&["ripr", "", "--json"]), &error)
+            .ok_or("a JSON-requested unknown command must write a document")?;
+        let value: serde_json::Value =
+            serde_json::from_str(&document).map_err(|err| err.to_string())?;
+        assert_eq!(value["error"]["code"], CODE_UNKNOWN_COMMAND);
         assert!(value["error"].get("token").is_none(), "{value}");
         Ok(())
     }

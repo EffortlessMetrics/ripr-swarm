@@ -50,6 +50,34 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: first-action requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help first-action` for the list)\n",
     },
+    // #15985: the two agent refusals that named no source for the id.
+    Case {
+        args: &["agent", "start"],
+        exit: 2,
+        stderr: "ripr: agent start requires --seam-id; add `--seam-id <id>`. Use an id that `ripr check` or `ripr pilot --root <dir>` printed\n",
+    },
+    Case {
+        args: &["agent", "brief", "--json"],
+        exit: 2,
+        stderr: "ripr: agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev>` to brief the changes since that revision, or `--seam-id <id>` for one seam. Use an id that `ripr check` or `ripr pilot --root <dir>` printed\n",
+    },
+    // #15985: an empty command name is named as empty, not echoed as `""`.
+    Case {
+        args: &[""],
+        exit: 2,
+        stderr: "ripr: the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands.\n",
+    },
+    // #15985: a word after the version flag is refused, never discarded.
+    Case {
+        args: &["--version", "extra"],
+        exit: 2,
+        stderr: "ripr: usage: ripr --version (this route accepts no other arguments, and \"extra\" follows it); drop \"extra\" to print the version, or run `ripr --help` to list commands\n",
+    },
+    Case {
+        args: &["-V", "check"],
+        exit: 2,
+        stderr: "ripr: usage: ripr --version (this route accepts no other arguments, and \"check\" follows it); drop \"check\" to print the version, or run `ripr --help` to list commands\n",
+    },
     Case {
         args: &["reports", "ts-limitations"],
         exit: 2,

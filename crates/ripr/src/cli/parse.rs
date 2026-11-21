@@ -246,6 +246,14 @@ pub(super) fn parse_args(args: Vec<String>) -> Result<CliCommand, String> {
     // separately; keeping this precedence in the parser makes the same rule
     // hold for library callers and installed-binary invocations.
     if top_level_version_requested(&args) {
+        // Leading flags keep that precedence, but a word after them is a
+        // command or a slip the version query would silently discard
+        // (#15985), as `--help --all` refuses extras (#9867).
+        if let Some(extra) = args.iter().skip(1).find(|arg| !arg.starts_with('-')) {
+            return Err(format!(
+                "usage: ripr --version (this route accepts no other arguments, and {extra:?} follows it); drop {extra:?} to print the version, or run `ripr --help` to list commands"
+            ));
+        }
         return Ok(CliCommand::Version);
     }
 
@@ -525,6 +533,29 @@ mod tests {
             assert!(
                 !top_level_version_requested(&argv),
                 "command-local version flags must not be intercepted: {argv:?}"
+            );
+        }
+    }
+
+    /// #15985: a word after the version flag is refused, never discarded.
+    /// The refused set includes a real command name and an empty argument.
+    #[test]
+    fn version_refuses_a_trailing_word() {
+        for (argv, extra) in [
+            (args(&["ripr", "--version", "extra"]), "extra"),
+            (args(&["ripr", "-V", "check"]), "check"),
+            (
+                args(&["ripr", "--json", "--version", "check", "--json"]),
+                "check",
+            ),
+            (args(&["ripr", "--version", ""]), ""),
+        ] {
+            assert_eq!(
+                parse_args(argv.clone()),
+                Err(format!(
+                    "usage: ripr --version (this route accepts no other arguments, and {extra:?} follows it); drop {extra:?} to print the version, or run `ripr --help` to list commands"
+                )),
+                "{argv:?}"
             );
         }
     }

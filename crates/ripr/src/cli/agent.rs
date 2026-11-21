@@ -278,7 +278,7 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
 }
 
 /// Where a seam id comes from, for the missing-`--seam-id` errors of
-/// `agent card` and `agent packet`. One copy so the messages cannot drift.
+/// `agent card`, `agent packet`, `agent start` and `agent brief`. One copy so the messages cannot drift.
 pub(crate) const SEAM_ID_SOURCE_HINT: &str =
     "Use an id that `ripr check` or `ripr pilot --root <dir>` printed";
 
@@ -851,7 +851,9 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         seam_id: seam_id.ok_or_else(|| {
             crate::cli::usage_refusal::missing_required(
                 "--seam-id",
-                "agent start requires --seam-id; add `--seam-id` to the command",
+                &format!(
+                    "agent start requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}"
+                ),
             )
         })?,
         out_dir: out_dir.unwrap_or_else(|| PathBuf::from("target/ripr/workflow")),
@@ -929,7 +931,9 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         .ok_or_else(|| {
             crate::cli::usage_refusal::missing_required(
                 "--diff",
-                "agent brief requires exactly one of --diff, --base, --files, or --seam-id",
+                &format!(
+                    "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev>` to brief the changes since that revision, or `--seam-id <id>` for one seam. {SEAM_ID_SOURCE_HINT}"
+                ),
             )
         })?
         .into_working_set();
@@ -2547,7 +2551,9 @@ mod tests {
         );
         assert_eq!(
             parse_agent_start_options(&args(&[])),
-            Err("agent start requires --seam-id; add `--seam-id` to the command".to_string())
+            Err(format!(
+                "agent start requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id", ""])),
@@ -2693,10 +2699,9 @@ mod tests {
     fn agent_brief_requires_exactly_one_working_set() {
         assert_eq!(
             parse_agent_brief_options(&args(&["--json"])),
-            Err(
-                "agent brief requires exactly one of --diff, --base, --files, or --seam-id"
-                    .to_string()
-            )
+            Err(format!(
+                "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev>` to brief the changes since that revision, or `--seam-id <id>` for one seam. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[

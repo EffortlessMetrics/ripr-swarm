@@ -249,3 +249,21 @@ fn invalid_config_under_a_backticked_root_leaves_next_null() -> TestResult {
     let _ = std::fs::remove_dir_all(&base);
     Ok(())
 }
+
+/// #15985: an empty command name used to publish `"token": ""`, which the
+/// refusal schema rejects (`minLength: 1`). The document now carries no token
+/// and the message says the name is empty.
+#[test]
+fn an_empty_command_name_json_refusal_carries_no_token() -> TestResult {
+    let value = document(&run_ripr(&["", "--json"]), 2)?;
+    assert_eq!(value["status"], "refused", "{value}");
+    assert_eq!(value["error"]["code"], "unknown_command", "{value}");
+    assert!(value["error"].get("token").is_none(), "{value}");
+    assert_eq!(
+        value["error"]["message"],
+        "the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands.",
+        "{value}"
+    );
+    assert_eq!(value["error"]["next"]["command"], "ripr --help", "{value}");
+    Ok(())
+}
