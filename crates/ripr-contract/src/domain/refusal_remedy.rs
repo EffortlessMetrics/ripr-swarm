@@ -11,8 +11,8 @@
 //!
 //! - a command is only what the message wrote as a backticked `ripr ...`
 //!   span, copied verbatim; nothing is composed, completed or guessed;
-//! - a flag is only a `--flag` the message tells the reader to pass, add,
-//!   use or repeat;
+//! - flags are `--flag` tokens outside command spans. Without a stated
+//!   command or tool, only instructed flags count;
 //! - a message that states none of these yields [`RemedyKind::None`], an
 //!   explicit "no machine-readable remedy" value. The human message may still
 //!   carry a prose step; the value never claims one it cannot ground;
@@ -112,7 +112,8 @@ pub struct RefusalRemedy {
     pub alternatives: Vec<String>,
     /// The first `ripr_<tool>` MCP tool name the message names.
     pub tool: Option<String>,
-    /// Flags the message tells the reader to pass, add or repeat.
+    /// First 16 distinct flags outside command spans, in prose order. Without
+    /// a stated command or tool, only instructed flags count.
     pub flags: Vec<String>,
     /// Placeholders (`<ref>`, `BASE`, `{root}`) in `command` the consumer
     /// must fill before running it.
@@ -126,9 +127,8 @@ pub struct RefusalRemedy {
     /// True when the only step the message gives is conditional (`if it
     /// persists, run ...`): the command is a fallback, not a first move.
     pub conditional: bool,
-    /// True when `command`/`tool` is not self-sufficient: the message names
-    /// flags or environment prerequisites outside the span. A consumer must
-    /// not run the command as-is without reading them.
+    /// True when a stated step has flags or environment prerequisites outside
+    /// its span, or when a flags-only remedy omits flags past the list cap.
     pub prose_has_more: bool,
 }
 
@@ -215,14 +215,15 @@ impl RefusalRemedy {
         // without its flags). With no step, only instructed flags count.
         let ranges = command_span_ranges(prose);
         let has_step = kind != RemedyKind::None;
-        let flags = stated_flags(prose, &ranges, !has_step);
+        let (flags, flags_truncated) = stated_flags(prose, &ranges, !has_step);
         let env = stated_env(prose, &ranges);
         let kind = if kind == RemedyKind::None && !flags.is_empty() {
             RemedyKind::Flags
         } else {
             kind
         };
-        let prose_has_more = has_step && (!flags.is_empty() || !env.is_empty());
+        let prose_has_more =
+            flags_truncated || (has_step && (!flags.is_empty() || !env.is_empty()));
         let fill_in = command.as_deref().map(placeholders).unwrap_or_default();
         Self {
             kind,
@@ -458,8 +459,9 @@ fn original_flag_instruction(before: &str) -> bool {
 /// `--flag` tokens outside command spans. When `gated`, a flag counts only if
 /// the word right before it is an instruction verb (`pass`, `add`, `repeating
 /// the original`, ...) or a joiner continuing a list whose previous item
-/// counted; otherwise (a step is stated) every such flag counts.
-fn stated_flags(prose: &str, ranges: &[(usize, usize)], gated: bool) -> Vec<String> {
+/// counted; otherwise (a step is stated) every such flag counts. Returns the
+/// capped list and whether a distinct flag was omitted.
+fn stated_flags(prose: &str, ranges: &[(usize, usize)], gated: bool) -> (Vec<String>, bool) {
     let mut out: Vec<String> = Vec::new();
     let mut last_counted_end: Option<usize> = None;
     let bytes = prose.as_bytes();
@@ -511,11 +513,15 @@ fn stated_flags(prose: &str, ranges: &[(usize, usize)], gated: bool) -> Vec<Stri
             continue;
         }
         last_counted_end = Some(end);
-        if !out.iter().any(|seen| seen == flag) && out.len() < MAX_LISTED {
-            out.push(flag.to_string());
+        if out.iter().any(|seen| seen == flag) {
+            continue;
         }
+        if out.len() == MAX_LISTED {
+            return (out, true);
+        }
+        out.push(flag.to_string());
     }
-    out
+    (out, false)
 }
 
 /// Placeholders in a command the consumer must fill: `<...>`, `{...}` and
@@ -850,13 +856,32 @@ mod tests {
     }
 
     #[test]
-    fn gated_flag_only_prose_respects_the_list_cap() {
+    fn flags_only_remedy_signals_only_distinct_overflow() {
         let flags: Vec<String> = (1..=17).map(|n| format!("--only-{n:02}")).collect();
-        let prose = format!("pass {}", flags.join(" and "));
-        let remedy = RefusalRemedy::from_prose(&prose);
-        assert_eq!(remedy.kind, RemedyKind::Flags);
-        assert_eq!(remedy.flags.len(), MAX_LISTED);
-        assert_eq!(remedy.flags, flags[..MAX_LISTED].to_vec());
+        for (count, kind, prose_has_more) in [
+            (0, RemedyKind::None, false),
+            (16, RemedyKind::Flags, false),
+            (17, RemedyKind::Flags, true),
+        ] {
+            let mut listed = flags[..count].to_vec();
+            if count == 16 {
+                listed.push(flags[0].clone());
+            }
+            let remedy = RefusalRemedy::from_prose(&format!(
+                "pass {}. The message mentions --ignored",
+                listed.join(" and ")
+            ));
+            assert_eq!(remedy.kind, kind, "{count} distinct flags");
+            assert_eq!(
+                remedy.flags,
+                flags[..count.min(16)],
+                "{count} distinct flags"
+            );
+            assert_eq!(
+                remedy.prose_has_more, prose_has_more,
+                "{count} distinct flags"
+            );
+        }
     }
 
     #[test]

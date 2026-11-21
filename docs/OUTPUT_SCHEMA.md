@@ -526,8 +526,10 @@ The field set is fixed; absent facts are `null` or empty, never omitted:
   `alternatives` — further distinct stated commands in message order (at most
   three).
 - `tool` — the first stated MCP tool name, verbatim.
-- `flags` — `--flag` tokens the message tells the reader to pass, add, use or
-  repeat (flags already inside `command` are not repeated).
+- `flags` — the first 16 distinct `--flag` tokens outside backticked `ripr`
+  command spans, in prose order. With a stated command or tool, every such flag
+  counts. Without a stated step, only flags in instructions such as `pass`,
+  `add`, or `use` count, including their continued lists.
 - `fill_in` — placeholders in `command` (`<ref>`, `BASE`, `{root}`) the
   consumer must fill before running it.
 - `retry_stated` — `true` only when the message itself tells the reader to
@@ -540,14 +542,13 @@ The field set is fixed; absent facts are `null` or empty, never omitted:
 - `conditional` — `true` when the only step the message gives is conditional
   (`if it persists, run ...`): the command or tool is a fallback, not a first
   move. An unconditional step always outranks a conditional one.
-- `prose_has_more` — `true` when `command` or `tool` is not self-sufficient:
-  the message names flags (`flags`, every `--flag` outside the command span)
-  or `env` prerequisites the span does not carry, for example a restart that
-  must repeat the original `--root` and trust-binding flags. A consumer must
-  not run `command` as-is when this is `true`; `command` may omit
-  prerequisites the prose states.
+- `prose_has_more` — `true` when a stated command or tool has flags or `env`
+  prerequisites elsewhere in the message, or when a flags-only remedy omits
+  distinct instructed flags beyond the 16-flag cap.
 
-A consumer branches on `remedy.kind` and `remedy.command`, never on the prose.
+A consumer branches on `remedy.kind` and `remedy.command`. When
+`prose_has_more` is `true`, consult the message for the full instructions
+before using the remedy.
 `kind` values are listed under `refusal_remedy_kind` in Enums.
 
 ## Agent card refusal envelope (`agent_card_refusal`, schema `0.1`)
