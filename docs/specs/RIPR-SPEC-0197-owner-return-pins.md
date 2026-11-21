@@ -490,6 +490,12 @@ wrong credits.
    RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
+   The same holds for a `?` inside a trusted macro's operands in the test
+   function's own body (`assert_eq!(parse(..)?, 91)`, #14116): its error
+   fails the test, so it cannot skip the comparison. It still refuses when
+   the macro call sits in a closure, an `async` block or a nested `fn`, when
+   the operand holds a closure (`|`) or an `async` block, and in any
+   function that is not a test (a helper's caller may discard the error).
    Exactly
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
@@ -828,7 +834,7 @@ twins' or `#[path]` targets' functions therefore refuses. Any other
 difference inside the item (comments included) refuses, and so does a gate:
 a `cfg` or `cfg_attr` on the function, an enclosing item, the file, a
 matching `mod` declaration, an item enclosing it or its declaring file, or
-the presence of any `#[path]` declaration. A constant is built only from `bool`, integer,
+a `#[path]` declaration that may reach the owner (below). A constant is built only from `bool`, integer,
 byte, `char` and string literals, `!` on a `bool`, `-` on an integer, the
 `bool` operators `&&`, `||`, `&`, `|`, `^`, `==` and `!=` (integer `==` only
 in `i8` range), parentheses, arrays and an unrebound bare `vec![..]` (not the
@@ -972,7 +978,15 @@ general combinator, callback or mutation adequacy.
    trusted macro used by that test refuses the pin. This scan
    includes other indexed files because textual macro scope reaches child
    modules. Workspace-owned globs remain supported only when that scan finds
-   no competing binding. The scan conservatively ignores visibility/cfg
+   no competing binding. A plain, unrenamed two-segment import of a trusted
+   macro at the root that exports it (`use std::vec;`, `use alloc::vec;`,
+   `use core::assert_eq;`; `vec`/`format` from `std` or `alloc`, the
+   assertion family, `matches`, `panic` and `unreachable` from `std` or
+   `core`) binds the standard macro rather than a competing one, when the
+   root is not shadowed in the file and the manifests prove no dependency,
+   package or patch takes the root name (#15263). Renames, longer paths,
+   `crate::`/`self::` paths and a root a crate does not export the macro
+   from (`use core::vec;`) still refuse. The scan conservatively ignores visibility/cfg
    refinements, so unrelated same-name definitions can cause under-credit.
    Other trusted names unused by the test do not defeat its pin (for example,
    an unrelated `std::fs::write` import does not defeat a plain assertion). It is not
@@ -1562,6 +1576,29 @@ unchanged. Rule 7a's refusal controls therefore check that a refused receipt
 grants no observation credit (`discriminate` is not `yes`) instead of reading
 propagation, which the rule-7a fixture's constant `u8` tail now establishes
 on its own.
+
+A `cfg` gate may compile the changed owner out for a twin the related tests
+run instead (#15104). Before any direct-return witness completes for a
+changed whole-body constant tail, the classifier asks
+`diff::owner_may_be_swapped`, the new-side half of the shared base-owner gate
+decision: a `cfg`/`cfg_attr` on the function, an enclosing item or the file,
+a same-path same-name twin, or a gated or changed module declaration on the
+owner's chain. When it answers yes, or when the source or the module
+declarations cannot be read, no witness completes and propagation reads
+`unknown` (`cfg_gated_owner`), so the finding reads no stronger than
+`propagation_unknown`. Ungated owners, an owner beside an unrelated
+`cfg(test)` module and a same-named function on another path keep the
+credit. A `#[path]` module declaration gates the owners it may reach:
+the file its literal names, resolved against the declaring file's
+directory (case-insensitively, with a backslash read as a separator), any file under
+that file's directory, where its own `mod` declarations resolve, except a
+default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
+can move or compile out), and any file whose path spells the declaration's
+name. A target that is not a literal on a top-level out-of-line
+declaration (an inline module's `#[path]`, a `#[path]` declaration inside
+an inline module, a non-literal value) gates every owner. Limit:
+the declarations inside a target file are not followed, so every file under
+its directory is gated.
 
 ### Format owner tails (#6578)
 
@@ -4083,7 +4120,8 @@ of the exact `x == 101` input row, independently of final gap admission. The
 three non-owner fixtures (`rust_nested_use_cfg`, `rust_nested_use_dependency_alias`,
 `rust_nested_use_dependency_glob`) classify their return-value findings
 `infection_unknown`, because call identity does not resolve to the owner;
-`rust_nested_use_owner` remains `static_unknown`. The fixtures use direct calls,
+`rust_nested_use_owner` resolves the owner call, so its return-value finding reads
+`weakly_exposed` (#14940). The fixtures use direct calls,
 not function values.
 
 Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). The computed-input continuation (`computed_input_parameters`) applies the same admission (below). It does not cover the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
@@ -4096,3 +4134,35 @@ identity is `infection_unknown`, never a fabricated missing-equality gap.
 Returned comparisons retain the same unresolved boundary reason as predicates.
 An admitted exact boundary input still supplies the discriminator. The adaptor
 element-run reader (`sequence_runs`) is unchanged.
+
+### A deleted early return that gives the remaining tail's value (#14936)
+
+Deleting `if x == 0 { return Vec::new(); }` from a function whose remaining
+body is `vec![]` changes nothing an assertion on the owner's return can see:
+every input the guard took returned an empty vector on the base side and
+returns the candidate's `vec![]` now. A removed-only `return_value` probe on
+the deleted line therefore reads its discriminate stage `weak`
+(`deleted_guard_same_value`) instead of crediting an exact pin, and the
+finding is not `exposed`, when all of the following hold; every unmet
+condition keeps today's reading:
+
+1. The shared owner `verified_base_owner` verifies the base-side item and
+   reports no gate.
+2. The deleted line is the base body's first statement, an `if` with no
+   `else` whose block is exactly one `return <constant>`, and it is the
+   removed line the probe stands on.
+3. The candidate body is one tail expression with no statement and no
+   attribute, and it folds to a constant.
+4. The two constants fold to the same value with the #14852 folder, which
+   for this reading also takes a bare `Vec::new()` or `String::new()` as the
+   empty value.
+
+The reading only withholds credit, so it does not refuse a possibly rebound
+`vec!`. It also does not read the guard's condition: a condition with a side
+effect or a possible panic could still be observed by a state or
+`should_panic` test, but the demoted oracle is the return-value pin, which
+cannot see that difference. "Remaining tail" here means the candidate's
+constant tail, which the same diff may also have changed; that change has
+its own probe. A deleted guard whose remaining tail returns a different constant
+(`vec![9]`) keeps its credit. The fixture is
+`fixtures/rust_deleted_guard_same_value`.

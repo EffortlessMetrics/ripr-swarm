@@ -5,16 +5,29 @@ use super::{
     ExposureClass, OracleKind, OracleStrength, ProbeId, RiprEvidence, SourceLocation, SymbolId,
 };
 
+/// The shape of changed behavior a probe stands for. Serialized as the
+/// snake_case `family` token in JSON output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeFamily {
+    /// `predicate`: a changed condition or comparison that decides a branch.
     Predicate,
+    /// `return_value`: a changed value the function returns or computes.
     ReturnValue,
+    /// `error_path`: a changed error path, such as an error return or raise.
     ErrorPath,
+    /// `call_deletion`: a call site the diff removed.
     CallDeletion,
+    /// `field_construction`: a changed field value in a constructed struct
+    /// or object.
     FieldConstruction,
+    /// `side_effect`: a changed effect outside the return value, such as a
+    /// call made for its effect or a process exit code.
     SideEffect,
+    /// `match_arm`: a changed match arm.
     MatchArm,
+    /// `static_unknown`: a changed line whose behavior shape `ripr` could not
+    /// classify.
     StaticUnknown,
 }
 
@@ -42,6 +55,7 @@ impl ProbeFamily {
         })
     }
 
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             ProbeFamily::Predicate => "predicate",
@@ -56,16 +70,23 @@ impl ProbeFamily {
     }
 }
 
+/// What kind of difference a probe's change makes. Serialized as the
+/// snake_case `delta` token in JSON output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeltaKind {
+    /// `value`: a different value is produced.
     Value,
+    /// `control`: a different branch or path is taken.
     Control,
+    /// `effect`: a different effect happens outside the returned value.
     Effect,
+    /// `unknown`: the kind of difference is not known.
     Unknown,
 }
 
 impl DeltaKind {
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             DeltaKind::Value => "value",
@@ -76,19 +97,44 @@ impl DeltaKind {
     }
 }
 
+/// Why static analysis stopped short for a finding. Serialized as snake_case
+/// tokens in `stop_reasons`. RIPR-SPEC-0411 lists each value's role and
+/// current producer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
+    /// `max_depth_reached`: reserved wire value; not emitted today.
     MaxDepthReached,
+    /// `external_crate_boundary`: reserved wire value; not emitted today.
     ExternalCrateBoundary,
+    /// `dynamic_dispatch_unresolved`: the path goes through a dynamic call
+    /// `ripr` cannot resolve statically.
     DynamicDispatchUnresolved,
+    /// `proc_macro_opaque`: heuristic annotation. The changed expression
+    /// contains a macro call (`name!(`) whose expansion `ripr` does not see.
     ProcMacroOpaque,
+    /// `fixture_opaque`: heuristic annotation. A related test mentions a
+    /// fixture, builder, or generator, so its inputs may come from values
+    /// `ripr` does not evaluate.
     FixtureOpaque,
+    /// `feature_unknown`: reserved wire value; not emitted today.
     FeatureUnknown,
+    /// `async_boundary_opaque`: heuristic annotation. The changed expression
+    /// names `async`, `spawn`, or `await`, so the path may cross a task
+    /// boundary `ripr` does not follow. A name match alone does not mean a
+    /// boundary is crossed.
     AsyncBoundaryOpaque,
+    /// `no_changed_rust_line`: heuristic annotation. `ripr` could not place
+    /// the changed line inside a Rust function it analyzes.
     NoChangedRustLine,
+    /// `infection_evidence_unknown`: added when a finding is
+    /// `infection_unknown` and has no more specific reason.
     InfectionEvidenceUnknown,
+    /// `propagation_evidence_unknown`: added when a finding is
+    /// `propagation_unknown` and has no more specific reason.
     PropagationEvidenceUnknown,
+    /// `static_probe_unknown`: added when a finding is `static_unknown` and
+    /// has no more specific reason.
     StaticProbeUnknown,
     /// Reach through internal calls is unresolved. A bounded walk may retain
     /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
@@ -123,6 +169,7 @@ pub enum StopReason {
 }
 
 impl StopReason {
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             StopReason::MaxDepthReached => "max_depth_reached",
@@ -214,6 +261,11 @@ impl StopReason {
         }
     }
 
+    /// The generic stop reason for an unknown class: `infection_evidence_unknown`,
+    /// `propagation_evidence_unknown` or `static_probe_unknown` for the
+    /// matching `*_unknown` class, and `None` for every other class. The
+    /// classifier adds it when an unknown finding has no more specific stop
+    /// reason.
     pub fn for_unknown_class(class: &ExposureClass) -> Option<Self> {
         match class {
             ExposureClass::InfectionUnknown => Some(StopReason::InfectionEvidenceUnknown),
@@ -224,17 +276,49 @@ impl StopReason {
     }
 }
 
+/// One behavior that ripr checks the tests against: a source location, the
+/// family of behavior there, and what a test would need to observe to notice
+/// a change in it.
+///
+/// Most diff probes sit on a changed line. Some sit on an unchanged use of a
+/// changed value, such as a predicate that reads a changed binding, and
+/// repo-mode probes cover existing code with no diff at all.
+///
+/// A probe is static evidence. It names where the behavior is and what kind
+/// of oracle could discriminate it; it makes no claim about any runtime
+/// mutation outcome for the line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probe {
+    /// Identifier for this probe within one run. A [`Finding`] built from the
+    /// probe reuses it as the finding id.
     pub id: ProbeId,
+    /// Where the probed source is. For a diff probe the line is the new-file
+    /// (head-side) coordinate, also for a removed line.
     pub location: SourceLocation,
+    /// The function or other owner that contains the probed source, when one
+    /// was found. `None` otherwise, including for a line of a function the
+    /// diff removed entirely.
     pub owner: Option<SymbolId>,
+    /// What kind of behavior this probe is about.
     pub family: ProbeFamily,
+    /// What kind of program delta the family implies.
     pub delta: DeltaKind,
+    /// Base-side text of the change, when the producer has one. `None` for a
+    /// purely added line and for probes with no base side, such as repo-mode
+    /// probes.
     pub before: Option<String>,
+    /// Head-side text of the change or of the probed source, when the
+    /// producer has one. `None` for a removed-only line.
     pub after: Option<String>,
+    /// The source expression the probe is about, as the producer read it. For
+    /// a probe on a changed line this is the trimmed line; a probe placed on
+    /// another site carries that site's expression.
     pub expression: String,
+    /// Places a test could observe this change, such as `return value` or
+    /// `field:<name>`. Empty when none are named.
     pub expected_sinks: Vec<String>,
+    /// Oracle shapes that would discriminate this change, such as
+    /// `exact error variant assertion`. Empty when none are named.
     pub required_oracles: Vec<String>,
 }
 
@@ -826,23 +910,49 @@ impl RelatedTestMiss {
     }
 }
 
+/// ripr's static verdict on one [`Probe`]: whether the related tests appear
+/// to contain a discriminator that would notice the changed behavior, with
+/// the evidence and gaps behind that verdict.
+///
+/// The class is static exposure evidence. It is not a runtime mutation
+/// outcome and does not establish that the tests are sufficient.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
+    /// Finding identifier. The classifiers set it to the probe id.
     pub id: String,
+    /// Identity parts of the canonical gap this finding belongs to, when a
+    /// producer assigned one. `None` means no canonical gap identity was
+    /// assigned.
     pub canonical_gap: Option<FindingCanonicalGap>,
+    /// The changed behavior this finding is about.
     pub probe: Probe,
+    /// The exposure classification, such as `exposed` or
+    /// `reachable_unrevealed`.
     pub class: ExposureClass,
+    /// Per-stage evidence for reach, infect, propagate and reveal.
     pub ripr: RiprEvidence,
+    /// Headline confidence in the classification, between 0 and 1. For Rust
+    /// it is derived from the stage evidence and capped by the weakest stage;
+    /// preview adapters use a per-class constant that is not on the same
+    /// scale (see `confidence_basis`).
     pub confidence: f32,
     /// Why `confidence` is held at its value, for preview-adapter findings
     /// (#10700). Empty for Rust, whose score is not a per-class constant.
     /// Explains the number only; no decision helper reads it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
+    /// Human-readable lines naming the evidence the analysis found.
     pub evidence: Vec<String>,
+    /// Human-readable lines naming evidence the analysis looked for and did
+    /// not find.
     pub missing: Vec<String>,
+    /// Where the changed value appears to flow, such as a return value.
     pub flow_sinks: Vec<FlowSinkFact>,
+    /// Values related tests were seen to use, and discriminating values no
+    /// related test was seen to use.
     pub activation: ActivationEvidence,
+    /// Why the static analysis stopped short of a firmer verdict. Empty when
+    /// nothing stopped it.
     pub stop_reasons: Vec<StopReason>,
     /// Number of matched related-test/oracle rows after the existing dedup,
     /// before bounded unique-first packing. Metadata only: the retained
@@ -851,7 +961,12 @@ pub struct Finding {
     /// vector count; absence cannot establish how many rows were discarded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related_tests_matched_total: Option<usize>,
+    /// Tests ripr related to this change, with the oracle each one uses.
+    /// Bounded: see `related_tests_matched_total` for the count before
+    /// packing.
     pub related_tests: Vec<RelatedTest>,
+    /// One suggested next action for a person or agent, when the producer
+    /// named one.
     pub recommended_next_step: Option<String>,
     /// Source language the adapter that produced this finding identifies as.
     /// Additive optional per RIPR-SPEC-0026; populated by the per-language

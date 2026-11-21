@@ -803,6 +803,11 @@ impl ClassifiedProbeEvidence {
             }
             None => (flow_sinks, propagation_witness),
         };
+        // #15104: the changed whole-body constant tail is the owner's return,
+        // but a `cfg` gate may compile this owner out for a twin the tests
+        // run instead (the shared owner's gate decision). No direct-return
+        // edge on it completes, whichever witness proposed one.
+        let propagation_witness = propagation_witness.filter(|_| !context.owner_may_be_swapped);
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -897,6 +902,23 @@ impl ClassifiedProbeEvidence {
                         ),
                     )
                 }
+            }
+            _ => propagate,
+        };
+        // #15104: nor may the sinks alone credit it (fail closed).
+        let propagate = match context.owner_fn {
+            Some(owner)
+                if context.owner_may_be_swapped
+                    && matches!(propagate.state, StageState::Yes | StageState::Weak) =>
+            {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Propagation unknown: a `cfg` gate may compile `{}` out for a twin the related tests run instead (cfg_gated_owner)",
+                        owner.name
+                    ),
+                )
             }
             _ => propagate,
         };
@@ -2041,6 +2063,18 @@ impl ClassifiedProbeEvidence {
                 Confidence::Medium,
                 "Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)",
             )
+        } else {
+            discriminate
+        };
+        // #14936: a deleted `if <cond> { return <constant>; }` whose constant
+        // is the candidate owner's whole-body constant tail returns the same
+        // value on both sides for every input the guard took, so an exact pin
+        // on the owner's return does not discriminate the deletion.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(agreement) = context.deleted_guard_agreement.as_ref()
+        {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, agreement.summary())
         } else {
             discriminate
         };

@@ -11,8 +11,8 @@ mod changed_span;
 mod const_flow;
 mod constant_tail_change;
 pub(in crate::analysis) use constant_tail_change::{
-    ConstantTailChange, base_side_may_rebind_trusted_macros, constant_tail_change,
-    is_equal_constant_respelling,
+    ConstantTailChange, DeletedGuardAgreement, base_side_may_rebind_trusted_macros,
+    constant_tail_change, deleted_guard_agreement, is_equal_constant_respelling,
 };
 #[cfg(feature = "lang-rust")]
 mod tier_flow;
@@ -215,8 +215,9 @@ pub(in crate::analysis) use propagation_witness::{
     test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_change_witness, constant_tail_witness, early_return_literal_witness,
-    fallible_literal_witness, format_tail_witness, result_map_witness,
+    changes_constant_owner_tail, constant_tail_change_witness, constant_tail_witness,
+    early_return_literal_witness, fallible_literal_witness, format_tail_witness,
+    result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;

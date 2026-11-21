@@ -10,7 +10,9 @@ mod parse;
 mod path;
 mod side_prefix;
 mod source;
-pub(crate) use base_owner::{ModuleDeclarations, verified_base_owner};
+pub(crate) use base_owner::{
+    ModuleDeclarations, may_declare_module, owner_may_be_swapped, verified_base_owner,
+};
 pub(crate) use copy_section::expand_copy_destinations;
 pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_source};
 pub mod records;
@@ -23,8 +25,8 @@ pub(crate) use load::{
     probe_head_ref_state, resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{
-    another_base_candidate, base_is_checked_out_head_with_parent, is_shallow_repository,
-    load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
+    another_base_candidate, base_is_checked_out_head, base_is_checked_out_head_with_parent,
+    is_shallow_repository, load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
     load_diff_with_effective_base_core, load_worktree_diff_with_effective_base_core,
     no_merge_base_diagnosis, resolve_effective_base_core,
 };

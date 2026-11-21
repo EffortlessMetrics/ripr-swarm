@@ -1,0 +1,45 @@
+{
+  "case_id": "authored-14087-raw-use-leaf-imported-render",
+  "subject_id": "authored-14087-raw-use-leaf",
+  "diff": "cases/authored-14087-raw-use-leaf-imported-render.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "raw_use_leaf_exact_pin",
+  "hard_case": "The bare `render(..)` calls reach the changed `b::render` only through the raw-spelled leaf `use crate::b::r#render;`, while a glob of `a` offers a namesake.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n >= 5",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::renders_through_b",
+        "equivalence_review": "not equivalent: `b::render(5)` becomes true and `assert_eq!(render(5), false)` fails. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_failed in tests::renders_through_b."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The raw leaf binds the plain name `render` to `b::render` (#14087), so `assert_eq!(render(5), false)` pins the changed boundary exactly. Before the fix the glob namesake `a::render` took the call and this change lost its credit (limited).",
+  "labeling_observation": {
+    "ripr_commit": "332729ac",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -2174,19 +2174,66 @@ fn refresh_publishes_diagnostics_under_a_spaced_unicode_root() -> Result<(), Str
     assert_lsp_refresh_publishes_under_root(&root)
 }
 
-/// Reads publishes until one whose path ends with the root-relative
-/// `expected` satisfies `accept` (given its diagnostic count), failing at
-/// `ANALYSIS_TIMEOUT`. A suffix match needs no canonicalization, so it also
-/// names a file that no longer exists.
+/// Compare the full decoded fixture paths, not a root-relative suffix. Valid
+/// URI encodings may differ; Windows paths also need case/separator folding.
+/// This lexical comparison still works after the fixture file is deleted.
+fn same_fixture_file_uri(left: &str, right: &str) -> bool {
+    let (Some(left), Some(right)) = (editor_uri_path(left), editor_uri_path(right)) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        let normalize = |path: PathBuf| path.to_string_lossy().replace('\\', "/").to_lowercase();
+        normalize(left) == normalize(right)
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+/// Reads publishes until one whose full decoded path is `expected` satisfies
+/// `accept` (given its diagnostic count), failing at `ANALYSIS_TIMEOUT`.
 fn await_publish_for(
     session: &mut LspSession,
-    expected: &Path,
+    expected: &str,
     waiting_for: &str,
+    pending_response: Option<u64>,
     accept: impl Fn(usize) -> bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + ANALYSIS_TIMEOUT;
-    loop {
-        let message = session.await_message(deadline, waiting_for)?;
+    await_publish_and_response(
+        || session.await_message(deadline, waiting_for),
+        expected,
+        pending_response,
+        accept,
+    )
+}
+
+/// A refresh publishes diagnostics and returns a response on independent
+/// output paths. Observe both before issuing another request; neither arrival
+/// order may discard the other obligation. No response is expected for a
+/// watched-file notification.
+fn await_publish_and_response(
+    mut next: impl FnMut() -> Result<serde_json::Value, String>,
+    expected: &str,
+    mut pending_response: Option<u64>,
+    accept: impl Fn(usize) -> bool,
+) -> Result<(), String> {
+    let mut published = false;
+    while !published || pending_response.is_some() {
+        let message = next()?;
+        if message.get("result").is_some() || message.get("error").is_some() {
+            let id = message.get("id").and_then(serde_json::Value::as_u64);
+            if pending_response.is_none() || id != pending_response {
+                return Err(format!(
+                    "unexpected response while awaiting publication: {message}"
+                ));
+            }
+            expect_result(&message, "ripr.refresh")?;
+            pending_response = None;
+            continue;
+        }
         if message.get("method").and_then(serde_json::Value::as_str)
             != Some("textDocument/publishDiagnostics")
         {
@@ -2195,25 +2242,26 @@ fn await_publish_for(
         let names_expected = message
             .pointer("/params/uri")
             .and_then(serde_json::Value::as_str)
-            .and_then(editor_uri_path)
-            .is_some_and(|path| path.ends_with(expected));
-        let count = message
+            .is_some_and(|uri| same_fixture_file_uri(uri, expected));
+        let accepted = message
             .pointer("/params/diagnostics")
             .and_then(serde_json::Value::as_array)
-            .map_or(0, Vec::len);
-        if names_expected && accept(count) {
-            return Ok(());
-        }
+            .is_some_and(|diagnostics| accept(diagnostics.len()));
+        published |= names_expected && accepted;
     }
+    Ok(())
 }
+
+#[path = "lsp_lifecycle/publication_response_order.rs"]
+mod publication_response_order;
 
 /// #14099: a file that is not open has no document-sync path. Deleting it
 /// outside the editor reaches the server only as a watched-file event, and
 /// the server must then retract the diagnostics it published for that file
 /// without waiting for a manual refresh. A watched-file event for the same
-/// file while its bytes are unchanged (a `touch`) is sent first: it must not
-/// be what clears the rows, so the empty publish is awaited only after the
-/// delete.
+/// file while its bytes are unchanged (a `touch`) is sent first and settled
+/// with a refresh round-trip while the file still exists: it must not be what
+/// clears the rows, so the empty publish is awaited only after the delete.
 #[test]
 fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Result<(), String> {
     let base = unique_compat_fixture_root("external-delete")?;
@@ -2223,11 +2271,26 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     let lib_uri = editor_file_uri(&lib)?;
     let mut session = start_session_with_published_diagnostics(&root, &relative)?;
 
-    // Unchanged bytes: nothing to refresh. Then the real deletion.
+    // Unchanged bytes: the touch itself schedules nothing. Settle it with an
+    // explicit refresh while the file still exists so a delayed touch cannot
+    // observe the deletion and satisfy the retraction assertion instead.
     session.notify(
         "workspace/didChangeWatchedFiles",
         Some(serde_json::json!({"changes": [{"uri": lib_uri, "type": 2}]})),
     )?;
+    let touch_refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    await_publish_for(
+        &mut session,
+        &lib_uri,
+        "the post-touch diagnostics and refresh response",
+        Some(touch_refresh_id),
+        |count| count > 0,
+    )?;
+
     fs::remove_file(&lib).map_err(|err| format!("delete fixture file failed: {err}"))?;
     session.notify(
         "workspace/didChangeWatchedFiles",
@@ -2235,8 +2298,9 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     )?;
     await_publish_for(
         &mut session,
-        &relative,
+        &lib_uri,
         "the retraction for the deleted file (no manual refresh was sent)",
+        None,
         |count| count == 0,
     )?;
     shutdown_exit_and_wait(&mut session)
@@ -2254,6 +2318,7 @@ fn deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it() -> R
     let relative = Path::new("src").join("lib.rs");
     let folder = root.join("src");
     let folder_uri = editor_file_uri(&folder)?;
+    let lib_uri = editor_file_uri(&root.join(&relative))?;
     let mut session = start_session_with_published_diagnostics(&root, &relative)?;
 
     // The folder still exists: not a deletion, nothing to refresh.
@@ -2268,8 +2333,9 @@ fn deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it() -> R
     )?;
     await_publish_for(
         &mut session,
-        &relative,
+        &lib_uri,
         "the retraction for the file below the deleted folder (no manual refresh was sent)",
+        None,
         |count| count == 0,
     )?;
     shutdown_exit_and_wait(&mut session)
@@ -3140,14 +3206,14 @@ fn oversized_non_rust_diff_over_changed_line_budget_is_typed_limited() -> Result
     shutdown_exit_and_wait(&mut control)
 }
 
-/// #13716: on a real Rust repository with a committed `>= 100` -> `> 100`
-/// change, the real server's own seam diagnostic (no injected
-/// fix-instruction) is offered "Start repair: copy repair command", and the
-/// targeted-test brief is not disabled with a language-boundary reason. The
-/// editor and `ripr agent repair --seam-id` read the same seam repair gate.
-#[test]
-fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Result<(), String> {
-    let base = unique_compat_fixture_root("repair-start")?;
+/// The `>= 100` -> `> 100` Rust boundary fixture shared by the editor
+/// repair-start journeys (#13716, #13636): committed on top of the base when
+/// `commit_change`, else left as an uncommitted production edit.
+fn boundary_change_fixture(
+    name: &str,
+    commit_change: bool,
+) -> Result<(CompatFixtureRoot, PathBuf), String> {
+    let base = unique_compat_fixture_root(name)?;
     let root = base.path.join("repo");
     fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
     fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
@@ -3177,16 +3243,27 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
         "src/lib.rs",
         "pub fn discount(total: u32) -> u32 {\n    if total > 100 {\n        10\n    } else {\n        0\n    }\n}\n",
     )?;
-    git(&["commit", "-q", "-am", "change boundary"])?;
+    if commit_change {
+        git(&["commit", "-q", "-am", "change boundary"])?;
+    }
+    Ok((base, root))
+}
 
+/// Opens a full-profile session on `root` with `base_ref`, refreshes, and
+/// returns the session plus the real server's own weakly-gripped seam
+/// diagnostic (no injected fix-instruction).
+fn refreshed_seam_session(
+    root: &Path,
+    base_ref: &str,
+) -> Result<(LspSession, Option<serde_json::Value>, serde_json::Value), String> {
     let mut session = LspSession::spawn()?;
     let initialize = session.request(
         "initialize",
         serde_json::json!({
             "processId": null,
-            "rootUri": editor_file_uri(&root)?,
+            "rootUri": editor_file_uri(root)?,
             "initializationOptions": {
-                "baseRef": "HEAD~1",
+                "baseRef": base_ref,
                 "checkMode": "instant",
                 "diagnosticProfile": "full"
             },
@@ -3241,7 +3318,7 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
         }
     }
     let (uri, diagnostic) = seam_diagnostic
-        .ok_or("fixture setup: the committed boundary change must publish a seam diagnostic")?;
+        .ok_or("fixture setup: the boundary change must publish a seam diagnostic")?;
     // Precondition: this is the production payload, not an injected summary.
     for injected in ["fix_instruction", "witness", "finding_id"] {
         if diagnostic.pointer(&format!("/data/{injected}")).is_some() {
@@ -3251,6 +3328,18 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
         }
     }
 
+    Ok((session, uri, diagnostic))
+}
+
+/// #13716: on a real Rust repository with a committed `>= 100` -> `> 100`
+/// change, the real server's own seam diagnostic (no injected
+/// fix-instruction) is offered "Start repair: copy repair command", and the
+/// targeted-test brief is not disabled with a language-boundary reason. The
+/// editor and `ripr agent repair --seam-id` read the same seam repair gate.
+#[test]
+fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Result<(), String> {
+    let (_base, root) = boundary_change_fixture("repair-start", true)?;
+    let (mut session, uri, diagnostic) = refreshed_seam_session(&root, "HEAD~1")?;
     let actions = session.request(
         "textDocument/codeAction",
         serde_json::json!({
@@ -3310,4 +3399,89 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
         ));
     }
     Ok(())
+}
+
+/// #13636: with the same boundary change left uncommitted, the real server
+/// lists "Start repair: copy repair command" inert, naming the commit step,
+/// and `ripr agent repair --phase before` refuses the same start ("committed
+/// first ... Nothing was started"). After the commit, the same session offers
+/// the enabled start with no refresh.
+#[test]
+fn real_seam_diagnostic_names_the_commit_step_on_an_uncommitted_change() -> Result<(), String> {
+    let (_base, root) = boundary_change_fixture("repair-start-uncommitted", false)?;
+    let (mut session, uri, diagnostic) = refreshed_seam_session(&root, "HEAD")?;
+    let seam_id = diagnostic
+        .pointer("/data/seam_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let request_start = |session: &mut LspSession| -> Result<serde_json::Value, String> {
+        let actions = session.request(
+            "textDocument/codeAction",
+            serde_json::json!({
+                "textDocument": {"uri": uri},
+                "range": diagnostic["range"].clone(),
+                "context": {"diagnostics": [diagnostic.clone()]},
+            }),
+        )?;
+        let actions = expect_result(&actions, "textDocument/codeAction")?
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        actions
+            .iter()
+            .find(|action| action["title"] == "Start repair: copy repair command")
+            .cloned()
+            .ok_or_else(|| format!("the repair start must be listed: {actions:?}"))
+    };
+
+    let start = request_start(&mut session)?;
+    let reason = start
+        .pointer("/disabled/reason")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("the start must be inert on an uncommitted change: {start}"))?;
+    if start.get("command").is_some()
+        || start.pointer("/data/disabled_reason")
+            != Some(&serde_json::json!("uncommitted_production_change"))
+        || !reason.starts_with("Commit your uncommitted source files first")
+        || !reason.contains("--literal-pathspecs commit -m \"<message>\" -- src/lib.rs")
+    {
+        return Err(format!(
+            "the inert start must name the commit step: {start}"
+        ));
+    }
+
+    // The CLI half: the before phase refuses this very start.
+    let before = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["agent", "repair", "--root"])
+        .arg(&root)
+        .args(["--seam-id", &seam_id, "--phase", "before"])
+        .current_dir(&root)
+        .output()
+        .map_err(|err| format!("run agent repair before phase: {err}"))?;
+    let stderr = String::from_utf8_lossy(&before.stderr);
+    if before.status.success()
+        || !stderr.contains("committed first")
+        || !stderr.contains("src/lib.rs")
+    {
+        return Err(format!(
+            "`ripr agent repair --phase before` must refuse the uncommitted start: status {:?}\nstderr:\n{stderr}",
+            before.status.code()
+        ));
+    }
+
+    // Commit: the same session re-enables the start without a refresh.
+    run_compat_git(&root, &["commit", "-q", "-am", "change boundary"])?;
+    // The server memoizes the preflight for one second per root.
+    std::thread::sleep(Duration::from_millis(1100));
+    let start = request_start(&mut session)?;
+    if start.get("disabled").is_some()
+        || !start
+            .pointer("/command/arguments/0/command")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|command| command.contains(&format!("--seam-id {seam_id}")))
+    {
+        return Err(format!("the committed start must be enabled: {start}"));
+    }
+    shutdown_exit_and_wait(&mut session)
 }

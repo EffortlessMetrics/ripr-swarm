@@ -134,7 +134,7 @@ map is:
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.3` |
-| `ripr cache export` success stdout | `schema_version` | `0.1` |
+| `ripr cache export` success stdout (published as `schemas/ripr/cache-export.schema.json`) | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
@@ -167,6 +167,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
+| `schemas/ripr/cache-export.schema.json` | `0.1` | `crates/ripr/src/analysis/seam_cache/export.rs`; cache export success report (`ripr cache export`) |
 | `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
@@ -237,7 +238,7 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
   is not suppressed by an explicit `--suppression-policy`, is not severity
   `off` for its file in `ripr.toml`, and its class is not `exposed`. Exposed
   findings print nothing.
-- `<classification>` is the check document's `class` token verbatim
+- `<classification>` is the check document's `classification` token verbatim
   (`weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
   `infection_unknown`, `propagation_unknown`, `static_unknown`);
   `<probe family>` is the probe's `family` token. These are static
@@ -901,7 +902,8 @@ same `canonical_next_action.v1` DTO that `ripr check --format json` embeds
 rather than re-inferred for the machine document. It is present only when the
 first-command state is a precise recovery: `stop.kind` is `doctor_recovery`,
 `stop.check_name` names the failing check (`root_directory`, `config`, or
-`cargo_toml` for the generic failed-prerequisite case), `stop.recovery_route`
+`cargo_toml` or `output_location` for the generic failed-prerequisite case),
+`stop.recovery_route`
 is the recovery prose, `action_class` is `satisfy_prerequisite`, and `command`
 is absent because a recovery is not a runnable command. The key is omitted when
 the state names a runnable command, and for the `source-build` profile. The
@@ -1016,6 +1018,11 @@ exit zero before consuming the directory. Failures after output creation name th
 retained owned partial output; preflight refusals, including unavailable Cargo
 input identity, occur before the output directory exists and create no output.
 The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-cache-export.md).
+The success object is published as
+[`schemas/ripr/cache-export.schema.json`](../schemas/ripr/cache-export.schema.json);
+`crates/ripr/tests/cache_export_json_schema.rs` validates the bytes the real
+command writes and holds `copied_files` and `logical_file_bytes` to the files
+in the directory `cache_dir` names.
 
 ## Matched intervention-study preregistration
 
@@ -1315,6 +1322,9 @@ CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
 stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 limit=STATIC_LIMIT_KIND
+owner=OWNER_NAME
+before=BASE EXPRESSION
+seen=VALUE (CONTEXT); VALUE (CONTEXT) (+N more)
 done=... | open=... | stop=...
 next=ripr context ... --at SELECTOR
 ```
@@ -1339,7 +1349,22 @@ next=ripr context ... --at SELECTOR
   currentness. A policy-suppressed finding prints a suppression `stop=`; a
   `--from` replay with `--suppression-policy` is refused for this format. All
   are static advisory, never runtime mutation outcomes.
-- `next=` is the scope-bound `ripr context` command for this finding.
+- `owner=` is the function the changed line belongs to (the producer's probe
+  owner, without the file prefix) and `before=` the changed expression as it
+  read on the base side; each is omitted when the producer recorded none, and
+  `before=` when it equals the record's expression. They carry the two facts a
+  `missing=-` row lacks, so an agent does not fetch the JSON packet for them.
+- `seen=` lists up to six values the related tests already use (the packet's
+  `observed_values`), each with its producer context in parentheses
+  (`function_argument` for an exercised input, `assertion_argument` for an
+  expected value, and so on), then `(+N more)`. It prints only when `next=`
+  is omitted, so no packet fact is dropped; absent when none were observed.
+- `next=` is the scope-bound `ripr context` command for this finding. It is
+  omitted for an `open=` test-side gap that names no concrete missing
+  discriminator and has at most one related test: the packet then adds nothing
+  the record, `owner=` and `before=` did not print. Any other finding keeps it,
+  because the discriminator's reason, observed inputs, flow sink and further
+  related tests live only in the packet.
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
@@ -4019,13 +4044,16 @@ Example:
 ```
 
 Scope: the flag applies to the findings-based check formats (`human`,
-`human-full`, `json`, `github`, `missed-txt`). Human output lists suppressed findings as compact
+`human-full`, `json`, `json-compact`, `github`, `missed-txt`). Human output lists suppressed findings as compact
 one-liners instead of detailed blocks; GitHub-format output skips
 annotations for suppressed findings and, when the policy hides every finding,
 emits a denominator `::notice` rather than an empty stream. SARIF keeps its existing
 `.ripr/suppressions.toml` `finding_id` suppression channel, and badge/repo
 formats keep their own suppression projections — `ripr check` rejects the
-flag for those formats instead of silently ignoring it. Date-expiry
+flag for those formats, and for `agent` and `json-terse`, instead of silently
+ignoring it. The rejection is a usage error decided before analysis (#15377):
+it exits 2 and writes no refusal record to stdout, so no format reports it as
+`analysis_failed`. Date-expiry
 enforcement beyond `expires` (review-after deadlines, required-active
 ledgers) belongs to the gate exception policy (#1442), not check
 suppression.
@@ -4928,8 +4956,8 @@ ripr check --format repo-sarif-compact
 `sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
 minified: parsed values are identical to `sarif`/`repo-sarif`, including the
 `RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
-bytes; `0` removes the cap; an unparseable value fails the run) and its
-in-band disclosure (`limited_results_bound`, `document_complete: false`,
+bytes; `0` removes the cap; results are kept by level, errors then warnings
+then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
 `results_rendered`/`results_total`/`results_omitted`). A bounded document
 stays valid SARIF 2.1.0 and is incomplete, never a clean run.
 The pretty `sarif` and `repo-sarif` bytes are unchanged.
@@ -15785,7 +15813,7 @@ ripr first-pr \
   --agent-packet target/ripr/agent/gap-packet.md \
   --gate-decision target/ripr/reports/gate-decision.json \
   --receipts-dir target/ripr/receipts \
-  --out-dir target/ripr/reports
+  --output-dir target/ripr/reports
 ```
 
 The command writes:
@@ -16420,7 +16448,13 @@ Field contract:
   observe the tests. The Markdown line then starts `Test run: reported by the
   caller, not run by ripr:`. The receipt's `verification.status` stays
   `verification_not_run` either way: the counts are the caller's claim, on a
-  separate axis from the static movement.
+  separate axis from the static movement. The object also carries
+  `attempt_id`, the attempt it speaks for (#14146). When several attempts
+  have such a receipt, it reports the most telling one: a caller-reported
+  failure first, then `not_recorded`, then a caller-reported pass, earliest
+  attempt within each; the Markdown form then prints one line per attempt,
+  in that order, as `Test run (attempt `<id>`): ...`, so one attempt's
+  `none recorded` never hides another attempt's reported failure.
 - `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
   one current awaiting repair attempt's recorded after command
   (`repair_attempt_after`; when that attempt recorded a refused after phase,
