@@ -5,6 +5,7 @@ mod arm_selection;
 mod binding_return_flow;
 mod boundary_pairing;
 mod builder_override;
+pub(in crate::analysis) mod byte_peek;
 mod call_identity;
 mod caller_loop_selector;
 mod changed_span;

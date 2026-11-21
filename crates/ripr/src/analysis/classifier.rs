@@ -393,6 +393,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.owner_sole_change = changed_file
         .zip(owner_fn)
         .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
+    context.byte_peek_change = changed_file.and_then(|changed| {
+        super::classify::byte_peek::byte_peek_change(
+            &context,
+            changed,
+            candidate_index.module_declarations(),
+            candidate_index.owner_pin_syntax(),
+        )
+    });
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
