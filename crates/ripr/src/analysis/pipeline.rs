@@ -3711,7 +3711,7 @@ fn is_git_mode_line(line: &str, prefix: &str) -> bool {
 
 /// A `git diff --binary` patch counts only once it is complete enough to be
 /// real: the `GIT binary patch` header, a `literal <n>` or `delta <n>` line,
-/// then a non-empty encoded data line (#15862). The marker alone, or a
+/// then a base85 data line (#15862). The marker alone, or a
 /// `literal 0` with no payload, stays unrecognized.
 #[derive(Clone, Copy, Default)]
 enum BinaryPatchProgress {
@@ -3727,12 +3727,30 @@ impl BinaryPatchProgress {
         let (next, complete) = match *self {
             _ if line == "GIT binary patch" => (Self::Header, false),
             Self::Header if is_binary_patch_size(line) => (Self::Size, false),
-            Self::Size if !line.is_empty() => (Self::Idle, true),
+            Self::Size if is_base85_data_line(line) => (Self::Idle, true),
             _ => (Self::Idle, false),
         };
         *self = next;
         complete
     }
+}
+
+/// One line of Git's base85 binary payload: a length character (`A`-`Z` for
+/// 1-26 bytes, `a`-`z` for 27-52) then exactly `ceil(len / 4) * 5` characters
+/// of Git's base85 alphabet (#15862). The payload is not decoded.
+fn is_base85_data_line(line: &str) -> bool {
+    let Some((&first, encoded)) = line.as_bytes().split_first() else {
+        return false;
+    };
+    let decoded = match first {
+        b'A'..=b'Z' => usize::from(first - b'A') + 1,
+        b'a'..=b'z' => usize::from(first - b'a') + 27,
+        _ => return false,
+    };
+    encoded.len() == decoded.div_ceil(4) * 5
+        && encoded
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&()*+-;<=>?@^_`{|}~".contains(b))
 }
 
 fn is_binary_patch_size(line: &str) -> bool {
@@ -5104,6 +5122,11 @@ mod tests {
             );
         }
         // Real `git diff --binary` output is recognized (#15862) ...
+        // A new one-byte file: the forward `literal 1` and reverse `literal 0`
+        // data lines are both base85 lines git emitted.
+        assert!(has_only_non_text_changes(
+            "diff --git a/e b/e\nnew file mode 100644\nindex 0000000..f76dd23\nGIT binary patch\nliteral 1\nIcmZPo000310RR91\n\nliteral 0\nHcmV?d00001\n\n"
+        ));
         assert!(has_only_non_text_changes(
             "diff --git a/logo.png b/logo.png\nindex 8352675..1592e5c 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
         ));
@@ -5117,6 +5140,9 @@ mod tests {
             "diff --git a/x b/x\nGIT binary patch\nliteral 0\n",
             "diff --git a/x b/x\nGIT binary patch\nliteral 0\n\n",
             "diff --git a/x b/x\nGIT binary patch\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\nnot payload\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQ WCj2L2ml2D\n",
             "diff --git a/x b/x\nold mode invalid\nnew mode invalid\n",
             "diff --git a/x b/x\nold mode 100644\nnew mode 10075\n",
             "diff --git a/x b/x\nold mode 100648\nnew mode 100755\n",

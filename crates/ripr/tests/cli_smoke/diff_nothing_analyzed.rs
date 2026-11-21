@@ -314,10 +314,13 @@ fn a_binary_rendered_copy_read_as_added_source_is_not_named_unread() -> TestResu
 const MODE_ONLY_LIB: &str =
     "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n";
 const BINARY_PATCH_LOGO: &str = "diff --git a/logo.png b/logo.png\nindex 8352675d67aed6625ece79af41c27fdb4ee2e867..1592e5c60f1a460928916dc5681fee1a9bd10868 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n";
-// Lookalikes with the same valid header: not a Git mode, and a bare marker.
+// Lookalikes with the same valid header: not a Git mode, a bare marker, and
+// a size line followed by text that is not a base85 data line.
 const INVALID_MODE_LIB: &str =
     "diff --git a/src/lib.rs b/src/lib.rs\nold mode invalid\nnew mode invalid\n";
 const BARE_BINARY_MARKER: &str = "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 0\n";
+const NON_PAYLOAD_BINARY: &str =
+    "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 0\nnot payload\n";
 
 /// #15862: a well-formed binary- or mode-only diff keeps the `malformed_diff`
 /// schema token, but the human limitation line must not call it unparseable
@@ -377,6 +380,7 @@ fn a_mode_only_diff_is_not_labelled_unparseable() -> TestResult {
     for (name, section) in [
         ("diff-invalid-mode-label", INVALID_MODE_LIB),
         ("diff-bare-binary-marker-label", BARE_BINARY_MARKER),
+        ("diff-non-payload-binary-label", NON_PAYLOAD_BINARY),
         ("diff-garbage-label-control", "this is not a diff\n"),
     ] {
         let (human, stderr, json) = run(name, &[section])?;
