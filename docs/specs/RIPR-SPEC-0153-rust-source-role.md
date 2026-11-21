@@ -105,7 +105,14 @@ the CLI reports. Other loose non-`src` files (panel subjects under
 `seeds_diff_probes` also consults module-tree evidence (#4435). A changed
 file seeds only when a Cargo target's module tree reaches it through
 `mod`, `#[path]` or literal `include!` edges, walked from every target
-root (a declared `[lib] path` replaces `src/lib.rs`). The modules of an
+root (a declared `[lib] path` replaces `src/lib.rs`). `autobins = false`
+drops the undiscovered `src/main.rs` and `src/bin/*` roots, and
+`autolib = false` drops `src/lib.rs` unless a `[lib]` table remains; a
+path-less declaration keeps its default path, including edition 2015's
+`src/<name>.rs`, `src/main.rs` and `src/bin/main.rs` fallback (#15877). A
+manifest that leaves no library or binary target (`autobins = false`, no
+`[[bin]]` or `[lib]`, no discoverable `src/lib.rs`) lets a completed walk of
+its test, bench and example roots judge the package. The modules of an
 external root (`[lib] path = "../shared/lib.rs"`) seed, and every member
 package that compiles that root keeps its tests in Draft scope. A file
 outside the layout directories that the owning package's production root
@@ -467,7 +474,10 @@ fields between a `FunctionFact` and its paired executable `TestFact` via generat
   every declaring package; `#[path]`, `include!`, nested inline and
   raw-identifier edges seed; a `#[path]` module outside `src/` that the
   production root mounts seeds while an unmounted sibling and a file only a
-  test target mounts do not (#15264); an unknown tree (`cfg_if!`) keeps seeding;
+  test target mounts do not (#15264); an undeclared `src/main.rs` (and the
+  module it mounts), `src/bin/*.rs` or `src/lib.rs` under `autobins` or
+  `autolib = false` seeds nothing while the discovered or declared control
+  seeds (#15877); an unknown tree (`cfg_if!`) keeps seeding;
   the LSP partition drops the same anchors. Each walk regression pairs a
   reached file with a true orphan so neither direction goes unpinned.
 - Unbuilt tests (#6965): a test in a file no `mod` declares (unchanged,
