@@ -271,7 +271,6 @@ fn timeout_labels_block_owner_refutation_through_judge_inputs() -> Result<(), St
     Ok(())
 }
 
-#[test]
 /// The labels must reach the shared judge in the shape it reads: a missed
 /// operator mutant on the line confirms, and with no line mutant the
 /// innermost function's whole-body mutant decides, except it cannot
