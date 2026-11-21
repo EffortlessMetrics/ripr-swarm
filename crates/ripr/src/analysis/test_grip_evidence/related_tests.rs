@@ -51,12 +51,18 @@ fn find_related_tests_in<'context, 'index>(
     context: &'context CompactGripContext<'index>,
     pool: Option<RelationPool<'_>>,
 ) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     let owner = OwnerContext::resolve(seam, context);
     let target_tokens = assertion_target_tokens(seam);
     let prefix = owner.prefix.as_deref();
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     let inaccessible_direct: BTreeSet<usize> = context
         .owner_function(seam.file(), seam.display_line())
         .map(|function| {
@@ -76,6 +82,9 @@ fn find_related_tests_in<'context, 'index>(
         })
         .unwrap_or_default();
     candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -85,6 +94,9 @@ fn find_related_tests_in<'context, 'index>(
         &owner,
         &target_tokens,
     );
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     match_assertion_target_affinity(&mut candidates, context, prefix, &target_tokens);
     match_same_test_file(&mut candidates, context, prefix, &owner);
     match_same_module(&mut candidates, context, prefix, &owner);
@@ -96,6 +108,10 @@ fn find_related_tests_in<'context, 'index>(
         if candidates.is_empty() {
             return Vec::new();
         }
+    }
+
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
     }
 
     // An inaccessible direct call cannot regain oracle credit through a
@@ -176,6 +192,9 @@ fn find_related_tests_in<'context, 'index>(
         })
     });
 
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     dedupe_related_candidates(candidates, context)
 }
 
@@ -206,7 +225,7 @@ pub(super) struct OwnerContext<'index> {
 }
 
 impl<'index> OwnerContext<'index> {
-    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
+    pub(super) fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
         let owner_fn = context.owner_function(seam.file(), seam.display_line());
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
@@ -377,7 +396,10 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
-    for test_index in indices {
+    for (position, test_index) in indices.iter().enumerate() {
+        if position.is_multiple_of(32) && cancellation::checkpoint().is_err() {
+            return;
+        }
         let Some(indexed) = context.tests.get(*test_index) else {
             continue;
         };

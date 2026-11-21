@@ -75,6 +75,11 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
             ));
         }
     }
+    if let Some(negated) = schema.get("not")
+        && check(value, negated, root, location).is_ok()
+    {
+        return Err(format!("{location}: matched a `not` schema {negated}"));
+    }
     if let Some(condition) = schema.get("if") {
         let branch = if check(value, condition, root, location).is_ok() {
             "then"
@@ -86,12 +91,14 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
                 .map_err(|error| format!("{error} (in the `{branch}` branch)"))?;
         }
     }
-    if let Some(number) = value.as_i64()
-        && let Some(minimum) = schema.get("minimum").and_then(Value::as_i64)
-        && number < minimum
-    {
-        return Err(format!("{location}: {number} is below minimum {minimum}"));
-    }
+    check_bound(value, schema, "minimum", std::cmp::Ordering::Less, location)?;
+    check_bound(
+        value,
+        schema,
+        "maximum",
+        std::cmp::Ordering::Greater,
+        location,
+    )?;
     if let Some(object) = value.as_object() {
         check_object(object, schema, root, location)?;
     }
@@ -100,6 +107,52 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
     }
     if let Some(text) = value.as_str() {
         check_string(text, schema, location)?;
+    }
+    Ok(())
+}
+
+/// `minimum` / `maximum` over every JSON number, failing closed: integers
+/// compare exactly across the signed and unsigned ranges, anything else as
+/// `f64`, and a bound that is not a number is an error rather than a skip.
+fn check_bound(
+    value: &Value,
+    schema: &Value,
+    keyword: &str,
+    violation: std::cmp::Ordering,
+    location: &str,
+) -> Result<(), String> {
+    let Some(bound) = schema.get(keyword) else {
+        return Ok(());
+    };
+    if !bound.is_number() {
+        return Err(format!("{location}: unsupported `{keyword}` value {bound}"));
+    }
+    if !value.is_number() {
+        return Ok(());
+    }
+    let exact = |number: &Value| {
+        number
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| number.as_u64().map(i128::from))
+    };
+    let ordering = match (exact(value), exact(bound)) {
+        (Some(number), Some(limit)) => number.cmp(&limit),
+        _ => {
+            let number = value.as_f64().unwrap_or(f64::NAN);
+            let limit = bound.as_f64().unwrap_or(f64::NAN);
+            number.partial_cmp(&limit).ok_or_else(|| {
+                format!("{location}: cannot compare {value} with `{keyword}` {bound}")
+            })?
+        }
+    };
+    if ordering == violation {
+        let side = if keyword == "minimum" {
+            "below"
+        } else {
+            "above"
+        };
+        return Err(format!("{location}: {value} is {side} {keyword} {bound}"));
     }
     Ok(())
 }
@@ -172,6 +225,14 @@ fn check_object(
                 }
             }
         }
+        Some(Value::Bool(true)) => {}
+        Some(extra) if extra.is_object() => {
+            for (field, emitted) in object {
+                if !properties.contains_key(field) {
+                    check(emitted, extra, root, &format!("{location}.{field}"))?;
+                }
+            }
+        }
         Some(other) => {
             return Err(format!(
                 "{location}: unsupported `additionalProperties` value {other}"
@@ -192,8 +253,22 @@ fn check_array(
     root: &Value,
     location: &str,
 ) -> Result<(), String> {
+    // Draft 2020-12: `prefixItems` binds a schema to each leading position,
+    // and `items` then applies only to the positions after the prefix.
+    let prefix = schema
+        .get("prefixItems")
+        .map(|prefix| {
+            prefix
+                .as_array()
+                .ok_or_else(|| format!("{location}: unsupported `prefixItems` value {prefix}"))
+        })
+        .transpose()?
+        .map_or(&[][..], Vec::as_slice);
+    for (index, (item, item_schema)) in items.iter().zip(prefix).enumerate() {
+        check(item, item_schema, root, &format!("{location}[{index}]"))?;
+    }
     if let Some(item_schema) = schema.get("items") {
-        for (index, item) in items.iter().enumerate() {
+        for (index, item) in items.iter().enumerate().skip(prefix.len()) {
             check(item, item_schema, root, &format!("{location}[{index}]"))?;
         }
     }
@@ -228,6 +303,11 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
     {
         return Err(format!("{location}: shorter than minLength {minimum}"));
     }
+    if let Some(maximum) = schema.get("maxLength").and_then(Value::as_u64)
+        && (text.chars().count() as u64) > maximum
+    {
+        return Err(format!("{location}: longer than maxLength {maximum}"));
+    }
     if let Some(pattern) = schema.get("pattern").and_then(Value::as_str) {
         match pattern {
             SHA256_DIGEST_PATTERN => {
@@ -245,9 +325,14 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
                     return Err(format!("{location}: {text:?} does not match {pattern}"));
                 }
             }
+            RELATIVE_WORKDIR_PATTERN => {
+                if !is_relative_working_directory(text) {
+                    return Err(format!("{location}: {text:?} does not match {pattern}"));
+                }
+            }
             other => {
                 return Err(format!(
-                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?} and {LONG_FLAG_PATTERN:?}"
+                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?}, {LONG_FLAG_PATTERN:?} and {RELATIVE_WORKDIR_PATTERN:?}"
                 ));
             }
         }
@@ -261,6 +346,25 @@ pub const SHA256_DIGEST_PATTERN: &str = "^sha256:[0-9a-f]{64}$";
 /// Unanchored at the end: a long flag is `--` then a lowercase letter, then
 /// anything.
 pub const LONG_FLAG_PATTERN: &str = "^--[a-z]";
+/// A relative working directory, as `repair-assurance.schema.json` publishes
+/// it, read with ECMAScript regex semantics (the JSON Schema dialect): `.`
+/// matches no line terminator (LF, CR, U+2028, U+2029); `[^\\/]+:` needs at
+/// least one character before the colon, so a first segment such as
+/// `:literal` passes while `c:` or `https:` does not; no leading `/` or `\\`;
+/// and no `..` segment.
+pub const RELATIVE_WORKDIR_PATTERN: &str =
+    r"^(?![^\\/]+:)(?![\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).+$";
+
+fn is_relative_working_directory(text: &str) -> bool {
+    let is_separator = |c: char| c == '/' || c == '\\';
+    let first_segment = text.split(is_separator).next().unwrap_or("");
+    let line_terminator = |c: char| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}');
+    !text.is_empty()
+        && !text.contains(line_terminator)
+        && !first_segment.chars().skip(1).any(|c| c == ':')
+        && !text.starts_with(is_separator)
+        && !text.split(is_separator).any(|segment| segment == "..")
+}
 
 const SUPPORTED_KEYWORDS: &[&str] = &[
     "$defs",
@@ -276,11 +380,15 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "if",
     "items",
     "maxItems",
+    "maxLength",
+    "maximum",
     "minItems",
     "minLength",
     "minimum",
+    "not",
     "oneOf",
     "pattern",
+    "prefixItems",
     "properties",
     "required",
     "then",
@@ -309,8 +417,10 @@ fn collect_unsupported(schema: &Value, found: &mut Vec<String>) {
                     collect_unsupported(member, found);
                 }
             }
-            "items" | "if" | "then" | "else" => collect_unsupported(nested, found),
-            "allOf" | "oneOf" => {
+            "items" | "if" | "then" | "else" | "not" | "additionalProperties" => {
+                collect_unsupported(nested, found)
+            }
+            "allOf" | "oneOf" | "prefixItems" => {
                 for member in nested.as_array().into_iter().flatten() {
                     collect_unsupported(member, found);
                 }

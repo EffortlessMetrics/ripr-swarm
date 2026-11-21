@@ -734,6 +734,22 @@ fn assert_limited_change_is_not_called_gripped(
     );
     // Location-specific: a spot counted as outside the change must not also
     // read as a different check on it, and the reverse.
+    // #15278: a gripped spot on the changed lines that check itself reads as a
+    // gap is reopened with check's reading, so it is neither a different check
+    // nor outside the change.
+    if gripped_note.starts_with("`ripr check` reads this changed code") {
+        assert!(
+            !repair.contains("different check than the one still open"),
+            "a spot check reads as open is not a different check:\n{repair}"
+        );
+        assert!(
+            !(repair.contains("outside your changed lines")
+                && repair.contains("already noticed by existing tests and not listed")),
+            "a spot check reads as open on the change is not counted outside it:\n{repair}"
+        );
+        assert_plain(&repair);
+        return Ok(());
+    }
     let on_change = gripped_note.contains("different check");
     assert_eq!(
         repair.contains("different check than the one still open"),
@@ -781,7 +797,7 @@ fn limited_option_change_is_not_called_gripped_by_repair() -> Result<(), String>
         // #14266: the weak `.or(Some(0))` return gap leads Start here over
         // the unknown predicate on the same line; both are non-exposed.
         "Changed behavior: xs.iter().copied().find(|x| x % 2 == 0).or(Some(0))",
-        "different check than the one still open",
+        "`ripr check` reads this changed code as weak",
     )
 }
 
@@ -943,6 +959,39 @@ fn sibling_err_variant_pin_leaves_the_return_value_seam_weak() -> Result<(), Str
     assert!(
         !repair.contains("repair_ready=true"),
         "no start is added:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #15278: the regex `is_word_byte` shape. Tests elsewhere in the repository
+/// pin the whole match seam, so the seam inventory reads it as already gripped,
+/// while `ripr check` reads the changed arm as weak (no test input selects the
+/// changed digit range). Bare repair must not say "the existing tests already
+/// check it, and `ripr check` reports the same" while check reports a gap.
+const WORD_OLD: &str = "pub fn is_word_byte(c: u8) -> bool {\n    match c {\n        b'_' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' => true,\n        _ => false,\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn word_byte() {\n        assert!(is_word_byte(b'a'));\n        assert!(!is_word_byte(b'-'));\n    }\n}\n";
+const WORD_TEST: &str = "use ar::is_word_byte;\n\n#[test]\nfn pins() {\n    assert_eq!(is_word_byte(b'a'), true);\n    assert_eq!(is_word_byte(b'-'), false);\n}\n";
+
+#[test]
+fn repair_never_says_check_reports_the_same_while_check_reports_a_weak_gap() -> Result<(), String> {
+    let new = WORD_OLD.replace("b'0'..=b'9'", "b'1'..=b'9'");
+    let repo = Repo::create(WORD_OLD, &new, WORD_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: weak"),
+        "precondition, check reports a weak gap on the changed arm:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD~1"])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("Nothing to do")
+            && !repair.contains("reports the same")
+            && !repair.contains("already check it"),
+        "repair must not call a change check reads as weak already checked:\n{repair}"
+    );
+    assert!(
+        repair.contains("`ripr check` reads this changed code as weak")
+            && repair.contains("write or strengthen the test by hand"),
+        "repair must name check's reading and the by-hand next step:\n{repair}"
     );
     Ok(())
 }
@@ -1158,11 +1207,17 @@ fn commit_step_names_dirty_files_outside_the_analyzed_root() -> Result<(), Strin
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
         .ok_or_else(|| format!("check must still name the repair start:\n{check}"))?;
-    // Precondition: the start's own preflight refuses over the outside file.
+    // Precondition: the start refuses. Since #15363 it refuses `crate` first,
+    // before writing anything, because a repair attempt starts only at the
+    // exact Git top-level; withholding this start in check is #15488.
     let (code, repair) = repo.ripr_status(&["repair", seam_id, "--root", "crate"])?;
     assert!(
-        code != Some(0) && repair.contains("Uncommitted: src/lib.rs"),
-        "precondition, the start refuses over the outside file:\n{repair}"
+        code != Some(0) && repair.contains("is not the exact Git top-level"),
+        "precondition, the start refuses the subdirectory root:\n{repair}"
+    );
+    assert!(
+        !repo.0.join("crate/target/ripr/repair-attempts").exists(),
+        "the refusal must take no attempt lock under the subdirectory root:\n{repair}"
     );
     let json = repo.ripr(&[
         "check", "--root", "crate", "--base", "HEAD", "--format", "json",

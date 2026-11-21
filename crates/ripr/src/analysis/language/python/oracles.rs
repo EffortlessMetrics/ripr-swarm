@@ -249,7 +249,7 @@ fn plain_dotted_name(expr: &Expr) -> Option<String> {
 }
 
 /// The truth of a literal condition (`if False:`, `while 0:`), when it is one.
-fn constant_truth(expr: &Expr) -> Option<bool> {
+pub(super) fn constant_truth(expr: &Expr) -> Option<bool> {
     let Expr::Constant(constant) = expr else {
         return None;
     };
@@ -649,8 +649,10 @@ fn assertion_from_assert(
 }
 
 /// `assert f(lit, ..)` and `assert not f(lit, ..)` with a bare callee name and
-/// only literal positional arguments. Whether the call pins a value is
-/// decided once the callee is resolved (`bool_oracle.rs`).
+/// only literal or plain-name positional arguments. Whether the call pins a
+/// value is decided once the callee is resolved (`bool_oracle.rs`); a name
+/// argument counts only once its test settles it as a parametrize argname
+/// (`bool_oracle::settle_parametrized_names`, #15310).
 fn bare_bool_call(expr: &Expr, source: &SourceText<'_>) -> Option<super::PythonBareBoolCall> {
     match expr {
         Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => {
@@ -810,7 +812,12 @@ fn literal_bool_call(
     let Expr::Name(callee) = call.func.as_ref() else {
         return None;
     };
-    if !call.keywords.is_empty() || !call.args.iter().all(is_literal_argument) {
+    if !call.keywords.is_empty()
+        || !call
+            .args
+            .iter()
+            .all(|argument| is_literal_argument(argument) || matches!(argument, Expr::Name(_)))
+    {
         return None;
     }
     Some(super::PythonBareBoolCall {
@@ -828,6 +835,15 @@ fn literal_bool_call(
             })
             .collect(),
         negated,
+        name_arguments: call
+            .args
+            .iter()
+            .filter_map(|argument| match argument {
+                Expr::Name(name) => Some(name.id.to_string()),
+                _ => None,
+            })
+            .collect(),
+        names_settled: false,
     })
 }
 
@@ -1155,12 +1171,18 @@ fn oracle_for_compare(
     compare: &ast::ExprCompare,
     source: &str,
 ) -> (OracleKind, OracleStrength, PythonOracleShape) {
-    let has_exact = compare.ops.iter().any(|op| matches!(op, ast::CmpOp::Eq));
+    // RIPR-SPEC-0238 rule 2: a single `is` against the `True`/`False` singleton
+    // pins the value exactly like `== True|False`, whatever the owner returns.
+    let is_bool_identity = matches!(compare.ops.as_slice(), [ast::CmpOp::Is])
+        && [compare.left.as_ref(), &compare.comparators[0]]
+            .into_iter()
+            .any(is_bool_literal);
+    let has_exact = is_bool_identity || compare.ops.iter().any(|op| matches!(op, ast::CmpOp::Eq));
     // RIPR-SPEC-0238 rule 1: `==` pins a value only when every operator in the
     // chain is `==` and some link compares two different token sequences
     // (`owner(1) == owner(1)` runs the changed code on both sides, while
     // `owner(1) == owner(1) == 30` still pins the result through its last link).
-    let all_exact = compare.ops.iter().all(|op| matches!(op, ast::CmpOp::Eq));
+    let all_exact = is_bool_identity || compare.ops.iter().all(|op| matches!(op, ast::CmpOp::Eq));
     let tautology = std::iter::once(compare.left.as_ref())
         .chain(compare.comparators.iter())
         .collect::<Vec<_>>()
@@ -1190,6 +1212,16 @@ fn oracle_for_compare(
         PythonOracleShape::BoundaryAssertion
     };
     (kind, strength, shape)
+}
+
+fn is_bool_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Constant(ast::ExprConstant {
+            value: ast::Constant::Bool(_),
+            ..
+        })
+    )
 }
 
 fn compare_observes_output(compare: &ast::ExprCompare) -> bool {

@@ -28,6 +28,7 @@ fn stage() -> StageEvidence {
 
 fn stage_with(state: StageState) -> StageEvidence {
     StageEvidence {
+        static_limit_kind: None,
         state,
         confidence: Confidence::Unknown,
         summary: String::new(),

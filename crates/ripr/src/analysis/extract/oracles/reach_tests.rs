@@ -197,6 +197,18 @@ fn spec_0231_rule_8_constant_diverging_statements_end_the_block() {
             "let None = Some(1) else { if c() { return; } panic!() };",
             Unreached::Unrefused,
         ),
+        (
+            "{ const None: Option<()> = Some(()); } None?;",
+            Unreached::Unrefused,
+        ),
+        (
+            "const None: Option<()> = Some(()); Err(())?;",
+            Unreached::Unrefused,
+        ),
+        (
+            "#[cfg(any())] const None: Option<()> = Some(()); None?;",
+            Unreached::Unrefused,
+        ),
         ("Err::<(), i32>(1)?;", Unreached::Unrefused),
         ("Err(\"stop\")?;", Unreached::Unrefused),
         ("None::<i32>?;", Unreached::Unrefused),
@@ -231,6 +243,32 @@ fn spec_0231_rule_8_constant_diverging_statements_end_the_block() {
         "check(300)",
         "statement that may complete",
     );
+}
+
+#[test]
+fn a_rebinding_or_an_associated_item_preserves_builtin_divergence() {
+    for (head, tail) in [
+        (
+            "fn t() -> Result<(), ()> { fn Err(_: ()) -> Result<(), ()> { Ok(()) } { let Err = Result::<(), ()>::Err; Err(())?;",
+            "} Ok(()) }",
+        ),
+        (
+            "fn t() -> Result<(), ()> { fn Err(_: ()) -> Result<(), ()> { Ok(()) } let Err = Result::<(), ()>::Err; Err(())?;",
+            "Ok(()) }",
+        ),
+        (
+            "fn t() { struct H; impl H { const None: Option<()> = Some(()); fn p() -> Option<()> { None?;",
+            "Some(()) } } }",
+        ),
+        (
+            "fn t() { struct H; impl H { fn Err(_: ()) -> Result<(), ()> { Ok(()) } fn p() -> Result<(), ()> { Err(())?;",
+            "Ok(()) } } }",
+        ),
+    ] {
+        let body = format!("{head}\ncheck(300).unwrap_err();\n{tail}");
+        assert_eq!(unreached(&body), vec![(2, Unreached::Unrefused)], "{head}");
+        assert_not_credited(&[&body], "check(300)", head);
+    }
 }
 
 #[test]

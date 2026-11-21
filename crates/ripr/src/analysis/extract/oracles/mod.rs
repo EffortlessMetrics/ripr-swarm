@@ -3,6 +3,8 @@ mod bool_operands;
 mod classify;
 mod pattern_admission;
 mod patterns;
+mod placeholder_scope;
+pub(crate) use placeholder_scope::PlaceholderScope;
 mod reach;
 mod scan;
 

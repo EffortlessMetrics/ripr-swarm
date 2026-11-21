@@ -90,6 +90,16 @@ required result.
 
 - Open Drafts early and use the shared
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff).
+- For changes to the evidence-promotion corpus or analyzer cache schema, run
+  `cargo xtask check-evidence-promotion-honesty --pre-label <PR> <target-branch>`
+  from a trusted development checkout with `origin` pointing to the base repository.
+  This uses the local `xtask` build. A fresh checkout incurs its usual first build. Compare
+  the printed head with the reviewed commit. The command checks every report
+  against the schema and historical pins in the published merge tree. It refuses
+  a missing merge ref or parents that differ from the observed target and PR head.
+  On refusal, refresh the composition or genuinely recapture the named reports on
+  the updated branch, then rerun before labeling. Repeat after a rebase. The
+  hosted PR and queue jobs still run the full honesty gate on their own trees.
 - Apply lane-selecting labels such as `full-ci` before `merge-ready`.
 - A push after a request needs affected review/proof refreshed. Inspect current
   request and run state before any new request, using the shared handoff. Preserve
@@ -181,6 +191,87 @@ fixture failure is also a dependency-preparation problem: a warm cache containin
 an old fixture pin can hide it even on current G. Preserve the existing repair
 owner and prove declared fixture preparation from a cold dependency state; do not
 repin audited fixture authority merely to follow the workspace's cache contents.
+
+## Mechanical test-relocation route
+
+Moving an inline `#[cfg(test)] mod NAME { BODY }` to its out-of-line file
+(#15193) de-indents every line, so a relocation PR is all deletions plus
+additions and exceeds the ordinary 160-file / 3,700-line cap without changing a
+token of Rust. Admission honors a verified relocation instead (#15217):
+
+```text
+Mechanical relocation: inline-cfg-test-v1
+```
+
+With exactly that body line, `candidate_admission.py` reads every changed file
+at the PR's merge base and exact head and hands them to
+`.github/actions/pr-candidate-admission/mechanical_relocation.py`, read from the
+trusted bundle. The verifier re-derives the relocation from the base and admits
+only a head that matches it:
+
+- each changed owner under `crates/ripr/src` or `crates/ripr-contract/src` is
+  byte-identical to the base with relocated module bodies replaced by `;` (and,
+  for a module whose name is neither `tests` nor `*_tests`, a
+  `#[path = "<stem>/<name>_tests.rs"]` line relative to the owner's directory);
+- no owner is a file that another file loads through `#[path]` or `include!`
+  (listed in `policy/relocation-indirect-owners.txt`, read from the base and
+  kept current by `indirect-owners --check`, which also fails on any load form
+  it cannot resolve to one plain literal and on any unreviewed published-source
+  `macro_rules!` that shadows a comma-neutral macro), since its children
+  resolve from the loader;
+- each added file is the Rust-resolved file of one relocated module and carries
+  its body token for token (multi-character operators are single tokens, doc
+  comments stay in place as tokens, non-ASCII identifiers are single tokens and
+  other non-ASCII outside strings and comments refuses) and its comments
+  unchanged, between the same identifiers and literals and before the same code
+  token. rustfmt may re-wrap lines, add or drop a trailing comma before a closer (not a 1-tuple's,
+  and not inside macros other than the standard comma-neutral ones), and drop
+  the braces of a one-expression closure body (whose opening `|` follows `=`,
+  `(`, `,`, `move` or a similar non-operand token, so never a binary `|`) or
+  match-arm block that ends its closure or arm and does not start with a
+  block-like expression, a `m! { .. }` call or an attribute; relative
+  `include_str!`/`include_bytes!`/`include!` paths are re-based to the new
+  directory;
+- `policy/inline-test-modules.txt` lowers one ceiling per relocated module, and
+  every other path-keyed metadata file (traceability, allowlists) equals the
+  base re-keyed by the transform's own rule: references to a moved test, or to
+  a function defined only in the moved body, name the test file, a
+  `.ripr/test_intent.toml` block's `path` follows its `test` only when that
+  function moved, and an allowlist row moves only when its pattern left the
+  owner;
+- a module relocated under its own name (loaded through the transform's
+  `#[path]`) adds exactly its target to `policy/relocation-indirect-owners.txt`,
+  and no other relocation changes that list;
+- every listed file's blob id is the hash of the head content read, so the
+  listing and the contents describe one head.
+
+Any other file, construct, rename or unreadable fact rejects, and the PR is
+judged on the ordinary route with the reason in the admission detail. Refused
+constructs: `file!`, `line!`, `column!` and `stringify!` (also as raw
+identifiers), `Location`, `#[track_caller]`, any `path` attribute in the body
+or on the module, a `use` that imports a location, include or comma-neutral
+macro name, a `macro_rules!` of a comma-neutral name, a non-test cfg, and in
+the owner a location construct after the first relocated module (every later
+line moves up). Residual the verifier cannot see: a macro defined in another
+file (or a glob-imported dependency macro) that expands to `line!()` or shadows
+a comma-neutral name, and a `#[path]` inside a doubly nested inline module of
+another file (the scan resolves one inline level); the required run still
+builds and runs every test. A
+validated relocation that would exceed the ordinary caps trades them for the
+relocation ceiling of 400 files / 40,000 changed lines, and nothing else (a
+smaller one is admitted on the ordinary route): claim identity, head freshness, competing candidates and the
+hard cut still apply, and the required run still builds and runs every test.
+Diff-scoped PR evidence is recorded `not_applicable:mechanical_relocation:<head>`
+because no behavior changed; the Result accepts that record only for a
+`mechanical_relocation_admitted` head. In the merge queue a relocation must be
+its group's only constituent.
+
+To produce one, run the same transform locally and check it before pushing:
+
+```bash
+python3 .github/actions/pr-candidate-admission/mechanical_relocation.py apply <owner.rs>...
+python3 .github/actions/pr-candidate-admission/mechanical_relocation.py verify --base origin/main
+```
 
 ## Historical history-sync route (source and swarm merges)
 

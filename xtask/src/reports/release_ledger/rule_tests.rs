@@ -666,3 +666,101 @@ fn path_inventories_bind_the_captured_record_partition() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(), String> {
+    let policy: Overrides = serde_json::from_str(include_str!(
+        "../../../../policy/release-ledger-overrides.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    let historical = "included_historical_reachable_only";
+    let reviewed: [(&str, &str, &[&str]); 8] = [
+        ("264db5967022a0aeaec26cc2827d432d3cdb62a5", historical, &[]),
+        ("bafadaf7986e9056cb9fbc8819d0158bb712baca", historical, &[]),
+        ("c44d0f6ccef88cad1059f994e69831632e90fb5e", historical, &[]),
+        (
+            "af3818be37ed9907209d426c803a4135e62505b1",
+            "included_accepted_product",
+            &["plugins/muse/ripr/.muse-plugin/plugin.json"],
+        ),
+        ("1b7f3740ab49a345f091e95a2b61f4e47bd8a9e4", historical, &[]),
+        ("8e74baf93e5c34bcd08944db07989dafa332aa97", historical, &[]),
+        (
+            "14e6e6dd818d832b12573a453a672d1d5f1f25fd",
+            "included_test_or_evidence",
+            &["examples/rust-discount-threshold/project/src/lib.rs"],
+        ),
+        (
+            "40631fc14a9a10ff7272ff61f6cb2e44a27309d5",
+            "included_accepted_release_or_control",
+            &["evals/ripr-eval-smoke/src/lib.rs"],
+        ),
+    ];
+    let mut commits = Vec::new();
+    let mut controls = Vec::new();
+    for (index, (id, _, paths)) in reviewed.iter().enumerate() {
+        let number = 10 + index as u8;
+        let effect = if paths.is_empty() {
+            "history_reachable_no_final_blob_effect"
+        } else {
+            "present_effective"
+        };
+        let mut row = commit(number, Some(index as u64 + 1), effect, paths);
+        row.commit_sha = (*id).to_string();
+        commits.push(row);
+        if !paths.is_empty() {
+            // Identical paths under another commit must still require review.
+            let number = 30 + controls.len() as u8;
+            let position = (reviewed.len() + controls.len() + 1) as u64;
+            controls.push(commit(number, Some(position), effect, paths));
+        }
+    }
+    let control_shas: Vec<_> = controls.iter().map(|row| row.commit_sha.clone()).collect();
+    commits.extend(controls);
+    let input = facts(commits);
+    let relevant = Overrides {
+        schema_version: policy.schema_version,
+        kind: policy.kind,
+        overrides: policy
+            .overrides
+            .into_iter()
+            .filter(|item| reviewed.iter().any(|(id, _, _)| *id == item.commit_sha))
+            .collect(),
+    };
+    require(
+        relevant.overrides.len() == reviewed.len(),
+        "each reviewed commit must have an override",
+    )?;
+    let ledger = derive(&DeriveInput {
+        facts: &input,
+        packet: &packet(),
+        overrides: Some(&relevant),
+        stage: "dry_run",
+        audit: None,
+    })?;
+    for (id, expected, _) in reviewed {
+        let row = ledger
+            .records
+            .iter()
+            .find(|row| row.commit_sha == id)
+            .ok_or_else(|| format!("missing reviewed commit {id}"))?;
+        require(
+            row.release_disposition == expected
+                && row.override_ref.is_some()
+                && row.source_sync_authority_effect == "not_established",
+            "reviewed row disposition or source authority changed",
+        )?;
+    }
+    for id in control_shas {
+        let control = ledger
+            .records
+            .iter()
+            .find(|row| row.commit_sha == id)
+            .ok_or_else(|| format!("missing unreviewed control {id}"))?;
+        require(
+            control.release_disposition == "blocking_unresolved" && control.override_ref.is_none(),
+            "an unreviewed commit with the same paths must remain blocked",
+        )?;
+    }
+    Ok(())
+}
