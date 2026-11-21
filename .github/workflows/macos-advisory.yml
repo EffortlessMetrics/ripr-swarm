@@ -44,18 +44,28 @@ concurrency:
 #     Add `macos-ci` first, then `merge-ready` last. The guard below uses the
 #     same shape as the other gated lanes so the two compose.
 #
-# What runs (sized to stay inside the job budget on a cold cache):
+# What runs, one check per job so each has the whole job budget:
 #   - `cargo clippy -p ripr -p xtask --all-targets -- -D warnings`
 #   - `cargo test -p ripr --lib`
+# As steps of one job they did not fit it: on 2026-11-21 (run 44873192116)
+# clippy finished after 24 minutes and the library test build was still
+# compiling when the 40-minute limit cancelled the job, as on every night
+# from 2026-11-12. A cancelled job also skips its cache save, so no later
+# night started any warmer. The limit is unchanged; each job now carries
+# half the work and saves its own cache.
 # The integration suites (cli_smoke, portable_consumer*, mcp_stdio) are not run
 # here; the TMPDIR-symlink experiment from #8391 is separate follow-up.
 
 jobs:
   macos-advisory:
-    name: macos-advisory
+    name: macos-advisory-${{ matrix.check }}
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: macos-15
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [clippy, lib-tests]
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -69,7 +79,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          shared-key: ripr-macos-advisory-1.95
+          # Per check: a clippy build and a test build share few artifacts,
+          # and two jobs saving one key would keep whichever saved first.
+          shared-key: ripr-macos-advisory-1.95-${{ matrix.check }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Record host
@@ -81,6 +93,7 @@ jobs:
           cargo --version
 
       - name: Clippy (advisory outcome)
+        if: matrix.check == 'clippy'
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-advisory"
@@ -90,32 +103,57 @@ jobs:
           exit 0
 
       - name: Prepare locked JSON owner-return fixture dependencies
+        if: matrix.check == 'lib-tests'
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
       - name: Prepare locked proptest profile dependencies
+        if: matrix.check == 'lib-tests'
         run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Library tests (advisory outcome)
+        if: matrix.check == 'lib-tests'
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/macos-advisory"
           set +e
           cargo test -p ripr --lib --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/macos-advisory/lib-tests.log"
           echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/lib-tests.status"
           exit 0
 
-      - name: Summarize and enforce evidence
+      - name: Summarize and enforce clippy evidence
+        if: matrix.check == 'clippy'
         shell: bash
         run: |
           d="$RUNNER_TEMP/macos-advisory"
           missing=0
-          for f in clippy.log clippy.status lib-tests.log lib-tests.status; do
+          for f in clippy.log clippy.status; do
             if [ ! -s "$d/$f" ]; then
               echo "::error::missing evidence file $f"
               missing=1
             fi
           done
           [ "$missing" -eq 0 ] || exit 1
-          clippy=$(cat "$d/clippy.status")
+          {
+            echo "## macOS advisory"
+            echo
+            echo "| Check | Exit status | Detail |"
+            echo "| --- | --- | --- |"
+            echo "| clippy -p ripr -p xtask --all-targets | $(cat "$d/clippy.status") | advisory |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize and enforce library test evidence
+        if: matrix.check == 'lib-tests'
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/macos-advisory"
+          missing=0
+          for f in lib-tests.log lib-tests.status; do
+            if [ ! -s "$d/$f" ]; then
+              echo "::error::missing evidence file $f"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
           tests=$(cat "$d/lib-tests.status")
           result=$(grep -E '^test result:' "$d/lib-tests.log" | tail -n 1 || true)
           passed=$(printf '%s' "$result" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed.*/\1/p')
@@ -124,7 +162,6 @@ jobs:
             echo
             echo "| Check | Exit status | Detail |"
             echo "| --- | --- | --- |"
-            echo "| clippy -p ripr -p xtask --all-targets | $clippy | advisory |"
             echo "| test -p ripr --lib | $tests | ${result:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
@@ -137,7 +174,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: macos-advisory-logs
+          name: macos-advisory-logs-${{ matrix.check }}
           path: ${{ runner.temp }}/macos-advisory/
           if-no-files-found: ignore
           retention-days: 14

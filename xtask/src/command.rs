@@ -596,7 +596,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]",
         "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
         "module-health [--threshold <n>]",
-        "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
+        "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path> [--run1-part <log> <status>]... [--run2-part <log> <status>]... [--expected-targets <build-log>]",
         "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
         "windows-advisory-acl-evidence --log <path> --status <path> --expect <test-path> [--expect <test-path>...]",
         "windows-advisory-file-policy-evidence --report <path> --subject <path> --log <path> --status <path> --head <sha>",
@@ -991,7 +991,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Walks crates/ripr/src/ and xtask/src/ for *.rs files, counts lines per file, and writes an advisory ranked report flagging files over the configurable line threshold (default 2000); always exits 0, never mutates source, and is never wired into CI gates.",
         ),
         command_entry(
-            "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
+            "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path> [--run1-part <log> <status>]... [--run2-part <log> <status>]... [--expected-targets <build-log>]",
             "report_only",
             "stdout only",
             false,
