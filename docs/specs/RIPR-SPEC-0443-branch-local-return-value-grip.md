@@ -393,6 +393,9 @@ there too.
 - `crates/ripr/tests/computed_return_tail_crate_qualified.rs::another_path_ending_in_the_owner_is_not_credited`
 - `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_transformed_or_wrapped_qualified_call_is_not_a_pin`
 - `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_test_outside_the_test_crate_root_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_explicit_library_name_is_the_spelling_that_counts`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_expected_name_bound_twice_resolves_to_the_binding_in_scope`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_let_bound_qualified_call_reads_like_the_bare_let_bound_call`
 
 ## Implementation Mapping
 
@@ -405,8 +408,10 @@ there too.
 - `crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs`:
   `return_seam_tail_reached_by_call` (#13037).
 - `crates/ripr/src/analysis/classify/related_tests.rs`:
-  `own_crate_qualified_owner_call_spelled_bare`, the own-crate spelling the
-  admission reads as the bare owner call.
+  `own_crate_qualified_owner_path`, the own-crate spelling the admission
+  establishes; `return_seam_tail_reached_by_call` reads the assertion and
+  the test body with that path spelled bare (`spell_path_bare`), so a `let`
+  the assertion names is still selected by the assertion's position.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: the `reached_tail_pin`
   admission; `crates/ripr/src/analysis/classify/reveal.rs`: its use in
   observation confirmation.

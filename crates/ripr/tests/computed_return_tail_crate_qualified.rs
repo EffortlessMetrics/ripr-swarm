@@ -52,6 +52,15 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(package: &str, files: &[(&str, &str)], patch: &str) -> Result<Self, String> {
+        Self::with_manifest_tail(package, "", files, patch)
+    }
+
+    fn with_manifest_tail(
+        package: &str,
+        manifest_tail: &str,
+        files: &[(&str, &str)],
+        patch: &str,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-qualified-tail-{}-{}",
@@ -62,7 +71,7 @@ impl TempRepo {
         repo.write(
             "Cargo.toml",
             &format!(
-                "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n"
+                "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{manifest_tail}\n[workspace]\n"
             ),
         )?;
         for (path, content) in files {
@@ -222,6 +231,80 @@ fn the_library_target_name_is_the_spelling_that_counts() -> Result<(), String> {
         ExposureClass::Exposed
     );
     assert_ne!(class(QUALIFIED_PIN)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn an_explicit_library_name_is_the_spelling_that_counts() -> Result<(), String> {
+    let class = |body: &str| -> Result<ExposureClass, String> {
+        Ok(TempRepo::with_manifest_tail(
+            "shipping",
+            "\n[lib]\nname = \"shipcalc\"\npath = \"src/lib.rs\"\n",
+            &[
+                ("src/lib.rs", LIB),
+                ("tests/shipping.rs", &test_file("", body)),
+            ],
+            PATCH,
+        )?
+        .computed_finding()?
+        .class)
+    };
+    assert_eq!(
+        class("assert_eq!(shipcalc::shipping_cost(100, true), 800);")?,
+        ExposureClass::Exposed
+    );
+    // The package name is not a second spelling when `[lib] name` differs.
+    assert_ne!(class(QUALIFIED_PIN)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn an_expected_name_bound_twice_resolves_to_the_binding_in_scope() -> Result<(), String> {
+    // The assertion's own position selects the `let` it reads, so the
+    // qualified spelling must keep that position.
+    let body = |call: &str, standard: &str| {
+        format!(
+            "let expected = 400;\n    assert_eq!({standard}(100, false), expected);\n    let expected = 800;\n    assert_eq!({call}(100, true), expected);"
+        )
+    };
+    assert_eq!(
+        class_of(
+            "",
+            &body("shipping::shipping_cost", "shipping::shipping_cost")
+        )?,
+        class_of(
+            "use shipping::shipping_cost;\n",
+            &body("shipping_cost", "shipping_cost")
+        )?,
+        "the qualified spelling reads like the bare one"
+    );
+    assert_eq!(
+        class_of(
+            "",
+            &body("shipping::shipping_cost", "shipping::shipping_cost")
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_let_bound_qualified_call_reads_like_the_bare_let_bound_call() -> Result<(), String> {
+    let qualified = class_of(
+        "",
+        "let got = shipping::shipping_cost(100, true);\n    assert_eq!(got, 800);",
+    )?;
+    let bare = class_of(
+        "use shipping::shipping_cost;\n",
+        "let got = shipping_cost(100, true);\n    assert_eq!(got, 800);",
+    )?;
+    assert_eq!(qualified, bare);
+    // The other branch's value through the same `let` is credited by neither.
+    let other = class_of(
+        "",
+        "let got = shipping::shipping_cost(100, false);\n    assert_eq!(got, 400);",
+    )?;
+    assert_ne!(other, ExposureClass::Exposed);
     Ok(())
 }
 

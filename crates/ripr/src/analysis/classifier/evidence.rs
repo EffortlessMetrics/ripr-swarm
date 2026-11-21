@@ -1417,18 +1417,18 @@ impl ClassifiedProbeEvidence {
                     // reads a bare owner call only, so the established path
                     // is read as that call; any other qualified spelling
                     // stays unevaluated.
-                    let bare_spelling =
-                        crate::analysis::classify::own_crate_qualified_owner_call_spelled_bare(
+                    let qualified_owner_path =
+                        crate::analysis::classify::own_crate_qualified_owner_path(
                             context.index,
                             test,
                             owner,
-                            &assertion.text,
                         );
                     crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
                         owner,
                         &context.probe.expression,
                         context.probe.location.line,
-                        bare_spelling.as_deref().unwrap_or(&assertion.text),
+                        &assertion.text,
+                        qualified_owner_path.as_deref(),
                         test,
                         &|name| {
                             // Only a top-level owner reads the file's
