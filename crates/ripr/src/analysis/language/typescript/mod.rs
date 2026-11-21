@@ -113,6 +113,7 @@ mod guard_entry_guard;
 mod helper_inline;
 #[cfg(test)]
 mod helper_inline_tests;
+mod hook_factory_method;
 mod hook_owner_guard;
 #[cfg(test)]
 mod identifier_write_scale_tests;

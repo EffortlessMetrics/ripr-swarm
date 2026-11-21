@@ -2804,3 +2804,13 @@ keys); do not take the next number.
 - `typescript_oracle_reach_acceptance_mismatch`: acceptance examples whose
   reported kind, strength, relation or class differs from this spec; must
   be zero.
+
+### Methods on a factory instance assigned in beforeEach (#15342)
+
+A synchronous Mocha `beforeEach` can bind a declared receiver to a direct
+call of an imported factory. For a factory with one unconditional final
+object-literal return, a test calling a named method of that receiver supplies
+advisory reach for edits in that method's interior. A sibling method or another
+receiver supplies no such link. Shadowed, reassigned, conditional, asynchronous
+and unresolved bindings withhold this evidence. A package build redirect and
+the assertion's observation of the changed line remain runtime uncertainties.

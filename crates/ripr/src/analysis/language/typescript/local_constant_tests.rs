@@ -194,6 +194,7 @@ fn file_level_bindings(source: &str, name: &str) -> Vec<TypeScriptScopeBinding> 
         vec![TypeScriptScopeBinding {
             name: name.to_string(),
             constructed_by: None,
+            hook_factory: None,
             file_level: true,
             parameter_end: None,
         }]
@@ -215,6 +216,7 @@ fn non_file_level_scope_binding_blocks_the_module_constant() -> Result<(), Strin
     let binding = |file_level| TypeScriptScopeBinding {
         name: "edge".to_string(),
         constructed_by: None,
+        hook_factory: None,
         file_level,
         parameter_end: None,
     };

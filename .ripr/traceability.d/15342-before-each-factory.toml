@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/directory_specifier_tests.rs::before_each_factory_relation_is_specific_to_the_changed_method_and_receiver",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/hook_factory_method.rs",
+]

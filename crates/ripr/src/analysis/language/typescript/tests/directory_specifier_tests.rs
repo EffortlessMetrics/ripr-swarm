@@ -557,3 +557,115 @@ fn sibling_module_withholds_package_source_and_uncredited_call_names_the_entry()
     }
     crate::testing::fixture_git::remove_fixture_tree(&root)
 }
+
+#[test]
+fn before_each_factory_relation_is_specific_to_the_changed_method_and_receiver()
+-> Result<(), String> {
+    use crate::testing::fixture_git::fixture_git_ok;
+
+    let owner = r#"export default function emitter() {
+  const items = [];
+  return {
+    add(value) {
+      items.push(value);
+    },
+    values() {
+      return items.slice();
+    }
+  };
+}
+"#;
+    let root = with_tree(
+        "hook-factory-method",
+        &[
+            ("src/index.ts", owner),
+            (
+                "package.json",
+                r#"{"name":"events","source":"src/index.ts","main":"dist/emitter.js","devDependencies":{"mocha":"*","chai":"*"}}"#,
+            ),
+            (".gitignore", "dist/\n"),
+        ],
+    )?;
+    fixture_git_ok(&root, &["init", "-q"])?;
+    fixture_git_ok(&root, &["add", "src", "package.json", ".gitignore"])?;
+    let changes = [changed_with_lines(
+        "src/index.ts",
+        &[
+            (5, "      items.push(value);"),
+            (8, "      return items.slice();"),
+        ],
+    )];
+    for (specifier, hook, factory_expected) in [
+        ("../src", "beforeEach(() => { inst = make(); });", true),
+        ("..", "beforeEach(() => { inst = make(); });", true),
+        (
+            "..",
+            "beforeEach(() => { if (ready) inst = make(); });",
+            false,
+        ),
+        ("..", "beforeEach(() => { let inst = make(); });", false),
+        ("..", "beforeEach(async () => { inst = make(); });", false),
+        (
+            "..",
+            "beforeEach(() => { const make = unrelated; inst = make(); });",
+            false,
+        ),
+        (
+            "..",
+            "beforeEach(() => { inst = make(); inst = other(); });",
+            false,
+        ),
+        ("..", "afterEach(() => { inst = make(); });", false),
+        (
+            "../elsewhere",
+            "beforeEach(() => { inst = make(); });",
+            false,
+        ),
+    ] {
+        let test = format!(
+            r#"import make from '{specifier}';
+import {{ expect }} from 'chai';
+describe('collection', () => {{
+  let inst;
+  {hook}
+  it('adds one', () => {{ inst.add('a'); }});
+  it('reads order', () => {{ expect(inst.values()).to.deep.equal([]); }});
+  it('another object', () => {{ expect(other.values()).to.deep.equal([]); }});
+  it('nested receiver', () => {{ holder. inst.values(); }});
+}});
+"#
+        );
+        ts_write_file(&root.join("test/public.test.ts"), &test)?;
+        fixture_git_ok(&root, &["add", "test"])?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &changes,
+        )?;
+        for (line, label) in [(5, "adds one"), (8, "reads order")] {
+            let finding = result
+                .findings
+                .iter()
+                .find(|finding| finding.probe.location.line == line)
+                .ok_or_else(|| format!("missing changed method at src/index.ts:{line}"))?;
+            let rows: Vec<_> = finding
+                .evidence
+                .iter()
+                .filter(|line| line.starts_with("related_test_relation: hook_factory_method ("))
+                .collect();
+            assert_eq!(
+                rows.len(),
+                usize::from(factory_expected),
+                "{specifier} {hook}: {finding:?}"
+            );
+            if factory_expected {
+                assert!(rows[0].contains(label), "{rows:?}");
+                assert!(
+                    !matches!(finding.class, ExposureClass::Exposed),
+                    "{finding:?}"
+                );
+            }
+        }
+    }
+    crate::testing::fixture_git::remove_fixture_tree(&root)
+}
