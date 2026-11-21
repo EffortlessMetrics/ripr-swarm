@@ -537,7 +537,7 @@ The fixture runner compares `expected/human.txt`, `human-full.txt`,
 `sarif.json` and `github.txt` only while the file exists, and the corpus gates
 iterate whatever `cases` a corpus still lists. Deleting a golden or dropping a
 case therefore removes the comparison with it.
-`policy/fixture-denominator-floor.txt` names each of those subjects, and
+`policy/fixture-denominator-floor.txt` names each of those subjects (one `golden` line per fixture, one `case` line per case), and
 `cargo xtask check-fixture-contracts` fails when a named one leaves the tree
 (#15925). To retire a golden or a case, remove its line in the same change and
 say why in the PR; never remove one to turn a gate green. New goldens and cases

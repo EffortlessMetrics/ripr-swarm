@@ -40,7 +40,17 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
         Some(value) => vec![fixture_dir_for_name(value)?],
         None => fixture_dirs,
     };
-    refuse_empty_fixture_selection(&selected)?;
+    if let Err(refusal) = refuse_empty_fixture_selection(&selected) {
+        // Replace any earlier passing report before refusing.
+        let body = fixture_report_body(
+            name.map(String::as_str),
+            &[],
+            &[],
+            std::slice::from_ref(&refusal),
+        );
+        write_report("fixtures.md", &body)?;
+        return Err(refusal);
+    }
     let run_set = collect_fixture_runs(selected, evaluate_fixture);
     write_fixture_report(name.map(String::as_str), &run_set)?;
     if run_set.violations.is_empty() {

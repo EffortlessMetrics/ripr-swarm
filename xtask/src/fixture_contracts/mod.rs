@@ -30,6 +30,7 @@ mod report_validators;
 mod retained_files;
 mod upstream_python;
 
+pub(crate) use denominator_floor::FLOOR_PATH as FIXTURE_DENOMINATOR_FLOOR_PATH;
 pub(crate) use editor_validators::*;
 pub(crate) use gap_validators::*;
 pub(crate) use general_validators::*;
@@ -43,8 +44,21 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     // #15925: the floor is read before anything else, so an absent or emptied
     // `fixtures/` reports every named subject as missing instead of passing.
     let floor = denominator_floor::check(fixtures_dir, Path::new(denominator_floor::FLOOR_PATH))?;
-    if let Some(proposal) = &floor.proposal {
-        write_report(denominator_floor::PROPOSAL_REPORT, proposal)?;
+    // A proposal left by an earlier run would be copied over a floor it no
+    // longer describes, so it never outlives the run that wrote it.
+    match &floor.proposal {
+        Some(proposal) => write_report(denominator_floor::PROPOSAL_REPORT, proposal)?,
+        None => remove_report_in(
+            &Path::new("target").join("ripr").join("reports"),
+            denominator_floor::PROPOSAL_REPORT,
+        )?,
+    }
+    if floor.above > 0 {
+        println!(
+            "check-fixture-contracts: {} fixture gate subjects are above {} and unprotected",
+            floor.above,
+            denominator_floor::FLOOR_PATH
+        );
     }
     if !fixtures_dir.exists() {
         let mut violations = vec![

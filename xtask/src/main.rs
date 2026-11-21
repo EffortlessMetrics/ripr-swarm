@@ -1160,7 +1160,11 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
         policy: files
             .iter()
             .any(|f| f.starts_with("policy/") || f.starts_with(".ripr/")),
-        fixture: files.iter().any(|f| f.starts_with("fixtures/")),
+        // The floor is the fixture gates' denominator: an edit that removes a
+        // line from it must meet the gate that reads it (#15925).
+        fixture: files.iter().any(|f| {
+            f.starts_with("fixtures/") || f == fixture_contracts::FIXTURE_DENOMINATOR_FLOOR_PATH
+        }),
     }
 }
 
@@ -1325,6 +1329,10 @@ mod check_fast_selector_tests {
             assert!(!categories.rust_src, "{path}");
             assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
         }
+        // #15925: a floor-only edit selects the gate that reads the floor.
+        let floor = categorize_changed_files(&["policy/fixture-denominator-floor.txt".to_string()]);
+        assert!(floor.fixture && floor.policy);
+        assert!(!categorize_changed_files(&["policy/other.txt".to_string()]).fixture);
     }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {

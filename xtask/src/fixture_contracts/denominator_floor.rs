@@ -38,8 +38,8 @@ const LISTED_VIOLATIONS: usize = 20;
 const HEADER: &str = "\
 # Named floor under the fixture gates' denominators (#15925).
 #
-# `golden <path>`       an optional golden surface the fixture runner compares
-#                       only while the file exists.
+# `golden <dir> <surface>...`  the optional golden surfaces of one fixture; the
+#                       runner compares each only while its file exists.
 # `case <corpus>#<id>`  a case in a corpus `cases` array that a gate iterates.
 #
 # `cargo xtask check-fixture-contracts` fails when a line here names something
@@ -68,12 +68,26 @@ pub(crate) fn observe(fixtures_dir: &Path) -> Result<BTreeSet<String>, String> {
         {
             let golden = path.join("expected").join(surface);
             if golden.is_file() {
-                entries.insert(format!("{GOLDEN} {}", normalize_path(&golden)));
+                entries.insert(format!("{GOLDEN} {}", nameable(fixtures_dir, &golden)?));
             }
         }
     }
-    collect_corpus_cases(fixtures_dir, &mut entries)?;
+    collect_corpus_cases(fixtures_dir, fixtures_dir, &mut entries)?;
     Ok(entries)
+}
+
+/// A subject's path as a floor line can carry it. One the line format cannot
+/// name is an error: skipping it would leave it outside the floor unannounced.
+fn nameable(fixtures_dir: &Path, path: &Path) -> Result<String, String> {
+    let text = normalize_path(path);
+    // Judged below the fixtures root, which is the part a fixture author names.
+    let below_root = path.strip_prefix(fixtures_dir).unwrap_or(path);
+    if floor_path_is_plain(&normalize_path(below_root)) {
+        return Ok(text);
+    }
+    Err(format!(
+        "{text}: a fixture gate subject's path cannot contain whitespace, `#` or `\\`, because {FLOOR_PATH} could not name it; rename it"
+    ))
 }
 
 fn sorted_children(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
@@ -89,7 +103,11 @@ fn sorted_children(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
     Ok(children)
 }
 
-fn collect_corpus_cases(dir: &Path, entries: &mut BTreeSet<String>) -> Result<(), String> {
+fn collect_corpus_cases(
+    fixtures_dir: &Path,
+    dir: &Path,
+    entries: &mut BTreeSet<String>,
+) -> Result<(), String> {
     for path in sorted_children(dir)? {
         let name = path
             .file_name()
@@ -97,7 +115,7 @@ fn collect_corpus_cases(dir: &Path, entries: &mut BTreeSet<String>) -> Result<()
             .unwrap_or_default();
         if path.is_dir() {
             if !SKIPPED_DIRECTORIES.contains(&name) {
-                collect_corpus_cases(&path, entries)?;
+                collect_corpus_cases(fixtures_dir, &path, entries)?;
             }
             continue;
         }
@@ -110,7 +128,7 @@ fn collect_corpus_cases(dir: &Path, entries: &mut BTreeSet<String>) -> Result<()
             continue;
         };
         for id in corpus_case_ids(&text) {
-            entries.insert(format!("{CASE} {}#{id}", normalize_path(&path)));
+            entries.insert(format!("{CASE} {}#{id}", nameable(fixtures_dir, &path)?));
         }
     }
     Ok(())
@@ -150,21 +168,49 @@ pub(crate) fn parse_floor(text: &str) -> Result<BTreeSet<String>, String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let well_formed = match line.split_once(' ') {
-            Some((GOLDEN, path)) => floor_path_is_plain(path),
-            Some((CASE, subject)) => subject
-                .split_once('#')
-                .is_some_and(|(path, id)| floor_path_is_plain(path) && !id.is_empty()),
-            _ => false,
-        };
-        if !well_formed || line != raw {
-            return Err(format!(
-                "line {}: expected `golden <path>` or `case <corpus>#<id>`, found `{raw}`",
+        let malformed = || {
+            format!(
+                "line {}: expected `golden <expected-dir> <surface>...` or `case <corpus>#<id>`, found `{raw}`",
                 index + 1
-            ));
+            )
+        };
+        if line != raw {
+            return Err(malformed());
         }
-        if !entries.insert(line.to_string()) {
-            return Err(format!("line {}: `{line}` is listed twice", index + 1));
+        let subjects = match line.split_once(' ') {
+            // One line per fixture keeps the file reviewable: the directory,
+            // then each optional surface it retains.
+            Some((GOLDEN, rest)) => {
+                let mut parts = rest.split(' ');
+                let dir = parts.next().filter(|dir| floor_path_is_plain(dir));
+                let surfaces: Vec<&str> = parts.collect();
+                let (Some(dir), false) = (dir, surfaces.is_empty()) else {
+                    return Err(malformed());
+                };
+                if surfaces
+                    .iter()
+                    .any(|surface| !floor_path_is_plain(surface) || surface.contains('/'))
+                {
+                    return Err(malformed());
+                }
+                surfaces
+                    .iter()
+                    .map(|surface| format!("{GOLDEN} {dir}/{surface}"))
+                    .collect()
+            }
+            Some((CASE, subject))
+                if subject
+                    .split_once('#')
+                    .is_some_and(|(path, id)| floor_path_is_plain(path) && !id.is_empty()) =>
+            {
+                vec![line.to_string()]
+            }
+            _ => return Err(malformed()),
+        };
+        for subject in subjects {
+            if !entries.insert(subject.clone()) {
+                return Err(format!("line {}: `{subject}` is listed twice", index + 1));
+            }
         }
     }
     Ok(entries)
@@ -183,8 +229,31 @@ fn floor_path_is_plain(path: &str) -> bool {
 
 pub(crate) fn render_floor(entries: &BTreeSet<String>) -> String {
     let mut out = String::from(HEADER);
+    // `case` sorts before `golden`, and a directory's surfaces are adjacent.
+    let mut open_dir: Option<&str> = None;
     for entry in entries {
-        out.push_str(entry);
+        let golden = entry
+            .strip_prefix("golden ")
+            .and_then(|path| path.rsplit_once('/'));
+        match golden {
+            Some((dir, surface)) if open_dir == Some(dir) => {
+                out.push(' ');
+                out.push_str(surface);
+            }
+            Some((dir, surface)) => {
+                if open_dir.is_some() {
+                    out.push('\n');
+                }
+                out.push_str(&format!("{GOLDEN} {dir} {surface}"));
+                open_dir = Some(dir);
+            }
+            None => {
+                out.push_str(entry);
+                out.push('\n');
+            }
+        }
+    }
+    if open_dir.is_some() {
         out.push('\n');
     }
     out
@@ -193,7 +262,11 @@ pub(crate) fn render_floor(entries: &BTreeSet<String>) -> String {
 pub(crate) struct FloorOutcome {
     pub(crate) violations: Vec<String>,
     pub(crate) disclosure: PolicyDisclosure,
-    /// The regenerated floor, when the tree and the floor differ.
+    /// Subjects in the tree that the floor does not name.
+    pub(crate) above: usize,
+    /// The regenerated floor, when the tree holds subjects the floor does not
+    /// name and nothing named is missing. A floor regenerated while a named
+    /// subject is missing would drop that line, so none is offered then.
     pub(crate) proposal: Option<String>,
 }
 
@@ -217,6 +290,7 @@ pub(crate) fn evaluate(
                     intro: "NOT_ESTABLISHED: the denominator floor could not be read, so no retained subject was checked.".to_string(),
                     items: Vec::new(),
                 },
+                above: observed.len(),
                 proposal: Some(render_floor(observed)),
             };
         }
@@ -257,11 +331,16 @@ pub(crate) fn evaluate(
             count(CASE, &floor)
         ),
     ];
-    if above > 0 {
+    if above > 0 && missing.is_empty() {
         items.push(format!(
             "{above} subjects are above the floor and unprotected; copy target/ripr/reports/{PROPOSAL_REPORT} to {FLOOR_PATH} to raise it"
         ));
+    } else if above > 0 {
+        items.push(format!(
+            "{above} subjects are above the floor and unprotected; no regenerated floor is offered while a named subject is missing"
+        ));
     }
+    let proposal = (above > 0 && missing.is_empty()).then(|| render_floor(observed));
     FloorOutcome {
         violations,
         disclosure: PolicyDisclosure {
@@ -269,7 +348,8 @@ pub(crate) fn evaluate(
             intro: "Presence of each named golden surface and corpus case. Presence is not evidence that the subject still discriminates.".to_string(),
             items,
         },
-        proposal: (*observed != floor).then(|| render_floor(observed)),
+        above,
+        proposal,
     }
 }
 
@@ -428,8 +508,87 @@ mod tests {
             .proposal
             .ok_or("a differing tree proposes a floor")?;
         assert!(
-            proposal.contains("alpha/expected/github.txt\n"),
+            proposal.contains("alpha/expected github.txt human.txt sarif.json\n"),
             "{proposal}"
+        );
+        Ok(())
+    }
+
+    /// Copying a regenerated floor must never be the way a removal is
+    /// accepted: with a named subject missing, none is offered.
+    #[test]
+    fn a_removal_beside_an_addition_offers_no_regenerated_floor() -> Result<(), String> {
+        let root = temp_root("mixed")?;
+        let fixtures = seed(&root)?;
+        let floor = render_floor(&observe_in(&root)?);
+        fs::remove_file(fixtures.join("alpha/expected/human.txt")).map_err(|e| e.to_string())?;
+        write_file(&fixtures.join("alpha/expected/github.txt"), "note\n")?;
+        let outcome = evaluate(Ok(floor), &observe_in(&root)?);
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(outcome.violations.len(), 1, "{:?}", outcome.violations);
+        assert_eq!(outcome.above, 1);
+        assert!(outcome.proposal.is_none(), "{:?}", outcome.proposal);
+        assert!(
+            outcome
+                .disclosure
+                .items
+                .iter()
+                .any(|item| item.contains("no regenerated floor is offered")),
+            "{:?}",
+            outcome.disclosure.items
+        );
+        Ok(())
+    }
+
+    /// The verdict of the production command, not of `evaluate` alone: a
+    /// deleted golden beside an unprotected one fails `check-fixture-contracts`,
+    /// and the proposal an earlier passing run wrote does not survive it.
+    #[test]
+    fn the_production_gate_refuses_a_deleted_golden() -> Result<(), String> {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        crate::tests::with_temp_cwd("denominator-floor-production", |root| {
+            crate::tests::copy_dir_recursive(&repo.join("fixtures"), &root.join("fixtures"))?;
+            seed_floor_in_cwd()?;
+            let proposal = root.join("target/ripr/reports").join(PROPOSAL_REPORT);
+            let golden = root.join("fixtures/boundary_gap/expected/human.txt");
+            let kept = fs::read_to_string(&golden).map_err(|err| err.to_string())?;
+            // Lower the floor by its last line, so one subject sits above it.
+            let floor = fs::read_to_string(FLOOR_PATH).map_err(|err| err.to_string())?;
+            let lowered = floor
+                .trim_end()
+                .rsplit_once('\n')
+                .ok_or("one-line floor")?
+                .0;
+            write_file(Path::new(FLOOR_PATH), &format!("{lowered}\n"))?;
+            // Control: a subject above the floor passes and proposes a raise.
+            crate::fixture_contracts::check_fixture_contracts()?;
+            assert!(proposal.is_file());
+            fs::remove_file(&golden).map_err(|err| err.to_string())?;
+            let refused = crate::fixture_contracts::check_fixture_contracts();
+            assert!(
+                refused.as_ref().is_err_and(|err| err.contains(
+                    "`golden fixtures/boundary_gap/expected/human.txt` is no longer in the tree"
+                )),
+                "{refused:?}"
+            );
+            assert!(!proposal.exists(), "a stale proposal survived a refusal");
+            write_file(&golden, &kept)?;
+            crate::fixture_contracts::check_fixture_contracts()
+        })
+    }
+
+    #[test]
+    fn a_subject_the_floor_cannot_name_is_refused_not_skipped() -> Result<(), String> {
+        let root = temp_root("unnameable")?;
+        let fixtures = seed(&root)?;
+        write_file(&fixtures.join("two words/expected/human.txt"), "human\n")?;
+        let refused = observe_in(&root);
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|err| err.contains("two words/expected/human.txt")),
+            "{refused:?}"
         );
         Ok(())
     }
@@ -458,17 +617,18 @@ mod tests {
     fn malformed_and_repeated_floor_lines_are_refused() {
         for text in [
             "golden\n",
-            "golden fixtures/a/../b/human.txt\n",
-            "golden /abs/human.txt\n",
+            "golden fixtures/a/expected\n",
+            "golden fixtures/a/../b human.txt\n",
+            "golden /abs human.txt\n",
+            "golden fixtures/a/expected sub/human.txt\n",
             "case fixtures/a/corpus.json\n",
             "case fixtures/a/corpus.json#\n",
             "subject fixtures/a\n",
-            " golden fixtures/a/expected/human.txt\n",
+            " golden fixtures/a/expected human.txt\n",
         ] {
             assert!(parse_floor(text).is_err(), "accepted {text:?}");
         }
-        let repeated =
-            "golden fixtures/a/expected/human.txt\ngolden fixtures/a/expected/human.txt\n";
+        let repeated = "golden fixtures/a/expected human.txt human.txt\n";
         assert!(
             parse_floor(repeated).is_err_and(|err| err.contains("listed twice")),
             "repeated line accepted"
