@@ -7,10 +7,9 @@
   PR summaries switches the console to UTF-8 while capturing, and the VS
   Code extension downloads the x64 server on Windows ARM64 instead of
   offering none (#4415).
-- VS Code: the server now starts when workspace trust is granted or a
-  folder is added, without `ripr: Restart Server`. In a multi-root window
-  the session binds to the folder selected as the workspace root, so the
-  server no longer reports the root as ambiguous after you pick one, and
+- VS Code: in a multi-root window the session binds to the folder
+  selected as the workspace root, so the server no longer reports the
+  root as ambiguous after you pick one, and
   status text and notifications name `ripr first-pr --root .` and
   `ripr pr-summary` instead of `cargo xtask` commands. The language server
   offers the per-finding inspect and navigate actions as `quickfix.ripr.*`

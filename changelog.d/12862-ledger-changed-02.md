@@ -20,9 +20,10 @@
   when it is unavailable, the notice says the scope stays at the changed
   packages (#3616, #2970).
 - Rust: when an owner's name is defined in more than one workspace crate, a
-  test in another crate that calls it is now related to the owner if a
-  direct path dependency joins the two packages, in either direction, and
-  the workspace index and dependency graph are complete. A same-named
+  test in another crate that calls it is now related to the owner if the
+  test's package declares a direct path dependency on the owner's package
+  and the workspace index and dependency graph are complete. A dependency
+  only from the owner's package to the test's package gives no credit. A same-named
   definition in the test's own package, a competing same-named candidate
   reachable through an edge, or a limited or unavailable graph still leaves
   the test unrelated (#3619, #2972).
@@ -50,15 +51,10 @@
   carries `next.repair_command` (null otherwise). A seam without a repair
   route keeps the `ripr check` snapshot plus `ripr outcome` comparison
   (#3932).
-- PR review surfaces lead with the repair start when one is carried:
-  review cards, gate repair routes and inline comments carry
-  `ripr agent repair --root . --seam-id <id> --phase before` for a seam that
-  passes repair-packet eligibility, and `first-action`,
-  `pr-review front-panel`, the PR evidence ledger, `first-pr` and
-  `pr-summary` show that carried command first. They no longer build an
-  `agent start --seam-id` command from a bare seam or gap id, and a seam
-  whose recommended test `ripr agent repair` cannot edit gets no repair
-  start (#3987, #3906).
+- PR review surfaces (`first-action`, `pr-review front-panel`, the PR
+  evidence ledger, `first-pr` and `pr-summary`) no longer build an
+  `agent start --seam-id` command from a bare seam or gap id. They show a
+  repair start only when an input artifact carries one (#3987, #3906).
 - The workflow `ripr init --ci github` generates now cancels a run still in
   progress for the same pull request when a newer push arrives, so two
   overlapping runs no longer both post the same comments (#4474).

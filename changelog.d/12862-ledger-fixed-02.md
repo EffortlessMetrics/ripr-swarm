@@ -6,18 +6,13 @@
   (`assert_eq!(msg, "error.timeout")`) is no longer read as a field access,
   so such an assertion is not credited as a field observer for a
   struct-construction change (#2937, #2904).
-- Rust workspaces: a test in another crate that calls the changed
-  function directly is now listed as a related test when no other
-  workspace function shares that name. Before, every test outside the
-  owner's package was dropped before its calls were considered, so such
-  an integration test was never credited. A same-named test in another
-  crate that does not call the function is still excluded (#3014, #3047,
-  #2971).
-- Rust checks: when the index spans the whole workspace, a test in another
-  workspace crate that calls the changed function is now listed as a
-  related test instead of being dropped at the package boundary, provided
-  no other indexed function or method shares that name (#3047, #2971,
-  #3033).
+- Rust workspaces: when the index spans the whole workspace, a test in
+  another workspace crate that calls the changed function directly is now
+  listed as a related test, provided no other indexed function or method
+  shares that name. Before, every test outside the owner's package was
+  dropped before its calls were considered, so such an integration test
+  was never credited. A same-named test in another crate that does not
+  call the function is still excluded (#3014, #3047, #2971, #3033).
 - The portable input identity in `repo-exposure-json` artifacts now reads
   Cargo manifest and lockfile CRLF line endings as LF, so the same commit
   checked out with CRLF and with LF line endings gets one identity and

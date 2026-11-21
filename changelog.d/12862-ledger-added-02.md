@@ -1,9 +1,11 @@
 <!-- section: Added -->
-- Rust: a changed `let` binding that normalizes a bounded `find`, `rfind`
-  or `len_utf8` result through `map_or` before a same-owner equality
-  predicate now carries the named static limitation
-  `rust_value_propagation_unresolved` in JSON and LSP gap output; the
-  finding stays `static_unknown` (#3271).
+- Rust: a `static_unknown` finding that has a related test with an
+  assertion and no other named limitation now carries the static
+  limitation `rust_value_propagation_unresolved` in JSON and LSP gap
+  output when the change is a `let` binding that normalizes a bounded
+  `find`, `rfind` or `len_utf8` result through `map_or` before a
+  same-owner equality predicate. The finding stays `static_unknown`
+  (#3271).
 - Library: the new `ripr::provider_contract` module exposes versioned,
   exact-snapshot provider DTOs for external proof orchestrators
   (`RiprAnalysisRequestV1`, `RiprAnalysisReceiptV1`, provider capability
