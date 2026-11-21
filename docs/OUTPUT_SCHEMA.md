@@ -1969,8 +1969,12 @@ either way; consumers must treat it as "no findings produced".
 `run_limitations[0].message` echoes the human diagnostic verbatim — exactly
 what the same run prints on stderr — except for `config_invalid`, whose
 message is the redacted config summary (path and parse location, no TOML
-source excerpt) per RIPR-SPEC-0007. No other caller-unsupplied value enters
-the document.
+source excerpt) per RIPR-SPEC-0007, followed by the human next step: `fix the
+error in ripr.toml and rerun, then check it with `ripr config validate --root
+<root>``, so `remedy.command` (and `error.next` on `check`) is that command
+(#15260; `<root>` is the bound absolute root, shell-quoted when needed, and
+`next` is `null` when that command cannot be lifted as one runnable command). No other caller-unsupplied value enters the
+document.
 
 Every `check` refusal document (scope guards and typed failures, including
 the `0.3` timeout generation) also carries the shared refusal block beside its
@@ -2016,7 +2020,11 @@ classes are:
   a comma-separated list (`agent brief --files a,,b`) is `invalid_value` with
   the whole value as `token` (#14859);
 - a `context --at`/`--finding` selector that matched no finding, matched
-  more than one, or could not be decided.
+  more than one, or could not be decided;
+- an input the argv named that cannot be used, as `input_unusable`
+  (`receipt check --json` with a missing or malformed receipt or an
+  unreadable `--ledger`, `cache status --json` with a `--root` that is not a
+  directory) (#15260).
 
 Every other argv usage error keeps empty stdout even under a JSON request,
 with the cause on stderr only: required-flag refusals not yet typed,
@@ -2032,11 +2040,15 @@ The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
 `unknown_command`, `unknown_value`, `missing_value`, `missing_required`,
 `conflicting_flags`, `invalid_value`,
-`selector_miss`. `token` is the offending argument, command, flag, value or
-selector (an empty malformed value has none); `next` is a fixed help pointer
-(`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
-always carries `next: null`, because its message embeds the caller's selector
-and nothing is lifted from caller-controlled text. No argv echo and no
+`selector_miss`, `input_unusable`. `token` is the offending argument,
+command, flag, value or selector (an empty malformed value has none); `next`
+is a fixed help pointer (`list_valid_arguments`, `list_valid_commands`), a
+listing command its owner composed from typed state (`follow_stated_step`: the
+`selector_miss` listing `ripr check ...`, or `ripr agent status --root ...`
+for a malformed `agent status --attempt` ID), or `null`. A `selector_miss`
+message embeds the caller's selector, so its `next` is never lifted from the
+prose: it is the owner's listing command, and `null` when the miss names a
+different step (a seam-id selector). No argv echo and no
 partial analysis. Without a JSON request stdout stays empty. Schema:
 `schemas/ripr/cli-refusal.schema.json`.
 
@@ -2046,9 +2058,11 @@ runs and writes the stderr `refusal code=<code> disposition=<disposition>`
 line (exit `3`) also writes this document. Its `code` is that reason code
 (the table in `docs/EXIT_CODES.md`), the extra `disposition` field is one of
 `retryable`, `terminal`, `needs_selection` or `not_started`, and `message` is
-the plain-words prose without the code line. `next` is always `null`:
-these prose steps can quote a user-supplied item or selector, so the document
-never lifts one into a runnable field. The step is in `message`. A
+the plain-words prose without the code line. `next` is `null` except where the
+owner composes the one step from the bound root (`no_current_attempt`:
+`ripr status --root <root>`, #15260): these prose steps can quote a
+user-supplied item or selector, so the document never lifts one into a
+runnable field. The step is in `message`. A
 selection refusal also carries `choices` (#14980): `several_eligible_seams`
 lists one `ripr repair <seam> --root <root>` per eligible seam, and
 `ambiguous_attempts` one `ripr continue --attempt <id> --root <root>` per
@@ -20842,7 +20856,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.186",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.187",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21627,7 +21641,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.186",
+      "schema_version": "1.187",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

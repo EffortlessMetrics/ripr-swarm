@@ -5471,7 +5471,8 @@ mod tests {
                             return Err(format!("no-strong fixture denied: {name}"));
                         }
                     }
-                    (_, Some("no_family_relevant_assertion")) => {
+                    (_, Some("no_family_relevant_assertion"))
+                    | (Some("unknown"), Some("other_behavior_assertion_passed_over")) => {
                         family_selection += 1;
                         if eligible {
                             return Err(format!("no-family-relevant fixture eligible: {name}"));
@@ -5639,7 +5640,11 @@ mod tests {
         // the diff did not change (or could not establish) weakly exposed;
         // each weak finding carries one orthogonal card, fourteen more in
         // total.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 49, 1) {
+        // #15250: `assert check_balance(5) is False` is now a strong exact pin,
+        // which a logging-only edit passes over, so the
+        // `python_caplog_alias_in_literal` card moves from no-strong-oracle to
+        // the never-delegated family-selection bucket.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

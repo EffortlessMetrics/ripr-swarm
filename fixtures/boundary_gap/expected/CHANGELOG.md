@@ -1,16 +1,18 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.186 for one-hop blanket-impl reach (#6732)
+## Pending - corpus cache generation 1.187 for one-hop blanket-impl reach and explicit harness identity (#6732, #15846)
 
 A test reaching a trait-impl owner only through a one-hop blanket impl now
-withholds the gap as unresolved reach, which bumps the analyzer cache schema to
-1.186. Move the portable unchanged-attempt snapshots to 1.186, recompute the
+withholds the gap as unresolved reach, and a classified cache entry binds an
+explicit registered harness to the selected Cargo target under an aliased
+workspace root. Together they bump the analyzer cache schema to 1.187. Move the
+portable unchanged-attempt snapshots to 1.187, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent verify
-commitments and receipt byte hashes, and recapture the 19 honesty reports whose
-header carried 1.184 (artifact, source_subject and analysis_inputs only). Weak
-grip, unchanged movement, historical currentness, incomplete receipt status and
-fail-closed first-action routing remain unchanged. No other fixture output is
-regenerated.
+commitments and receipt byte hashes, and recapture the honesty reports whose
+header carried an older generation (artifact, source_subject and
+analysis_inputs only). Weak grip, unchanged movement, historical currentness,
+incomplete receipt status and fail-closed first-action routing remain unchanged.
+No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 

@@ -148,8 +148,10 @@ reached the caller.
   json`, a value flag missing its value or given an empty one (#11979,
   #14859), a required flag left out (#14877), two flags that cannot be used
   together (#14925), a malformed number caught by the CLI's shared numeric readers
-  (#11979), and a `context` selector
-  miss or ambiguity. The document carries
+  (#11979), a `context` selector
+  miss or ambiguity, an argv-named input that cannot be used (`receipt check`
+  receipt or `--ledger`, `cache status --root`: code `input_unusable`), and a
+  malformed `agent status --attempt` ID (`invalid_value`, #15260). The document carries
   `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are
   unchanged, and without a JSON request stdout stays empty. Other argv

@@ -91,6 +91,8 @@ mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
+#[path = "cli_smoke/json_refusal_next_steps.rs"]
+mod json_refusal_next_steps;
 #[path = "cli_smoke/leftover_check_honesty.rs"]
 mod leftover_check_honesty;
 #[path = "cli_smoke/leftover_hints.rs"]
@@ -4862,14 +4864,23 @@ fn context_selector_miss_emits_cli_refusal_only_for_json_request() -> Result<(),
     ]);
     let value = assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
     // `next` is never lifted from the miss prose, which embeds the selector:
-    // a selector shaped like a runnable command stays `null`.
-    assert_eq!(value["error"]["next"], serde_json::Value::Null);
+    // it is the listing command the owner composed from the typed run
+    // (#15260), and a selector shaped like a runnable command never reaches it.
+    let next = value["error"]["next"]["command"]
+        .as_str()
+        .ok_or("the selector miss must carry the owner's listing command")?
+        .to_string();
+    assert!(next.starts_with("ripr check --root "), "{next}");
+    assert!(next.ends_with(" --json"), "{next}");
+    assert_eq!(value["error"]["next"]["purpose"], "follow_stated_step");
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains(&format!("`{next}`")), "{message}");
     let hostile = "`ripr check --json` probe:nope.rs:1:absent-6834";
     let hostile_out = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", hostile, "--json",
     ]);
     let hostile_value = assert_cli_refusal(&hostile_out, "selector_miss", hostile, "")?;
-    assert_eq!(hostile_value["error"]["next"], serde_json::Value::Null);
+    assert_eq!(hostile_value["error"]["next"]["command"], next.as_str());
     let plain = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector,
     ]);
@@ -27527,10 +27538,12 @@ fn receipt_check_rejects_present_invalid_canonical_gap_id() -> Result<(), Box<dy
         write(identity)?;
         let bad = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
         assert_eq!(bad.status.code(), Some(2), "{label}: should exit 2");
-        assert!(
-            bad.stdout.is_empty(),
-            "{label}: stdout must be empty, got {}",
-            String::from_utf8_lossy(&bad.stdout)
+        // #15260: under `--json` the refusal is the shared document on stdout.
+        let refusal: serde_json::Value = serde_json::from_slice(&bad.stdout)?;
+        assert_eq!(refusal["status"], "refused", "{label}: {refusal:#}");
+        assert_eq!(
+            refusal["error"]["code"], "input_unusable",
+            "{label}: {refusal:#}"
         );
         let stderr = String::from_utf8_lossy(&bad.stderr);
         assert!(
