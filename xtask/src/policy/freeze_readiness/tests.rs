@@ -77,6 +77,15 @@ impl Repo {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
+    /// A directory beside the repository, outside its tree, removed with it.
+    fn aux(&self) -> Result<PathBuf, String> {
+        let mut name = self.root.clone().into_os_string();
+        name.push("-aux");
+        let path = PathBuf::from(name);
+        fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        Ok(path)
+    }
+
     fn write(&self, path: &str, text: &str) -> Result<(), String> {
         let path = self.root.join(path);
         if let Some(parent) = path.parent() {
@@ -92,6 +101,16 @@ impl Repo {
         self.git(&["add", "-A"])?;
         self.git(&["commit", "--quiet", "--allow-empty", "-m", message])?;
         self.git(&["rev-parse", "HEAD"])
+    }
+}
+
+impl Drop for Repo {
+    fn drop(&mut self) {
+        // Best effort: a failed removal must not turn a passing test red.
+        let _removed = fs::remove_dir_all(&self.root);
+        if let Ok(aux) = self.aux() {
+            let _removed = fs::remove_dir_all(aux);
+        }
     }
 }
 
@@ -232,9 +251,8 @@ impl Cut {
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
-        let mut name = self.repo.root.clone().into_os_string();
-        name.push(format!("-checks-{nonce}.json"));
-        let path = PathBuf::from(name);
+        let aux = self.repo.aux()?;
+        let path = aux.join(format!("checks-{nonce}.json"));
         fs::write(&path, json!({ "check_runs": runs }).to_string())
             .map_err(|error| error.to_string())?;
         Ok(path)
@@ -590,6 +608,12 @@ fn a_green_cargo_deny_run_must_prove_which_commit_it_scanned() -> Result<(), Str
         ],
         // Its sibling result was not captured.
         vec![deny.clone()],
+        // A failed scan of a manually selected commit is not the candidate's
+        // failure: there is still no result for the candidate.
+        vec![
+            check_run(1, DENY_CHECK, &cut.candidate, "failure", TODAY),
+            check_run(4, DEPENDENCY_REVIEW_CHECK, &cut.candidate, "success", TODAY),
+        ],
         // A skipped dependency-review from a different workflow run.
         vec![deny.clone(), other_run],
     ];
@@ -751,6 +775,13 @@ fn freeze_must_be_active_on_exactly_the_candidate() -> Result<(), String> {
             admission("inactive", &cut.candidate, &tree),
             None,
         ),
+        // After #1609 the packet is pinned, merges resume and the watch stops
+        // judging main, so a pinned tip is not a freeze.
+        (
+            "released",
+            admission("candidate_pinned", &cut.candidate, &tree),
+            None,
+        ),
         (
             "another cut",
             admission("active", &cut.observed, &other_tree),
@@ -842,9 +873,7 @@ fn moving_or_incomplete_subjects_are_refused() -> Result<(), String> {
     assert!(error.contains("is not a commit"), "{error}");
 
     // A shallow clone cannot answer ancestry, so it must not answer at all.
-    let mut shallow = cut.repo.root.clone().into_os_string();
-    shallow.push("-shallow");
-    let shallow = PathBuf::from(shallow);
+    let shallow = cut.repo.aux()?.join("shallow");
     // `--no-local` makes a path clone honor `--depth` on every platform.
     cut.repo.git(&[
         "clone",

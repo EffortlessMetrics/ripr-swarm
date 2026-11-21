@@ -390,7 +390,7 @@ fn judge_newest_run<'a>(
         predicate.lower(
             State::NotEstablished,
             format!(
-                "no `{name}` check run for {} was supplied; capture `gh api repos/<owner>/<repo>/commits/{sha}/check-runs?per_page=100` and pass it with --hosted-checks",
+                "no `{name}` check run for {} was supplied; capture `gh api \"repos/<owner>/<repo>/commits/{sha}/check-runs?filter=all&per_page=100\"` (every page) and pass it with --hosted-checks",
                 short(sha)
             ),
         );
@@ -471,34 +471,23 @@ fn deny_observation(
         .iter()
         .filter(|run| run.name == DENY_CHECK && subjects.contains(&run.head_sha.as_str()))
         .collect();
-    // A run that cannot prove its subject says nothing about the candidate, in
-    // either direction, so it must not displace one that can.
-    let established: Vec<&CheckRun> = on_subject
+    let Some(newest) = on_subject.iter().copied().max_by_key(|run| run.id) else {
+        judge_newest_run(predicate, &[], DENY_CHECK, request.candidate, None);
+        return Ok(());
+    };
+    // A run that cannot show which commit it scanned says nothing about the
+    // candidate in either direction: its failure is not the candidate's
+    // failure, and it must not displace a run that can.
+    let bound: Vec<&CheckRun> = on_subject
         .iter()
         .copied()
         .filter(|run| sibling_of(run) == Some("skipped"))
         .collect();
-    let pool = if established.is_empty() {
-        &on_subject
-    } else {
-        &established
-    };
-    let Some(run) = judge_newest_run(
-        predicate,
-        pool,
-        DENY_CHECK,
-        request.candidate,
-        Some(request.today),
-    ) else {
-        return Ok(());
-    };
-    let unbound = |why: &str| {
-        format!(
-            "check run {} `{DENY_CHECK}` does not prove it scanned {}: {why}. Dispatch {SECURITY_WORKFLOW_PATH} on that commit with no base_sha or head_sha",
-            run.id,
-            short(&run.head_sha)
-        )
-    };
+    let run = bound
+        .iter()
+        .copied()
+        .max_by_key(|run| run.id)
+        .unwrap_or(newest);
     let workflow = git.blob(&run.head_sha, SECURITY_WORKFLOW_PATH)?;
     let shaped = workflow.as_ref().is_some_and(|(_, bytes)| {
         let text = String::from_utf8_lossy(bytes);
@@ -509,27 +498,50 @@ fn deny_observation(
     if let Some((oid, _)) = &workflow {
         inputs.push(blob_input(&run.head_sha, SECURITY_WORKFLOW_PATH, oid));
     }
-    if !shaped {
+    let why_unbound = if !shaped {
+        Some(
+            "the workflow at that commit no longer has the subject-selection lines this check relies on",
+        )
+    } else {
+        match sibling_of(run) {
+            Some("skipped") => None,
+            Some(_) => Some(
+                "`dependency-review` ran in the same workflow run, which happens for a manually selected base/head or a pull request event",
+            ),
+            None => Some(
+                "the supplied check runs lack the `dependency-review` result of the same workflow run",
+            ),
+        }
+    };
+    if let Some(why) = why_unbound {
+        predicate.saw(format!(
+            "check run {} `{DENY_CHECK}` attached to {}: {} / {}; its result is not used",
+            run.id,
+            short(&run.head_sha),
+            run.status,
+            run.conclusion.as_deref().unwrap_or("none")
+        ));
         predicate.lower(
             State::NotEstablished,
-            unbound("the workflow at that commit no longer has the subject-selection lines this check relies on"),
+            format!(
+                "check run {} `{DENY_CHECK}` does not show that it scanned {}: {why}. Dispatch {SECURITY_WORKFLOW_PATH} on that commit with no base_sha or head_sha",
+                run.id,
+                short(&run.head_sha)
+            ),
         );
         return Ok(());
     }
-    match sibling_of(run) {
-        Some("skipped") => predicate.saw(format!(
-            "`{DEPENDENCY_REVIEW_CHECK}` was skipped in the same workflow run, so no manual subject was selected and cargo-deny scanned {}",
-            short(&run.head_sha)
-        )),
-        Some(_) => predicate.lower(
-            State::NotEstablished,
-            unbound("`dependency-review` ran in the same workflow run, which happens for a manually selected base/head or a pull request event"),
-        ),
-        None => predicate.lower(
-            State::NotEstablished,
-            unbound("the supplied check runs lack the `dependency-review` result of the same workflow run"),
-        ),
-    }
+    judge_newest_run(
+        predicate,
+        &bound,
+        DENY_CHECK,
+        request.candidate,
+        Some(request.today),
+    );
+    predicate.saw(format!(
+        "`{DEPENDENCY_REVIEW_CHECK}` was skipped in the same workflow run, so no manual subject was selected and cargo-deny scanned {}",
+        short(&run.head_sha)
+    ));
     Ok(())
 }
 
@@ -848,7 +860,10 @@ fn freeze_activation(
                     format!("the admission packet is not for release {RELEASE}"),
                 );
             }
-            if state != "active" && state != "candidate_pinned" {
+            // `candidate_pinned` is the state after #1609, when ordinary merges
+            // have resumed and the watch no longer judges main. Only `active`
+            // is a freeze.
+            if state != "active" {
                 predicate.lower(
                     State::Failed,
                     format!("the admission packet state is `{state}`, not `active`"),
