@@ -2479,7 +2479,9 @@ fn classify_change_for_owner_inner<'a>(
         {
             evidence.push(format!(
                 "{}: {} calls {} ({})",
-                if helper.cross_module {
+                if helper.candidate.relation == PythonRelationKind::RouteHelperCall {
+                    "route_helper_call"
+                } else if helper.cross_module {
                     "cross_module_caller_call"
                 } else {
                     "helper_owner_call"

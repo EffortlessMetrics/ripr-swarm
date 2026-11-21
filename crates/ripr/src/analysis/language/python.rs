@@ -2770,6 +2770,8 @@ mod reexport_tests;
 mod replaced_block_tests;
 
 #[cfg(test)]
+mod route_helper_tests;
+#[cfg(test)]
 mod route_identity_tests;
 
 #[cfg(test)]
