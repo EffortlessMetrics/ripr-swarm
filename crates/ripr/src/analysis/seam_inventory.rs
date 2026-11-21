@@ -1466,21 +1466,36 @@ fn compact_classified_seams_from_seams<'a>(
     seams: impl IntoIterator<Item = &'a RepoSeam>,
     index: &RustIndex,
 ) -> Result<Vec<ClassifiedSeam>, String> {
-    let seams = seams.into_iter();
+    use rayon::prelude::*;
+
+    let seams: Vec<&RepoSeam> = seams.into_iter().collect();
     let context = test_grip_evidence::CompactGripContext::new(index);
-    let mut classified = Vec::with_capacity(seams.size_hint().0);
-    for seam in seams {
-        cancellation::checkpoint()?;
-        let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
-        cancellation::checkpoint()?;
-        let class = seam_classification::classify_seam(seam, &evidence);
-        classified.push(ClassifiedSeam {
-            evidence,
-            seam: seam.clone(),
-            class,
-        });
-    }
-    Ok(classified)
+    // Seams are independent and the context's memos are keyed, so the walk
+    // runs on the rayon pool the classified evidence pass already uses. An
+    // indexed parallel collect keeps input order, so the records are the
+    // serial loop's records. Workers do not inherit this thread's
+    // cancellation token or committed-source overlay; each seam re-enters
+    // both, and one interrupted seam fails the whole walk as before.
+    let token = cancellation::current_token();
+    let overlay = super::committed_source::current_overlay();
+    seams
+        .par_iter()
+        .map_init(super::syntax::run_memo::enter, |_scope, &seam| {
+            cancellation::with_optional_token(token.as_ref(), || {
+                super::committed_source::with_overlay(overlay.clone(), || {
+                    cancellation::checkpoint()?;
+                    let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+                    cancellation::checkpoint()?;
+                    let class = seam_classification::classify_seam(seam, &evidence);
+                    Ok(ClassifiedSeam {
+                        evidence,
+                        seam: seam.clone(),
+                        class,
+                    })
+                })
+            })
+        })
+        .collect()
 }
 
 /// Classified seams, the seam-limit fact, lexical-fallback files, compact
@@ -5398,6 +5413,86 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    /// The compact walk runs on the rayon pool. Its records must be the
+    /// serial per-seam projection's records, in input order, so the compact
+    /// cache family and summary-json are unchanged by the schedule.
+    #[test]
+    fn parallel_compact_classification_matches_the_serial_projection() -> Result<(), String> {
+        let mut production = Vec::new();
+        let mut files: Vec<(PathBuf, String)> = Vec::new();
+        for file in 0..12 {
+            let mut source = String::new();
+            let mut tests = String::new();
+            for item in 0..8 {
+                let name = format!("value_{file}_{item}");
+                source.push_str(&format!(
+                    "pub fn {name}(input: i32) -> i32 {{ if input > {item} {{ input + {file} }} else {{ {item} }} }}\n"
+                ));
+                // Every other owner gets an exact-value test, so the walk
+                // yields more than one class and a reordering is visible.
+                if item % 2 == 0 {
+                    tests.push_str(&format!(
+                        "#[test] fn reads_{name}() {{ assert_eq!({name}(100), {}); }}\n",
+                        100 + file
+                    ));
+                }
+            }
+            let path = PathBuf::from(format!("src/unit_{file}.rs"));
+            production.push(path.clone());
+            files.push((path, source));
+            files.push((PathBuf::from(format!("tests/unit_{file}.rs")), tests));
+        }
+        let borrowed: Vec<(PathBuf, &str)> = files
+            .iter()
+            .map(|(path, source)| (path.clone(), source.as_str()))
+            .collect();
+        let index = index_from_files(&borrowed)?;
+        let seams = inventory_seams_from_index(&production, &index);
+        assert!(
+            seams.len() >= 96,
+            "fixture must give every pool worker several seams, found {}",
+            seams.len()
+        );
+
+        let context = test_grip_evidence::CompactGripContext::new(&index);
+        let serial: Vec<ClassifiedSeam> = seams
+            .iter()
+            .map(|seam| {
+                let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+                let class = seam_classification::classify_seam(seam, &evidence);
+                ClassifiedSeam {
+                    evidence,
+                    seam: seam.clone(),
+                    class,
+                }
+            })
+            .collect();
+        let classes: BTreeSet<String> = serial
+            .iter()
+            .map(|entry| format!("{:?}", entry.class))
+            .collect();
+        assert!(
+            classes.len() > 1,
+            "fixture must classify into more than one class, found {classes:?}"
+        );
+
+        let render = |records: &[ClassifiedSeam]| {
+            serde_json::to_string(records).map_err(|error| error.to_string())
+        };
+        let expected = render(&serial)?;
+        for _ in 0..4 {
+            let parallel = compact_classified_seams_from_seams(&seams, &index)?;
+            let ids: Vec<&str> = parallel
+                .iter()
+                .map(|entry| entry.seam.id().as_str())
+                .collect();
+            let input_ids: Vec<&str> = seams.iter().map(|seam| seam.id().as_str()).collect();
+            assert_eq!(ids, input_ids, "records must keep input order");
+            assert_eq!(render(&parallel)?, expected);
+        }
+        Ok(())
+    }
 
     #[test]
     fn compact_classification_refuses_deadline_before_publication() -> Result<(), String> {
