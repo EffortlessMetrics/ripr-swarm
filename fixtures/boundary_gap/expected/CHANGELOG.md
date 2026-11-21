@@ -1,5 +1,12 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.202 for unit tail statement blocks (#15459)
+
+The analyzer omits return-value seams for unit functions whose tail block only
+executes statements. The editor rejects saved gap ledgers from before this change.
+The 1.202 producer regenerated the unchanged-attempt reports, verification and
+receipt hashes. The attempt still has weak grip.
+
 ## Pending — corpus cache generation 1.201 for test-local empty macros and same-line owner calls (#15539, #14487)
 
 A second directly asserted call on the same line can supply the boundary input.
