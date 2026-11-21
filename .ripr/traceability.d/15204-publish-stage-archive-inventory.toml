@@ -1,0 +1,15 @@
+# Qualified producer accepts the publish-stage archive only as committed blobs or their exact strip (#15204).
+[[extend]]
+id = "RIPR-SPEC-0134"
+tests = [
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::a_publish_stage_archive_of_the_admitted_commit_is_accepted",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::a_committed_archive_without_stage_is_still_accepted",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::a_hand_edited_stripped_source_file_is_refused_with_marker_and_record_intact",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::an_edited_or_extra_non_source_entry_is_refused",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::the_strip_is_accepted_only_under_the_stripped_source_root",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::a_marker_naming_another_commit_is_refused",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::stage_evidence_is_accepted_only_all_together",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::a_staged_archive_with_strippable_source_left_unstripped_is_refused",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::only_a_staged_package_is_allowed_dirty_and_path_dependencies_are_packaged",
+  "xtask/src/reports/release/candidate_harness/archive/inventory_tests.rs::a_real_multi_package_publish_stage_archive_passes_the_inventory",
+]

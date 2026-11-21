@@ -506,6 +506,8 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
     let mut writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
+        // Same bytes on every build host: the crate would record DOS attributes on Windows.
+        .system(zip::System::Unix)
         .unix_permissions(0o644);
 
     let entries = fs::read_dir(package_dir)

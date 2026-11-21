@@ -5745,7 +5745,10 @@ mod tests {
     }
 
     /// #13894 N3: a preview-language file matching the operator's
-    /// `excluded_file_patterns` is a scope note on a complete outcome.
+    /// `excluded_file_patterns` is a scope note on a complete outcome. The
+    /// Python adapter must be compiled in; the rust-only counterpart is
+    /// `uncompiled_preview_adapter_with_configured_exclusion_stays_partial`.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn preview_excluded_file_pattern_is_a_scope_note_on_a_complete_outcome() -> Result<(), String> {
         let root = temp_root("analysis-outcome-preview-excluded")?;
@@ -5820,6 +5823,7 @@ mod tests {
             .ok_or_else(|| "outcome must be projected".to_string())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_configured_scope_note(
         outcome: &crate::analysis_outcome::AnalysisOutcome,
         path: &str,
@@ -5842,6 +5846,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_generated_name_stays_partial(outcome: &crate::analysis_outcome::AnalysisOutcome) {
         assert_eq!(
             outcome.kind,
@@ -5859,6 +5864,7 @@ mod tests {
 
     /// #13894 review: a configured `excluded_file_patterns` match wins over the
     /// built-in generated NAME convention (Python), like the Rust branch.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn configured_pattern_wins_over_generated_name_for_python() -> Result<(), String> {
         let enabled = [LanguageId::Rust, LanguageId::Python];
@@ -5891,6 +5897,63 @@ mod tests {
             &unconfigured,
         )?;
         assert_generated_name_stays_partial(&outcome);
+        Ok(())
+    }
+
+    /// #15601 C3: in a binary without the Python adapter, an enabled Python
+    /// language cannot run at all, so a changed Python file is never judged
+    /// by the preview skip rules. Even when the operator's
+    /// `excluded_file_patterns` match it, the outcome stays partial on the
+    /// typed adapter-unavailable limitation; it must not read as a complete
+    /// outcome with a configured scope note, nor as a preview-adapter skip.
+    #[cfg(not(feature = "lang-python"))]
+    #[test]
+    fn uncompiled_preview_adapter_with_configured_exclusion_stays_partial() -> Result<(), String> {
+        let enabled = [LanguageId::Rust, LanguageId::Python];
+        let configured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            python: crate::config::PythonLanguageConfig {
+                excluded_file_patterns: vec!["fixtures/**".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-excluded-uncompiled",
+            "fixtures/data.py",
+            &enabled,
+            &configured,
+        )?;
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::PartialWithLimitations,
+            "{:?}",
+            outcome.limitations
+        );
+        let unavailable = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+            })
+            .ok_or_else(|| format!("python must be unavailable: {:?}", outcome.limitations))?;
+        assert!(
+            unavailable
+                .bounded_detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("python"),
+            "{unavailable:?}"
+        );
+        assert!(
+            !outcome.limitations.iter().any(|limitation| matches!(
+                limitation.kind,
+                AnalysisLimitationKind::RequestedScopeExcluded
+                    | AnalysisLimitationKind::LanguageScopeUnsupported
+            )),
+            "{:?}",
+            outcome.limitations
+        );
         Ok(())
     }
 

@@ -4,9 +4,12 @@
 //! `include` list in `crates/ripr/Cargo.toml` already leaves out out-of-line
 //! unit-test files, but about a third of the remaining source is inline
 //! `#[cfg(test)] mod tests { .. }` blocks, and that share grows with every
-//! test added. Moving those blocks into files is a 400k-line diff.
+//! test added.
 //!
-//! Instead the package is built from a publish stage: a sparse local clone of
+//! This stage is a temporary uploadability bridge, not the test/payload
+//! boundary: the intended layout keeps tests in owner-local files that the
+//! package rules exclude (see `docs/RELEASE.md`, Crate tarball contents). Until
+//! then the package is built from a publish stage: a sparse local clone of
 //! the workspace checked out at `HEAD`, holding the workspace members and the
 //! root files, in which `crates/ripr/src` has each inline module whose
 //! attributes include exactly `#[cfg(test)]` removed with its attributes and
@@ -33,7 +36,7 @@ use ra_ap_syntax::{AstNode, Edition, SourceFile, TextRange};
 use sha2::Digest as _;
 
 /// The crate whose inline test modules are stripped in the stage.
-const STRIPPED_SOURCE_ROOT: &str = "crates/ripr/src";
+pub(crate) const STRIPPED_SOURCE_ROOT: &str = "crates/ripr/src";
 
 /// The marker file, relative to the `ripr` package root, that names the
 /// commit a publish stage was checked out at. Packaged by the `include` list.
@@ -113,6 +116,15 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
         &[
             "clone",
             "--quiet",
+            // Stage the committed bytes on every host: a global
+            // `core.autocrlf=true` would otherwise rewrite the checkout to
+            // CRLF and `verify_stage` compares against `git show` (LF).
+            // `core.eol=lf` covers `text=auto` attributes, which otherwise
+            // check out with the native (CRLF) ending on Windows.
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
             "--shared",
             "--no-checkout",
             workspace_arg.as_str(),
@@ -442,6 +454,7 @@ mod tests {
             fs::write(&file, body).map_err(io)?;
         }
         git_output(&workspace, &["init", "-q"])?;
+        git_output(&workspace, &["config", "core.autocrlf", "false"])?;
         git_output(&workspace, &["add", "--", ".gitattributes"])?;
         for (path, _) in files {
             git_output(&workspace, &["add", "--", path])?;
