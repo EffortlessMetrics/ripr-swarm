@@ -1817,15 +1817,49 @@ fn strip_narration(stderr: &str) -> String {
         .join("\n")
 }
 
-/// Where a command's narration lands. `reports ci-packet` replays each
-/// child's stderr on its own stdout, inside a `::stop-commands::` window, so
-/// its children's narration is read from both streams.
+/// Where a command's narration and refusal prose land. `reports ci-packet`
+/// replays each child's stderr on its own stdout, inside a
+/// `::stop-commands::` window, so both are read from the two streams together.
+/// A window's token differs on every run and is spelled `TOKEN` here.
 fn narration_log(path: &str, output: &Output) -> String {
     let stderr = stderr_text(output);
     if path != "reports ci-packet" {
         return stderr;
     }
-    format!("{}\n{stderr}", String::from_utf8_lossy(&output.stdout))
+    let mut log = String::new();
+    let mut open: Option<String> = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        match (&open, line.strip_prefix("::stop-commands::")) {
+            (None, Some(token)) => {
+                open = Some(format!("::{token}::"));
+                log.push_str("::stop-commands::TOKEN\n");
+            }
+            (Some(resume), _) if line == resume => {
+                open = None;
+                log.push_str("::TOKEN::\n");
+            }
+            _ => {
+                log.push_str(line);
+                log.push('\n');
+            }
+        }
+    }
+    log + &stderr
+}
+
+/// Everything in a command's log that is not narration. For `reports
+/// ci-packet` the log holds its children's reports too, and quiet changes one
+/// later `Next:` line there, which is not narration (#11955).
+fn refusal_prose(path: &str, log: &str) -> String {
+    let prose = strip_narration(log);
+    if path != "reports ci-packet" {
+        return prose;
+    }
+    prose
+        .lines()
+        .filter(|line| !line.starts_with("Next: "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run_catalog_command(args: &[String], quiet_env: Option<&str>) -> Result<Output, String> {
@@ -2093,7 +2127,6 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
             continue;
         }
         let quiet_err = stderr_text(&quiet);
-        let loud_err = stderr_text(&loud);
         let leaked = narration_lines(&narration_log(&path, &quiet));
         if !leaked.is_empty() {
             failures.push(format!(
@@ -2108,9 +2141,10 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
             ));
             continue;
         }
-        if strip_narration(&loud_err) != strip_narration(&quiet_err) {
+        let quiet_log = narration_log(&path, &quiet);
+        if refusal_prose(&path, &loud_log) != refusal_prose(&path, &quiet_log) {
             failures.push(format!(
-                "{path}: RIPR_QUIET changed refusal prose\nloud={loud_err}\nquiet={quiet_err}"
+                "{path}: RIPR_QUIET changed refusal prose\nloud={loud_log}\nquiet={quiet_log}"
             ));
             continue;
         }

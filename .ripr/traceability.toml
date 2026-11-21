@@ -5568,6 +5568,8 @@ tests = [
   "crates/ripr/src/cli/commands/init.rs::tests::generated_workflow_installs_the_checksummed_release_binary",
   "crates/ripr/tests/generated_review_workflow.rs::generated_install_failure_explanation_is_consistent_on_every_host",
   "crates/ripr/tests/generated_review_workflow.rs::generated_workflow_replay_prints_only_runnable_next_steps",
+  "crates/ripr/tests/generated_review_workflow.rs::ci_packet_child_report_cannot_issue_workflow_commands",
+  "crates/ripr/tests/generated_review_workflow.rs::ci_packet_replays_child_stderr_inside_a_stop_commands_window",
   "crates/ripr/src/output/ci_summary/tests.rs::complete_artifacts_render_every_section_in_order",
   "crates/ripr/src/output/ci_summary/tests.rs::start_here_is_named_by_artifact_not_a_target_path",
   "crates/ripr/tests/generated_review_workflow.rs::generated_install_windows_zip_route_replays_securely",
@@ -5601,6 +5603,7 @@ fixtures = [
 code = [
   ".github/actions/ripr-check/action.yml",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/ci_packet.rs",
   "crates/ripr/src/cli/commands/init_workflow.rs",
   "crates/ripr/src/output/ci_summary.rs",
   "crates/ripr/tests/cli_smoke.rs",
