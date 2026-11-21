@@ -746,9 +746,11 @@ say the record cannot authorize `cargo publish`, `gh release`, or another
 workflow generically. `ripr#1637`'s 2026-08-30 amendment makes that bridge a
 precondition of `stable_ready_same_candidate`.
 
-**0.11.0: stable waits for that machinery.** The owner ruling of 2026-11-21 is
-that `0.11.0` stable publication waits for `ripr#1651`, `ripr#1652`, and
-`ripr#1646`. The manual templates below are not the `0.11.0` stable path. Do
+**0.11.0: stable waits for that machinery.** The owner ruling of 2026-11-21
+(made in the project chat; `ripr-swarm#16012` is its repository record) is
+that `0.11.0` stable publication waits for `ripr#1651`, `ripr#1652`,
+`ripr#1646`, `ripr#1644`, and `ripr#1649`. The manual templates below are not
+the `0.11.0` stable path. Do
 not run an `[EXTERNAL-PUBLISHING]` template in this section for `0.11.0`, and
 do not ask for a #1470 record that names one. They stay as the reference for
 the order, the per-channel gates, and the receipts the source transaction must
