@@ -1560,6 +1560,46 @@ mod unix_stubs {
     }
 
     #[test]
+    fn ps_geometry_is_scoped_and_unexplained_results_refuse() -> Result<(), String> {
+        let root = scratch("ps-state")?;
+        // The fixture checks the actual probe argv and environment before
+        // producing the same exit/status pairs as ps on Unix.
+        let ps = stub(
+            &root,
+            r#"#!/bin/sh
+[ "$COLUMNS/$LINES" = "80/24" ] && [ "$1/$2/$3" = "-o/stat=/-p" ] || exit 2
+case "$4" in
+  1) exit 1 ;;
+  2) echo 'Z+' ;;
+  3) echo 'S' ;;
+  4) echo 'unexplained warning' >&2; exit 1 ;;
+  5) echo 'Z'; echo 'unexplained warning' >&2 ;;
+  *) exit 2 ;;
+esac
+"#,
+        )?;
+        let results = [
+            (1, true),
+            (2, true),
+            (3, false),
+            (4, false),
+            (5, false),
+            (6, false),
+        ]
+        .into_iter()
+        .find(|(pid, stopped)| {
+            super::super::controls::ps_confirms_child_stopped(&ps, *pid) != *stopped
+        });
+        fs::remove_dir_all(root).map_err(|error| format!("clean ps fixture: {error}"))?;
+        if let Some((pid, _)) = results {
+            return Err(format!(
+                "unexpected liveness observation for fixture pid {pid}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn instrument_controls_discriminate_every_failure_state() -> TestResult {
         let root = scratch("instrument")?;
         let controls = super::super::controls::instrument_controls(&root, &all_cases());
