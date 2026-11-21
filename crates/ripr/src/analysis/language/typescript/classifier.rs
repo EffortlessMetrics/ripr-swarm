@@ -2698,6 +2698,34 @@ fn ts_destructured_default_change(
     })
 }
 
+/// Arguments of an instance-method owner call in `observed`
+/// (`receiver.method(...)`) where `receiver` is bound in the test body to
+/// `new <owner class>(...)`. Method owners are called through instances,
+/// not namespaces, so the namespace-receiver path cannot see them
+/// (typescript_same_method_owner_identity_positive).
+fn ts_instance_owner_call_arguments(
+    test: &TypeScriptTest,
+    observed: &str,
+    owner: &TypeScriptOwner,
+) -> Option<Vec<String>> {
+    let class_name = owner.class_name.as_deref()?;
+    let observed = observed.trim();
+    for receiver in instance_call_receivers(observed, &owner.name) {
+        let needle = format!("{receiver} = new {class_name}(");
+        let alt = format!("{receiver} = new {class_name} (");
+        if !test.body_text.contains(&needle) && !test.body_text.contains(&alt) {
+            continue;
+        }
+        let rest = observed.strip_prefix(&receiver)?.trim_start();
+        let rest = rest.strip_prefix('.')?.trim_start();
+        let rest = rest.strip_prefix(owner.name.as_str())?.trim_start();
+        if ts_is_one_argument_list(rest) {
+            return balanced_call_arguments(&rest[1..]).map(positional_prefix);
+        }
+    }
+    None
+}
+
 /// Whether some strong, pinned assertion of an oracle relation calls the
 /// owner with an argument supplying the changed input class (#15285).
 fn ts_input_class_witnessed(
@@ -2731,6 +2759,7 @@ fn ts_input_class_witnessed(
             }
             let Some(arguments) =
                 ts_observed_owner_call_arguments(test, assertion, &names, owner, &receivers)
+                    .or_else(|| ts_instance_owner_call_arguments(test, observed, owner))
             else {
                 return false;
             };

@@ -12555,6 +12555,68 @@ fn ts_input_class_dropped_trim_with_padded_input_stays_exposed() -> Result<(), S
     Ok(())
 }
 
+/// #15285 control (method owner): a padded argument supplied through an
+/// instance receiver (`new TokenValidator(...)` then
+/// `validator.validate(" abc ")`) witnesses the added `.trim()`, so the
+/// finding stays `exposed`. Mirrors
+/// `typescript_same_method_owner_identity_positive`, which must never lose
+/// `exposed`.
+#[test]
+fn ts_input_class_trim_on_method_with_padded_instance_input_stays_exposed() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"padded\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\" abc \")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "padded instance input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 (method owner): the same method change with only an unpadded
+/// instance input must read `weakly_exposed`.
+#[test]
+fn ts_input_class_trim_on_method_without_padded_input_downgrades() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"plain\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\"abc\")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "unpadded instance input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// #15285: a changed destructured default differs only when the field is
 /// omitted. A test that always supplies the field cannot discriminate it,
 /// so it must not read `exposed`. (On this shape the changed line is not
