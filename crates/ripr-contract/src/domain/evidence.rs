@@ -168,6 +168,9 @@ impl Confidence {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StageEvidence {
+    /// Producer-owned category. Older persisted stages carry only the summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub static_limit_kind: Option<super::StaticLimitKind>,
     pub state: StageState,
     pub confidence: Confidence,
     pub summary: String,
@@ -179,6 +182,7 @@ impl StageEvidence {
             state,
             confidence,
             summary: summary.into(),
+            static_limit_kind: None,
         }
     }
 }

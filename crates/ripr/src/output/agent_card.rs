@@ -9,8 +9,8 @@
 use crate::analysis;
 use crate::app::task_first::CardStartHold;
 use crate::domain::{
-    FixInstructionState, FocusedExecutionGoal, RepairCardDoneWhen, RepairCardTarget, RepairCardV1,
-    StaticMovementGoal,
+    FixInstructionState, FocusedExecutionGoal, RepairCardDoneWhen, RepairCardTarget,
+    RepairCardTestKind, RepairCardV1, StaticMovementGoal,
 };
 
 /// The default human card: a short brief a first-time reader can act on.
@@ -132,6 +132,17 @@ pub(crate) fn agent_card_plain_lines(
         ));
     }
     match &card.selected_target {
+        // An inline-module target is repaired by adding one new test function
+        // and leaving existing tests unchanged (#5210), so its anchor is a
+        // model to read, not a test to extend (#15323).
+        Some(RepairCardTarget::Existing {
+            file,
+            line,
+            test_kind: RepairCardTestKind::InlineUnit,
+            ..
+        }) => {
+            lines.push(format!("  Nearby test (left unchanged): {file}:{line}"));
+        }
         Some(RepairCardTarget::Existing { file, line, .. }) => {
             lines.push(format!("  Test to extend: {file}:{line}"));
         }

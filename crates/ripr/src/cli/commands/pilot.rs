@@ -495,6 +495,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &input.root,
         !classified.is_empty(),
         config.languages().enabled(),
+        config.source_text().is_none(),
         &analysis::workspace_preview_language_files(&input.root),
     )
     .with_unanalyzed(
@@ -1975,7 +1976,12 @@ mod tests {
         let sink = std::sync::Arc::new(CliProgressSink::with_writer(
             Box::new(buffer.clone()),
             false,
-            ProgressPolicy::STANDARD,
+            ProgressPolicy {
+                // Stage and heartbeat projection only: the #15351 non-TTY
+                // quiet window is pinned in `cli::progress` tests.
+                non_tty_hold: Duration::ZERO,
+                ..ProgressPolicy::STANDARD
+            },
         ));
         let (done_tx, done_rx) = mpsc::channel();
         let result = run_pilot_analysis_with_timeout(

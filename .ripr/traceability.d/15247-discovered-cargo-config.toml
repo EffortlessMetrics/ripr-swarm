@@ -1,0 +1,11 @@
+# A discovered Cargo config cannot choose the metadata probe's rustc (#15247).
+[[extend]]
+id = "RIPR-SPEC-0197"
+code = [
+  "crates/ripr/src/analysis/workspace/assertion_dependency.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/workspace/assertion_dependency/discovered_config_tests.rs::discovered_config_refuses_every_probe_program_choice",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/discovered_config_tests.rs::snapshot_refuses_a_discovered_config_but_keeps_the_users_cargo_home",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/discovered_config_tests.rs::identity_probe_never_runs_a_wrapper_the_analyzed_tree_names",
+]

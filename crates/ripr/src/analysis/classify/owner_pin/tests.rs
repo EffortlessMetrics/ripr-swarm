@@ -1342,6 +1342,208 @@ fn library_export_imports_in_another_file_still_defeat_a_module_name() {
     }
 }
 
+/// The single-walk implementation that predates the name-independent summary
+/// (#15329), kept as the oracle. Only `modules` is owned (`String`) to match
+/// `reexports_library_module`; the logic is otherwise verbatim.
+fn single_walk_library_may_export_other(index: &RustIndex, owner_root: &Path, name: &str) -> bool {
+    let Some(source_dir) = owner_root.parent() else {
+        return true;
+    };
+    if !index.include_limitations.is_empty() {
+        return true;
+    }
+    let src_dirs = BTreeSet::new();
+    let mut library = Vec::new();
+    for (path, facts) in index.files().iter() {
+        if !path.starts_with(source_dir) {
+            continue;
+        }
+        match target_root(path, index, &src_dirs) {
+            None => return true,
+            Some(root) if root == owner_root => {
+                let masked = mask_comments_and_strings(&facts.source);
+                let includes = whole_word_offsets(&masked, "include")
+                    .into_iter()
+                    .any(|offset| {
+                        masked[offset + "include".len()..]
+                            .trim_start()
+                            .starts_with('!')
+                    });
+                if includes || declares_value_named(&masked, name) {
+                    return true;
+                }
+                library.push(masked);
+            }
+            Some(_) => {}
+        }
+    }
+    let modules: BTreeSet<String> = library
+        .iter()
+        .flat_map(|masked| declared_module_names(masked))
+        .filter(|module| {
+            !library.iter().any(|masked| {
+                library_import_statements(masked)
+                    .iter()
+                    .any(|statement| use_statement_binds_name(statement, module))
+                    || binds_extern_crate(masked, module)
+            })
+        })
+        .map(String::from)
+        .collect();
+    index.files().iter().any(|(path, facts)| {
+        target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
+            && public_use_statements(&facts.source)
+                .iter()
+                .any(|statement| {
+                    (contains_as_whole_word(statement, name) || statement.contains('*'))
+                        && !reexports_library_module(statement, &modules)
+                })
+    })
+}
+
+/// (label, `lib.rs` tail, expected answer per name).
+type LibraryExportCase<'a> = (&'a str, &'a str, &'a [(&'a str, bool)]);
+
+const LIBRARY_EXPORT_NAMES: [&str; 8] = [
+    "LIMIT", "score", "rebate", "ext", "absent", "m", "helpers", "Widget",
+];
+
+#[test]
+fn library_export_summary_answers_match_the_single_walk_on_a_multi_file_library() {
+    let m = "pub fn score() -> i64 { 1 }\npub fn rebate() -> i64 { 2 }\n";
+    let helpers = "pub const LIMIT: u32 = 9;\n// pub use ghost::absent;\n";
+    let widget = "pub struct Widget;\n";
+    let base = [
+        ("src/m.rs", m),
+        ("src/helpers.rs", helpers),
+        ("src/widget.rs", widget),
+    ];
+    let mods = "pub mod m;\nmod helpers;\nmod widget;\n";
+    let root = Path::new(LIB);
+    // (label, lib.rs tail, name -> expected)
+    let cases: [LibraryExportCase; 6] = [
+        (
+            "value declared in a library file",
+            "",
+            &[
+                ("LIMIT", true),
+                ("score", false),
+                ("absent", false),
+                ("ext", false),
+            ],
+        ),
+        (
+            "re-export through a library module",
+            "pub use self::m::score;\n",
+            &[("score", false), ("rebate", false), ("LIMIT", true)],
+        ),
+        (
+            // No `crate`/`self`/`super` root: not provably local, fails closed.
+            "re-export through a bare module path",
+            "pub use m::score;\n",
+            &[("score", true), ("rebate", false), ("LIMIT", true)],
+        ),
+        (
+            "re-export of a foreign item",
+            "pub use fastscore::ext;\n",
+            &[
+                ("ext", true),
+                ("score", false),
+                ("absent", false),
+                ("LIMIT", true),
+            ],
+        ),
+        (
+            "foreign glob",
+            "pub use fastscore::*;\n",
+            &[("rebate", true), ("absent", true), ("Widget", true)],
+        ),
+        (
+            "glob of a library module",
+            "pub use self::m::*;\n",
+            &[("rebate", false), ("absent", false), ("LIMIT", true)],
+        ),
+    ];
+    for (label, tail, expected) in cases {
+        let lib = format!("{mods}{tail}");
+        let mut files = vec![(LIB, lib.as_str())];
+        files.extend(base);
+        let library = index(&files);
+        assert_eq!(library.files().len(), 4, "{label}");
+        for name in LIBRARY_EXPORT_NAMES {
+            let old = single_walk_library_may_export_other(&library, root, name);
+            assert_eq!(
+                library_may_export_other(&library, root, name),
+                old,
+                "{label}: {name}"
+            );
+        }
+        for (name, answer) in expected {
+            assert_eq!(
+                library_may_export_other(&library, root, name),
+                *answer,
+                "{label}: {name}"
+            );
+        }
+    }
+    // An `include!` in any library file fails every name closed.
+    let included = "pub fn score() -> i64 { 1 }\ninclude!(\"gen.rs\");\n";
+    let lib = format!("{mods}pub use m::score;\n");
+    let library = index(&[
+        (LIB, lib.as_str()),
+        ("src/m.rs", m),
+        ("src/helpers.rs", included),
+        ("src/widget.rs", widget),
+    ]);
+    for name in LIBRARY_EXPORT_NAMES {
+        assert!(
+            single_walk_library_may_export_other(&library, root, name),
+            "{name}"
+        );
+        assert!(
+            library_may_export_other(&library, root, name),
+            "include: {name}"
+        );
+    }
+    // A file with no established crate root fails every name closed.
+    let library = index(&[
+        (LIB, "pub mod m;\n"),
+        ("src/m.rs", m),
+        ("src/orphan.rs", widget),
+    ]);
+    for name in LIBRARY_EXPORT_NAMES {
+        assert!(
+            single_walk_library_may_export_other(&library, root, name),
+            "{name}"
+        );
+        assert!(
+            library_may_export_other(&library, root, name),
+            "orphan: {name}"
+        );
+    }
+}
+
+#[test]
+fn library_export_summary_is_computed_once_per_owner_root_across_names() {
+    let library = index(&[
+        (LIB, "pub mod m;\npub use m::score;\n"),
+        ("src/m.rs", "pub fn score() -> i64 { 1 }\n"),
+    ]);
+    assert_eq!(library.files().len(), 2);
+    LIBRARY_EXPORT_SUMMARIES.with(|count| count.set(0));
+    for name in LIBRARY_EXPORT_NAMES {
+        library_may_export_other(&library, Path::new(LIB), name);
+    }
+    assert_eq!(
+        LIBRARY_EXPORT_SUMMARIES.with(std::cell::Cell::get),
+        1,
+        "every name reuses one summary of the owner's library"
+    );
+    // A second owner root is its own summary.
+    library_may_export_other(&library, Path::new("other/src/lib.rs"), "score");
+    assert_eq!(LIBRARY_EXPORT_SUMMARIES.with(std::cell::Cell::get), 2);
+}
+
 #[test]
 fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
     // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
@@ -9917,6 +10119,51 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     }
 }
 
+/// #15345: an associated constructor (`Config::fresh(3)`) pins its
+/// returned literal's field through the `T::name(..)` call identity
+/// (RIPR-SPEC-0172): the test names the owner's own type through a direct
+/// `use` (a brace list is refused there). A bare `fresh(3)`, another type's
+/// `Other::fresh(3)`, a glob import and `assert_ne!` do not pin.
+#[test]
+fn an_associated_constructor_pins_its_whole_value_field() {
+    let lib = format!(
+        "{CONFIG_LIB}\nimpl Config {{\n    pub fn fresh(n: u32) -> Self {{\n        Config {{\n            retries: n + 1,\n            name: \"x\".into(),\n            count: Count(n),\n        }}\n    }}\n}}\n"
+    );
+    let literal = r#"Config { retries: 7, name: "x".into(), count: Count(3) }"#;
+    let admits = |imports: &str, body: &str| {
+        let tests = format!("{imports}\n#[test]\nfn pins() {{\n{body}\n}}\n");
+        let (index, pin) = whole_value_pin(&lib, "fresh", &tests);
+        assert!(pin.is_some(), "the associated field pin must establish");
+        pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let direct = "use demo::Config;\nuse demo::Count;";
+    for body in [
+        format!("assert_eq!(Config::fresh(3), {literal});"),
+        format!("let c = Config::fresh(3);\nassert_eq!(c, {literal});"),
+    ] {
+        assert!(admits(direct, &body), "{body}");
+    }
+    for (imports, body) in [
+        (direct, format!("assert_ne!(Config::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(Other::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(fresh(3), {literal});")),
+        (
+            "use demo::*;",
+            format!("assert_eq!(Config::fresh(3), {literal});"),
+        ),
+    ] {
+        assert!(!admits(imports, &body), "{imports} {body}");
+    }
+    // Another type's same-named associated function competes for the call
+    // name, so no field pin is established.
+    let decoy = format!(
+        "{lib}\npub struct Other;\nimpl Other {{\n    pub fn fresh(_n: u32) -> u32 {{\n        0\n    }}\n}}\n"
+    );
+    let tests =
+        format!("{direct}\n#[test]\nfn pins() {{\nassert_eq!(Config::fresh(3), {literal});\n}}\n");
+    assert!(whole_value_pin(&decoy, "fresh", &tests).1.is_none());
+}
+
 /// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
 /// tail, an early `return Err(..)` exits as `?` does, and the test may
 /// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
@@ -13285,6 +13532,27 @@ fn walked_parameter_refuses_an_empty_literal_argument() {
     }
 }
 
+/// #15277 review: a turbofish call reads its arguments like a plain call, so
+/// the empty-walk refusal still sees an empty literal through `count::<u8>`.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_through_a_turbofish() {
+    let tail = "xs.iter().count()";
+    let lib = format!(
+        "pub fn count<T>(xs: &[T]) -> usize {{\n    {tail}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{}\n}}\n",
+        adaptor_test(
+            "        assert_eq!(count::<u8>(&[]), 0);\n        assert_eq!(count::<u8>(&[3, 4]), 2);"
+        )
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count", tail);
+    assert!(pin.is_some(), "the turbofish walk must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(count::<u8>(&[3, 4]), 2);".to_string()]
+    );
+}
+
 /// #9444 review: the refusal also reads a call wrapped in a rendered or
 /// indexed comparison, a spaced method call, and leaves a field receiver
 /// or a rebound parameter alone.
@@ -14169,6 +14437,173 @@ fn prelude_rebound(refusal: Option<AssertionRefusal>) -> bool {
     )
 }
 
+/// #14116: an audited pass-through wrapper (`proptest!` through the audited
+/// prelude glob or its qualified path) pastes its arguments only into
+/// generated function bodies, so a trusted name its arguments mention is
+/// confined to the call's own text and no longer refuses a test elsewhere.
+/// Every other spelling, version, argument shape and local redefinition keeps
+/// the workspace-wide site.
+#[test]
+fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result<(), String> {
+    let proptest = "proptest = \"1\"\n";
+    let audited = lock_of(&[("proptest", "1.12.0", REGISTRY)]);
+    let at = |label: &str, lock: &str, sibling: &str| {
+        prelude_refusal(
+            &format!("pass-through-{label}"),
+            proptest,
+            Some(lock),
+            sibling,
+        )
+    };
+    let body = "#[test]\n    fn p(v in prop::collection::vec(0u8..3, 1..4)) {\n        prop_assert!(!v.is_empty());\n        assert_eq!(v.len(), v.len());\n    }";
+    let bare = format!("proptest! {{\n    {body}\n}}\n");
+    let glob = "use proptest::prelude::*;\n";
+    // Fixture premise: the qualified call mentions `assert_eq`, which
+    // refuses without the audited lock.
+    let qualified = format!("proptest::proptest! {{\n    {body}\n}}\n");
+    // Without the prelude glob, a qualified call names its nested wrapper by
+    // path too.
+    let qualified_body = body.replace("prop_assert!", "proptest::prop_assert!");
+    assert!(prelude_rebound(at(
+        "premise",
+        &lock_of(&[("proptest", "1.11.0", REGISTRY)]),
+        &qualified
+    )?));
+    for (label, sibling) in [
+        ("bare", format!("{glob}{bare}")),
+        (
+            "qualified",
+            format!("proptest::proptest! {{\n    {qualified_body}\n}}\n"),
+        ),
+        (
+            "external",
+            format!("::proptest::proptest! {{\n    {qualified_body}\n}}\n"),
+        ),
+        (
+            "no-op-redefinition",
+            format!(
+                "macro_rules! proptest {{ ($($t:tt)*) => {{}} }}\nproptest::proptest! {{\n    {qualified_body}\n}}\n"
+            ),
+        ),
+        ("container-glob", format!("{glob}use super::*;\n{bare}")),
+        ("qualified-with-prelude", format!("{glob}{qualified}")),
+        (
+            "inert-attributes",
+            format!(
+                "{glob}proptest! {{\n    #![proptest_config(ProptestConfig::with_cases(8))]\n    #[doc(hidden)]\n    {body}\n}}\n"
+            ),
+        ),
+        // Trusted calls nested in the confined arguments rebind nothing, so
+        // the fixpoint must not reopen what their own arguments mention.
+        (
+            "nested-trusted-calls",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(v in 0u8..3) {{ assert_eq!(vec![v], vec![v]); let _ = vec![assert_eq!(v, v)]; let _ = format!(\"{{}}\", matches!(v, 0)); prop_assert!(matches!(vec![assert_eq!(v, v)].len(), 1)); }} }}\n"
+            ),
+        ),
+    ] {
+        assert_eq!(at(label, &audited, &sibling)?, None, "{sibling}");
+    }
+    for (label, sibling) in [
+        ("no-glob", bare.clone()),
+        (
+            "definition-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ macro_rules! assert_eq {{ () => {{}} }} }} }}\n"
+            ),
+        ),
+        (
+            "module-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ mod m {{ pub use other::assert_eq; }} }} }}\n"
+            ),
+        ),
+        (
+            "nested-wrapper",
+            format!("{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ define!(assert_eq); }} }}\n"),
+        ),
+        (
+            "plain-import",
+            format!("use other::prop_assert;\n{glob}{bare}"),
+        ),
+        (
+            "local-redefinition",
+            format!("{glob}macro_rules! prop_assert {{ ($($t:tt)*) => {{ $($t)* }} }}\n{bare}"),
+        ),
+        ("inline-module", format!("{glob}mod inner {{\n{bare}}}\n")),
+        (
+            "block-glob",
+            format!("{glob}fn f() {{\n    use other::*;\n    {bare}}}\n"),
+        ),
+        ("item-macro", format!("{glob}make_imports!();\n{bare}")),
+        (
+            "pasting-redefinition",
+            "macro_rules! proptest { ($($t:tt)*) => { $($t)* } }\n".to_string(),
+        ),
+        (
+            "other-wrapper",
+            format!("other::proptest! {{\n    {body}\n}}\n"),
+        ),
+        // A renamed import binds `prop_assert` to another macro, which can
+        // paste its argument into an exported definition.
+        (
+            "aliased-wrapper",
+            format!(
+                "use other::helper as prop_assert;\n{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "aliased-wrapper-qualified-call",
+            "use other::helper as prop_assert;\nproptest::proptest! { #[test] fn p(x in 0u8..3) { prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        // A qualified outer call establishes nothing about a bare nested
+        // `prop_assert!` without the audited prelude glob.
+        (
+            "qualified-call-nested-wrapper-without-prelude",
+            "proptest::proptest! { #[test] fn p(x in 0u8..3) { prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        (
+            "foreign-nested-path",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ other::prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "use-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use other::helper as prop_assert; prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        // Procedural attributes may emit an exported definition beside the
+        // item they decorate.
+        (
+            "opaque-attribute",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ #[dep::define(assert_eq)] struct Marker; }} }}\n"
+            ),
+        ),
+        (
+            "derive-attribute",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ #[derive(Debug)] struct Marker; assert_eq!(x, x); }} }}\n"
+            ),
+        ),
+        (
+            "conditional-attribute",
+            format!(
+                "{glob}proptest! {{ #[cfg_attr(test, dep::define)] #[test] fn p(x in 0u8..3) {{ assert_eq!(x, x); }} }}\n"
+            ),
+        ),
+        ("imported-attribute", format!("use other::test;\n{glob}{bare}")),
+    ] {
+        assert!(
+            prelude_rebound(at(label, &audited, &sibling)?),
+            "{label}: {sibling}"
+        );
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0369 (audited versions only): the glob keeps assertion credit
 /// only when the lockfile locks the crate exactly once, from the registry, at
 /// an audited version. Every other lock state keeps the pre-#11703 refusal.
@@ -14335,6 +14770,11 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "use ::vstd::prelude::*;\n",
         ),
         (
+            "owner-pin-prelude-external-beside-import",
+            vstd,
+            "use other::vstd;\nuse ::vstd::prelude::*;\n",
+        ),
+        (
             "owner-pin-prelude-workspace-dep",
             "creusot-std = { version = \"0.14\", features = [\"std\"] }\n",
             "use creusot_std::prelude::*;\n",
@@ -14419,6 +14859,16 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "owner-pin-prelude-rename",
             vstd,
             "extern crate other as vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import",
+            vstd,
+            "use other::vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import-self",
+            prusti,
+            "use other::prusti_contracts::{self};\nuse prusti_contracts::*;\n",
         ),
     ] {
         assert!(
@@ -15005,4 +15455,135 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     assert_eq!(proofs(), before + 1, "a read-time proof is not repeated");
     let matches = StdRootedCalls::of(sources[3]);
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
+}
+
+/// #15277: a turbofish names the same function, so `doubled::<u8>(5)` and
+/// `s.apply::<u8>(4)` are the owner calls their plain spellings are. An
+/// unclosed turbofish, a path value without a call, anything chained after
+/// the call, a turbofish this reading refuses (fn-pointer or const-block
+/// arguments) and a turbofish call that mentions the name again in its
+/// arguments are no owner call.
+#[test]
+fn a_turbofish_call_has_the_plain_call_shape() {
+    assert!(matches!(
+        owner_call_shape("doubled::<u8>(5)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("doubled::<Vec<u8>>(v)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("s.apply::<u8>(4)", "apply"),
+        Some(CallShape::Method("s"))
+    ));
+    for operand in [
+        "doubled::<u8(5)",
+        "doubled::<u8>",
+        "doubled::<u8>(5).min(3)",
+        "doubled::<u8> (5)",
+        "doubled::other(5)",
+        "doubled::<fn(u8) -> u8>(f)",
+        "doubled::<{ N + 1 }>(5)",
+        "doubled::<u8>(doubled(5))",
+    ] {
+        assert!(owner_call_shape(operand, "doubled").is_none(), "{operand}");
+    }
+    assert_eq!(
+        crate::analysis::extract::turbofish_len("::<u8>(5)"),
+        "::<u8>".len()
+    );
+    assert_eq!(crate::analysis::extract::turbofish_len("(5)"), 0);
+    assert_eq!(crate::analysis::extract::turbofish_len("::<u8(5)"), 0);
+}
+
+/// #15263: a test module that imports a standard macro at its own path
+/// (`use std::vec;`, `use alloc::vec;`, `use core::assert_eq;`) binds the
+/// standard macro, so the `assert_eq!` over `vec![..]` stays credited. Each
+/// control keeps a real or possible rebinding refused.
+#[test]
+fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-macro-import-plain",
+        &[
+            ("Cargo.toml", &manifest("")),
+            ("src/lib.rs", ""),
+            ("tests/buf_tests.rs", ""),
+        ],
+    )?;
+    let alloc_dependency = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-macro-import-alloc-dep",
+        &[(
+            "Cargo.toml",
+            &manifest("alloc = { package = \"fake-alloc\", version = \"1\" }\n"),
+        )],
+    )?;
+    let lib = "pub fn weights(x: u32) -> Vec<u32> {\n    vec![x * 3]\n}\n";
+    let refusal_under = |root: &Path, import: &str| -> Result<Option<AssertionRefusal>, String> {
+        let tests = format!(
+            "#[cfg(test)]\nmod test {{\n    use demo::weights;\n    {import}\n\n    #[test]\n    fn weighs() {{\n        assert_eq!(weights(4), vec![12]);\n    }}\n}}\n"
+        );
+        let mut index = index(&[(LIB, lib), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))
+            .ok_or_else(|| format!("no indexed test under `{import}`"))?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.starts_with("assert_eq!(weights(4)"))
+            .ok_or_else(|| format!("no indexed assertion under `{import}`"))?;
+        Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+    };
+    let rebound = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    // Fixture premise: with no import the assertion is credited, and a
+    // foreign import of `vec` does refuse it.
+    assert_eq!(refusal_under(&plain, "")?, None);
+    assert!(rebound(refusal_under(&plain, "use other::vec;")?));
+    for import in [
+        "use std::vec;",
+        "use ::std::vec;",
+        "use alloc::vec;",
+        "use std::assert_eq;",
+        "use core::assert_eq;",
+        "use std::{vec, fmt};",
+    ] {
+        assert_eq!(refusal_under(&plain, import)?, None, "{import}");
+    }
+    for import in [
+        // Not where the standard library exports the macro.
+        "use core::vec;",
+        "use std::vec::vec;",
+        "use alloc::assert_eq;",
+        // A rename, and a root a local alias or module takes.
+        "use other::assert_eq as vec;",
+        "use std::assert_eq as vec;",
+        "use other as std;\n    use std::vec;",
+        "mod std {}\n    use std::vec;",
+        "mod alloc {}\n    use alloc::vec;",
+        "extern crate other as alloc;\n    use alloc::vec;",
+        "use crate::alloc::vec;",
+    ] {
+        assert!(rebound(refusal_under(&plain, import)?), "{import}");
+    }
+    // A manifest dependency named `alloc` may be the crate `use alloc::vec`
+    // names, so the import stays a rebinding there; `std` is unaffected.
+    assert!(rebound(refusal_under(
+        &alloc_dependency,
+        "use alloc::vec;"
+    )?));
+    assert_eq!(refusal_under(&alloc_dependency, "use std::vec;")?, None);
+    Ok(())
 }

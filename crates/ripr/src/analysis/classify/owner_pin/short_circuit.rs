@@ -1434,4 +1434,39 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn whitespace_inside_a_raw_string_with_an_inner_quote_is_content() {
+        // #15021: an inner `"` inside a hashed raw string is content, not
+        // the literal's end, so the whitespace after it is content too. Read
+        // as a string boundary, the edit `"b"  c` -> `"b" c` would compact to
+        // the same operand and read as retained (a false agreement).
+        let pinned = r##"check(n,r#"a "b"  c"#)"##;
+        let edited = r##"check(n,r#"a "b" c"#)"##;
+        let function = format!("fn f(n: u32) -> bool {{\n    {edited}\n}}");
+        // The operands differ only by one space inside the literal.
+        assert_eq!(pinned.replacen("\"  c", "\" c", 1), edited);
+        assert_ne!(compact_operand(pinned), compact_operand(edited));
+        assert_eq!(compact_operand(pinned), pinned);
+        assert_eq!(
+            GuardOperandChange::read(&function, edited, &format!("n != 0 && {pinned}")),
+            None
+        );
+        // Two hashes, and a `"#` inside the literal that does not close it.
+        let deeper = r###"check(n,r##"a "# b"##)"###;
+        assert_eq!(compact_operand(deeper), deeper);
+        // Alternate: layout whitespace outside the same literal is ignored,
+        // so the retained operand still reads and only the guard differs.
+        let spaced = r##"check(n,   r#"a "b"  c"#)"##;
+        assert_eq!(compact_operand(spaced), pinned);
+        let change = GuardOperandChange::read(
+            &format!("fn f(n: u32) -> bool {{\n    {pinned}\n}}"),
+            pinned,
+            &format!("n != 0 && {spaced}"),
+        );
+        assert_eq!(
+            change.as_ref().map(|change| change.differing.len()),
+            Some(1)
+        );
+    }
 }

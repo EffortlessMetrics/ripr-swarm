@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The generated workflow's job summary now shows the start-here and first-action commands and paths from the repository root (`git -C . fetch ...`, `--root .`) instead of the runner's checkout path, so they paste into a local checkout. This includes the forward-slash root a Windows runner prints and a checkout path the command had to quote, such as one with an apostrophe. The uploaded reports keep the real path (#15858).
