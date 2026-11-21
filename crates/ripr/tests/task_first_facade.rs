@@ -4697,10 +4697,12 @@ fn assert_already_complete_summary(
             ));
         }
     }
-    if !summary.contains(root_arg) {
-        return Err(format!(
-            "the printed commands must name the selected root `{root_arg}`:\n{summary}"
-        ));
+    for (index, command) in [(4, "Next"), (5, "Full status")] {
+        if !lines[index].contains(&format!("--root {root_arg}`")) {
+            return Err(format!(
+                "the {command} command must name the selected root `{root_arg}`:\n{summary}"
+            ));
+        }
     }
     for page_only in [
         "# RIPR Repair Attempt Status",
