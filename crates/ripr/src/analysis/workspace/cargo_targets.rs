@@ -1061,6 +1061,28 @@ pub(crate) fn declared_crate_root_paths_from_manifest(
         return Vec::new();
     };
     let normalized_dir = normalize(manifest_dir);
+    explicit_crate_root_paths(&value, manifest_dir)
+        .into_iter()
+        .filter_map(|target| {
+            target
+                .strip_prefix(&normalized_dir)
+                .ok()
+                .map(|relative| relative.to_path_buf())
+        })
+        .filter(|relative| {
+            // ParentDir (or absolute/prefix) components escape the package
+            // directory: drop the target rather than trust it.
+            relative.components().all(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+        })
+        .collect()
+}
+
+fn explicit_crate_root_paths(value: &toml::Value, manifest_dir: &Path) -> BTreeSet<PathBuf> {
     let mut normalized = BTreeSet::new();
     for key in ["lib", "bin", "test", "bench", "example"] {
         let entries = match value.get(key) {
@@ -1081,24 +1103,36 @@ pub(crate) fn declared_crate_root_paths_from_manifest(
         }
     }
     normalized
-        .into_iter()
-        .filter_map(|target| {
-            target
-                .strip_prefix(&normalized_dir)
-                .ok()
-                .map(|relative| relative.to_path_buf())
+}
+
+/// Check named target roots even where source discovery skips their directory.
+/// A root outside the indexed inventory leaves its module edges unknown.
+pub(crate) fn explicit_target_roots_are_covered(
+    manifest: &toml::Value,
+    manifest_dir: &Path,
+    analysis_root: &Path,
+    indexed: impl Fn(&Path) -> bool,
+) -> bool {
+    let Ok(root) = std::path::absolute(analysis_root) else {
+        return false;
+    };
+    let root = lexical(&normalize(&root));
+    let directory = root.join(manifest_dir);
+    let mut roots = explicit_crate_root_paths(manifest, &directory);
+    if let Some(build) = manifest
+        .get("package")
+        .and_then(|package| package.get("build"))
+        .and_then(toml::Value::as_str)
+    {
+        roots.insert(normalize(&directory.join(build.trim())));
+    }
+    roots.into_iter().all(|target| {
+        lexical(&target).strip_prefix(&root).is_ok_and(|relative| {
+            !super::discover::path_enters_ignored_dir(
+                &relative.to_string_lossy().replace('\\', "/"),
+            ) && indexed(relative)
         })
-        .filter(|relative| {
-            // ParentDir (or absolute/prefix) components escape the package
-            // directory: drop the target rather than trust it.
-            relative.components().all(|component| {
-                matches!(
-                    component,
-                    std::path::Component::Normal(_) | std::path::Component::CurDir
-                )
-            })
-        })
-        .collect()
+    })
 }
 
 /// Build the source-role context for a set of analyzed files: read each

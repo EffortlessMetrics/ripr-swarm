@@ -294,7 +294,13 @@ pub(super) fn extract_parser_probe_shapes(
     if let Some(tail_expr) = body.as_ref().and_then(|body| body.tail_expr()) {
         let range = tail_expr.syntax().text_range();
         let tail_text = slice_text(text, range.start(), range.end());
-        if is_tail_return_value_text(&tail_text) {
+        // #15459: a unit owner's tail block that ends in a `;`-terminated
+        // statement yields `()`, not a returned value; its statements keep
+        // their own side_effect/call_deletion probes.
+        let unit_statement_block = function.ret_type().is_none()
+            && ast::BlockExpr::cast(tail_expr.syntax().clone())
+                .is_some_and(|block| block.tail_expr().is_none());
+        if !unit_statement_block && is_tail_return_value_text(&tail_text) {
             push_probe_shape(
                 &mut shapes,
                 line_index,
