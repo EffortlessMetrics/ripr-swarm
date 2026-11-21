@@ -95,13 +95,19 @@ fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
 /// byte count or an unpaired surrogate is refused rather than replaced, which
 /// keeps the path-identity rule above (no lossy decode may merge two names).
 fn decode_utf16_diff_text(source: &str, bytes: &[u8]) -> Option<Result<String, String>> {
-    let (payload, unit_from_bytes): (&[u8], fn([u8; 2]) -> u16) = match bytes {
-        [0xFF, 0xFE, payload @ ..] => (payload, u16::from_le_bytes),
-        [0xFE, 0xFF, payload @ ..] => (payload, u16::from_be_bytes),
+    let (payload, little_endian) = match bytes {
+        [0xFF, 0xFE, payload @ ..] => (payload, true),
+        [0xFE, 0xFF, payload @ ..] => (payload, false),
         _ => return None,
     };
     let (pairs, trailing) = payload.as_chunks::<2>();
-    let units = pairs.iter().map(|pair| unit_from_bytes(*pair));
+    let units = pairs.iter().map(|pair| {
+        if little_endian {
+            u16::from_le_bytes(*pair)
+        } else {
+            u16::from_be_bytes(*pair)
+        }
+    });
     let decoded = char::decode_utf16(units).collect::<Result<String, _>>();
     Some(match decoded {
         Ok(text) if trailing.is_empty() => Ok(text),
