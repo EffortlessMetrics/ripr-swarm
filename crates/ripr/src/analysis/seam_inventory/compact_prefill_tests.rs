@@ -19,6 +19,19 @@ pub(super) fn fixture(label: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+pub(super) fn compact_baseline(
+    state: &OwnedWorkspaceState,
+    config: &RiprConfig,
+) -> Result<(Vec<ClassifiedSeam>, Vec<PathBuf>), String> {
+    let (cached_index, index_build) = build_index_timed(state, config)?;
+    inventory_compact_classified_seams_from_state_with_config(
+        state,
+        cached_index,
+        index_build,
+        config,
+    )
+}
+
 #[test]
 fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<(), String> {
     const CHILD: &str = "RIPR_COMPACT_PREFILL_CHILD_ACK";
@@ -96,8 +109,7 @@ fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<()
     let root = fixture("compact-windows-full")?;
     let config = RiprConfig::default();
     let state = collect_workspace_state(&root, &config)?;
-    let (baseline, fallback) =
-        inventory_compact_classified_seams_from_state_with_config(&state, &config)?;
+    let (baseline, fallback) = compact_baseline(&state, &config)?;
     assert!(
         baseline.len() > LIMITS.window * 2,
         "fixture must exercise several windows"

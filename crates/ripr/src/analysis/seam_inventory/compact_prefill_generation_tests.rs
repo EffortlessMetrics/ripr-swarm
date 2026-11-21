@@ -41,7 +41,7 @@ fn compact_windows_zero_total_with_nonempty_index_preserves_prior_generation() -
     let pass = test_grip_evidence::EvidencePass::new(&cached.index);
     let key = state.cache_key();
     let cache = RepoSeamFactCache::at_compact_classified(&root);
-    let (baseline, _) = inventory_compact_classified_seams_from_state_with_config(&state, &config)?;
+    let (baseline, _) = super::tests::compact_baseline(&state, &config)?;
     assert!(
         !baseline.is_empty(),
         "the prior generation must be observably nonempty"
