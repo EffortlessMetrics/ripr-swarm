@@ -183,6 +183,7 @@ fn packets() -> Result<Vec<(String, Value)>, String> {
         .filter_map(|seam| seam["seam_id"].as_str().map(str::to_string))
         .collect();
     let mut documents = Vec::new();
+    let mut refused = 0usize;
     for id in ids {
         let args = [
             "agent",
@@ -199,8 +200,19 @@ fn packets() -> Result<Vec<(String, Value)>, String> {
                 let document = parse(&args, &output)?;
                 documents.push((id.clone(), document));
             }
-            // A policy-omitted seam is refused; its envelope has its own schema.
-            Some(3) => {}
+            // A policy-omitted seam is refused; its envelope has its own
+            // schema. Exit 3 also means an unknown seam id, which would be a
+            // fixture fault, so only the policy refusal is skipped.
+            Some(3) => {
+                let refusal = parse(&args, &output)?;
+                let category = &refusal["run_limitations"][0]["category"];
+                if category != "seam_policy_omitted" {
+                    return Err(format!(
+                        "agent packet --seam-id {id}: exit 3 was not a policy refusal: {category}"
+                    ));
+                }
+                refused += 1;
+            }
             other => {
                 return Err(format!(
                     "agent packet --seam-id {id}: exit {other:?}; stderr:\n{}",
@@ -210,6 +222,10 @@ fn packets() -> Result<Vec<(String, Value)>, String> {
         }
     }
     let _ = std::fs::remove_dir_all(&root);
+    println!(
+        "{} packeted seams, {refused} policy-omitted seams",
+        documents.len()
+    );
     Ok(documents)
 }
 
