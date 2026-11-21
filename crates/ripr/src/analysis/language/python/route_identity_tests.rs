@@ -406,6 +406,187 @@ fn an_unreadable_client_fixture_reaches_the_route_without_oracle_credit() -> Res
 }
 
 #[test]
+fn a_nested_fixture_client_over_the_owners_app_is_identified() -> Result<(), String> {
+    // #14141 repro: client(invoice_app) where invoice_app returns the owner's app.
+    let nested = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&nested)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_nested_fixture_client_over_a_rival_app_does_not_relate() -> Result<(), String> {
+    let rival = format!(
+        "{CLIENT_IMPORTS}from app.b import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&rival)?, None);
+    Ok(())
+}
+
+#[test]
+fn a_two_hop_nested_fixture_client_is_identified() -> Result<(), String> {
+    let two_hop = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app):\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&two_hop)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_fixture_chains_that_cannot_be_read_stay_unidentified() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // A fixture with two different returns.
+    let two_returns = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        return app\n    return other\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&two_returns)?, unidentified);
+    // A fixture parameter rebound in the fixture body.
+    let rebound = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    items_app = make_app()\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&rebound)?, unidentified);
+    // An intermediate parameter rebound in its own body.
+    let rebound_mid = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app):\n    base_app = make_app()\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&rebound_mid)?, unidentified);
+    // A chain longer than the cap (4 hops): client -> f1 -> f2 -> f3 -> f4 -> f5 -> app.
+    let mut long = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef f5():\n    return app\n"
+    );
+    for (name, param) in [("f4", "f5"), ("f3", "f4"), ("f2", "f3"), ("f1", "f2")] {
+        long.push_str(&format!(
+            "\n@pytest.fixture\ndef {name}({param}):\n    return {param}\n"
+        ));
+    }
+    long.push_str("\n@pytest.fixture\ndef client(f1):\n    return TestClient(f1)\n");
+    assert_eq!(fixture_relation(&long)?, unidentified);
+    Ok(())
+}
+
+/// The relation of the `test_items` test in `tests/test_items.py` to the
+/// `items` owner in `app/a.py` for an explicit multi-file workspace.
+fn workspace_relation(files: &[(&str, &str)]) -> Result<Option<PythonRelationKind>, String> {
+    let (owners, tests) = super::fixtures_tests::workspace(files);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "items")
+        .ok_or_else(|| "expected items owner".to_string())?;
+    Ok(related_test_candidates(owner, &tests)
+        .first()
+        .map(|candidate| candidate.relation))
+}
+
+#[test]
+fn a_test_module_app_override_wins_over_the_conftest_app_fixture() -> Result<(), String> {
+    // pytest resolves a fixture dependency from the requesting test's
+    // scope, so a test-module override replaces the conftest definition
+    // a shared client fixture names.
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    let test = "import pytest\nfrom app.b import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", test),
+        ])?,
+        None
+    );
+    // The same override returning the owner's application identifies it,
+    // while the conftest definition alone points at the rival.
+    let test = "import pytest\nfrom app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.b import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", test),
+        ])?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_directly_parametrized_app_dependency_is_not_followed_to_its_fixture() -> Result<(), String> {
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    // A direct parametrize supplies the dependency itself, so the
+    // application fixture never runs and its import identifies nothing.
+    let direct = "import pytest\n\n@pytest.mark.parametrize(\"items_app\", [object()])\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", direct),
+        ])?,
+        Some(PythonRelationKind::ApiClientRouteUnidentifiedApp)
+    );
+    // `indirect=True` routes the value through the fixture instead, so
+    // the ordinary chain still identifies the owner's application.
+    let indirect = "import pytest\n\n@pytest.mark.parametrize(\"items_app\", [object()], indirect=True)\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", indirect),
+        ])?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_defaulted_app_parameter_is_not_a_fixture_request() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // pytest leaves a defaulted client parameter at its default, so the
+    // same-named fixture returning the owner's application never runs.
+    let root_default = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app=other_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&root_default)?, unidentified);
+    // The same holds for a defaulted parameter on an intermediate fixture.
+    let mid_default = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app=other_app):\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&mid_default)?, unidentified);
+    Ok(())
+}
+
+#[test]
+fn an_exit_the_reader_cannot_use_fails_the_chain_closed() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // An early bare return supplies no application on that path.
+    let bare = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        return\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&bare)?, unidentified);
+    // A tab-separated rival return is an exit like any other spelling.
+    let tabbed = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        return\tother\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&tabbed)?, unidentified);
+    // A bare exit in the client fixture itself supplies no client there.
+    let bare_client = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef client(request):\n    if request.param:\n        return\n    return TestClient(app)\n"
+    );
+    assert_eq!(fixture_relation(&bare_client)?, unidentified);
+    Ok(())
+}
+
+#[test]
 fn a_shadowed_application_name_is_not_the_import_it_spells() -> Result<(), String> {
     let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
     let local = "from starlette.testclient import TestClient\nfrom app.a import app\n\ndef test_items():\n    app = build_other_app()\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
