@@ -2,10 +2,53 @@
 
 use super::*;
 
+/// Analytics keeps its default-feature fixture product apart from the suite's
+/// all-features executable. Let Cargo validate that same default build before
+/// launching either the wrong-root control or the measured consumers.
+fn consumer_ripr_binary() -> Result<String, String> {
+    if std::env::var_os(crate::reports::FIXTURE_BINARY_ISOLATE_ENV).is_none_or(|value| value != "1")
+    {
+        return scoreboard_test_ripr_binary();
+    }
+    let shared = crate::repo_root()?.join(crate::ripr_debug_binary());
+    let target = crate::reports::fixtures::isolated_default_target_dir(&shared)?;
+    let target_text = crate::path_to_utf8(&target, "scoreboard fixture target")?;
+    build_scoreboard_ripr(&[("CARGO_TARGET_DIR", target_text)])
+}
+
+// A configured build.target can leave an older native binary in the same private
+// target. Recreate the two layouts without compiling another product in this test.
+fn check_target_override_artifact(root: &Path) -> Result<(), String> {
+    let manifest = crate::repo_root()?.join("crates/ripr/Cargo.toml");
+    let target =
+        std::path::absolute(root.join("cargo-artifact-control")).map_err(|err| err.to_string())?;
+    let name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
+    let host = target.join("debug").join(&name);
+    let configured = target.join("x86_64-unknown-linux-gnu/debug").join(&name);
+    for (file, bytes) in [(&host, "stale host"), (&configured, "configured target")] {
+        fs::create_dir_all(file.parent().ok_or("missing fixture directory")?)
+            .map_err(|err| err.to_string())?;
+        fs::write(file, bytes).map_err(|err| err.to_string())?;
+    }
+    let artifact = json!({
+        "reason": "compiler-artifact", "manifest_path": manifest,
+        "target": {"name": "ripr", "kind": ["bin"]}, "profile": {"test": false},
+        "executable": configured,
+    });
+    let selected = scoreboard_ripr_artifact(&artifact.to_string(), &manifest)?;
+    assert_eq!(
+        fs::read_to_string(selected).map_err(|err| err.to_string())?,
+        "configured target"
+    );
+    fs::remove_file(&configured).map_err(|err| err.to_string())?;
+    assert!(scoreboard_ripr_artifact(&artifact.to_string(), &manifest).is_err());
+    Ok(())
+}
+
 #[test]
 fn measured_consumers_use_the_private_pin_and_preserve_the_cached_source() -> Result<(), String> {
     let _cwd = crate::acquire_test_cwd_read_guard();
-    let binary = scoreboard_test_ripr_binary()?;
+    let binary = consumer_ripr_binary()?;
     struct Fixture(PathBuf);
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -13,6 +56,7 @@ fn measured_consumers_use_the_private_pin_and_preserve_the_cached_source() -> Re
         }
     }
     let fixture = Fixture(crate::tests::temp_dir("dx-measured-consumer-root"));
+    check_target_override_artifact(&fixture.0)?;
     let corpus = fixture.0.join("corpus");
     let source = corpus.join("fixture");
     fs::create_dir_all(source.join("src")).map_err(|err| err.to_string())?;
@@ -76,7 +120,8 @@ fn measured_consumers_use_the_private_pin_and_preserve_the_cached_source() -> Re
     // Exercise the proposed wrong-root command against the same real binary.
     // Its failure must be the malformed cached config, not a setup/timeout.
     let wrong_args = warm_check_args(&source.display().to_string(), &base);
-    let wrong_root = run_measured_check(&wrong_args, &fixture.0.join("wrong-root-cache"))?;
+    let wrong_root =
+        run_measured_check_with_binary(&binary, &wrong_args, &fixture.0.join("wrong-root-cache"))?;
     assert!(!wrong_root.output.timed_out, "wrong-root control timed out");
     assert!(
         wrong_root
