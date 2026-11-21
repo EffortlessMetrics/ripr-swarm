@@ -688,6 +688,9 @@ case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_oracl
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_oracle_execution_reached_uncalled
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_oracle_execution_shadowed
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_oracle_execution_uncalled
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_owner_value_masked_is_some
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_owner_value_masked_tuple_projection
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_owner_value_observed_payload
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_pairing_comment_interior_mutation_still_pairs
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_pairing_compound_assigned_binding
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_predicate_pairing_mutably_borrowed_binding
@@ -2097,6 +2100,8 @@ golden fixtures/python_guarded_write_same_line_mask/expected/human-full.txt
 golden fixtures/python_guarded_write_same_line_mask/expected/human.txt
 golden fixtures/python_guarded_write_unicode_rebound/expected/human-full.txt
 golden fixtures/python_guarded_write_unicode_rebound/expected/human.txt
+golden fixtures/python_infinity_seeded_selector_integer_pin_no_exposed_credit/expected/human-full.txt
+golden fixtures/python_infinity_seeded_selector_integer_pin_no_exposed_credit/expected/human.txt
 golden fixtures/python_len_local_boundary_repair_gap/expected/human.txt
 golden fixtures/python_literal_value_inside_longer_number/expected/human-full.txt
 golden fixtures/python_literal_value_inside_longer_number/expected/human.txt
@@ -2187,8 +2192,8 @@ golden fixtures/python_parametrize_collection_error/expected/human.txt
 golden fixtures/python_parametrize_tuple_unpack/expected/human-full.txt
 golden fixtures/python_parametrize_tuple_unpack/expected/human.txt
 golden fixtures/python_parametrized_boundary_repair_gap/expected/human.txt
-golden fixtures/python_patched_callee_reachable_unrevealed/expected/human-full.txt
-golden fixtures/python_patched_callee_reachable_unrevealed/expected/human.txt
+golden fixtures/python_patched_callee_reachable_h/expected/human-full.txt
+golden fixtures/python_patched_callee_reachable_h/expected/human.txt
 golden fixtures/python_property_based_limit/expected/human.txt
 golden fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit/expected/human-full.txt
 golden fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit/expected/human.txt
@@ -2538,6 +2543,12 @@ golden fixtures/rust_predicate_appended_str_arm_false_side_only/expected/human-f
 golden fixtures/rust_predicate_appended_str_arm_false_side_only/expected/human.txt
 golden fixtures/rust_predicate_appended_str_arm_truth_assert/expected/human-full.txt
 golden fixtures/rust_predicate_appended_str_arm_truth_assert/expected/human.txt
+golden fixtures/rust_predicate_owner_value_masked_is_some/expected/human-full.txt
+golden fixtures/rust_predicate_owner_value_masked_is_some/expected/human.txt
+golden fixtures/rust_predicate_owner_value_masked_tuple_projection/expected/human-full.txt
+golden fixtures/rust_predicate_owner_value_masked_tuple_projection/expected/human.txt
+golden fixtures/rust_predicate_owner_value_observed_payload/expected/human-full.txt
+golden fixtures/rust_predicate_owner_value_observed_payload/expected/human.txt
 golden fixtures/rust_predicate_returned_drop_exit/expected/human-full.txt
 golden fixtures/rust_predicate_returned_drop_exit/expected/human.txt
 golden fixtures/rust_predicate_returned_drop_plain/expected/human-full.txt
