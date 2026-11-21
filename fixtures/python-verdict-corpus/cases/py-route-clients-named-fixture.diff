@@ -1,0 +1,9 @@
+diff --git a/routeclients/stock.py b/routeclients/stock.py
+--- a/routeclients/stock.py
++++ b/routeclients/stock.py
+@@ -5,4 +5,4 @@ app = MiniApp()
+ 
+ @app.get("/stock")
+ def stock():
+-    return {"left": 5}
++    return {"left": 6}
