@@ -412,6 +412,18 @@ impl TsAliasMap {
         self.packages.package_dir_for(specifier)
     }
 
+    pub(crate) fn build_source_in(&self, package: &Path) -> Option<&str> {
+        self.packages.build_source_in(package)
+    }
+
+    pub(crate) fn own_build_entry(
+        &self,
+        importer: &Path,
+        module: &str,
+    ) -> Option<&super::workspace_packages::BuildEntry> {
+        self.packages.own_build_entry(&self.root, importer, module)
+    }
+
     /// The workspace root this map resolves within.
     pub(crate) fn root(&self) -> &Path {
         &self.root
