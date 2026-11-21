@@ -1077,11 +1077,26 @@ a corrective-release decision through #1470. A failed marketplace does not
 invalidate a verified crate, tag, and server release. Never republish a crate
 version, delete or retarget a public tag, or claim a complete release.
 
-A withheld or failed marketplace leaves no run receipt. Section 7's
-publication receipt still loads the server, VS Code Marketplace, and Open VSX
-run receipts unconditionally, so it stops there. Do not fabricate a receipt:
-K waits for the terminal `ripr#1481` channel matrix and an owner-backed
-disposition for that channel.
+A withheld or failed marketplace leaves no run receipt. Do not fabricate one.
+Record the channel's state as an owner-backed disposition instead, in
+`$PACKET_ROOT/vs-marketplace-disposition.json` or
+`$PACKET_ROOT/open-vsx-disposition.json`:
+
+```json
+{
+  "channel": "vs_marketplace",
+  "state": "withheld",
+  "source_release_head": "<40-hex SOURCE_RELEASE_HEAD>",
+  "authority_url": "https://github.com/EffortlessMetrics/ripr/issues/1470#issuecomment-<id>"
+}
+```
+
+`state` is `withheld` (the #1470 record says `not_authorized`, or the channel
+was never dispatched) or `failed` (dispatched, did not publish, and #1470
+carries the corrective decision). `authority_url` is the owner's #1470 comment
+that says so. Section 7's publication receipt accepts a run receipt or a
+disposition for each marketplace, never both and never neither. K still waits
+for the terminal `ripr#1481` channel matrix.
 
 ### npm and PyPI
 
@@ -1155,7 +1170,8 @@ BACK_SYNC_TREE="${BACK_SYNC_TREE:?set to the separately reviewed back-sync tree 
 test "$(git -C "$SWARM_ROOT" rev-parse "$K^{tree}")" = "$BACK_SYNC_TREE"
 ```
 
-After K, BACK_SYNC_TREE, and all authorized channel receipts are available,
+After K, BACK_SYNC_TREE, and a run receipt or owner-backed disposition for
+every channel are available,
 produce the exact release-receipt schema consumed by the K verifier. Do this
 before either verifier invocation; its semantics remain owned by
 [`BACK_SYNC_VERIFIER.md`](BACK_SYNC_VERIFIER.md).
@@ -1163,8 +1179,26 @@ before either verifier invocation; its semantics remain owned by
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; produce verifier-bound publication receipt
-jq -n --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" --arg source_release_tag "v${VERSION}" --slurpfile server "$PACKET_ROOT/server-run-receipt.json" --slurpfile marketplace "$PACKET_ROOT/vs-marketplace-run-receipt.json" --slurpfile open_vsx "$PACKET_ROOT/open-vsx-run-receipt.json" '{schema_version: 1, version: $version, source_release_head: $source_release_head, join: $join, tree: $tree, source_release_tag: $source_release_tag, channels: {server_binaries: $server[0], vs_marketplace: $marketplace[0], open_vsx: $open_vsx[0]}}' > "$PUBLICATION_RECEIPT"
-jq -e --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" '.version == $version and .source_release_head == $source_release_head and .join == $join and .tree == $tree and .source_release_tag == ("v" + $version) and (.channels | keys | sort) == ["open_vsx", "server_binaries", "vs_marketplace"]' "$PUBLICATION_RECEIPT" >/dev/null
+run_receipt_row() {
+  jq -e -c --arg sha "$SOURCE_RELEASE_HEAD" 'select(.headSha == $sha and .status == "completed" and .conclusion == "success")' "$1"
+}
+marketplace_row() {
+  # $1 = packet file stem, $2 = channel key. Exactly one of a run receipt or
+  # an owner-backed disposition must exist; a missing row is a stop.
+  local run="$PACKET_ROOT/$1-run-receipt.json" disposition="$PACKET_ROOT/$1-disposition.json"
+  if test -e "$run"; then
+    # Explicit return: errexit does not reach a command substitution.
+    test ! -e "$disposition" || return 1
+    run_receipt_row "$run"
+  else
+    jq -e -c --arg channel "$2" --arg sha "$SOURCE_RELEASE_HEAD" 'select((keys | sort) == ["authority_url", "channel", "source_release_head", "state"] and .channel == $channel and .source_release_head == $sha and (.state == "withheld" or .state == "failed") and (.authority_url | type == "string" and test("^https://github\\.com/EffortlessMetrics/ripr/issues/1470#issuecomment-[0-9]+$")))' "$disposition"
+  fi
+}
+SERVER_ROW="$(run_receipt_row "$PACKET_ROOT/server-run-receipt.json")"
+MARKETPLACE_ROW="$(marketplace_row vs-marketplace vs_marketplace)"
+OPEN_VSX_ROW="$(marketplace_row open-vsx open_vsx)"
+jq -n --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" --arg source_release_tag "v${VERSION}" --argjson server "$SERVER_ROW" --argjson marketplace "$MARKETPLACE_ROW" --argjson open_vsx "$OPEN_VSX_ROW" '{schema_version: 1, version: $version, source_release_head: $source_release_head, join: $join, tree: $tree, source_release_tag: $source_release_tag, channels: {server_binaries: $server, vs_marketplace: $marketplace, open_vsx: $open_vsx}}' > "$PUBLICATION_RECEIPT"
+jq -e --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" '.version == $version and .source_release_head == $source_release_head and .join == $join and .tree == $tree and .source_release_tag == ("v" + $version) and (.channels | keys | sort) == ["open_vsx", "server_binaries", "vs_marketplace"] and (.channels.server_binaries.conclusion == "success") and ([.channels.vs_marketplace, .channels.open_vsx] | all(.conclusion == "success" or .state == "withheld" or .state == "failed"))' "$PUBLICATION_RECEIPT" >/dev/null
 ```
 
 ```bash
