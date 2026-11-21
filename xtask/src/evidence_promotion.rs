@@ -10,6 +10,7 @@
 
 use super::*;
 
+mod digest_delta;
 mod partial_analysis;
 #[cfg(test)]
 mod python_coarse_tests;

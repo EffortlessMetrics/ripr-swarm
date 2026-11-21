@@ -5630,3 +5630,74 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
     assert!(terminal.contains("perl:"), "{terminal}");
     assert!(!terminal.contains("  python:"), "{terminal}");
 }
+
+fn raw_terminal_controls(text: &str) -> Vec<char> {
+    text.chars()
+        .filter(|ch| {
+            (ch.is_control() && *ch != '\n' && *ch != '\t')
+                || matches!(
+                    *ch,
+                    '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                )
+        })
+        .collect()
+}
+
+/// #14285: the gap row and the "Next, by hand" line carry the repository
+/// path verbatim, so the finished terminal summary escapes control and bidi
+/// characters with the `ripr check` spelling; the Markdown file is a written
+/// artifact and keeps the raw path.
+#[test]
+fn pilot_terminal_escapes_terminal_controls_from_a_hostile_file_name() {
+    let hostile = "src/e\u{1b}]0;PWNED\u{07}\u{1b}[31mx\u{1b}[2J\u{202e}.rs";
+    let entry = classified_in_owner(SeamGripClass::Ungripped, hostile, "f", 1);
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    assert_eq!(
+        entry.seam.file().to_string_lossy(),
+        hostile,
+        "precondition: the ranked seam carries the raw hostile path"
+    );
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), context);
+    let raw = raw_terminal_controls(&terminal);
+    assert!(
+        raw.is_empty(),
+        "raw control/bidi chars {raw:?} in: {terminal}"
+    );
+    let spelled = r"src/e\u{1b}]0;PWNED\u{07}\u{1b}[31mx\u{1b}[2J\u{202e}.rs";
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("  gap ") && line.contains(spelled)),
+        "gap row must carry the escaped path: {terminal}"
+    );
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("Next, by hand:") && line.contains(spelled)),
+        "next-by-hand line must carry the escaped path: {terminal}"
+    );
+}
+
+#[test]
+fn pilot_terminal_for_a_plain_file_name_is_unchanged_by_the_escape() {
+    let entry = classified_in_owner(SeamGripClass::Ungripped, "src/pricing.rs", "f", 1);
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), context);
+    // No `\u{..}` spelling appears for plain text, and the path is literal on
+    // both the gap row and the "Next, by hand" line.
+    assert!(!terminal.contains(r"\u{"), "{terminal}");
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("  gap ") && line.contains("src/pricing.rs:1")),
+        "{terminal}"
+    );
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("Next, by hand:") && line.contains("src/pricing.rs")),
+        "{terminal}"
+    );
+}

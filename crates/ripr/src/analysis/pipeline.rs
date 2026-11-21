@@ -692,6 +692,48 @@ impl ProbeWorkerObserver {
     }
 }
 
+thread_local! {
+    /// Deferred user-visible disclosures for the current analysis thread. While
+    /// a capture is installed, [`disclose!`] buffers instead of printing so a
+    /// caller that may discard the run (the last-commit fallback retry) prints
+    /// them only if it keeps the result (#15330).
+    static DEFERRED_DISCLOSURES: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Print one analysis disclosure on stderr, or buffer it under
+/// [`capture_disclosures`].
+pub(crate) fn emit_disclosure(message: String) {
+    let unbuffered = DEFERRED_DISCLOSURES.with(|slot| match slot.borrow_mut().as_mut() {
+        Some(buffer) => {
+            buffer.push(message);
+            None
+        }
+        None => Some(message),
+    });
+    if let Some(message) = unbuffered {
+        eprintln!("{message}");
+    }
+}
+
+macro_rules! disclose {
+    ($($arg:tt)*) => {
+        emit_disclosure(format!($($arg)*))
+    };
+}
+
+/// Run `work`, buffering the disclosures it would print on stderr and
+/// returning them beside its result. The caller prints them only when it
+/// adopts the result.
+pub(crate) fn capture_disclosures<T>(work: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let previous = DEFERRED_DISCLOSURES.with(|slot| slot.borrow_mut().replace(Vec::new()));
+    let result = work();
+    let captured = DEFERRED_DISCLOSURES
+        .with(|slot| std::mem::replace(&mut *slot.borrow_mut(), previous))
+        .unwrap_or_default();
+    (result, captured)
+}
+
 #[cfg(test)]
 thread_local! {
     static PROBE_WORKER_OBSERVER: std::cell::RefCell<
@@ -1359,7 +1401,8 @@ fn enforce_changed_language_line_limit(
          reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
          limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
          `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
-         are reported as not analyzed)."
+         are reported as not analyzed). From a pre-commit hook, set those flags in the \
+         hook's `args:`, or skip this hook for one commit with `SKIP=ripr git commit ...`."
     ))
 }
 
@@ -2170,7 +2213,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // Emit as stderr disclosures — these are not Findings (no probe was
     // generated), but the user needs to know what was not analyzed.
     for message in unanalyzed_disclosures(non_source_message, &changed_files) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
     // RIPR-SPEC-0347 (#8999): changed trybuild `tests/ui` fixtures are compile-time
     // expectations ripr does not read as oracles. Advisory stderr text only; no
@@ -2178,22 +2221,22 @@ fn run_pipeline_for_diff_text_with_language_config(
     if let Some(message) =
         trybuild_fixtures::trybuild_fixture_disclosure_message(&options.root, &changed_files)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
-    emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
+    emit_submodule_disclosure(submodule_file_count, |message| disclose!("{message}"));
     if let Some(message) = symlink_disclosure_message(symlink_file_count) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
-        eprintln!("{message}");
+        disclose!("{message}");
     });
 
     // #7663: name every ripr-artifact file the intake dropped, so the counts
     // below never silently disagree with the commit the diff came from.
     if !own_artifact_files.is_empty() {
-        eprintln!(
+        disclose!(
             "{}",
             ripr_artifact_disclosure(&options.root, &artifact_roots, &own_artifact_files)
         );
@@ -2207,7 +2250,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     if findings.is_empty()
         && let Some(message) = deleted_files_disclosure(&deleted_paths, other_changes)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Disclose when the diff parsed to zero changed files (#2425): the input
@@ -2231,7 +2274,7 @@ fn run_pipeline_for_diff_text_with_language_config(
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
     {
-        eprintln!(
+        disclose!(
             "{}",
             zero_file_diff_disclosure(
                 diff_text,
@@ -2252,7 +2295,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         && is_truncated_diff_stream(truncated_file_sections)
         && let Some(message) = truncated_diff_disclosure_message(truncated_file_sections)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Rename metadata can register a binary file without any text hunks.

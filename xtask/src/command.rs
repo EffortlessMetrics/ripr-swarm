@@ -220,6 +220,7 @@ pub(crate) enum XtaskCommand {
     DroidAdmit(Vec<String>),
     Package,
     PublishDryRun,
+    PublishPrecheck,
     Help(Vec<String>),
     IssueIntake(Vec<String>),
     WorkPortfolio(Vec<String>),
@@ -474,6 +475,7 @@ impl XtaskCommand {
             "droid-admit" => Self::DroidAdmit(rest.to_vec()),
             "package" => Self::Package,
             "publish-dry-run" => Self::PublishDryRun,
+            "publish-precheck" => Self::PublishPrecheck,
             "issue-intake" => Self::IssueIntake(rest),
             "work" => match rest.first().map(|arg| arg.as_str()) {
                 Some("portfolio") => Self::WorkPortfolio(rest[1..].to_vec()),
@@ -872,6 +874,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "droid-admit",
         "package",
         "publish-dry-run",
+        "publish-precheck",
         "issue-intake --issue <number>",
         "work portfolio [--captured <dir>] [--json]",
         "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
@@ -2993,6 +2996,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Rehearses the ripr/ripr-contract lockstep publish (contract dry-run, vendored packaging, packaged check) without publishing.",
+        ),
+        command_entry(
+            "publish-precheck",
+            "non_mutating_check",
+            "target/publish-precheck packaging output",
+            false,
+            false,
+            "Refuses to proceed unless a fresh registry-mode ripr package from the retained stage matches the rehearsal receipt's ripr_sha256.",
         ),
         command_entry(
             "issue-intake --issue <number>",

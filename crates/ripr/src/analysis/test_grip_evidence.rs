@@ -5544,6 +5544,18 @@ fn effective_oracle_strength(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleStrength, Option<String>) {
+    // #15183: a trusted assertion name rebound at this assertion (a test-local
+    // `macro_rules! assert_eq`) may compare nothing, so its extracted strength
+    // is not evidence. Read it as unknown, never above what was extracted, and
+    // before any rule below could grade it up.
+    if pin_syntax.assertion_macro_rebound(test, oracle, index) {
+        let withheld = if oracle.strength.rank() < OracleStrength::Unknown.rank() {
+            oracle.strength.clone()
+        } else {
+            OracleStrength::Unknown
+        };
+        return (withheld, None);
+    }
     match assertion_verdict_for_test(owner_fn, &oracle.text, test, index) {
         ExactValueVerdict::Contradicted {
             expected,

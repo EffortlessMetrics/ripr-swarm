@@ -328,6 +328,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0229 For match_arm_shadowed_assert, explain why the bounded match-arm owner cannot start a repair.
+RIPR-SPEC-0229: the repo-seam view no longer credits the rebound assertion macro (#15183), so ripr repair agrees with check and the repair-vs-check conflict advisory is replaced by the missing-evidence refusal; check classification and JSON unchanged
 
 Command:
 `cargo xtask goldens bless match_arm_shadowed_assert --reason "..."`

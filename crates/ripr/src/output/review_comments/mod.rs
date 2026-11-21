@@ -647,6 +647,43 @@ mod tests {
         assert!(rendered.contains("  - state: `open`"), "{rendered}");
     }
 
+    /// #15378: card commands carry the shared translator's PowerShell pair,
+    /// and a command PowerShell runs unchanged gets none.
+    #[test]
+    fn comments_markdown_pairs_commands_with_their_powershell_form() {
+        let redirecting = "ripr agent brief --root . --seam-id s1 --json > 'my dir/brief.json'";
+        let items = json!([{
+            "seam_id": "s1",
+            "reason": "r",
+            "gap_state": "open",
+            "llm_guidance": {
+                "command": redirecting,
+                "analysis_outcome_command": "ripr check --root . --format json"
+            }
+        }]);
+        let mut lines = Vec::new();
+        push_markdown_items(&mut lines, "Inline", Some(&items));
+        let rendered = lines.join("\n");
+        let pair =
+            crate::output::markdown::powershell_text_variant(redirecting).unwrap_or_default();
+        assert!(
+            !pair.is_empty(),
+            "a redirecting command needs a PowerShell form"
+        );
+        assert!(
+            rendered.contains(&format!("  - command (PowerShell): {}", code_span(&pair))),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("  - analysis_outcome_command: `ripr check --root . --format json`"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("analysis_outcome_command (PowerShell)"),
+            "{rendered}"
+        );
+    }
+
     /// #4586: an absent path with Markdown-active characters must stay inside
     /// a code span so `@mention` / backticks cannot fire when posted.
     #[test]

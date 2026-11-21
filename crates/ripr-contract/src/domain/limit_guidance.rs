@@ -284,8 +284,9 @@ impl StopReason {
                  only spawning it."
             }
             StopReason::NoChangedRustLine => {
-                "Make sure the changed line sits inside a function (not a macro body or item \
-                 attribute); if it does, report the shape in an issue."
+                "Check the tests that use the macro, attribute or item holding the change, since \
+                 ripr cannot trace a change outside a function; if the line is inside an \
+                 ordinary function, report the shape in an issue."
             }
             StopReason::InfectionEvidenceUnknown => {
                 "Add a test input that reaches the changed value, such as a boundary value, \
@@ -448,6 +449,19 @@ mod tests {
             assert!(is_actionable(step), "{}: {step}", reason.as_str());
             assert!(!step.contains("  "), "{}: {step}", reason.as_str());
         }
+    }
+
+    #[test]
+    fn no_changed_rust_line_step_does_not_ask_the_user_to_move_the_line() {
+        let step = StopReason::NoChangedRustLine.next_step();
+        assert!(!step.contains("Make sure"), "{step}");
+        assert!(!step.contains("sits inside"), "{step}");
+        assert!(
+            step.contains("cannot trace")
+                && step.contains("Check the tests")
+                && step.contains("report the shape in an issue"),
+            "{step}"
+        );
     }
 
     #[test]

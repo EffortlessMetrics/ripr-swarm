@@ -582,7 +582,7 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `false`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)"}
        },
       "evidence_stages": [
         {"stage":"reach","state":"yes","confidence":"medium"},
@@ -591,11 +591,11 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach gate: gate_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches unknown sink (line 24)", "related test tests/constant_tail_change.rs:30 gate_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(gate(flag), false);", "source assertion argument value false at line 32", "source function argument value flag = true at line 32"],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: gate_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `false`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "local flow reaches unknown sink (line 24)", "related test tests/constant_tail_change.rs:30 gate_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(gate(flag), false);", "source assertion argument value false at line 32", "source function argument value flag = true at line 32"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":24}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: gate_agrees_on_the_early_return"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `false`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: gate_agrees_on_the_early_return"],
       "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
         "32": "assert_eq!(gate(flag), false);"
@@ -880,7 +880,7 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)"}
        },
       "evidence_stages": [
         {"stage":"reach","state":"yes","confidence":"medium"},
@@ -889,11 +889,11 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach pick: pick_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: if x == 0 { return Vec::new(); } (line 29)", "related test tests/constant_tail_change.rs:36 pick_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(pick(0), Vec::<i32>::new());", "source function argument value x = 0 at line 37", "source function argument value x == 0 at line 37"],
+      "evidence_path": ["reach yes: Related tests appear to reach pick: pick_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "local flow reaches returned value: if x == 0 { return Vec::new(); } (line 29)", "related test tests/constant_tail_change.rs:36 pick_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(pick(0), Vec::<i32>::new());", "source function argument value x = 0 at line 37", "source function argument value x == 0 at line 37"],
       "flow_sinks": [
         {"kind":"return_value","text":"if x == 0 { return Vec::new(); }","line":29}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach pick: pick_agrees_on_the_early_return"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach pick: pick_agrees_on_the_early_return"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "37": "assert_eq!(pick(0), Vec::<i32>::new());"

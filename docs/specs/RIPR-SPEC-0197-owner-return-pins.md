@@ -978,7 +978,15 @@ general combinator, callback or mutation adequacy.
    trusted macro used by that test refuses the pin. This scan
    includes other indexed files because textual macro scope reaches child
    modules. Workspace-owned globs remain supported only when that scan finds
-   no competing binding. The scan conservatively ignores visibility/cfg
+   no competing binding. A plain, unrenamed two-segment import of a trusted
+   macro at the root that exports it (`use std::vec;`, `use alloc::vec;`,
+   `use core::assert_eq;`; `vec`/`format` from `std` or `alloc`, the
+   assertion family, `matches`, `panic` and `unreachable` from `std` or
+   `core`) binds the standard macro rather than a competing one, when the
+   root is not shadowed in the file and the manifests prove no dependency,
+   package or patch takes the root name (#15263). Renames, longer paths,
+   `crate::`/`self::` paths and a root a crate does not export the macro
+   from (`use core::vec;`) still refuse. The scan conservatively ignores visibility/cfg
    refinements, so unrelated same-name definitions can cause under-credit.
    Other trusted names unused by the test do not defeat its pin (for example,
    an unrelated `std::fs::write` import does not defeat a plain assertion). It is not
@@ -4126,3 +4134,35 @@ identity is `infection_unknown`, never a fabricated missing-equality gap.
 Returned comparisons retain the same unresolved boundary reason as predicates.
 An admitted exact boundary input still supplies the discriminator. The adaptor
 element-run reader (`sequence_runs`) is unchanged.
+
+### A deleted early return that gives the remaining tail's value (#14936)
+
+Deleting `if x == 0 { return Vec::new(); }` from a function whose remaining
+body is `vec![]` changes nothing an assertion on the owner's return can see:
+every input the guard took returned an empty vector on the base side and
+returns the candidate's `vec![]` now. A removed-only `return_value` probe on
+the deleted line therefore reads its discriminate stage `weak`
+(`deleted_guard_same_value`) instead of crediting an exact pin, and the
+finding is not `exposed`, when all of the following hold; every unmet
+condition keeps today's reading:
+
+1. The shared owner `verified_base_owner` verifies the base-side item and
+   reports no gate.
+2. The deleted line is the base body's first statement, an `if` with no
+   `else` whose block is exactly one `return <constant>`, and it is the
+   removed line the probe stands on.
+3. The candidate body is one tail expression with no statement and no
+   attribute, and it folds to a constant.
+4. The two constants fold to the same value with the #14852 folder, which
+   for this reading also takes a bare `Vec::new()` or `String::new()` as the
+   empty value.
+
+The reading only withholds credit, so it does not refuse a possibly rebound
+`vec!`. It also does not read the guard's condition: a condition with a side
+effect or a possible panic could still be observed by a state or
+`should_panic` test, but the demoted oracle is the return-value pin, which
+cannot see that difference. "Remaining tail" here means the candidate's
+constant tail, which the same diff may also have changed; that change has
+its own probe. A deleted guard whose remaining tail returns a different constant
+(`vec![9]`) keeps its credit. The fixture is
+`fixtures/rust_deleted_guard_same_value`.

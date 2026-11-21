@@ -32,8 +32,13 @@ families as the Rust adapter and tags each finding with
 When `ripr.toml` is absent, Python project detection may also enable the
 adapter for roots with markers such as `pyproject.toml`, `setup.py`,
 `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`, or
-Python files under `src/` or `tests/`. An explicit `ripr.toml` remains
-authoritative and can keep Python disabled.
+non-generated regular Python files directly at the root or under `src/` or
+`tests/`. `ripr init` preserves this selection when Python is compiled in and
+warns when it is unavailable. Detection reads file presence, not contents, and
+does not descend into arbitrary root child directories. An explicit `ripr.toml` remains
+authoritative and can keep Python disabled. The LSP requests nonrecursive,
+root-anchored Python presence events so creating, deleting or renaming the last
+root source file reloads those defaults; generated names remain excluded.
 
 The adapter is syntax-first. It must not depend on `mypy`, `pyright`, a
 runtime test runner, or an import graph. When syntax-first analysis
@@ -216,7 +221,9 @@ Test discovery:
   With no project venv the command keeps PATH `python` at its existing
   confidence: a static producer cannot know whether system Python has pytest,
   and a runtime probe would make reports and goldens host-dependent, so
-  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  `ripr doctor` checks PATH `python -m pytest` instead when there is no
+  project venv; with a venv, doctor reads the same static venv facts
+  (RIPR-SPEC-0007). The
   unittest route is unchanged. JSON (`evidence`, `repair_placement`,
   `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
   carry this one decision; renderers never read the filesystem, and the

@@ -404,6 +404,8 @@ one is not named; ripr's own git invocations always use `a/` and `b/`. Paths in 
 
 - `crates/ripr/tests/cli_smoke.rs::check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun` (#14423: agent `stop=` and JSON `scope_route` name the last-commit rerun, the rerun analyzes it, also for an `origin/main` default base; root commit, detached HEAD, feature branch, ignored and untracked source keep no route)
 - `crates/ripr/tests/cli_smoke.rs::check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only` (#13644: human-only last-commit fallback, stderr label, drill-ins on `HEAD~1`, JSON unchanged, explicit `--base` not rescoped, clone with `origin/main`, ignored source keeps the empty result)
+- `crates/ripr/tests/cli_smoke/leftover_check_honesty.rs::discarded_last_commit_retry_prints_no_deletion_note` (#15330: a discarded deletion-only retry prints no "diff deleted" note; explicit `--base HEAD~1` keeps it)
+- `crates/ripr/tests/cli_smoke/leftover_check_honesty.rs::adopted_last_commit_retry_prints_its_buffered_disclosures` (#15330: an adopted retry prints its buffered rename note before the last-commit label)
 
 ## Implementation Mapping
 
@@ -457,6 +459,12 @@ one is not named; ripr's own git invocations always use `a/` and `b/`. Paths in 
   retry spends only the remaining `--timeout` (skipped below one second) and
   is labeled on stderr only after its result replaces the output, never
   through the progress stream; its git probes honor `--git-timeout`.
+  The retry's post-analysis diff disclosures (deletion-only, rename,
+  submodule, symlink, unanalyzed, artifact, zero-file and truncated-stream
+  notes) are buffered and print, before that label, only when its result
+  replaces the output; a discarded retry prints none of them (#15330). Other
+  stderr lines (the committed-history missing-path note and `--verbose`
+  diagnostics) still print as the retry runs.
 
 ## Metrics
 

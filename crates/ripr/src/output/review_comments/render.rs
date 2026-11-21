@@ -966,23 +966,30 @@ pub(super) fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value:
                     .to_string(),
             );
         }
-        lines.push(format!("  - command: {}", code_span(command)));
+        push_markdown_command(lines, "command", command);
         if let Some(guidance) = item.get("llm_guidance")
             && let Some(outcome) = string_field(guidance, "analysis_outcome_command")
         {
-            lines.push(format!(
-                "  - analysis_outcome_command: {}",
-                code_span(outcome)
-            ));
+            push_markdown_command(lines, "analysis_outcome_command", outcome);
             if let Some(verify) = string_field(guidance, "verify_command") {
-                lines.push(format!("  - verify_command: {}", code_span(verify)));
+                push_markdown_command(lines, "verify_command", verify);
             }
             if let Some(receipt) = string_field(item, "receipt_command") {
-                lines.push(format!("  - receipt_command: {}", code_span(receipt)));
+                push_markdown_command(lines, "receipt_command", receipt);
             }
         }
     }
     lines.push(String::new());
+}
+
+/// One card command line plus its PowerShell pair from the shared translator
+/// (#15378 put these cards under `--root`, where the paste harness reads them).
+/// No pair when PowerShell runs the Bash spelling unchanged.
+fn push_markdown_command(lines: &mut Vec<String>, label: &str, command: &str) {
+    lines.push(format!("  - {label}: {}", code_span(command)));
+    if let Some(form) = crate::output::markdown::powershell_text_variant(command) {
+        lines.push(format!("  - {label} (PowerShell): {}", code_span(&form)));
+    }
 }
 
 pub(super) fn push_navigation_only_target_markdown(lines: &mut Vec<String>, target: &Value) {

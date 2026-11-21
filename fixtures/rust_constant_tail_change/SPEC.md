@@ -34,9 +34,10 @@ Tests pin `ready`, `items`, `bytes` and every counterexample with an exact
 - Every counterexample (`enabled`, `gate`, `pick`, `neg`, `both`, `px`)
   reads a class other than `exposed`; `off` has no finding (#14938).
 
-The deleted `if x == 0 { return Vec::new(); }` line of `pick` has a separate
-base-side `return_value` finding. It reads `weakly_exposed`. The existing
-assertion observes an empty vector on both versions of `pick(0)`.
+The deleted `if x == 0 { return Vec::new(); }` line of `pick` is its own
+base-side `return_value` probe. Since #14936 it reads `weakly_exposed`, not
+`exposed`: `pick(0)` returns an empty vector on both sides. The
+constant-tail rule does not produce that reading.
 
 ## Must Not
 

@@ -1401,7 +1401,9 @@ fn nothing_fits_error(files: &[OverLimitFile]) -> String {
          was not run to protect runner memory before probe expansion. Repair route: reduce the \
          diff scope, split the extraction PR, run a narrower diff, or raise the limit via {}. \
          To analyze a subset, pass `--path <glob>` and/or `--exclude <glob>` to `ripr check` \
-         (repeatable, repository-relative; files left out are reported as not analyzed).",
+         (repeatable, repository-relative; files left out are reported as not analyzed). From \
+         a pre-commit hook, set those flags in the hook's `args:`, or skip this hook for one \
+         commit with `SKIP=ripr git commit ...`.",
         files.len(),
         largest.changed_lines,
         largest.limit_env,
@@ -1751,7 +1753,9 @@ fn enforce_changed_rust_line_limit(
          PR, run a narrower diff, or raise the limit via \
          {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>. To analyze a subset, pass \
          `--path <glob>` and/or `--exclude <glob>` to `ripr check` (repeatable, \
-         repository-relative; files left out are reported as not analyzed)."
+         repository-relative; files left out are reported as not analyzed). From a \
+         pre-commit hook, set those flags in the hook's `args:`, or skip this hook for one \
+         commit with `SKIP=ripr git commit ...`."
     ))
 }
 

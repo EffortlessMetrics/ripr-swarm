@@ -4365,6 +4365,14 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/lsp/backend/flat_python_watch_tests.rs::flat_python_root_watchers_cover_only_direct_root_paths",
+  "crates/ripr/src/lsp/backend/flat_python_watch_tests.rs::flat_python_registered_events_reload_defaults_and_keep_explicit_config",
+  "crates/ripr/src/cli/commands/init.rs::tests::generated_config_handles_flat_python_layout",
+  "crates/ripr/src/config/tests.rs::flat_python_detection_respects_explicit_configuration",
+  "crates/ripr/src/config/tests.rs::flat_python_detection_ignores_non_source_entries",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::flat_python_presence_changes_detection_cache_identity",
+  "crates/ripr/tests/cli_smoke/init_followups.rs::flat_python_init_doctor_check_first_use",
+
   "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_wrapper_in_another_package_when_its_test_pins_it_then_the_helper_reads_static_unknown",
   "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_an_aliased_import_then_the_alias_call_is_the_edge",
   "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_same_module_hop_behind_the_importer_then_the_chain_is_followed",
@@ -8282,6 +8290,7 @@ tests = [
   "crates/ripr/src/app/receipt.rs::receipt_check_malformed_json_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_missing_required_field_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_missing_current_head_exits_nonzero",
+  "crates/ripr/src/app/receipt.rs::receipt_check_rejects_foreign_identity_fields",
   "crates/ripr/src/app/receipt.rs::receipt_check_invalid_current_head_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_invalid_status_in_file_exits_nonzero",
   "crates/ripr/src/app/receipt.rs::receipt_check_no_path_no_gap_exits_nonzero",
@@ -10678,6 +10687,7 @@ tests = [
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::validates_complete_findings_and_zero_outcomes_without_count_inference",
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::preserves_incomplete_and_unsupported_kinds",
   "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::rejects_missing_envelope_and_declared_completeness_disagreement",
+  "crates/ripr/src/app/analysis_outcome_artifact.rs::tests::accepts_differently_spelled_same_root_and_refuses_another_directory",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_preserves_incomplete_typed_outcome_and_digest",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_does_not_look_clean_without_producer_evidence",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_marks_malformed_or_stale_evidence_invalid",
@@ -11300,6 +11310,9 @@ tests = [
   "crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_runs_quietly_and_sees_the_staged_change",
   "crates/ripr/tests/pre_commit_hook_manifest.rs::push_hook_entry_runs_quietly_and_sees_the_committed_change",
   "crates/ripr/tests/pre_commit_hook_manifest.rs::without_quiet_the_same_entry_writes_progress_lines",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_analyzes_the_first_commit_instead_of_refusing_an_unborn_head",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::unborn_head_keeps_other_bases_refused",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::oversized_first_commit_refusal_names_the_hook_bypass_and_scoping",
 ]
 fixtures = []
 code = [
@@ -11685,6 +11698,10 @@ name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_keeps_context_pointer_when_the_packet_holds_more",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_prints_observed_inputs_only_when_it_drops_the_context_pointer",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_before_line_is_omitted_when_it_repeats_the_expression",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value",
@@ -13542,6 +13559,7 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_fact_from_another_test_file_does_not_pair_a_loan_call_on_the_same_line",
   "crates/ripr/src/analysis/classify/helper_transfer/multi_caller_tests.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/multi_site_tests.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/receiver_shape_tests.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/method_hop_tests.rs",
   "crates/ripr/src/analysis/classify/argument_fold/parse_helper.rs::tests",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",

@@ -578,31 +578,35 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
             .iter()
             .find(|registration| registration["id"] == "ripr-diagnostics-input-watch")
             .ok_or_else(|| format!("no diagnostics-input registration: {registrations:?}"))?;
-        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"]
-            .iter()
-            .map(|relative| {
-                serde_json::json!({
-                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
-                })
+        let expected = [
+            "target/ripr/reports/gap-decision-ledger.json",
+            ".git/HEAD",
+            "*.py",
+        ]
+        .iter()
+        .map(|relative| {
+            serde_json::json!({
+                "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
             })
-            // #14099: a change watcher for analyzed sources and a delete
-            // watcher for every path under the root (a folder deleted as one
-            // entry is reported as the folder) ride the same root-anchored
-            // registration.
-            .chain([
-                serde_json::json!({
-                    "globPattern": {
-                        "baseUri": root_uri.as_str(),
-                        "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
-                    },
-                    "kind": 2,
-                }),
-                serde_json::json!({
-                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": "**/*"},
-                    "kind": 4,
-                }),
-            ])
-            .collect::<Vec<_>>();
+        })
+        // #14099: a change watcher for analyzed sources and a delete
+        // watcher for every path under the root (a folder deleted as one
+        // entry is reported as the folder) ride the same root-anchored
+        // registration.
+        .chain([
+            serde_json::json!({
+                "globPattern": {
+                    "baseUri": root_uri.as_str(),
+                    "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                },
+                "kind": 2,
+            }),
+            serde_json::json!({
+                "globPattern": {"baseUri": root_uri.as_str(), "pattern": "**/*"},
+                "kind": 4,
+            }),
+        ])
+        .collect::<Vec<_>>();
         if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
             return Err(format!(
                 "diagnostics watchers not root-anchored: {diagnostics}"

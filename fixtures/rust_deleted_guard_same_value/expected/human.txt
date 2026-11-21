@@ -1,0 +1,25 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_deleted_guard_same_value/input
+
+Summary: 4 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 4 found, 0 suppressed by your settings (4 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable
+
+Hidden:
+  All 4 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
+    - ./src/lib.rs:4 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:4 (weak); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:8 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:8 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
+    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

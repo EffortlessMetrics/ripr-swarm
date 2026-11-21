@@ -74,6 +74,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0197 The separate base-side return in pick has no discriminating assertion. Its existing test observes an empty vector on both sides.
+RIPR-SPEC-0197 (#14936): the deleted same-value guard of pick reads weakly_exposed; gate's guard discriminate stage reads weak
 
 Command:
 `cargo xtask goldens bless rust_constant_tail_change --reason "..."`

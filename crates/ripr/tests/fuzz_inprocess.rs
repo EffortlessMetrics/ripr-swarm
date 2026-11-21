@@ -558,10 +558,13 @@ fn long_line_regressions_finish_within_the_deadline() -> Result<(), String> {
 }
 
 /// The `else if` chain input the fuzz lane found (#15189): an owner whose
-/// body is one `if a == 0 { 0 } else if a == 1 { 1 } ...` line of 1,900
-/// arms. Every arm is a boundary seam, and each seam re-read the whole
-/// body to learn that `a` is a local of `amount`, so a one-line change
-/// beside it took 8.7 seconds in a release build and far longer in debug.
+/// body is one `if a == 0 { 0 } else if a == 1 { 1 } ...` line of arms.
+/// Every arm is a boundary seam, and each seam re-read the whole body to
+/// learn that `a` is a local of `amount`, so a one-line change beside 1,900
+/// arms took 8.7 seconds in a release build and far longer in debug. The
+/// case keeps 1,000 arms: 1,900 took 47 of the 60 deadline seconds on a
+/// hosted debug runner even when fixed. The linear-time bound itself is
+/// held by `every_seam_of_a_long_owner_is_answered_in_linear_time`.
 ///
 /// The diff changes the `let` on line 2 alone. The case must finish in time
 /// with the answer the slow pass exists to give: the changed binding is
@@ -570,7 +573,7 @@ fn long_line_regressions_finish_within_the_deadline() -> Result<(), String> {
 /// that finding.
 #[test]
 fn else_if_chain_regression_finishes_within_the_deadline() -> Result<(), String> {
-    const ARMS: usize = 1_900;
+    const ARMS: usize = 1_000;
     let mut chain = String::from("    if a == 0 { 0 }");
     for arm in 1..ARMS {
         chain.push_str(&format!(" else if a == {arm} {{ {arm} }}"));
