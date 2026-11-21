@@ -512,7 +512,7 @@ fn the_checker_reads_the_working_directory_pattern_like_ecmascript() -> Result<(
         (":literal", true),
         ("a..b/c", true),
         ("", false),
-        ("c:/x", false),
+        ("q:rel", false),
         ("https:x", false),
         ("::x", false),
         ("/abs", false),
