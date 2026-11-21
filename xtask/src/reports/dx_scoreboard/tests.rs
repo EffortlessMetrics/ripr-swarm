@@ -1669,7 +1669,12 @@ fn a_non_object_spot_check_section_fails_with_its_name() {
             "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
             "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
         },
-        "repos": [],
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
         "recall_of_missed": "n/a",
     });
     assert!(
