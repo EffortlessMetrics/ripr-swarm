@@ -531,12 +531,9 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("invalid file name in {}", path.display()))?
             .to_string();
-        let entry_options = if file_name.ends_with(".exe") {
-            options.unix_permissions(0o755)
-        } else if metadata.permissions().readonly() {
-            options
-        } else if !file_name.contains('.') {
-            // Best-effort executable bit for Unix-style binaries (ripr) without an extension.
+        // Only the server executable is runnable; licenses and the notice stay
+        // 0644 so an extraction on Linux/macOS does not mark them executable.
+        let entry_options = if file_name.ends_with(".exe") || file_name == "ripr" {
             options.unix_permissions(0o755)
         } else {
             options

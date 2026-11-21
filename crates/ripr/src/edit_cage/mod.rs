@@ -2156,13 +2156,40 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     let top =
         fs::canonicalize(&top).map_err(|err| format!("canonicalize Git top-level {top}: {err}"))?;
     if requested != top {
-        return Err(format!(
-            "attempt root {} is not the exact Git top-level {}",
-            requested.display(),
-            top.display()
-        ));
+        return Err(not_exact_top_level_message(&requested, &top));
     }
     Ok(requested)
+}
+
+fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
+    format!(
+        "attempt root {} is not the exact Git top-level {}",
+        requested.display(),
+        top.display()
+    )
+}
+
+/// The Git top-level a repair attempt would need when `root` is a proper
+/// subdirectory of its work tree, `None` for the exact top-level or when Git
+/// cannot say (those cases keep the attempt's own refusals). The before-phase
+/// entry uses it to refuse a subdirectory `--root` before writing anything;
+/// surfaces that print a repair start should share it too (#15488). It asks Git exactly as
+/// [`canonical_repository_root`] does (same command, environment and deadline),
+/// so check never withholds a start the cage would accept, for example under
+/// an exported `GIT_DIR`.
+pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
+    let requested = fs::canonicalize(root).ok()?;
+    let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = fs::canonicalize(&top).ok()?;
+    (requested != top).then_some(top)
+}
+
+/// The cage's refusal text for a non-top-level attempt root, produced before
+/// any attempt state is written.
+pub(crate) fn subdirectory_attempt_root_refusal(root: &Path) -> Option<String> {
+    let top = enclosing_git_top_level_above(root)?;
+    let requested = fs::canonicalize(root).ok()?;
+    Some(not_exact_top_level_message(&requested, &top))
 }
 
 /// Repository-relative prefix of the repair-attempt store, the only place

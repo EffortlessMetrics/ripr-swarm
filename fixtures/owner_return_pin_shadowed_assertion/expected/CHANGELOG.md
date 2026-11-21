@@ -439,3 +439,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_shadowed_assertion (35)
+
+Reason:
+RIPR-SPEC-0197: the repo-seam view no longer credits the rebound assertion macro (#15183), so ripr repair agrees with check and the repair-vs-check conflict advisory is replaced by the missing-evidence refusal; check classification and JSON unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_shadowed_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`

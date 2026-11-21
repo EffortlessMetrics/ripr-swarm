@@ -639,6 +639,12 @@ const WARM_RSS_METRIC: &str = "speed.warm_check_peak_rss_mb";
 /// Below this many samples the nearest-rank p95 is the maximum.
 pub(crate) const P95_DISTINCT_FROM_MAX_AT: usize = 20;
 
+/// The warm document of a row's declared expected partial outcome. It is
+/// deliberately never contradiction-scanned, which is a declared scope, not a
+/// measurement that stopped short (#12052, #10809).
+pub(crate) const DECLARED_PARTIAL_WARM_JSON: &str =
+    "warm check JSON (declared expected partial outcome)";
+
 /// Nearest-rank percentile of an ascending series: the value at 1-based rank
 /// `ceil(pct / 100 * n)`. With fewer than 20 samples the p95 rank is `n`, so
 /// p95 is the maximum; this is stated in the report rather than interpolated.
@@ -818,7 +824,9 @@ pub(crate) fn record_warm_check(
             samples.push(rss);
             // Trust may scan only an admitted complete document. A rejected
             // subject, an incomplete analysis or an expected partial outcome
-            // cannot contribute a clean zero.
+            // cannot contribute a clean zero. A fully admitted declared
+            // partial series is named apart from a missing document, so the
+            // contradiction sample can say it was out of scope.
             if admission.is_complete() {
                 match serde_json::from_str::<Value>(&first.output.stdout) {
                     Ok(json) => match check_contradictions(&json) {
@@ -830,6 +838,8 @@ pub(crate) fn record_warm_check(
                     },
                     Err(_) => missing_sources.push("warm check JSON"),
                 }
+            } else if complete && matches!(admission, CheckAdmission::ExpectedPartial { .. }) {
+                missing_sources.push(DECLARED_PARTIAL_WARM_JSON);
             } else {
                 missing_sources.push("warm check JSON");
             }
@@ -861,11 +871,30 @@ pub(crate) fn linked_target(checkout: &Path) -> Option<String> {
 
 /// The contradiction sample. Both documents must be scanned; a count from
 /// one alone would undercount, so it is incomplete rather than a value.
+///
+/// One exception: when the only unscanned document is the warm check of a
+/// row's declared expected partial outcome and the pilot scan found nothing,
+/// the scan is out of the row's declared scope rather than stopped short, so
+/// the sample is `not_measured` with that reason. Read as `incomplete`, every
+/// new expected-partial row would fail the gate as a lost completion until a
+/// baseline recorded it incomplete too (#10809). A contradiction the pilot
+/// scan did find, or a pilot document that was not scanned, keeps the sample
+/// incomplete, so it still fails closed.
 pub(crate) fn contradiction_outcome(
     contradictions: Option<(usize, Vec<String>)>,
     missing_sources: &[&str],
 ) -> (SampleOutcome, String) {
+    let declared_scope_only = !missing_sources.is_empty()
+        && missing_sources
+            .iter()
+            .all(|source| *source == DECLARED_PARTIAL_WARM_JSON);
     match contradictions {
+        Some((0, _)) if declared_scope_only => (
+            SampleOutcome::NotMeasured,
+            "not measured: the row's declared expected partial outcome is never \
+             contradiction-scanned; pilot repo-exposure scanned, none found"
+                .to_string(),
+        ),
         Some((count, _)) if !missing_sources.is_empty() => (
             SampleOutcome::Incomplete(count as f64),
             format!("not scanned: {}", missing_sources.join(", ")),
@@ -877,6 +906,13 @@ pub(crate) fn contradiction_outcome(
             } else {
                 format!("e.g. {}", examples.join("; "))
             },
+        ),
+        // A declared partial row never scans its warm document, so no count
+        // means the pilot document itself was not scanned: that is stopped
+        // short, not out of scope, and stays incomplete.
+        None if missing_sources.contains(&DECLARED_PARTIAL_WARM_JSON) => (
+            SampleOutcome::Incomplete(0.0),
+            format!("not scanned: {}", missing_sources.join(", ")),
         ),
         None => (
             SampleOutcome::NotMeasured,

@@ -283,6 +283,59 @@ struct Evaluation {
     new_text: Option<String>,
 }
 
+/// Whether a changed line only adds or rewrites a logging call (#15250): the
+/// new line, and the old line when there is one, is a call of a logging method
+/// (`debug`, `info`, `warning`, `warn`, `error`, `critical`, `fatal`,
+/// `exception`, `log`) on one receiver whose last name segment contains `log`, and every positional and keyword
+/// argument is built from literals and names (attributes, subscripts,
+/// arithmetic, tuples) without a call, so the line cannot change any value the
+/// owner returns or writes. An assertion on the owner's result cannot observe
+/// such an edit, however exactly it pins that result.
+pub(super) fn is_message_only_log_call_edit(old_line: Option<&str>, new_line: &str) -> bool {
+    fn inert(expr: &Expr) -> bool {
+        match expr {
+            Expr::Constant(_) | Expr::Name(_) => true,
+            Expr::Attribute(attribute) => inert(attribute.value.as_ref()),
+            Expr::Subscript(subscript) => {
+                inert(subscript.value.as_ref()) && inert(subscript.slice.as_ref())
+            }
+            Expr::BinOp(bin_op) => inert(bin_op.left.as_ref()) && inert(bin_op.right.as_ref()),
+            Expr::UnaryOp(unary_op) => inert(unary_op.operand.as_ref()),
+            Expr::Tuple(tuple) => tuple.elts.iter().all(inert),
+            _ => false,
+        }
+    }
+    /// The receiver of an inert logging call, or `None`.
+    fn inert_log_receiver(line: &str) -> Option<String> {
+        let Expr::Call(call) = parse_expression(line.trim())? else {
+            return None;
+        };
+        let Expr::Attribute(attribute) = call.func.as_ref() else {
+            return None;
+        };
+        let method = attribute.attr.as_str();
+        let logging_method =
+            level_number(method).is_some() || matches!(method, "exception" | "fatal" | "log");
+        let receiver = expr_full_name(attribute.value.as_ref())?;
+        // A logger by name (`logging`, `log`, `logger`, `self._log`): an
+        // `error` or `log` method on another object (`parser.error`,
+        // `math.log`) can raise or return what the owner uses.
+        let logger_name = receiver
+            .rsplit('.')
+            .next()
+            .is_some_and(|last| last.to_ascii_lowercase().contains("log"));
+        (logging_method
+            && logger_name
+            && call.args.iter().all(inert)
+            && call.keywords.iter().all(|keyword| inert(&keyword.value)))
+        .then_some(receiver)
+    }
+    let Some(receiver) = inert_log_receiver(new_line) else {
+        return false;
+    };
+    old_line.is_none_or(|old| inert_log_receiver(old).is_some_and(|old| old == receiver))
+}
+
 /// `<receiver>.<level>("<fmt>", <args>)` with no keyword arguments.
 fn parse_log_call(line: &str) -> Option<LogCall> {
     let Expr::Call(call) = parse_expression(line.trim())? else {

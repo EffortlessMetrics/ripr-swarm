@@ -364,14 +364,24 @@ fn files_in_skipped_unit_test_targets(
                     || !context.roots.iter().any(|root| root == member))
                     && scan.may_mount(member, &chain))
         });
-        if !ancestry_may_run {
+        if !ancestry_may_run && !scan.may_forward_module_outside(&chain) {
             skipped.insert(file.clone());
         }
     }
     skipped
 }
 
-/// True when `source` may mount a module through a file the scan cannot
+pub(super) fn may_build_mount_operands(source: &str) -> bool {
+    !matches!(mount_operand_doubt(source), MountOperandDoubt::None)
+}
+
+enum MountOperandDoubt {
+    None,
+    ForwardedModule,
+    Unbound,
+}
+
+/// Whether `source` may mount a module through a file the scan cannot
 /// name or read, judged on Rust tokens so comments, whitespace and string
 /// contents cannot hide or fake a mount (#14962 review):
 ///
@@ -379,18 +389,21 @@ fn files_in_skipped_unit_test_targets(
 ///   attribute-position `path` token, since its expansion can mount any
 ///   file (`mod /* c */ $n;`); a macro without them, such as `($e:expr) =>
 ///   { $e * 2 }`, is no doubt;
-/// - any `include` token other than an `include!` (any delimiter) whose
+/// - any `include` token other than a plain metavariable or an `include!`
+///   (any delimiter) whose
 ///   operand is a string literal naming a `.rs` file: a generated
 ///   `include!(concat!(env!("OUT_DIR"), ..))`, an `include!("gen.inc")` the
 ///   scan does not read (it reads only `.rs` sources), and an alias such as
 ///   `use std::include as inc;` whose `inc!` no rule could follow;
 /// - a `path` attribute whose value is a metavariable or a string literal
 ///   that does not name a `.rs` file (`#[path = "m.txt"]`);
-/// - `mod $name` anywhere.
-fn may_build_mount_operands(source: &str) -> bool {
+/// - `mod $name` anywhere or a literal `mod` inside a macro invocation's
+///   token tree, where the macro may forward it into a declaration.
+fn mount_operand_doubt(source: &str) -> MountOperandDoubt {
     let tokens = mount_tokens(source);
     let ident = |at: usize, name: &str| matches!(tokens.get(at), Some(MountToken::Ident(word)) if word == name);
     let punct = |at: usize, mark: char| matches!(tokens.get(at), Some(MountToken::Punct(found)) if *found == mark);
+    let is_metavariable = |at: usize| at.checked_sub(1).is_some_and(|prev| punct(prev, '$'));
     // A literal with an escape (`"\u{73}hared.rs"`) decodes to a name the
     // substring scan cannot match, so it names no source the scan can tie
     // back (#14962 review, Devin).
@@ -398,23 +411,40 @@ fn may_build_mount_operands(source: &str) -> bool {
         matches!(tokens.get(at), Some(MountToken::Str(text))
             if text.ends_with(".rs") && !text.contains('\\'))
     };
+    let mut invocation_depth = 0usize;
+    let mut doubt = MountOperandDoubt::None;
     for at in 0..tokens.len() {
+        match tokens[at] {
+            MountToken::Punct('(' | '[' | '{')
+                if invocation_depth > 0
+                    || (at >= 2
+                        && punct(at - 1, '!')
+                        && matches!(tokens[at - 2], MountToken::Ident(_))) =>
+            {
+                invocation_depth += 1;
+            }
+            MountToken::Punct(')' | ']' | '}') => {
+                invocation_depth = invocation_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
         if ident(at, "macro_rules") && punct(at + 1, '!') {
             if macro_body_may_mount(&tokens, at + 2, true) {
-                return true;
+                return MountOperandDoubt::Unbound;
             }
         } else if ident(at, "macro")
             && matches!(tokens.get(at + 1), Some(MountToken::Ident(_)))
             && macro_body_may_mount(&tokens, at + 2, false)
         {
-            return true;
+            return MountOperandDoubt::Unbound;
         }
         if ident(at, "include")
+            && (!is_metavariable(at) || punct(at + 1, '!'))
             && !(punct(at + 1, '!')
                 && (punct(at + 2, '(') || punct(at + 2, '{') || punct(at + 2, '['))
                 && names_rust_source(at + 3))
         {
-            return true;
+            return MountOperandDoubt::Unbound;
         }
         if ident(at, "path")
             && punct(at + 1, '=')
@@ -424,13 +454,18 @@ fn may_build_mount_operands(source: &str) -> bool {
                     && matches!(tokens.get(at + 2), Some(MountToken::Str(_)))
                     && !names_rust_source(at + 2)))
         {
-            return true;
+            return MountOperandDoubt::Unbound;
         }
-        if ident(at, "mod") && punct(at + 1, '$') {
-            return true;
+        if ident(at, "mod") {
+            if punct(at + 1, '$') {
+                return MountOperandDoubt::Unbound;
+            }
+            if invocation_depth > 0 && !is_metavariable(at) {
+                doubt = MountOperandDoubt::ForwardedModule;
+            }
         }
     }
-    false
+    doubt
 }
 
 /// True when the macro definition whose name or body starts at `from` holds
@@ -458,8 +493,13 @@ fn macro_body_may_mount(tokens: &[MountToken], from: usize, first_group_only: bo
                         matches!(tokens.get(near), Some(MountToken::Punct(':')))
                     })
                 };
+                let metavariable = at > 0 && matches!(tokens[at - 1], MountToken::Punct('$'));
                 let mounts = match word.as_str() {
-                    "mod" | "include" => true,
+                    "mod" => !metavariable,
+                    // A metavariable followed by `!` can expand to a mount.
+                    "include" => {
+                        !metavariable || matches!(tokens.get(at + 1), Some(MountToken::Punct('!')))
+                    }
                     "path" => !in_path(at.checked_sub(1)) && !in_path(Some(at + 1)),
                     _ => false,
                 };
@@ -662,6 +702,7 @@ struct WorkspaceMountScan {
     /// Workspace-relative path (when the file sits under the root), its
     /// lowercased text, and the module names it declares.
     sources: Vec<(Option<PathBuf>, String, BTreeSet<String>)>,
+    forwarding_sources: Vec<Option<PathBuf>>,
 }
 
 impl WorkspaceMountScan {
@@ -756,10 +797,9 @@ impl WorkspaceMountScan {
             }
         }
         let mut lowered = Vec::with_capacity(sources.len());
+        let mut forwarding_sources = Vec::new();
         for (path, text, manifest) in sources {
-            if stray_files::spells_a_path_with_escapes(&text)
-                || (!manifest && may_build_mount_operands(&text))
-            {
+            if stray_files::spells_a_path_with_escapes(&text) {
                 return None;
             }
             if manifest {
@@ -768,11 +808,28 @@ impl WorkspaceMountScan {
                 // target's `src_path`: `crate_root_may_run` asks it.
                 continue;
             }
+            match mount_operand_doubt(&text) {
+                MountOperandDoubt::Unbound => return None,
+                MountOperandDoubt::ForwardedModule => forwarding_sources.push(path.clone()),
+                MountOperandDoubt::None => {}
+            }
             let mut declared = BTreeSet::new();
             stray_files::collect_declared_modules(&text, &mut declared);
             lowered.push((path, text.to_ascii_lowercase(), declared));
         }
-        Some(Self { sources: lowered })
+        Some(Self {
+            sources: lowered,
+            forwarding_sources,
+        })
+    }
+
+    /// An invocation in a skipped ancestor cannot itself bring that ancestor
+    /// into a running target. Outside the chain the macro may change the name
+    /// or shape of the declaration, so keep the possible route.
+    fn may_forward_module_outside(&self, chain: &BTreeSet<&Path>) -> bool {
+        self.forwarding_sources
+            .iter()
+            .any(|path| path.as_deref().is_none_or(|path| !chain.contains(path)))
     }
 
     /// True when a source outside `chain` (the file and its own skipped
@@ -914,7 +971,7 @@ fn files_outside_module_tree(
         .filter(|(_, facts)| is_poisoning(facts))
         .all(|(file, _)| unlinked.contains(&file));
     let mut outside = BTreeSet::new();
-    let mut stray_candidates: Vec<PathBuf> = Vec::new();
+    let mut stray_candidates = Vec::new();
     let mut manifest_dirs: BTreeSet<PathBuf> = BTreeSet::new();
     for file in unlinked {
         let Some(package_dir) = crate_roots.package_manifest_dir(workspace_root, file) else {
@@ -944,7 +1001,7 @@ fn files_outside_module_tree(
                 outside.insert(file.clone());
             }
         } else if poison_only_in_unlinked && stray_files::is_stray_shape(relative) {
-            stray_candidates.push(file.clone());
+            stray_candidates.push((file.clone(), package_dir.clone()));
             manifest_dirs.insert(package_dir);
         }
     }
@@ -955,7 +1012,11 @@ fn files_outside_module_tree(
                 manifest_dirs.insert(dir);
             }
         }
-        manifest_dirs.extend(index.workspace_member_dirs.iter().cloned());
+        manifest_dirs.extend(index.workspace_member_dirs.iter().map(|dir| {
+            dir.strip_prefix(workspace_root)
+                .unwrap_or(dir)
+                .to_path_buf()
+        }));
         outside.extend(stray_files::never_compiled(
             index,
             workspace_root,
@@ -1946,6 +2007,7 @@ mod tests {
             "macro_rules! m { ($n:ident) => { const U: &str = r#\"/*\"#; mod/*c*/$n; }; }",
             // Any `mod`, `include` or attribute `path` in a macro body.
             "macro_rules! m { ($f:literal) => { include!($f); }; }",
+            "macro_rules! m { ($include:ident, $f:literal) => { $include!($f); }; }",
             "macro_rules! m [ ($n:ident) => { pub mod $n {} } ];",
             "macro_rules! m { ($a:meta) => { #[$a] mod inner; }; }",
             "macro m($n:ident) { mod $n; }",
@@ -1962,6 +2024,8 @@ mod tests {
         }
         for plain in [
             "macro_rules! twice { ($e:expr) => { $e * 2 }; }",
+            "macro_rules! m { ($mod:ident) => { $mod::One }; }\nmod tests {}",
+            "macro_rules! m { ($include:expr) => { $include }; }",
             "include!(\"gen.rs\");",
             "include!{\"gen.rs\"}",
             "include![\"gen.rs\"];",

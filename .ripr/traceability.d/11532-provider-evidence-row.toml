@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0204"
+tests = [
+  "crates/ripr/src/provider_contract/tests.rs::guarded_result_report_oracle_validates_only_at_its_canonical_spelling",
+]
+code = [
+  "crates/ripr/src/provider_contract/model.rs",
+  "crates/ripr/src/provider_contract/validate.rs",
+]

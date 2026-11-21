@@ -67,7 +67,22 @@ fn root_metadata_refusal(root: &Path, command_name: &str, error: &std::io::Error
     )
 }
 
+/// The shared root gate for a command that writes under `target/ripr`: the
+/// directory check of [`ensure_command_root_dir`] plus the output-containment
+/// check, so a checked-in `target` link cannot redirect its output (#7781).
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
+    ensure_command_root_dir(root, command_name)?;
+    // #7781: every command that writes under `target/ripr` shares this
+    // gate, so a checked-in `target` link cannot redirect its output.
+    crate::atomic_file::ensure_default_output_contained(root)
+        .map_err(|error| format!("{command_name}: {error}"))
+}
+
+/// The directory-only part of [`ensure_command_root`] (#15249): refuse a
+/// missing or non-directory `--root` with the shared wording naming the command
+/// actually run. A read-only command uses this form so a hostile `target` link
+/// it never writes through does not refuse it.
+pub(super) fn ensure_command_root_dir(root: &Path, command_name: &str) -> Result<(), String> {
     // Detected once: every branch below keys on the same typed components.
     let stripped = windows_stripped_components(root);
     match std::fs::metadata(root) {
@@ -80,10 +95,6 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
             if let Some(note) = windows_root_rebind_note(root, command_name) {
                 eprintln!("{note}");
             }
-            // #7781: every command that writes under `target/ripr` shares this
-            // gate, so a checked-in `target` link cannot redirect its output.
-            crate::atomic_file::ensure_default_output_contained(root)
-                .map_err(|error| format!("{command_name}: {error}"))?;
             Ok(())
         }
         // Metadata resolved, so the typed name addresses an existing entry.
@@ -341,6 +352,40 @@ pub(super) fn refuse_json_envelope_checked(
     base: Option<&str>,
     error: impl Into<crate::core_error::CoreError>,
 ) -> Result<String, String> {
+    refuse_json_envelope_checked_with_format(
+        schema_version,
+        scope,
+        mode,
+        root,
+        base,
+        error,
+        crate::app::OutputFormat::Json,
+    )
+}
+
+/// Render the existing refusal with the requested JSON presentation.
+pub(super) fn refuse_json_envelope_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> String {
+    refuse_json_envelope_checked_with_format(schema_version, scope, mode, root, base, error, format)
+        .unwrap_or_else(|failure| failure)
+}
+
+fn refuse_json_envelope_checked_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> Result<String, String> {
     let error = error.into();
     let rendered = crate::output::limited_check::render_refusal_envelope(
         &crate::output::limited_check::RefusalEnvelopeContext {
@@ -353,7 +398,9 @@ pub(super) fn refuse_json_envelope_checked(
         &error,
     );
     match rendered {
-        Ok(document) => write_stdout_refusal_json(document)?,
+        Ok(document) => {
+            write_stdout_refusal_json(crate::output::compact_json::finish(document, &format))?
+        }
         Err(render) => return Err(render),
     }
     Ok(error.to_string())

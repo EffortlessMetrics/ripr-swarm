@@ -1693,6 +1693,11 @@ pub(super) enum DocumentStalenessReason {
     /// failed, or not recorded by a committed snapshot) is not part of the
     /// reason; renderers that name one must observe it (#11452).
     NoAnalyzedSavedContent,
+    /// The buffer equals the recorded saved content, but that saved content
+    /// is not what the committed snapshot analyzed (#15316): the file was
+    /// saved, or rewritten on disk and reloaded, after the last analysis.
+    /// Saving again cannot help; the next analysis of the saved file can.
+    SavedContentNotYetAnalyzed,
 }
 
 impl DocumentStalenessReason {
@@ -1704,6 +1709,7 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => "invalid_incremental_change",
             Self::DocumentStoreLimitReached => "document_store_limit_reached",
             Self::NoAnalyzedSavedContent => "no_analyzed_saved_content",
+            Self::SavedContentNotYetAnalyzed => "saved_content_not_yet_analyzed",
         }
     }
 
@@ -1719,6 +1725,9 @@ impl DocumentStalenessReason {
                 "this editor buffer was not tracked because the open-document limit was reached"
             }
             Self::NoAnalyzedSavedContent => "the document's saved content has no analyzed baseline",
+            Self::SavedContentNotYetAnalyzed => {
+                "the saved file changed since ripr last analyzed it"
+            }
         }
     }
 
@@ -1859,6 +1868,28 @@ pub(super) enum QuarantineTransition {
     Unchanged,
 }
 
+impl QuarantineTransition {
+    /// The net edge of two edges applied back to back to one document before
+    /// any publish (#15316): an external rewrite registers its buffer change
+    /// and the implied save as one lifecycle step, so the client receives
+    /// one marker for that version instead of one per edge.
+    pub(super) fn then(self, later: Self) -> Self {
+        match (self, later) {
+            // Entered and left again before anything was published: the
+            // client never saw the episode. Unreachable from `did_change`:
+            // its fold runs only for a divergent buffer, and a save never
+            // moves the analyzed identity, so the save cannot exit.
+            (Self::Entered, Self::Exited { .. }) => Self::Unchanged,
+            (_, Self::Exited { was_disclosed }) => Self::Exited { was_disclosed },
+            (Self::Entered, _) | (_, Self::Entered) => Self::Entered,
+            (Self::Exited { was_disclosed }, Self::Unchanged) => Self::Exited { was_disclosed },
+            (Self::Exited { .. }, Self::ReasonChanged) => Self::Entered,
+            (Self::ReasonChanged, _) | (_, Self::ReasonChanged) => Self::ReasonChanged,
+            (Self::Unchanged, Self::Unchanged) => Self::Unchanged,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DocumentState {
     pub(super) uri: Uri,
@@ -1888,6 +1919,13 @@ pub(super) struct DocumentState {
     /// `buffer_authority_unknown` is set; it selects the disclosed reason and
     /// never relaxes the fail-closed quarantine.
     pub(super) store_limit_refused: bool,
+    /// True from a save that adopted a saved digest until the next committed
+    /// analysis records an identity for this document (#15316). Only then
+    /// does a buffer equal to `saved_digest` mean "saved after the last
+    /// analysis": a digest seeded at open, or one an external rewrite made
+    /// stale, says nothing about which side is newer, so it keeps the
+    /// fail-closed divergent-buffer reason and its save route.
+    pub(super) saved_after_analysis: bool,
     pub(super) quarantine: Option<DocumentQuarantine>,
 }
 
@@ -1909,6 +1947,7 @@ impl DocumentState {
             analyzed_input_identity: None,
             buffer_authority_unknown: false,
             store_limit_refused: false,
+            saved_after_analysis: false,
             quarantine: None,
         }
     }
@@ -1943,7 +1982,15 @@ impl DocumentState {
         match analyzed {
             None => Some(DocumentStalenessReason::NoAnalyzedSavedContent),
             Some(analyzed) if *analyzed != self.buffer_digest() => {
-                Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+                // Hashing twice on the divergent branch only; a clean
+                // buffer still costs one digest.
+                if self.saved_after_analysis
+                    && self.saved_digest.as_deref() == Some(self.buffer_digest().as_str())
+                {
+                    Some(DocumentStalenessReason::SavedContentNotYetAnalyzed)
+                } else {
+                    Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+                }
             }
             Some(_) => None,
         }
@@ -1992,11 +2039,16 @@ impl DocumentState {
         if let (Some(_), Some(next_quarantine)) = (&self.quarantine, &mut next) {
             next_quarantine.withdrawal_disclosed = was_disclosed;
         }
-        let was = self.quarantine.is_some();
+        let prior_reason = self.quarantine.as_ref().map(|quarantine| quarantine.reason);
         self.quarantine = next;
-        match (was, self.quarantine.is_some()) {
-            (false, true) => QuarantineTransition::Entered,
-            (true, false) => QuarantineTransition::Exited { was_disclosed },
+        let reason = self.quarantine.as_ref().map(|quarantine| quarantine.reason);
+        match (prior_reason, reason) {
+            (None, Some(_)) => QuarantineTransition::Entered,
+            (Some(_), None) => QuarantineTransition::Exited { was_disclosed },
+            // A held quarantine whose reason moved (for example a divergent
+            // buffer that is then saved, #15316) must replace the marker the
+            // client holds, versioned client or not.
+            (Some(prior), Some(current)) if prior != current => QuarantineTransition::ReasonChanged,
             _ => QuarantineTransition::Unchanged,
         }
     }
@@ -2040,6 +2092,12 @@ fn document_line_extent(text: &str, target_line: usize) -> Option<(usize, usize)
 /// encoding, while Rust string edits require UTF-8 byte boundaries. Lines end
 /// at `\n`, `\r\n` or a bare `\r`, and the terminator is excluded from the
 /// line's character span, matching the protocol's line semantics.
+///
+/// A line past the document's last line defaults back to the end of the
+/// document, as an overlong character defaults back to the line end: the
+/// reference `TextDocument.offsetAt` resolves it to the content length, and
+/// clients append at such positions. Only the line is clamped this way; a
+/// character inside a multi-unit character stays refused.
 fn document_position_byte_offset(
     text: &str,
     position: Position,
@@ -2048,7 +2106,10 @@ fn document_position_byte_offset(
     let target_line = usize::try_from(position.line).ok()?;
     let target_units = usize::try_from(position.character).ok()?;
 
-    let (line_start, line_end) = document_line_extent(text, target_line)?;
+    let Some((line_start, line_end)) = document_line_extent(text, target_line) else {
+        // `document_line_extent` refuses only a line past the final line.
+        return Some(text.len());
+    };
     let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
@@ -2646,6 +2707,7 @@ impl DocumentStore {
             return false;
         }
         state.analyzed_saved_digest = Some(committed_digest.to_string());
+        state.saved_after_analysis = false;
         state.analyzed_input_identity = input_identity;
         state.refresh_quarantine();
         state.quarantine.is_none()
@@ -2844,6 +2906,7 @@ impl DocumentStore {
         }
         if let Some(digest) = saved_digest {
             state.saved_digest = Some(digest);
+            state.saved_after_analysis = true;
         }
         if let Some(text) = text {
             state.text = text;
@@ -2908,6 +2971,7 @@ impl DocumentStore {
         self.documents.for_each_mut(|uri, state| {
             if let Some(digest) = analyzed.get(uri) {
                 state.analyzed_saved_digest = digest.clone();
+                state.saved_after_analysis = false;
             }
             state.analyzed_input_identity = input_identity.clone();
             match state.refresh_quarantine() {
@@ -2960,6 +3024,7 @@ impl DocumentStore {
             analyzed_input_identity: None,
             buffer_authority_unknown: true,
             store_limit_refused: true,
+            saved_after_analysis: false,
             quarantine: None,
         };
         state.refresh_quarantine();
@@ -3075,6 +3140,7 @@ mod tests {
             analyzed_input_identity: Some("input:test".to_string()),
             buffer_authority_unknown: false,
             store_limit_refused: false,
+            saved_after_analysis: false,
             quarantine: None,
         }
     }
@@ -3185,6 +3251,82 @@ mod tests {
             return Err("withdrawal must disclose exactly once per episode".to_string());
         }
         Ok(())
+    }
+
+    /// #15316: a buffer equal to the recorded saved content that the
+    /// snapshot did not analyze is not a divergent unsaved buffer; saving
+    /// again cannot restore it.
+    #[test]
+    fn saved_but_unanalyzed_buffer_names_the_saved_content_reason() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut state = clean_document_state(&uri, "fn analyzed() {}");
+        state.text = "fn reverted() {}".to_string();
+        if state.refresh_quarantine() != QuarantineTransition::Entered {
+            return Err("a diverging buffer must enter quarantine".to_string());
+        }
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+        {
+            return Err("an unsaved buffer keeps the divergent-buffer reason".to_string());
+        }
+        // A digest seeded without a save (at open, or made stale by an
+        // external rewrite) says nothing about which side is newer: the
+        // divergent-buffer reason and its save route stay.
+        state.saved_digest = Some(digest_of("fn reverted() {}"));
+        state.refresh_quarantine();
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)
+        {
+            return Err("an unsaved digest must keep the divergent-buffer reason".to_string());
+        }
+        state.saved_after_analysis = true;
+        // The held quarantine's reason moves, so the client's marker must be
+        // replaced even when diagnostic versions were not negotiated.
+        let transition = state.refresh_quarantine();
+        if transition != QuarantineTransition::ReasonChanged {
+            return Err(format!(
+                "a reason move inside a held quarantine must report ReasonChanged: {transition:?}"
+            ));
+        }
+        if state.refresh_quarantine() != QuarantineTransition::Unchanged {
+            return Err("recomputing an unchanged reason must stay Unchanged".to_string());
+        }
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::SavedContentNotYetAnalyzed)
+        {
+            return Err(format!(
+                "a saved, unanalyzed buffer must name the saved-content reason: {:?}",
+                state.quarantine
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quarantine_transitions_fold_into_one_net_edge() {
+        use QuarantineTransition::{Entered, Exited, ReasonChanged, Unchanged};
+        let exited = Exited {
+            was_disclosed: true,
+        };
+        assert_eq!(Entered.then(Unchanged), Entered);
+        assert_eq!(Entered.then(ReasonChanged), Entered);
+        assert_eq!(Unchanged.then(Entered), Entered);
+        assert_eq!(Unchanged.then(Unchanged), Unchanged);
+        assert_eq!(Unchanged.then(ReasonChanged), ReasonChanged);
+        assert_eq!(ReasonChanged.then(Unchanged), ReasonChanged);
+        assert_eq!(Entered.then(exited), Unchanged);
+        assert_eq!(Unchanged.then(exited), exited);
+        assert_eq!(exited.then(Unchanged), exited);
+        assert_eq!(exited.then(ReasonChanged), Entered);
     }
 
     #[test]
@@ -3567,11 +3709,8 @@ mod tests {
         assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
         // An offset past the line end clamps to the line end (LSP 3.17).
         assert_eq!(edit("ab\r", 0, 3)?, "abX\r");
-        // Lines past the final terminator do not exist.
-        assert_eq!(
-            edit("ab\r", 2, 0),
-            Err("edit at 2:0 of \"ab\\r\" was refused".to_string())
-        );
+        // A line past the final line defaults back to the document end.
+        assert_eq!(edit("ab\r", 2, 0)?, "ab\rX");
         // An empty final line after CRLF, and mixed terminators in one buffer.
         assert_eq!(edit("ab\r\n", 1, 0)?, "ab\r\nX");
         assert_eq!(edit("a\nb\rc\r\nd", 3, 1)?, "a\nb\rc\r\ndX");
@@ -3899,8 +4038,13 @@ mod tests {
                 _ => {
                     // A valid replacement may change bytes before a subsequent
                     // invalid range fails. Accounting must cover this return too.
+                    // A UTF-16 position inside the inserted surrogate pair is
+                    // refused whatever the text; a line past the end is not.
                     let mut params = full_replace_params(uri, step, &text);
-                    params.content_changes.push(ranged_insert(99, 0, "bad"));
+                    params
+                        .content_changes
+                        .push(ranged_insert(0, 0, "\u{1F389}"));
+                    params.content_changes.push(ranged_insert(0, 1, "bad"));
                     store.change(params, &PositionEncodingKind::UTF16);
                 }
             }
@@ -4287,14 +4431,15 @@ mod tests {
                     text: "A".to_string(),
                 },
                 TextDocumentContentChangeEvent {
+                    // A reversed range: rejected after the first change applied.
                     range: Some(tower_lsp_server::ls_types::Range {
                         start: Position {
-                            line: 9,
-                            character: 0,
+                            line: 0,
+                            character: 3,
                         },
                         end: Position {
-                            line: 9,
-                            character: 0,
+                            line: 0,
+                            character: 1,
                         },
                     }),
                     range_length: None,
@@ -4463,11 +4608,14 @@ mod tests {
             },
             &PositionEncodingKind::UTF16,
         );
-        if recovered != QuarantineTransition::Unchanged {
+        if recovered != QuarantineTransition::ReasonChanged {
             // The document remains quarantined because the recovered buffer
             // still differs from the analyzed saved digest. What changes is
-            // the reason: buffer authority is known again.
-            return Err("recovery must continue the existing quarantine episode".to_string());
+            // the reason: buffer authority is known again, so the episode
+            // continues and only the marker text is replaced (#15316).
+            return Err(format!(
+                "recovery must continue the existing quarantine episode under a new reason: {recovered:?}"
+            ));
         }
         let Some(state) = store.state_for_uri(&uri) else {
             return Err("missing recovered document state".to_string());
@@ -5767,7 +5915,7 @@ mod tests {
     }
 
     /// Overlong LSP character offsets clamp to the line end for every negotiated
-    /// encoding (#7316). Mid-character and absent-line positions stay refused.
+    /// encoding (#7316). Mid-character positions stay refused.
     #[test]
     fn overlong_incremental_character_offsets_clamp_to_line_end() -> Result<(), String> {
         let line = "abc";
@@ -5830,29 +5978,6 @@ mod tests {
             );
         }
 
-        // Absent line is still refused.
-        let mut buffer = line.to_string();
-        let absent = apply_document_content_changes(
-            &mut buffer,
-            vec![TextDocumentContentChangeEvent {
-                range: Some(tower_lsp_server::ls_types::Range {
-                    start: Position {
-                        line: 9,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 9,
-                        character: 0,
-                    },
-                }),
-                range_length: None,
-                text: "X".to_string(),
-            }],
-            &PositionEncodingKind::UTF16,
-        );
-        assert!(absent.is_err());
-        assert_eq!(buffer, line);
-
         // Mid-surrogate (UTF-16 code unit inside emoji) is still refused.
         let mut emoji = "a🎉b".to_string();
         let original = emoji.clone();
@@ -5877,6 +6002,83 @@ mod tests {
         assert!(mid.is_err());
         assert_eq!(emoji, original);
 
+        Ok(())
+    }
+
+    /// A line past the document's last line defaults back to the document end,
+    /// as an overlong character defaults back to the line end. A client that
+    /// appends below the last line must not quarantine the document.
+    #[test]
+    fn incremental_line_past_end_clamps_to_document_end() -> Result<(), String> {
+        let apply = |text: &str,
+                     start: (u32, u32),
+                     end: (u32, u32),
+                     insert: &str,
+                     encoding: &PositionEncodingKind|
+         -> Result<String, String> {
+            let mut buffer = text.to_string();
+            apply_document_content_changes(
+                &mut buffer,
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: start.0,
+                            character: start.1,
+                        },
+                        end: Position {
+                            line: end.0,
+                            character: end.1,
+                        },
+                    }),
+                    range_length: None,
+                    text: insert.to_string(),
+                }],
+                encoding,
+            )
+            .map_err(|()| format!("refused {start:?}..{end:?} on {text:?}"))?;
+            Ok(buffer)
+        };
+
+        // Eleven lines ending in a newline; line 14 lies past the final line.
+        let eleven: String = (0..11).map(|n| format!("// line {n}\n")).collect();
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            assert_eq!(
+                apply(&eleven, (14, 0), (14, 0), "// tail\n", &encoding)?,
+                format!("{eleven}// tail\n"),
+                "append past the last line, {encoding:?}"
+            );
+            // Past-end end with an in-document start replaces the suffix.
+            assert_eq!(
+                apply("ab\ncd", (1, 1), (9, 4), "X", &encoding)?,
+                "ab\ncX",
+                "past-end end, {encoding:?}"
+            );
+        }
+        // Without a trailing terminator the clamp lands after the last
+        // character, not at the start of a phantom line.
+        assert_eq!(
+            apply("abc", (9, 0), (9, 0), "X", &PositionEncodingKind::UTF16)?,
+            "abcX"
+        );
+        // A past-end start with an in-document end is reversed and refused.
+        let reversed = apply("ab\ncd", (9, 0), (0, 1), "X", &PositionEncodingKind::UTF16);
+        assert!(reversed.is_err(), "reversed range applied: {reversed:?}");
+        // The line clamp does not relax mid-surrogate refusal on a real line.
+        let mid_surrogate = apply(
+            "a\u{1F389}b",
+            (0, 2),
+            (5, 0),
+            "X",
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(
+            mid_surrogate.is_err(),
+            "mid-surrogate start applied: {mid_surrogate:?}"
+        );
         Ok(())
     }
 }

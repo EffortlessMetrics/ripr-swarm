@@ -692,6 +692,48 @@ impl ProbeWorkerObserver {
     }
 }
 
+thread_local! {
+    /// Deferred user-visible disclosures for the current analysis thread. While
+    /// a capture is installed, [`disclose!`] buffers instead of printing so a
+    /// caller that may discard the run (the last-commit fallback retry) prints
+    /// them only if it keeps the result (#15330).
+    static DEFERRED_DISCLOSURES: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Print one analysis disclosure on stderr, or buffer it under
+/// [`capture_disclosures`].
+pub(crate) fn emit_disclosure(message: String) {
+    let unbuffered = DEFERRED_DISCLOSURES.with(|slot| match slot.borrow_mut().as_mut() {
+        Some(buffer) => {
+            buffer.push(message);
+            None
+        }
+        None => Some(message),
+    });
+    if let Some(message) = unbuffered {
+        eprintln!("{message}");
+    }
+}
+
+macro_rules! disclose {
+    ($($arg:tt)*) => {
+        emit_disclosure(format!($($arg)*))
+    };
+}
+
+/// Run `work`, buffering the disclosures it would print on stderr and
+/// returning them beside its result. The caller prints them only when it
+/// adopts the result.
+pub(crate) fn capture_disclosures<T>(work: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let previous = DEFERRED_DISCLOSURES.with(|slot| slot.borrow_mut().replace(Vec::new()));
+    let result = work();
+    let captured = DEFERRED_DISCLOSURES
+        .with(|slot| std::mem::replace(&mut *slot.borrow_mut(), previous))
+        .unwrap_or_default();
+    (result, captured)
+}
+
 #[cfg(test)]
 thread_local! {
     static PROBE_WORKER_OBSERVER: std::cell::RefCell<
@@ -1356,7 +1398,8 @@ fn enforce_changed_language_line_limit(
          reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
          limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
          `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
-         are reported as not analyzed)."
+         are reported as not analyzed). From a pre-commit hook, set those flags in the \
+         hook's `args:`, or skip this hook for one commit with `SKIP=ripr git commit ...`."
     ))
 }
 
@@ -1500,7 +1543,25 @@ fn run_pipeline_for_diff_text_with_language_config(
             .sample
             .push(file.path.to_string_lossy().replace('\\', "/"));
     }
-    if out_of_scope.count > 0 && changed_files.is_empty() {
+    // #15268: a scoped path the parser refused (edited in two sections of a
+    // patch series) did match the scope; its located limitation, not a
+    // "matched nothing" error, is the answer.
+    // #15268: the parser read the input as a diff and refused named files
+    // (in any language), so an empty result is never the garbage reading.
+    let parser_refused_named_files = parsed_diff
+        .limitations
+        .iter()
+        .any(names_parsed_file_limitation);
+    let refused_in_scope = parsed_diff.limitations.iter().any(|limitation| {
+        names_parsed_file_limitation(limitation)
+            && limitation.path.as_deref().is_some_and(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path)
+                    && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+                    && diff_limitation_in_scope(limitation, languages)
+            })
+    });
+    if out_of_scope.count > 0 && changed_files.is_empty() && !refused_in_scope {
         return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
     }
     // #10796: the scoped intake completed — publish the adapter-facing scoped
@@ -1512,12 +1573,13 @@ fn run_pipeline_for_diff_text_with_language_config(
         .into_iter()
         .filter(|limitation| diff_limitation_in_scope(limitation, languages))
         // A per-file parser limitation (combined hunk, conflict markers) on a
-        // file the operator scoped out must not invalidate the files kept.
+        // file the operator scoped out must not invalidate the files kept,
+        // and one on ripr's own artifacts (#7663) is not user scope either.
         .filter(|limitation| {
-            limitation
-                .path
-                .as_deref()
-                .is_none_or(|path| diff_scope.admits(std::path::Path::new(path)))
+            limitation.path.as_deref().is_none_or(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path) && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+            })
         })
         .collect::<Vec<_>>();
     if out_of_scope.count > 0 {
@@ -2165,7 +2227,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // Emit as stderr disclosures — these are not Findings (no probe was
     // generated), but the user needs to know what was not analyzed.
     for message in unanalyzed_disclosures(non_source_message, &changed_files) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
     // RIPR-SPEC-0347 (#8999): changed trybuild `tests/ui` fixtures are compile-time
     // expectations ripr does not read as oracles. Advisory stderr text only; no
@@ -2173,22 +2235,22 @@ fn run_pipeline_for_diff_text_with_language_config(
     if let Some(message) =
         trybuild_fixtures::trybuild_fixture_disclosure_message(&options.root, &changed_files)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
-    emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
+    emit_submodule_disclosure(submodule_file_count, |message| disclose!("{message}"));
     if let Some(message) = symlink_disclosure_message(symlink_file_count) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
-        eprintln!("{message}");
+        disclose!("{message}");
     });
 
     // #7663: name every ripr-artifact file the intake dropped, so the counts
     // below never silently disagree with the commit the diff came from.
     if !own_artifact_files.is_empty() {
-        eprintln!(
+        disclose!(
             "{}",
             ripr_artifact_disclosure(&options.root, &artifact_roots, &own_artifact_files)
         );
@@ -2202,7 +2264,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     if findings.is_empty()
         && let Some(message) = deleted_files_disclosure(&deleted_paths, other_changes)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Disclose when the diff parsed to zero changed files (#2425): the input
@@ -2225,8 +2287,12 @@ fn run_pipeline_for_diff_text_with_language_config(
             .iter()
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
+        // A parser limitation that names a file (#15268: a path edited in
+        // two sections of a patch series) already says why nothing was read;
+        // the generic "verify the diff is valid" guess would contradict it.
+        && !parser_refused_named_files
     {
-        eprintln!(
+        disclose!(
             "{}",
             zero_file_diff_disclosure(
                 diff_text,
@@ -2247,7 +2313,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         && is_truncated_diff_stream(truncated_file_sections)
         && let Some(message) = truncated_diff_disclosure_message(truncated_file_sections)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Rename metadata can register a binary file without any text hunks.
@@ -2259,6 +2325,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         && deleted_file_count == 0
         && submodule_file_count == 0
         && limitations.len() == supplied_evidence_limitations
+        && !parser_refused_named_files
     {
         // The schema token stays `malformed_diff` (a new limitation kind is a
         // schema change); a well-formed diff with only binary or mode changes
@@ -3669,6 +3736,12 @@ fn is_binary_sentinel(line: &str) -> bool {
     };
     rest.match_indices(" and ")
         .any(|(at, sep)| at > 0 && at + sep.len() < rest.len())
+}
+
+/// A diff-parse limitation located at a file: the parser read the input as
+/// a diff and refused named content, so the input is not garbage.
+pub(crate) fn names_parsed_file_limitation(limitation: &AnalysisLimitation) -> bool {
+    limitation.producer_stage == AnalysisStage::DiffParse && limitation.path.is_some()
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
@@ -9761,6 +9834,85 @@ index 0000000..1111111 100644
             detail.contains(&format!("and {} more", FLOODED_VENDOR_FILES - 3)),
             "{detail}"
         );
+        Ok(())
+    }
+
+    /// #15268: `src/lib.rs` edited in two sections of a series, `src/big.rs` once.
+    fn repeated_lib_series() -> String {
+        let edit = |hunk: &str| {
+            format!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n{hunk}"
+            )
+        };
+        // `git log -p` output: a commit header separates the two edits.
+        format!(
+            "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -1 +1 @@\n-pub fn big_0() -> u32 {{ 1 }}\n+pub fn big_0() -> u32 {{ 0 }}\n",
+            edit(
+                "@@ -1 +1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n"
+            ),
+            edit("@@ -0,0 +1 @@\n+// added later\n"),
+        )
+    }
+
+    #[test]
+    fn a_scope_keeping_only_a_refused_series_file_reports_its_limitation() -> Result<(), String> {
+        let result = run_scoped("series-scope", &["src/lib.rs"], &[], &repeated_lib_series())?
+            .map_err(|error| {
+                format!("a matched but refused path must not read as no match: {error}")
+            })?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{outcome:?}");
+        let refused = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                    && limitation.recovery.kind == AnalysisRecoveryKind::UseTwoWayDiff
+            })
+            .ok_or("the refused series file must be named")?;
+        assert_eq!(refused.path.as_deref(), Some("src/lib.rs"));
+        // Control: a scope that truly matches nothing is still refused.
+        let refusal = run_scoped(
+            "series-scope-miss",
+            &["nowhere"],
+            &[],
+            &repeated_lib_series(),
+        )?
+        .err()
+        .ok_or("a scope matching nothing must be refused")?;
+        assert!(
+            refusal.starts_with("scope_filter_matched_nothing:"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_series_editing_artifacts_or_docs_twice_is_not_a_limitation() -> Result<(), String> {
+        // #15268 review: only an analyzed-language path is refused. ripr's own
+        // reports (#7663) and a README edited in two commits stay out of scope.
+        for path in ["target/ripr/pilot/pilot-summary.md", "README.md"] {
+            let section = |hunk: &str| {
+                format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}")
+            };
+            let diff = format!(
+                "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}",
+                section("@@ -1 +1 @@\n-old\n+new\n"),
+                section("@@ -0,0 +1 @@\n+added\n")
+            );
+            let result = run_scoped("series-nonsource", &[], &[], &diff)?
+                .map_err(|error| format!("{path}: {error}"))?;
+            let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+            assert!(outcome.kind.is_complete(), "{path}: {outcome:?}");
+            assert!(
+                !outcome
+                    .limitations
+                    .iter()
+                    .any(|limitation| limitation.recovery.kind
+                        == AnalysisRecoveryKind::UseTwoWayDiff),
+                "{path}: {outcome:?}"
+            );
+        }
         Ok(())
     }
 
