@@ -62,6 +62,60 @@ fn write(root: &Path, path: &str, text: &str) -> Result<(), String> {
     std::fs::write(root.join(path), text).map_err(|error| format!("write {path}: {error}"))
 }
 
+/// These commands echo the root argument when post-parse analysis refuses.
+/// An explicitly empty string still identifies that input in the refusal.
+#[test]
+fn empty_root_refusals_preserve_the_supplied_string() -> Result<(), String> {
+    let cases: &[(&str, &[&str], &str)] = &[
+        (
+            DIFF_REFUSAL_SCHEMA,
+            &["diff", "--json", "--base", "ripr-unresolved-ref"],
+            "analysis_failed",
+        ),
+        (
+            RERUN_REFUSAL_SCHEMA,
+            &["rerun", "--json", "--changed-test", "tests/over.rs"],
+            "repository_root_unusable",
+        ),
+        (
+            AGENT_BRIEF_REFUSAL_SCHEMA,
+            &["agent", "brief", "--json", "--base", "main"],
+            "repository_root_unusable",
+        ),
+        (
+            AGENT_PACKET_REFUSAL_SCHEMA,
+            &["agent", "packet", "--json", "--seam-id", "seam:none"],
+            "repository_root_unusable",
+        ),
+    ];
+    for &(path, args, identity) in cases {
+        let mut refusal = refusal_json(args, Path::new(""), 2)?;
+        let schema = published_schema::read(path)?;
+        conforms(&refusal, &schema)?;
+        if refusal.get("root").and_then(Value::as_str) != Some("")
+            || refusal
+                .pointer("/analysis_scope/run_status")
+                .and_then(Value::as_str)
+                != Some(identity)
+        {
+            return Err(format!(
+                "{path} did not echo the empty root for {identity}: {refusal}"
+            ));
+        }
+        let object = refusal.as_object_mut().ok_or("expected a refusal object")?;
+        object.remove("root");
+        if conforms(&refusal, &schema).is_ok() {
+            return Err(format!("{path} accepted an omitted root"));
+        }
+        let object = refusal.as_object_mut().ok_or("expected a refusal object")?;
+        object.insert("root".to_string(), json!(42));
+        if conforms(&refusal, &schema).is_ok() {
+            return Err(format!("{path} accepted a numeric root"));
+        }
+    }
+    Ok(())
+}
+
 /// A one-commit Rust package. `broken_config` adds a `ripr.toml` that does
 /// not parse.
 fn fixture_repo(label: &str, broken_config: bool) -> Result<PathBuf, String> {
