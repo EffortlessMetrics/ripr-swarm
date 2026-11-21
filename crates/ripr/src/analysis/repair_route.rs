@@ -1134,6 +1134,7 @@ mod tests {
 
     fn rust_related_test(relation_reason: RelationReason) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -1152,6 +1153,7 @@ mod tests {
 
     fn external_related_test() -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "fetch blob resizes".to_string(),
             file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
             line: 9,

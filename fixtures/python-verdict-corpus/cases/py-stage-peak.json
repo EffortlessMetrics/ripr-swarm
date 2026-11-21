@@ -1,0 +1,47 @@
+{
+  "case_id": "py-stage-peak",
+  "subject_id": "authored-py-stage-peak",
+  "diff": "cases/py-stage-peak.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "comparison_boundary",
+  "test_shape": "pytest_stage_peak",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.4, pytest 8.4.0, x86_64-windows; original and edited baselines executed in fresh authored copies",
+    "mutants": [
+      {
+        "replacement": "        if x >= best:",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: for equal objects the edited >= arm rebinds best to the later equal element, distinguishable by an identity assertion the integer test does not make"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A strong exact integer pin reaches the loop, but the > to >= boundary on a list accumulator is unmodeled: the integer result 9 is the same either way, so infection remains unknown rather than exposed.",
+  "labeling_observation": {
+    "ripr_commit": "e04bdfa9f1e74854f810e2c94df1c767810a293b",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "infection_unknown"
+  ]
+}

@@ -283,6 +283,11 @@ fn suggested_assertion_shape(
             .to_string();
     }
 
+    if finding.recommended_next_step.as_deref() == Some(crate::domain::TERNARY_COMPARISON_NEXT_STEP)
+    {
+        return crate::domain::TERNARY_COMPARISON_NEXT_STEP.to_string();
+    }
+
     // A strong snapshot or exact-value check already exists, so asking for
     // another one is misleading: the gap is the missing tie to the changed line.
     // Fire only when the classifier reached its strong-but-untied conclusion:

@@ -41,7 +41,18 @@ fn install_panic_hook() {
         // stays 2: the output was cut short, and a command that would have
         // exited 3 (a gate block, a typed refusal) must never read as a
         // pass under `pipefail`.
-        if is_closed_stdout_panic(message) {
+        // Any other stdout write failure (a full disk behind `> report.txt`,
+        // `>/dev/full`, a revoked file) is the output destination failing,
+        // not a ripr bug: name it like the typed stdout writers do, without
+        // a backtrace. The exit stays 2: the output is incomplete.
+        let closed_stdout = is_closed_stdout_panic(message);
+        let stdout_failure = (!closed_stdout)
+            .then(|| stdout_write_failure_report(message))
+            .flatten();
+        if closed_stdout || stdout_failure.is_some() {
+            if let Some(report) = stdout_failure {
+                write_stderr_report(format_args!("{}", terminal_safe_report(report)));
+            }
             std::process::exit(2);
         }
         // A panic message can quote repository text (a path, a parsed value),
@@ -75,6 +86,22 @@ fn is_closed_stdout_panic(message: &str) -> bool {
         && CLOSED_PIPE_MARKERS
             .iter()
             .any(|marker| message.contains(marker))
+}
+
+/// The report for a `println!` panic whose stdout write failed for a reason
+/// other than a closed pipe, in the wording of the typed stdout writers
+/// (`commands_context.rs`), or `None` for any other panic.
+fn stdout_write_failure_report(message: &str) -> Option<String> {
+    let cause = message.strip_prefix("failed printing to stdout")?;
+    let cause = cause.trim_start_matches(':').trim();
+    let cause = if cause.is_empty() {
+        "unknown error"
+    } else {
+        cause
+    };
+    Some(format!(
+        "ripr: write to stdout failed: {cause}; check where ripr's output goes (a full disk, a closed or read-only file) and rerun; the output is incomplete"
+    ))
 }
 
 /// `CommandError`'s `Display` is the library's terminal escape; routing the
@@ -250,6 +277,17 @@ mod tests {
             || super::is_closed_stdout_panic("Broken pipe")
         {
             return Err("closed-stdout detection must match only EPIPE on stdout".to_owned());
+        }
+        let full = super::stdout_write_failure_report(
+            "failed printing to stdout: No space left on device (os error 28)",
+        );
+        if full.as_deref()
+            != Some(
+                "ripr: write to stdout failed: No space left on device (os error 28); check where ripr's output goes (a full disk, a closed or read-only file) and rerun; the output is incomplete",
+            )
+            || super::stdout_write_failure_report("index out of bounds").is_some()
+        {
+            return Err(format!("stdout write failure report regressed: {full:?}"));
         }
         if !super::is_closed_stdout_error("write to stdout failed: Broken pipe (os error 32)")
             || !super::is_closed_stdout_error(

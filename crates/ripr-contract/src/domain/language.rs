@@ -263,20 +263,21 @@ fn shallow_has_extension(root: &Path, extension: &str) -> bool {
 
 /// Languages to name in a copy-paste `[languages] enabled = [...]` tip.
 ///
-/// Keep every already-enabled language except default `rust` when the
-/// workspace has no Rust markers, then append each language the tip is
-/// asking the user to add. Following the tip must not disable another
-/// preview adapter, and a TypeScript-only repo must not be told to enable
-/// Rust (#7648).
+/// Keep every already-enabled language except `rust` when `keep_rust` is
+/// false, then append each language the tip is asking the user to add.
+/// Following the tip must not disable another preview adapter, and a
+/// TypeScript-only repo must not be told to enable Rust (#7648). Callers pass
+/// `keep_rust` true when Rust markers are present or when `rust` was enabled
+/// explicitly rather than by default (#15304).
 pub fn enablement_tip_languages(
     enabled: &[LanguageId],
-    rust_detected: bool,
+    keep_rust: bool,
     to_add: impl IntoIterator<Item = LanguageId>,
 ) -> Vec<LanguageId> {
     let mut target: Vec<LanguageId> = enabled
         .iter()
         .copied()
-        .filter(|id| *id != LanguageId::Rust || rust_detected)
+        .filter(|id| *id != LanguageId::Rust || keep_rust)
         .collect();
     for id in to_add {
         if !target.contains(&id) {
@@ -542,6 +543,14 @@ pub enum StaticLimitKind {
     /// route, not by this label. This names the unresolved boundary input,
     /// not a coverage claim. See RIPR-SPEC-0068 (#13892, #14951).
     ActivationBoundaryInputUnresolved,
+    /// A Rust owner compiled only under a cfg ripr cannot evaluate
+    /// (`#[cfg(error_generic_member_access)]`) has no test seen calling it,
+    /// and a doc example in the same library is gated by the same cfg, so
+    /// the doctest admission did not read it. That example may check the
+    /// owner, so the producer withholds the gap as `static_unknown`. Nothing
+    /// is credited; this names the unread example, not a coverage claim.
+    /// See RIPR-SPEC-0240 (#14935).
+    RustGatedDoctestUnread,
 }
 
 impl StaticLimitKind {
@@ -624,6 +633,7 @@ impl StaticLimitKind {
             StaticLimitKind::ActivationBoundaryInputUnresolved => {
                 "activation_boundary_input_unresolved"
             }
+            StaticLimitKind::RustGatedDoctestUnread => "rust_gated_doctest_unread",
         }
     }
 
@@ -836,6 +846,12 @@ impl StaticLimitKind {
                  closure-derived operand that ripr cannot map to a test call's arguments, so it \
                  cannot tell which side of the boundary a test input lands on. The repair is \
                  withheld; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustGatedDoctestUnread => {
+                "Doc example not read: the changed Rust function is compiled only under a cfg \
+                 ripr cannot evaluate, and a doc example in the same library is gated by that \
+                 cfg, so ripr did not read the example that may check it. ripr does not claim \
+                 a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1237,6 +1253,10 @@ mod tests {
             StaticLimitKind::ActivationBoundaryInputUnresolved.as_str(),
             "activation_boundary_input_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustGatedDoctestUnread.as_str(),
+            "rust_gated_doctest_unread"
+        );
     }
 
     #[test]
@@ -1278,6 +1298,7 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceReadLimited,
             StaticLimitKind::RustFutureNeverPolled,
             StaticLimitKind::ActivationBoundaryInputUnresolved,
+            StaticLimitKind::RustGatedDoctestUnread,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
@@ -1372,6 +1393,51 @@ mod tests {
         assert_eq!(
             kind.describe_for_family(&ProbeFamily::Predicate),
             kind.describe()
+        );
+        let other = StaticLimitKind::DynamicDispatch;
+        assert_eq!(
+            other.describe_for_family(&ProbeFamily::MatchArm),
+            other.describe()
+        );
+    }
+
+    #[test]
+    fn every_language_wire_token_round_trips_and_others_are_unknown() {
+        for language in LanguageId::ALL {
+            assert_eq!(LanguageId::from_wire(language.as_str()), Some(language));
+        }
+        for token in ["", "Rust", "ts", "js", "python3", "perl "] {
+            assert_eq!(LanguageId::from_wire(token), None, "{token:?}");
+        }
+    }
+
+    #[test]
+    fn only_perl_has_an_enable_prerequisite_and_it_names_the_fact_packet() {
+        assert_eq!(
+            LanguageId::Perl.enable_prerequisite(),
+            Some(format!(
+                "Perl also needs a fact packet: pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`, not yet published)"
+            ))
+        );
+        for language in LanguageId::ALL {
+            if language != LanguageId::Perl {
+                assert_eq!(language.enable_prerequisite(), None, "{language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_match_arm_reads_the_assertion_context_limit_as_assert() {
+        use crate::domain::ProbeFamily;
+        let unresolved = StaticLimitKind::RustAssertionContextUnresolved;
+        let base = unresolved.describe();
+        assert!(base.contains("`assert_eq!`"), "{base}");
+        let arm = unresolved.describe_for_family(&ProbeFamily::MatchArm);
+        assert_eq!(arm, base.replace("`assert_eq!`", "`assert!`"));
+        assert!(!arm.contains("`assert_eq!`"));
+        assert_eq!(
+            unresolved.describe_for_family(&ProbeFamily::Predicate),
+            base
         );
         let other = StaticLimitKind::DynamicDispatch;
         assert_eq!(

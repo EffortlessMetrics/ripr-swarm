@@ -681,9 +681,18 @@ fn repair_attempt_schema() -> Result<Value, String> {
 /// does not evaluate the schema's `pattern` constraints; the identity shapes
 /// those pin (`repair-attempt-` plus 24 hex, 40-hex heads, `sha256:` digests)
 /// are enforced by their own producer-side parsers.
-fn assert_manifest_matches_published_schema(manifest: &Value) -> Result<(), String> {
+fn assert_manifest_matches_published_schema(
+    manifest: &Value,
+    reserved_attempt_id: &str,
+) -> Result<(), String> {
     let schema = repair_attempt_schema()?;
     assert_object_matches_schema(manifest, &schema, "attempt manifest")?;
+    if manifest["repair_attempt_id"].as_str() != Some(reserved_attempt_id) {
+        return Err(format!(
+            "manifest repair_attempt_id {} differs from reserved attempt {reserved_attempt_id}",
+            manifest["repair_attempt_id"]
+        ));
+    }
 
     let state = manifest
         .get("state")
@@ -796,10 +805,11 @@ fn published_schema_conformance_rejects_manifests_the_schema_forbids() -> Result
     // The negative experiment for the conformance helper itself. Without it a
     // helper that silently accepted everything would still report every real
     // manifest as schema-conformant.
+    let reserved_id = "repair-attempt-0123456789abcdef01234567";
     let base = serde_json::json!({
         "schema_version": "0.1",
         "kind": "repair_attempt",
-        "repair_attempt_id": "repair-attempt-0123456789abcdef01234567",
+        "repair_attempt_id": reserved_id,
         "state": "awaiting_edit",
         "root": "/tmp/fixture",
         "repository_head": "0123456789abcdef0123456789abcdef01234567",
@@ -817,8 +827,20 @@ fn published_schema_conformance_rejects_manifests_the_schema_forbids() -> Result
         "non_claims": ["no runtime mutation outcome"],
         "after": Value::Null
     });
-    assert_manifest_matches_published_schema(&base)
+    assert_manifest_matches_published_schema(&base, reserved_id)
         .map_err(|error| format!("a conformant manifest was rejected: {error}"))?;
+
+    let mut sibling_attempt = base.clone();
+    let sibling_id = "repair-attempt-0123456789abcdef01234568";
+    sibling_attempt["repair_attempt_id"] = serde_json::json!(sibling_id);
+    assert_manifest_matches_published_schema(&sibling_attempt, sibling_id)?;
+    let mut analysis_attempt = base.clone();
+    analysis_attempt["repair_attempt_id"] = serde_json::json!("snapshot:7");
+    let mut missing_identity = base.clone();
+    missing_identity
+        .as_object_mut()
+        .ok_or("expected manifest object")?
+        .remove("repair_attempt_id");
 
     let mut undeclared_field = base.clone();
     undeclared_field["unexpected"] = Value::Bool(true);
@@ -836,13 +858,16 @@ fn published_schema_conformance_rejects_manifests_the_schema_forbids() -> Result
     terminal_without_verdict["state"] = Value::String("ready_to_finish".to_string());
 
     for (named, doctored) in [
+        ("repair_attempt_id", sibling_attempt),
+        ("repair_attempt_id", analysis_attempt),
+        ("repair_attempt_id", missing_identity),
         ("unexpected", undeclared_field),
         ("seam_id", missing_required),
         ("kind", unpinned_kind),
         ("state", unlisted_state),
         ("after", terminal_without_verdict),
     ] {
-        let Err(error) = assert_manifest_matches_published_schema(&doctored) else {
+        let Err(error) = assert_manifest_matches_published_schema(&doctored, reserved_id) else {
             return Err(format!(
                 "a manifest doctored at `{named}` was accepted as schema-conformant"
             ));
@@ -869,7 +894,7 @@ fn clean_test_only_edit_binds_prepare_and_apply() -> Result<(), String> {
     let attempt_id = sole_attempt(&fixture)?;
 
     let manifest = attempt_manifest(&fixture, &attempt_id)?;
-    assert_manifest_matches_published_schema(&manifest)?;
+    assert_manifest_matches_published_schema(&manifest, &attempt_id)?;
     if manifest.get("state").and_then(Value::as_str) != Some("awaiting_edit") {
         return Err(format!(
             "prepared attempt state is not awaiting_edit: {manifest:?}"
@@ -947,7 +972,7 @@ fn clean_test_only_edit_binds_prepare_and_apply() -> Result<(), String> {
     let manifest = attempt_manifest(&fixture, &attempt_id)?;
     // The terminal state is the other branch of the schema's state-to-`after`
     // conditional, so both branches are checked against emitted bytes.
-    assert_manifest_matches_published_schema(&manifest)?;
+    assert_manifest_matches_published_schema(&manifest, &attempt_id)?;
     if manifest.get("state").and_then(Value::as_str) != Some("ready_to_finish") {
         return Err(format!(
             "applied attempt state is not ready_to_finish: {manifest:?}"

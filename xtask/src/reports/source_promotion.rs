@@ -274,7 +274,7 @@ fn usage() -> String {
     "usage: cargo xtask source-promotion preflight --source-parent <full-sha> --swarm-parent <full-sha> --swarm-ref <protected-tag-ref> --source-repo <path> --swarm-repo <path> --version <version> --controller-root <path> --candidate-manifest <relative-path> --selection-decision <native-1609-comment> --qualification-bundle <relative-path> --qualification-decision <native-2769-comment> [--resolved-tree <full-tree-sha>] [--source-main <rev>] [--swarm-main <rev>] [--source-remote <owner/repo>] [--swarm-remote <owner/repo>] [--out <dir>]".to_string()
 }
 
-fn validate_sha(name: &str, object_kind: &str, value: &str) -> Result<(), String> {
+pub(super) fn validate_sha(name: &str, object_kind: &str, value: &str) -> Result<(), String> {
     if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(format!(
             "{name} must be a complete 40-character hexadecimal {object_kind} SHA"
@@ -860,7 +860,7 @@ fn dry_merge_from_repo(
     })
 }
 
-fn parse_merge_tree_output(stdout: &[u8]) -> Result<(String, Vec<String>), String> {
+pub(super) fn parse_merge_tree_output(stdout: &[u8]) -> Result<(String, Vec<String>), String> {
     let mut fields = stdout.split(|byte| *byte == 0);
     let tree = fields
         .next()

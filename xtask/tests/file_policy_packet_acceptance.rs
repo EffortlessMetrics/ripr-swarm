@@ -270,3 +270,46 @@ fn file_policy_packet_inventory_reaches_actual_cli_acceptance() -> Result<(), St
     }
     Ok(())
 }
+
+#[test]
+fn file_policy_source_violations_precede_native_inventory() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let subject = "target/ripr/reports/file-policy.subject.json";
+    fixture.write(subject, "previous run")?;
+    let path = "policy/non-rust-allowlist.toml";
+    let mut policy = fs::read_to_string(fixture.0.join(path)).map_err(|error| error.to_string())?;
+    policy.push_str(
+        r#"
+[[allow]]
+glob = "tools/without-retention.py"
+kind = "fixture"
+owner = "packet-cli-test"
+surface = "fixtures"
+classification = "fixture"
+reason = "CLI fixture"
+covered_by = []
+"#,
+    );
+    fixture.write(path, &policy)?;
+    fixture.write("tools/without-retention.py", "")?;
+    fixture.write("unexpected.py", "")?;
+    let (output, report) = fixture.check()?;
+    if output.status.code() != Some(1)
+        || !report.contains("Status: fail")
+        || !report.contains("unapproved non-Rust programming/declarative file: unexpected.py")
+        || !report.contains("lacks a keep-non-Rust retention rule: tools/without-retention.py")
+        || !report.contains("not_enumerated; source paths violate file policy")
+        || String::from_utf8_lossy(&output.stderr).contains("policy cargo child start:")
+        || fixture.0.join("target/debug").exists()
+        || fixture.0.join(subject).exists()
+    {
+        return Err(format!(
+            "invalid source ran or retained coverage: {}\n{report}",
+            diagnostic(&output)
+        ));
+    }
+    fs::remove_file(fixture.0.join("unexpected.py")).map_err(|error| error.to_string())?;
+    fs::remove_file(fixture.0.join("tools/without-retention.py"))
+        .map_err(|error| error.to_string())?;
+    fixture.require_pass()
+}
