@@ -159,6 +159,35 @@ fn required_names_only(branch: &Value) -> bool {
             .all(|name| name.as_str().is_some_and(|name| seen.insert(name)))
 }
 
+fn named_definition(reference: &str) -> Option<&str> {
+    let name = reference.strip_prefix("#/$defs/")?;
+    (!name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')))
+    .then_some(name)
+}
+
+/// A reference back to the changed property can reverse the implication,
+/// for instance underneath a sibling's `not`. Keep this proof within a
+/// single schema resource whose references can only address named definitions.
+fn only_named_definition_refs(key: &str, node: &Value) -> bool {
+    match key {
+        "$ref" => node.as_str().and_then(named_definition).is_some(),
+        "$id" | "$anchor" | "$dynamicAnchor" | "$dynamicRef" | "$recursiveAnchor"
+        | "$recursiveRef" => false,
+        _ => match node {
+            Value::Object(fields) => fields
+                .iter()
+                .all(|(key, value)| only_named_definition_refs(key, value)),
+            Value::Array(items) => items
+                .iter()
+                .all(|value| only_named_definition_refs("", value)),
+            _ => true,
+        },
+    }
+}
+
 /// A top-level property can add a receipt version by retaining its original
 /// local reference as one arm of an inclusive union. Check the legacy
 /// definition itself, and resolve every other arm before accepting the union.
@@ -170,14 +199,7 @@ fn retains_local_reference(
 ) -> bool {
     fn definition<'a>(root: &'a serde_json::Map<String, Value>, arm: &Value) -> Option<&'a Value> {
         let arm = arm.as_object().filter(|arm| arm.len() == 1)?;
-        let name = arm.get("$ref")?.as_str()?.strip_prefix("#/$defs/")?;
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        {
-            return None;
-        }
+        let name = named_definition(arm.get("$ref")?.as_str()?)?;
         root.get("$defs")?
             .get(name)
             .filter(|schema| schema.is_object() || schema.is_boolean())
@@ -197,6 +219,9 @@ fn retains_local_reference(
     definition(new_root, prior) == Some(legacy)
         && arms.contains(prior)
         && arms.iter().all(|arm| definition(new_root, arm).is_some())
+        && new_root
+            .iter()
+            .all(|(key, value)| key == "$id" || only_named_definition_refs(key, value))
 }
 
 fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
@@ -670,6 +695,26 @@ mod tests {
             if !matches!(assess(&old, &doc), Compat::Violations(_)) {
                 return Err(format!(
                     "accepted a narrowed or unresolved receipt union: {doc}"
+                ));
+            }
+        }
+        for reference in [
+            json!({"$ref":"#/properties/receipt"}),
+            json!({"$ref":"#"}),
+            json!({"$dynamicRef":"#receipt"}),
+            json!({"$id":"other", "$ref":"#/$defs/prior"}),
+        ] {
+            let mut referenced_old = old.clone();
+            let mut referenced_new = valid.clone();
+            for root in [&mut referenced_old, &mut referenced_new] {
+                root["properties"]["sibling"] = json!({"not":reference});
+            }
+            if !matches!(
+                assess(&referenced_old, &referenced_new),
+                Compat::Violations(_)
+            ) {
+                return Err(format!(
+                    "unproved union with an indirect reference was accepted: {reference}"
                 ));
             }
         }
