@@ -14499,6 +14499,11 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
             "qualified-nested-wrapper",
             "proptest::proptest! { #[test] fn p(v in proptest::collection::vec(proptest::prop_oneof![proptest::strategy::Just(vec![1u8])], 0..3)) { proptest::prop_assert!(v.len() < 3); assert_eq!(v.len(), v.len()); } }\n".to_string(),
         ),
+        // A field colon before the path is no `::` separator.
+        (
+            "field-initializer-nested-wrapper",
+            "proptest::proptest! { #[test] fn p(x in 0u8..3) { struct Check { result: bool } let c = Check { result: proptest::prop_assert!({ assert_eq!(x, x); true }) }; let d = Check { result: ::proptest::prop_assert!({ assert_eq!(x, x); true }) }; } }\n".to_string(),
+        ),
         (
             "external-nested-wrapper",
             "::proptest::proptest! { #[test] fn p(v in ::proptest::prop_oneof![::proptest::strategy::Just(vec![1u8])]) { ::proptest::prop_assert_eq!(v, vec![1u8]); } }\n".to_string(),
