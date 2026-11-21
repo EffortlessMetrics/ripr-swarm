@@ -13426,6 +13426,7 @@ tests = [
   "crates/ripr/tests/empty_guard_table_infection.rs",
   "crates/ripr/tests/method_hop_relations.rs",
   "crates/ripr/tests/literal_length_boundary.rs",
+  "crates/ripr/tests/spec_b_binding_contracts.rs::leading_character_width_requires_direct_literal_rows_and_matching_transforms",
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
   "crates/ripr/src/analysis/probes/lexical.rs::tests::empty_closure_head_is_not_a_predicate",
   "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",

@@ -350,12 +350,13 @@ pub(super) fn apply_rust_value_propagation_limit(
 /// contradict it. Only that route's own derived-local fact qualifies: other
 /// infection-Yes mechanisms keep the disclosure, and a miss here is the
 /// conservative direction (the disclosure stays).
-fn literal_byte_length_resolves(finding: &Finding, relation: &ChangedBindingPredicateUse) -> bool {
+fn literal_length_resolves(finding: &Finding, relation: &ChangedBindingPredicateUse) -> bool {
     finding.ripr.infect.state == crate::domain::StageState::Yes
         && finding.activation.observed_values.iter().any(|fact| {
             fact.value.starts_with(&format!("{} = ", relation.binding))
                 && fact.text.contains("immutable string literal")
-                && fact.text.contains("via as_bytes().len()")
+                && (fact.text.ends_with("via as_bytes().len()")
+                    || fact.text.ends_with("via first char len_utf8()"))
         })
 }
 
@@ -385,7 +386,7 @@ pub(super) fn attach_changed_binding_predicate_evidence(
         "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {} (changed `let {}` declared at line {})",
         relation.binding, relation.predicate_line, relation.binding, relation.binding_line
     ));
-    if !literal_byte_length_resolves(finding, relation)
+    if !literal_length_resolves(finding, relation)
         && let BindingValueResolution::Unresolved { earliest_operation } =
             &relation.value_resolution
     {
