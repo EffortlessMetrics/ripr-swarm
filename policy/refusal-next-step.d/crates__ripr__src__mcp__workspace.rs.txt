@@ -1,0 +1,1 @@
+crates/ripr/src/mcp/workspace.rs|the refresh produced no findings, so no consumed-source claim was needed or bound
