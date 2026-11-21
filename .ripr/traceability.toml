@@ -19326,9 +19326,13 @@ tests = [
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::unevaluable_pytest_configuration_withholds_credit",
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::irrelevant_configuration_keeps_credit",
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::nested_package_configuration_applies_below_its_directory",
+  "crates/ripr/src/analysis/language/python/membership_activation_tests.rs",
 ]
 fixtures = [
   "fixtures/python-verdict-corpus/subjects/authored-py-nested-call-9814",
+  "fixtures/python-verdict-corpus/subjects/authored-py-pytest-membership",
+  "fixtures/python-verdict-corpus/cases/py-membership-removed-member-unpassed.json",
+  "fixtures/python-verdict-corpus/cases/py-membership-removed-member-passed.json",
   "fixtures/python-verdict-corpus/cases/py-nested-independent-outer-owner.json",
   "fixtures/python-verdict-corpus/cases/py-nested-repeated-inner-owner.json",
   "fixtures/python-verdict-corpus/cases/py-nested-idempotent-owner.json",
@@ -19406,6 +19410,7 @@ code = [
   "crates/ripr/src/analysis/language/python/related_tests.rs",
   "crates/ripr/src/analysis/language/python/sink_alignment.rs",
   "crates/ripr/src/analysis/language/python/static_limits.rs",
+  "crates/ripr/src/analysis/language/python/membership_activation.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md",

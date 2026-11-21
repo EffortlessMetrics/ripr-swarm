@@ -387,6 +387,7 @@ mod loop_walk;
 // build.
 #[cfg(test)]
 mod may_reach;
+mod membership_activation;
 mod message_pin;
 mod module_value;
 mod range_activation;
@@ -2629,6 +2630,9 @@ mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
+
+#[cfg(test)]
+mod membership_activation_tests;
 
 #[cfg(test)]
 mod nested_result_tests;
