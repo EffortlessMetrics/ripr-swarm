@@ -872,6 +872,29 @@ id = "RIPR-SPEC-0411"
 scope = "out"
 reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"
 
+# #12922: emitted-class runtime corpus floors. A zero floor is a waiver,
+# not coverage; named static_unknown controls in unemitted_stage_unknown_tests
+# and the corpus class-authority test guard the waived classes.
+[[axis]]
+id = "reachable_unrevealed"
+description = "Runtime-labeled cases whose pinned analyzer class is reachable_unrevealed."
+floor = 2
+
+[[axis]]
+id = "infection_unknown"
+description = "Runtime-labeled cases whose pinned analyzer class is infection_unknown."
+floor = 2
+
+[[axis]]
+id = "propagation_unknown"
+description = "Waived: the python adapter has no producer for propagation_unknown; retain static_unknown rather than inventing stage evidence. See unemitted_stage_unknown_tests and SPEC.md."
+floor = 0
+
+[[axis]]
+id = "partially_discriminated"
+description = "Runtime truth includes at least one assertion failure and one non-equivalent survivor per case; no static adequacy claim."
+floor = 15
+
 # DX scoreboard workload identity pairing
 [[spec]]
 id = "RIPR-SPEC-0436"

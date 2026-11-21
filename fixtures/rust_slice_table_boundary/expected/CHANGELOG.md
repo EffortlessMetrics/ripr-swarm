@@ -360,3 +360,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_slice_table_boundary (29)
+
+Reason:
+RIPR-SPEC-0224: distinguish the file-proximity miss from an assertion-free direct caller (#14808).
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

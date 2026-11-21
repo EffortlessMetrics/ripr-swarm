@@ -50,11 +50,12 @@ use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::{collections::BTreeMap, path::Path, path::PathBuf};
 
 /// Credit every bare boolean assertion whose callee is a resolved `bool` owner.
-pub(super) fn credit_bare_bool_asserts<'a>(
+pub(super) fn credit_bare_bool_asserts<'a, 'o>(
     tests: &mut [PythonTest],
-    owners: &[PythonOwner],
+    owners: impl IntoIterator<Item = &'o PythonOwner, IntoIter: Clone>,
     read_source: impl Fn(&Path) -> Option<&'a str>,
 ) {
+    let owners = owners.into_iter();
     let mut parsed: BTreeMap<PathBuf, Option<(Mod, &'a str)>> = BTreeMap::new();
     let mut kept: BTreeMap<(PathBuf, String, String), bool> = BTreeMap::new();
     let mut credits: Vec<(usize, usize, bool)> = Vec::new();
@@ -74,7 +75,7 @@ pub(super) fn credit_bare_bool_asserts<'a>(
             if assertion.oracle_strength == OracleStrength::Strong {
                 continue;
             }
-            let Some(owner) = unique_callee_owner(test, owners, call) else {
+            let Some(owner) = unique_callee_owner(test, owners.clone(), call) else {
                 continue;
             };
             // A patched or locally rebound callee is not the owner under test.
@@ -156,7 +157,7 @@ fn may_walrus_bind(function_text: &str, name: &str) -> bool {
 /// rules every other related-test consumer uses.
 fn unique_callee_owner<'o>(
     test: &PythonTest,
-    owners: &'o [PythonOwner],
+    owners: impl Iterator<Item = &'o PythonOwner>,
     call: &PythonBareBoolCall,
 ) -> Option<&'o PythonOwner> {
     let import = test
@@ -165,7 +166,6 @@ fn unique_callee_owner<'o>(
         .find(|import| import.alias == call.callee);
     let name = import.map_or(call.callee.as_str(), |import| import.imported.as_str());
     let mut matching = owners
-        .iter()
         .filter(|owner| owner.name == name)
         .filter(|owner| related_test_relation(test, owner).is_some())
         // The relation also matches on call text alone; an imported callee must

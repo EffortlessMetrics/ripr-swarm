@@ -363,6 +363,8 @@ pub(crate) fn parse_mutmut_dump(
         entry.1.push(SyntheticMutant {
             id: name.to_string(),
             mutator,
+            // mutmut names no operator, so it reports no genre.
+            genre: String::new(),
             replacement,
             start_line,
             start_col,
@@ -534,6 +536,7 @@ mod tests {
         );
         assert_eq!(mutant.outcome, "missed");
         assert_eq!(mutant.mutator, "m.x_f");
+        assert_eq!(mutant.genre, "");
         assert_eq!(tool["name"], "mutmut");
         assert_eq!(tool["version"], "3.8.1");
         assert_eq!(tool["records"], 1);

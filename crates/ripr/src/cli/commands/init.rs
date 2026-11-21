@@ -1,7 +1,7 @@
 use super::init_agents;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, reconcile_root};
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
@@ -343,6 +343,17 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         .chain(agent_paths.iter())
     {
         ensure_creatable_parent(path)?;
+    }
+
+    // A directory squatting on a target can never be overwritten, so
+    // "rerun --force" would only fail later with an atomic-write message.
+    for path in std::iter::once(&config_path).chain(workflow_path.as_ref()) {
+        if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
+            return Err(format!(
+                "{} is a directory, not a file; move or remove it, then rerun init",
+                output::path::human_path(path)
+            ));
+        }
     }
 
     // `--ci` and `--mcp` add files; they keep an existing ripr.toml rather
@@ -975,7 +986,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
                 let reconciled = reconcile_root(
                     &options.root,
                     root_explicit,
-                    expect_value(args, i, "--root")?,
+                    init_flag_value(args, i, "--root")?,
                     "init",
                 )?;
                 options.root = reconciled;
@@ -983,12 +994,24 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
             }
             "--ci" => {
                 i += 1;
-                options.ci = Some(parse_init_ci(expect_value(args, i, "--ci")?)?);
+                let provider = init_flag_value(args, i, "--ci")?;
+                if options.ci.is_some() {
+                    // `init` generates one CI provider per run, so a repeat
+                    // would silently drop the first (#15259).
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        "--ci",
+                        "init --ci takes one provider per run; pass --ci github or --ci gitlab, then rerun init for the other",
+                    ));
+                }
+                options.ci = Some(parse_init_ci(provider)?);
             }
             "--mcp" => options.mcp = true,
             "--agents" => {
                 i += 1;
-                init_agents::parse_agents(expect_value(args, i, "--agents")?, &mut options.agents)?;
+                init_agents::parse_agents(
+                    init_flag_value(args, i, "--agents")?,
+                    &mut options.agents,
+                )?;
             }
             "--dry-run" => options.dry_run = true,
             "--force" => options.force = true,
@@ -997,6 +1020,15 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         i += 1;
     }
     Ok(options)
+}
+
+/// A following flag is a missing value, not an unknown provider/target
+/// (`init --ci --root X`).
+fn init_flag_value<'a>(args: &'a [String], idx: usize, flag: &str) -> Result<&'a str, String> {
+    match args.get(idx) {
+        Some(value) if !value.starts_with("--") => Ok(value.as_str()),
+        _ => Err(crate::cli::parse::missing_value(flag)),
+    }
 }
 
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
