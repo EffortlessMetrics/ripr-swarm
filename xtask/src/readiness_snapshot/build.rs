@@ -92,6 +92,10 @@ fn apply_rehearsal_adapters(
     receipt: &super::model::RehearsalReceipt,
     path: &Path,
 ) -> Result<(), String> {
+    // A plan establishes no execution evidence, even for a caller-created receipt.
+    if receipt.plan.is_some() {
+        return Ok(());
+    }
     if receipt.source_sha != source_sha {
         set_dimension(
             dimensions,
@@ -142,7 +146,7 @@ fn apply_rehearsal_adapters(
     let artifact_digest = digest_file(path).ok();
     let evidence = vec![ReadinessEvidenceRecord {
         producer: "readiness_no_publish_rehearsal".to_string(),
-        schema_version: super::model::REHEARSAL_RECEIPT_SCHEMA_VERSION.to_string(),
+        schema_version: receipt.schema_version.clone(),
         command: "cargo xtask readiness-rehearsal --sha <SHA> --no-publish".to_string(),
         artifact: path.display().to_string(),
         artifact_digest,
@@ -197,6 +201,9 @@ fn apply_rehearsal_adapters(
 pub(crate) fn package_dimension_state(
     receipt: &super::model::RehearsalReceipt,
 ) -> ReadinessDimensionState {
+    if receipt.plan.is_some() {
+        return ReadinessDimensionState::NotProven;
+    }
     if receipt
         .install_smokes
         .iter()
