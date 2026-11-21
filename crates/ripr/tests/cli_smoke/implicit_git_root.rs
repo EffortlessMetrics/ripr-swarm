@@ -305,7 +305,8 @@ fn git_launch_failure_stops_root_discovery_with_consumer_recovery() -> TestResul
         assert_eq!(output.status.code(), Some(2));
         if expects_envelope {
             // #6834: `check --json` refusals emit the envelope on stdout;
-            // `cache` keeps the legacy empty-stdout contract.
+            // `cache status --json` writes the shared refusal document
+            // (#15260).
             let value = super::assert_check_json_refusal(
                 &output,
                 "repository_root_unusable",
@@ -320,7 +321,7 @@ fn git_launch_failure_stops_root_discovery_with_consumer_recovery() -> TestResul
             );
             assert!(message.contains(recovery), "{message}");
         } else {
-            assert!(output.stdout.is_empty());
+            assert_cache_status_refusal_document(&output)?;
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -364,7 +365,11 @@ fn fixed_root_probe_timeout_names_only_effective_consumer_recovery() -> TestResu
     ] {
         let output = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &project, &args, &env)?;
         assert_eq!(output.status.code(), Some(2));
-        assert!(output.stdout.is_empty());
+        if args[0] == "cache" {
+            assert_cache_status_refusal_document(&output)?;
+        } else {
+            assert!(output.stdout.is_empty());
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("git_invocation_timeout:"), "{stderr}");
         assert!(
@@ -452,5 +457,22 @@ fn task_first_commands_resolve_workspace_root_from_a_member_directory() -> TestR
     }
 
     fs::remove_dir_all(outer)?;
+    Ok(())
+}
+
+/// `cache status --json` refuses with the shared refusal document on stdout
+/// (#15260): code `input_unusable`, the human cause as the message and the
+/// command help as `next`.
+#[cfg(unix)]
+fn assert_cache_status_refusal_document(
+    output: &std::process::Output,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(value["status"], "refused", "{value:#}");
+    assert_eq!(value["error"]["code"], "input_unusable", "{value:#}");
+    assert_eq!(
+        value["error"]["next"]["command"], "ripr cache status --help",
+        "{value:#}"
+    );
     Ok(())
 }

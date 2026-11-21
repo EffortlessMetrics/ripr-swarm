@@ -12,6 +12,7 @@ tests = [
   "crates/ripr/tests/mutants_skip_owner_opt_out.rs::trait_level_mutants_skip_withholds_default_method_only",
   "crates/ripr/tests/mutants_skip_owner_opt_out.rs::fn_nested_in_a_skipped_fn_is_withheld",
   "crates/ripr/tests/mutants_skip_owner_opt_out.rs::explain_states_owner_opt_out_withholding",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::agent_and_replay_explain_the_recorded_owner_opt_out",
   "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::reads_impl_trait_module_and_file_scopes_innermost_first",
   "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::inner_attributes_are_rewritten_to_outer_form",
   "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::unparsable_source_and_ambiguous_owner_yield_nothing",

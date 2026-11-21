@@ -1,0 +1,15 @@
+# config validate checks the selected suppressions manifest (#15308).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_missing_configured_manifest_fails_and_names_the_key",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_missing_default_manifest_stays_valid_and_silent",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_malformed_default_manifest_fails_without_any_ripr_toml",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_malformed_configured_manifest_fails_with_its_own_path",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_valid_manifest_is_named_with_its_entry_count",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_directory_at_the_manifest_path_fails_instead_of_passing",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_control_byte_in_the_manifest_path_is_escaped_on_success",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_dangling_default_manifest_link_fails",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_dangling_configured_manifest_link_fails",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_manifest_link_to_a_real_file_is_read",
+]

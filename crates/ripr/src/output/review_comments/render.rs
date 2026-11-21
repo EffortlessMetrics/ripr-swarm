@@ -511,7 +511,25 @@ pub(super) fn review_recommendation_json(
     let seam = &entry.seam;
     let missing = missing_records_for(entry);
     let recommended = agent_seam_packets::recommended_test_for(entry);
-    let nearest = agent_seam_packets::nearest_strong_test_to_imitate(seam.kind(), &entry.evidence);
+    // A strong assertion in another function can be ranked as navigation
+    // context. The producer's reach rule also has to admit this row (#15805).
+    let mut oracle_candidates = entry
+        .evidence
+        .related_tests
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|test| {
+            entry.evidence.reach.state == crate::domain::StageState::Yes
+                && matches!(
+                    entry.evidence.observe.state,
+                    crate::domain::StageState::Yes | crate::domain::StageState::Weak
+                )
+                && test
+                    .relation_reason
+                    .establishes_reach(test.assertion_targets_non_function != Some(true))
+        });
+    let nearest =
+        agent_seam_packets::first_strong_test_to_imitate(seam.kind(), oracle_candidates.clone());
     let candidate_values = agent_seam_packets::candidate_values_for(entry, &missing);
     let assertion_shape = agent_seam_packets::assertion_shape_for_entry(entry);
     let seam_id = seam.id().as_str();
@@ -654,8 +672,7 @@ pub(super) fn review_recommendation_json(
     // top-ranked related test, else no oracle observed (`unknown` / `none`).
     // This projects the same oracle facts agent briefs and seam packets carry;
     // the review card does not compute an oracle of its own.
-    let representative_oracle =
-        nearest.or_else(|| entry.evidence.related_tests.first().map(AsRef::as_ref));
+    let representative_oracle = nearest.or_else(|| oracle_candidates.next());
     let oracle_kind = representative_oracle
         .map(|test| test.oracle_kind.as_str())
         .unwrap_or_else(|| crate::domain::OracleKind::Unknown.as_str());

@@ -1618,6 +1618,203 @@ fn given_strict_boundary_seam_when_tests_skip_equal_value_then_grip_names_missin
     Ok(())
 }
 
+/// #14487: a test line that calls a free owner twice supplies both inputs to
+/// the seam, as it already does to the diff-scoped probe path (#13373).
+/// `assert_eq!(ok(12), true); assert_eq!(ok(11), false);` on one line covers `n > 11` at its
+/// equality boundary, so `ripr check` reads the probe `exposed`; the seam
+/// used to read only the line's first call, name `11 (equality boundary)`
+/// missing, and send a weak-grip gap to the gate. The negatives keep the
+/// expansion bounded: a line without the boundary input still names it, a
+/// boundary call no assertion observes directly (`!ok(11)`, `let _ =
+/// ok(11)`) lends no input, and neither does a same-line call that resolves
+/// to a rival module's `ok`.
+#[test]
+fn given_two_owner_calls_on_one_test_line_when_second_hits_boundary_then_seam_reads_it()
+-> Result<(), String> {
+    // (test file source, expected missing equality boundary)
+    let cases = [
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(ok(11), false); }\n",
+            false,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(11), false); assert_eq!(ok(12), true); }\n",
+            false,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(ok(13), true); }\n",
+            true,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(!ok(11), true); }\n",
+            true,
+        ),
+        (
+            "#[test]\nfn b() { assert_eq!(ok(12), true); let _ = ok(11); }\n",
+            true,
+        ),
+        (
+            "mod other { pub fn ok(_: u32) -> bool { false } }\n#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(other::ok(11), false); }\n",
+            true,
+        ),
+    ];
+    for (tests_src, expect_missing) in cases {
+        let prod_src = "pub fn ok(n: u32) -> bool { n > 11 }\n";
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), prod_src),
+            (PathBuf::from("tests/t.rs"), tests_src),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "expected a predicate seam for `n > 11`".to_string())?;
+        if predicate.expression().trim() != "n > 11" {
+            return Err(format!(
+                "fixture parsed the wrong subject: `{}`",
+                predicate.expression()
+            ));
+        }
+        let evidence = evidence_for_seam(predicate, &index);
+        if evidence.related_tests.is_empty() {
+            return Err(format!("fixture should relate test `b`: {tests_src}"));
+        }
+        let missing: Vec<&str> = evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect();
+        let class = classify_seam(predicate, &evidence);
+        if expect_missing {
+            if missing != ["11 (equality boundary)"] || class == SeamGripClass::StronglyGripped {
+                return Err(format!(
+                    "{tests_src:?} must keep `11 (equality boundary)` missing, got {} {missing:?}",
+                    class.as_str()
+                ));
+            }
+        } else if !missing.is_empty() || class != SeamGripClass::StronglyGripped {
+            return Err(format!(
+                "{tests_src:?} should be strongly gripped with nothing missing, got {} {missing:?}",
+                class.as_str()
+            ));
+        }
+    }
+    // The rival negative must fail on the identity guard, not on the shape
+    // reading: the observed-call reader does list `other::ok(11)`'s row, so
+    // only `qualified_owner_calls_resolve` keeps it from the seam.
+    let rival_src = "mod other { pub fn ok(_: u32) -> bool { false } }\n#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(other::ok(11), false); }\n";
+    let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub fn ok(n: u32) -> bool { n > 11 }\n",
+        ),
+        (PathBuf::from("tests/t.rs"), rival_src),
+    ])?;
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| {
+            function.name == "ok" && function.file.as_path() == Path::new("src/lib.rs")
+        })
+        .ok_or_else(|| "rival fixture lost the owner `ok`".to_string())?;
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "b")
+        .ok_or_else(|| "rival fixture lost test `b`".to_string())?;
+    let (call_line, call_text) = test
+        .body_calls()
+        .find(|call| call.name == "ok")
+        .map(|call| (call.line, call.text.to_string()))
+        .ok_or_else(|| "rival fixture lost its owner call".to_string())?;
+    let rows = crate::analysis::classify::observed_owner_call_rows_on_line(
+        test, call_line, &call_text, owner, &index,
+    );
+    if !rows
+        .iter()
+        .any(|row| row.len() == 1 && row.first().map(|value| value.trim()) == Some("11"))
+    {
+        return Err(format!(
+            "the rival line's observed rows should list `other::ok(11)`, so the guard is what refuses it: {rows:?}"
+        ));
+    }
+    given_same_line_boundary_call_the_seam_cannot_trust_then_boundary_stays_missing()
+}
+
+/// #14487 review (PR #15517): three same-line shapes whose second boundary
+/// call must not reach the seam. Each fixture's premise is asserted (its
+/// owner-call line holds the shape) before the seam's verdict is read.
+fn given_same_line_boundary_call_the_seam_cannot_trust_then_boundary_stays_missing()
+-> Result<(), String> {
+    // (label, test file source, text the owner-call line must hold)
+    let cases = [
+        (
+            "unexecuted branch",
+            "#[test]\nfn b() { assert_eq!(ok(12), true); if false { assert_eq!(ok(11), false); } }\n",
+            "if false { assert_eq!(ok(11), false); }",
+        ),
+        (
+            "uncalled closure",
+            "#[test]\nfn b() { assert_eq!(ok(12), true); let _f = || assert_eq!(ok(11), false); }\n",
+            "|| assert_eq!(ok(11), false)",
+        ),
+        (
+            "multi-line rival assertion",
+            "mod other { pub fn ok(_: u32) -> bool { false } }\n#[test]\nfn b() { assert_eq!(ok(12), true); assert_eq!(ok(13), true); assert_eq!(\n    other::ok(\n        11), false);\n}\n",
+            "assert_eq!(ok(13), true); assert_eq!(",
+        ),
+        (
+            "field argument reassigned on the line",
+            "struct Case { n: u32 }\n#[test]\nfn b() { let mut case = Case { n: 11 }; assert_eq!(ok(12), true); case.n = 13; assert_eq!(ok(case.n), true); }\n",
+            "assert_eq!(ok(case.n), true)",
+        ),
+    ];
+    for (label, tests_src, premise) in cases {
+        let index = index_from_files(&[
+            (
+                PathBuf::from("src/lib.rs"),
+                "pub fn ok(n: u32) -> bool { n > 11 }\n",
+            ),
+            (PathBuf::from("tests/t.rs"), tests_src),
+        ])?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "b")
+            .ok_or_else(|| format!("{label}: fixture lost test `b`"))?;
+        if !test
+            .body_calls()
+            .any(|call| call.name == "ok" && call.text.contains(premise))
+        {
+            return Err(format!(
+                "{label}: no owner-call line holds the intended shape `{premise}`"
+            ));
+        }
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| format!("{label}: expected a predicate seam for `n > 11`"))?;
+        let evidence = evidence_for_seam(predicate, &index);
+        if evidence.related_tests.is_empty() {
+            return Err(format!("{label}: fixture should relate test `b`"));
+        }
+        let missing: Vec<&str> = evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect();
+        let class = classify_seam(predicate, &evidence);
+        if missing != ["11 (equality boundary)"] || class == SeamGripClass::StronglyGripped {
+            return Err(format!(
+                "{label}: must keep `11 (equality boundary)` missing, got {} {missing:?}",
+                class.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// #4228: a reversed literal (`100 < amount`) or a local boundary
 /// (`let limit = 100;`) names its boundary and closes only when a test
 /// passes the boundary value. The same shapes close in `check`
@@ -3052,6 +3249,7 @@ fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |file: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from(file),
         line: 3,
@@ -3084,6 +3282,7 @@ fn window_boundaries_release_only_unheld_shared_grips() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |test_name: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: test_name.to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3115,6 +3314,7 @@ fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let base = RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3246,6 +3446,7 @@ fn shared_grips_retain_one_record_per_distinct_grip_at_high_fan_out() -> Result<
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |test_name: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: test_name.to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3280,6 +3481,7 @@ fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> 
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |file: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from(file),
         line: 3,
@@ -3320,6 +3522,7 @@ fn cancelled_evidence_pass_releases_provisional_shared_grips() -> Result<(), Str
         .ok_or("fixture must build a context")?;
     let provisional: Weak<RelatedTestGrip> = {
         let shared = context.share_grip(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing_tests.rs"),
             line: 12,
@@ -3410,6 +3613,103 @@ fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), Str
     if serial.matches("seam_id").count() != seams.len() {
         return Err("every seam must produce evidence".into());
     }
+    Ok(())
+}
+
+#[test]
+fn direct_candidate_walk_observes_cancellation() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    let prod = PathBuf::from("src/value.rs");
+    let tests = (0..65)
+        .map(|i| format!("#[test] fn case_{i}() {{ assert_eq!(value(), 1); }}\n"))
+        .collect::<String>();
+    let index = index_from_files(&[
+        (prod.clone(), "pub fn value() -> i32 { 1 }"),
+        (PathBuf::from("tests/value.rs"), &tests),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams.first().ok_or("fixture needs a return seam")?;
+    let context = CompactGripContext::new(&index);
+    let owner = related_tests::OwnerContext::resolve(seam, &context);
+    let mut complete = BTreeMap::new();
+    related_tests::match_direct_owner_call(&mut complete, &context, None, &owner);
+    assert_eq!(complete.len(), 65);
+    let started = Instant::now();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_secs(1),
+        Arc::new(move || {
+            if clock_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                started
+            } else {
+                started + Duration::from_secs(1)
+            }
+        }),
+    );
+    let mut interrupted = BTreeMap::new();
+    cancellation::with_token(&token, || {
+        related_tests::match_direct_owner_call(&mut interrupted, &context, None, &owner);
+    });
+    assert_eq!(
+        interrupted.len(),
+        32,
+        "a live first batch must stop at the next periodic checkpoint"
+    );
+    assert_eq!(
+        token.observed_abort(),
+        Some(AnalysisAbortKind::DeadlineExceeded)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[test]
+fn evidence_pass_discards_seam_when_deadline_expires_during_relation_walk() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass.context.as_ref().ok_or("fixture context must build")?;
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            find_related_tests_with_context(seam, context)
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+        })
+        .ok_or("fixture needs a directly related test")?;
+    assert_eq!(pass.evidence_for(std::slice::from_ref(seam)).len(), 1);
+    let started = Instant::now();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_secs(1),
+        Arc::new(move || {
+            if clock_calls.fetch_add(1, Ordering::SeqCst) >= 2 {
+                started + Duration::from_secs(1)
+            } else {
+                started
+            }
+        }),
+    );
+    let evidence =
+        cancellation::with_token(&token, || pass.evidence_for(std::slice::from_ref(seam)));
+    assert!(
+        evidence.is_empty(),
+        "the interrupted seam must not become evidence"
+    );
+    assert_eq!(
+        token.observed_abort(),
+        Some(AnalysisAbortKind::DeadlineExceeded)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
     Ok(())
 }
 
@@ -13159,6 +13459,42 @@ fn given_assertion_target_token_in_test_assertion_when_related_tests_are_ranked_
         grip.relation_reason,
         RelationReason::AssertionTargetAffinity
     );
+    if grip.assertion_targets_non_function != Some(false) {
+        return Err(format!(
+            "function affinity acquired module authority: {grip:?}"
+        ));
+    }
+    // Exercise the same full producer on a supplied non-function seam. The
+    // Rust inventory does not currently emit predicate seams for const items.
+    let path = PathBuf::from("src/pricing.rs");
+    let expression = "6 >= discount_threshold";
+    let source = "const discount_threshold: i32 = 5;
+pub const DISCOUNTED: bool = 6 >= discount_threshold;";
+    let index = index_from_files(&[(path.clone(), source), (PathBuf::from(test.0), test.1)])?;
+    let seam = RepoSeam::new(
+        path,
+        "DISCOUNTED",
+        SeamKind::PredicateBoundary,
+        source.find(expression).ok_or("missing const expression")?,
+        2,
+        expression,
+        RequiredDiscriminator::BoundaryValue {
+            description: expression.into(),
+        },
+        ExpectedSink::ReturnValue,
+    );
+    let evidence = evidence_for_seam(&seam, &index);
+    let module = evidence
+        .related_tests
+        .first()
+        .ok_or("missing module assertion-target row")?;
+    if module.relation_reason != RelationReason::AssertionTargetAffinity
+        || module.assertion_targets_non_function != Some(true)
+    {
+        return Err(format!(
+            "indexed module assertion target lost owner authority: {module:?}"
+        ));
+    }
     assert_eq!(grip.relation_confidence, RelationConfidence::Medium);
     Ok(())
 }
@@ -24355,6 +24691,59 @@ fn branch_local_return_value_seam_record_agrees_with_the_stage() -> Result<(), S
         OracleStrength::Strong,
         "the per-test record must not publish strong grip the stage refuses: {grip:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn tuple_field_guard_agrees_with_the_per_test_oracle_grade() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let missed =
+        include_str!("../../../../../fixtures/rust_tuple_guard_other_branch/input/src/lib.rs");
+    let taken = missed.replace(
+        "f(Money(2), Money(3)), Money(0)",
+        "f(Money(102), Money(3)), Money(105)",
+    );
+    let custom_eq = missed.replace(", PartialEq", "")
+        + r#"
+impl PartialEq for crate::Money {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && f(Money(102), Money(3)).0 == 105
+    }
+}
+"#;
+    let custom_drop = missed.replace("Clone, Copy, ", "")
+        + r#"
+impl Drop for crate::Money {
+    fn drop(&mut self) {
+        if self.0 == 2 { assert_eq!(f(Money(102), Money(3)).0, 105); }
+    }
+}
+"#;
+    for (source, expected) in [
+        (missed, OracleStrength::Weak),
+        (taken.as_str(), OracleStrength::Strong),
+        (custom_eq.as_str(), OracleStrength::Strong),
+        (custom_drop.as_str(), OracleStrength::Strong),
+    ] {
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::ReturnValue && seam.expression() == "Money(b.0 + a.0)"
+            })
+            .ok_or("missing edited return seam")?;
+        let evidence = evidence_for_seam(seam, &index);
+        let [record] = evidence.related_tests.as_slice() else {
+            return Err("expected the one assertion on the owner".into());
+        };
+        assert_eq!(record.test_name, "observes");
+        assert_eq!(record.oracle_strength, expected);
+        assert_eq!(
+            evidence.discriminate.state == StageState::Yes,
+            expected == OracleStrength::Strong
+        );
+    }
     Ok(())
 }
 

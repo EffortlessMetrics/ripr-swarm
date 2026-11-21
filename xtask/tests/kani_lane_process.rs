@@ -329,3 +329,7 @@ fn kani_runner_requires_contract_package_results() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(feature = "automation")]
+#[path = "kani_lane_process/producer_aliases.rs"]
+mod producer_aliases;

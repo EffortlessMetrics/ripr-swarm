@@ -29,7 +29,7 @@ Changed
   before: self.items.push(x + 1);
   after:  self.items.push(x);
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::impl Bag::add

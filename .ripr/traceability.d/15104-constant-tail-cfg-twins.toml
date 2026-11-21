@@ -3,6 +3,9 @@
 [[extend]]
 id = "RIPR-SPEC-0197"
 tests = [
+  "crates/ripr/tests/constant_tail_cfg_twin.rs::an_unparseable_declaring_file_withholds_the_credit",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::may_declare_module_keeps_any_mod_keyword",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::path_declarations_gate_only_the_files_they_may_move",
   "crates/ripr/src/analysis/diff/base_owner.rs::tests::owner_swap_reads_new_side_gates_and_twins",
   "crates/ripr/tests/constant_tail_cfg_twin.rs::a_plain_integer_constant_tail_keeps_its_credit",
   "crates/ripr/tests/constant_tail_cfg_twin.rs::an_unrelated_cfg_test_module_keeps_the_credit",
@@ -11,6 +14,9 @@ tests = [
   "crates/ripr/tests/constant_tail_cfg_twin.rs::the_second_platform_twin_changing_is_not_credited",
   "crates/ripr/tests/constant_tail_cfg_twin.rs::a_cfg_module_twin_is_not_credited",
   "crates/ripr/tests/constant_tail_cfg_twin.rs::a_cfg_attr_on_the_owner_is_not_credited",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::may_declare_module_keeps_any_mod_keyword",
+  "crates/ripr/src/analysis/diff/base_owner.rs::tests::path_declarations_gate_only_the_files_they_may_move",
+  "crates/ripr/tests/constant_tail_cfg_twin.rs::an_unparseable_declaring_file_withholds_the_credit",
 ]
 code = [
   "crates/ripr/src/analysis/diff/base_owner.rs",

@@ -6,8 +6,8 @@ use crate::cli::suggest::unknown_argument;
 use crate::output;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_JSON: &str = "target/ripr/reports/kani.json";
-const DEFAULT_MARKDOWN: &str = "target/ripr/reports/kani.md";
+const DEFAULT_JSON: &str = "target/ripr/reports/kani-import.json";
+const DEFAULT_MARKDOWN: &str = "target/ripr/reports/kani-import.md";
 
 /// Help route these argument errors point at. The kani options are documented
 /// only behind the command's own `--help` (#13237); the top-level `ripr help`

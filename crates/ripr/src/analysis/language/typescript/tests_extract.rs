@@ -233,7 +233,8 @@ fn extract_tests_expanding_suite_factories(
                 &ret.program.body,
                 &imports,
             )
-            .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
+            .with_strict_matchers(strict_equality_matchers(&ret.program.body, source))
+            .with_registers_matchers(file_may_register_matchers(source)),
             admission,
             hook_calls,
             ..TestScope::default()
@@ -1047,9 +1048,27 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         .iter()
         .flatten()
         .any(|(name, _, _)| name == "undefined");
+    // `Deno.test` registers through the runtime's global namespace; a
+    // declaration, parameter or import named `Deno` makes it an ordinary call
+    // whose callback may never run, so it registers nothing.
+    let deno_shadowed = scope
+        .levels
+        .iter()
+        .flatten()
+        .any(|(name, _, _)| name == "Deno")
+        || scope
+            .registration_levels
+            .iter()
+            .flatten()
+            .any(|(name, _)| name == "Deno")
+        || imports.iter().any(|import| import.local == "Deno");
     for stmt in statements {
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
+        }
+        if deno_shadowed && statement_call(stmt).is_some_and(|call| deno_test_callee(&call.callee))
+        {
+            continue;
         }
         // Both bare and awaited roots need runner provenance before an
         // assertion can receive credit. Restrict this check to registration
@@ -3561,6 +3580,17 @@ fn unused_function_reach_body(
             &source[function.span.start as usize..function.span.end as usize],
             function.body.as_ref()?.statements.as_slice(),
         )
+    } else if deno_test_callee(&call.callee) {
+        // A Deno registration's callback may sit in an options object or be
+        // the only argument; read the same callback the assertions come from.
+        (
+            call.span.start as usize,
+            call_text,
+            deno_test_site(call, source)?
+                .callback
+                .body_statements()?
+                .as_slice(),
+        )
     } else {
         (
             call.span.start as usize,
@@ -3823,8 +3853,19 @@ fn test_name_and_assertions_from_registration(
     bindings: &TypeScriptAssertionBindings,
     registration: Option<&RegistrationScope>,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
-    let vitest_for = call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test);
-    if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+    // Deno's `Deno.test(...)` registers through the global namespace and has
+    // its own argument shapes; the callback is read from a local arena copy.
+    let deno_arena;
+    let deno = if deno_test_callee(&call.callee) {
+        deno_arena = oxc_allocator::Allocator::default();
+        Some(deno_test_registration(call, source, &deno_arena)?)
+    } else {
+        None
+    };
+    let vitest_for =
+        deno.is_none() && call_callee_is_active_for_declaration(call, TestDeclarationRoot::Test);
+    if deno.is_none()
+        && !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
         && !vitest_for
         && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Test)
@@ -3841,9 +3882,14 @@ fn test_name_and_assertions_from_registration(
         return None;
     }
 
-    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let ava_macro = bindings.registration_is_ava(callee_root_name(&call.callee));
-    let callback = call.arguments.get(callback_index(call, ava_macro))?;
+    let (name, callback) = match &deno {
+        Some(deno) => (deno.name.clone(), &deno.callback),
+        None => (
+            title_argument(call.arguments.first()?, source, call.span.start as usize)?,
+            call.arguments.get(callback_index(call, ava_macro))?,
+        ),
+    };
     // `node:test` / AVA-style contexts end a running test as skipped or todo
     // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 17):
     // the run passes however the later assertions would have gone, so the
@@ -4224,6 +4270,215 @@ fn test_callback_receiver_name(arg: &oxc_ast::ast::Argument<'_>) -> Option<Strin
     };
     let first = params.items.first()?;
     super::owners::binding_identifier_name(&first.pattern).map(|name| name.to_string())
+}
+
+/// A `Deno.test` registration: its title and its callback.
+struct DenoTest<'a> {
+    name: String,
+    callback: oxc_ast::ast::Argument<'a>,
+}
+
+/// Whether `callee` is `Deno.test` or `Deno.test.only`.
+fn deno_test_callee(callee: &Expression<'_>) -> bool {
+    let Expression::StaticMemberExpression(member) = callee else {
+        return false;
+    };
+    let is_deno_test = |member: &oxc_ast::ast::StaticMemberExpression<'_>| {
+        member.property.name == "test"
+            && matches!(&member.object, Expression::Identifier(object) if object.name == "Deno")
+    };
+    is_deno_test(member)
+        || (member.property.name == "only"
+            && matches!(
+                &member.object,
+                Expression::StaticMemberExpression(inner) if is_deno_test(inner)
+            ))
+}
+
+/// Whether a Deno options object leaves the test running: `ignore` must be
+/// literal `false` when present, and a spread or computed key may carry it.
+fn deno_options_are_active(options: &oxc_ast::ast::ObjectExpression<'_>) -> bool {
+    options.properties.iter().all(|property| {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return false;
+        };
+        if property.computed {
+            return false;
+        }
+        let key = match &property.key {
+            PropertyKey::StaticIdentifier(ident) => ident.name.as_str(),
+            PropertyKey::StringLiteral(literal) => literal.value.as_str(),
+            _ => return false,
+        };
+        key != "ignore"
+            || (property.kind == oxc_ast::ast::PropertyKind::Init
+                && !property.method
+                && matches!(&property.value, Expression::BooleanLiteral(l) if !l.value))
+    })
+}
+
+/// Where a `Deno.test` registration keeps its callback: a positional
+/// argument, or the `fn` value of its options object. Only a function value
+/// is a callback.
+enum DenoCallback<'c, 'a> {
+    Argument(&'c oxc_ast::ast::Argument<'a>),
+    Property(&'c Expression<'a>),
+}
+
+impl<'c, 'a> DenoCallback<'c, 'a> {
+    fn argument(argument: &'c oxc_ast::ast::Argument<'a>) -> Option<Self> {
+        matches!(
+            argument,
+            oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                | oxc_ast::ast::Argument::FunctionExpression(_)
+        )
+        .then_some(Self::Argument(argument))
+    }
+
+    fn property(expression: &'c Expression<'a>) -> Option<Self> {
+        matches!(
+            expression.get_inner_expression(),
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+        )
+        .then_some(Self::Property(expression))
+    }
+
+    /// The callback's body statements.
+    fn body_statements(&self) -> Option<&'c oxc_allocator::Vec<'a, Statement<'a>>> {
+        match self {
+            Self::Argument(argument) => match argument {
+                oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => {
+                    Some(&arrow.body.statements)
+                }
+                oxc_ast::ast::Argument::FunctionExpression(function) => {
+                    function.body.as_ref().map(|body| &body.statements)
+                }
+                _ => None,
+            },
+            Self::Property(expression) => match expression.get_inner_expression() {
+                Expression::ArrowFunctionExpression(arrow) => Some(&arrow.body.statements),
+                Expression::FunctionExpression(function) => {
+                    function.body.as_ref().map(|body| &body.statements)
+                }
+                _ => None,
+            },
+        }
+    }
+
+    /// The callback as an argument in `arena`, for the registration readers
+    /// that take the callback argument.
+    fn clone_into<'b>(
+        &self,
+        arena: &'b oxc_allocator::Allocator,
+    ) -> Option<oxc_ast::ast::Argument<'b>> {
+        use oxc_allocator::CloneIn;
+        match self {
+            Self::Argument(oxc_ast::ast::Argument::ArrowFunctionExpression(arrow)) => Some(
+                oxc_ast::ast::Argument::ArrowFunctionExpression(arrow.clone_in(arena)),
+            ),
+            Self::Argument(oxc_ast::ast::Argument::FunctionExpression(function)) => Some(
+                oxc_ast::ast::Argument::FunctionExpression(function.clone_in(arena)),
+            ),
+            Self::Argument(_) => None,
+            Self::Property(expression) => match expression.get_inner_expression() {
+                Expression::ArrowFunctionExpression(arrow) => Some(
+                    oxc_ast::ast::Argument::ArrowFunctionExpression(arrow.clone_in(arena)),
+                ),
+                Expression::FunctionExpression(function) => Some(
+                    oxc_ast::ast::Argument::FunctionExpression(function.clone_in(arena)),
+                ),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// A `Deno.test` registration's title and where its callback is.
+struct DenoTestSite<'c, 'a> {
+    name: String,
+    callback: DenoCallback<'c, 'a>,
+}
+
+/// The four Deno registration shapes: `Deno.test("name", fn)` (optionally
+/// `("name", options, fn)`), `Deno.test({ name, fn })`, `Deno.test(options,
+/// fn)` and `Deno.test(function named() {})`. A test the options ignore,
+/// or whose title or callback cannot be read, registers nothing. The one
+/// shape reader for both the assertion and the reach readers.
+fn deno_test_site<'c, 'a>(
+    call: &'c oxc_ast::ast::CallExpression<'a>,
+    source: &SourceText<'_>,
+) -> Option<DenoTestSite<'c, 'a>> {
+    let start = call.span.start as usize;
+    match call.arguments.first()? {
+        oxc_ast::ast::Argument::ObjectExpression(options) => {
+            if !deno_options_are_active(options) {
+                return None;
+            }
+            let mut name = None;
+            let mut callback = None;
+            for property in &options.properties {
+                let ObjectPropertyKind::ObjectProperty(property) = property else {
+                    continue;
+                };
+                match property.key.static_name().as_deref() {
+                    Some("name") => {
+                        name = Some(match &property.value {
+                            Expression::StringLiteral(literal) => literal.value.to_string(),
+                            Expression::TemplateLiteral(template)
+                                if template.single_quasi().is_some() =>
+                            {
+                                template.single_quasi()?.to_string()
+                            }
+                            _ => computed_title(source.line_for_offset(start)),
+                        });
+                    }
+                    Some("fn") => callback = DenoCallback::property(&property.value),
+                    _ => {}
+                }
+            }
+            let callback = callback.or_else(|| DenoCallback::argument(call.arguments.get(1)?))?;
+            Some(DenoTestSite {
+                name: name.unwrap_or_else(|| computed_title(source.line_for_offset(start))),
+                callback,
+            })
+        }
+        first @ oxc_ast::ast::Argument::FunctionExpression(function) => {
+            let name = function.id.as_ref()?.name.to_string();
+            Some(DenoTestSite {
+                name,
+                callback: DenoCallback::argument(first)?,
+            })
+        }
+        title @ (oxc_ast::ast::Argument::StringLiteral(_)
+        | oxc_ast::ast::Argument::TemplateLiteral(_)) => {
+            let name = title_argument(title, source, start)?;
+            let mut index = 1;
+            if let Some(oxc_ast::ast::Argument::ObjectExpression(options)) = call.arguments.get(1) {
+                if !deno_options_are_active(options) {
+                    return None;
+                }
+                index = 2;
+            }
+            Some(DenoTestSite {
+                name,
+                callback: DenoCallback::argument(call.arguments.get(index)?)?,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// A [`deno_test_site`] with its callback cloned into `arena`.
+fn deno_test_registration<'b>(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    arena: &'b oxc_allocator::Allocator,
+) -> Option<DenoTest<'b>> {
+    let site = deno_test_site(call, source)?;
+    Some(DenoTest {
+        name: site.name,
+        callback: site.callback.clone_into(arena)?,
+    })
 }
 
 fn call_callee_is_active_declaration(
