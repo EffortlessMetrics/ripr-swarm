@@ -32,6 +32,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         configured_languages: configured_languages(&options.root),
         root: options.root,
         base_ref: options.base_ref,
+        event_name: settings.event_name.clone(),
         upload_sarif: options.upload_sarif == "true",
         pull_request: settings.pull_request(),
         gate_baseline: !options.gate_baseline.is_empty(),

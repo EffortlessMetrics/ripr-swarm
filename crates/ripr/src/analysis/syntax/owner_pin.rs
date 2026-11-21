@@ -1607,10 +1607,14 @@ fn macro_binding_sites_in_tree(
                     continue;
                 }
                 // RIPR-SPEC-0369: an exact verification-prelude glob exports no
-                // assertion macro, so it cannot rebind a trusted name.
+                // assertion macro, so it cannot rebind a trusted name. A plain
+                // import that binds the root name (`use other::vstd;`) takes
+                // the path over for the module, as for the standard roots; an
+                // absolute `::vstd` path still names the extern crate.
                 if item.star_token().is_some()
                     && is_assertion_free_prelude_glob(&item)
                     && !drop_in_shadowed(root, external)
+                    && (external || !root_imported())
                     && drop_in_verified(root)
                 {
                     continue;
@@ -1685,6 +1689,19 @@ fn macro_binding_sites_in_tree(
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
                     let kind = if !trusted.contains(&name) {
+                        None
+                    } else if item.rename().is_none()
+                        && standard_root
+                        && is_standard_macro_import(&item, name)
+                        && !drop_in_shadowed(root, external)
+                        && drop_in_verified(if root == "alloc" {
+                            crate::analysis::facts::drop_in::ALLOC_MACRO_IMPORT_ROOT
+                        } else {
+                            root
+                        })
+                    {
+                        // #15263: `use std::vec;` / `use alloc::vec;` names
+                        // the standard macro itself, like a standard-root glob.
                         None
                     } else if !is_drop_in_assertion(&item, name)
                         || drop_in_shadowed(root, external)
@@ -1908,16 +1925,19 @@ fn use_tree_segments(item: &ast::UseTree) -> Vec<String> {
     segments
 }
 
-/// RIPR-SPEC-0369: glob imports of verification-framework preludes whose
-/// published export lists (checked against creusot-std 0.14.0, vstd
-/// 0.0.0-2026-10-25-0158 and prusti-contracts 0.3.3) contain no macro named
-/// like a trusted assertion, so the glob cannot rebind `assert_eq!` and its
-/// kin. Each entry is the exact glob path; the crate must also resolve to the
-/// registry package (`drop_in_verified`) and not be shadowed.
+/// RIPR-SPEC-0369: glob imports of verification-framework and other common
+/// preludes whose published export lists (checked against creusot-std
+/// 0.14.0, vstd 0.0.0-2026-10-25-0158, prusti-contracts 0.3.3, proptest
+/// 1.12.0 and rayon 1.12.0) contain no macro named like a trusted assertion,
+/// so the glob cannot rebind `assert_eq!` and its kin. Each entry is the
+/// exact glob path; the crate must also resolve to the registry package
+/// (`drop_in_verified`) and not be shadowed.
 const ASSERTION_FREE_PRELUDE_GLOBS: &[&[&str]] = &[
     &["creusot_std", "prelude"],
     &["vstd", "prelude"],
     &["prusti_contracts"],
+    &["proptest", "prelude"],
+    &["rayon", "prelude"],
 ];
 
 fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
@@ -1925,6 +1945,28 @@ fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
     ASSERTION_FREE_PRELUDE_GLOBS
         .iter()
         .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
+}
+
+/// Whether a plain `use` names a standard-library macro at its own path
+/// (`use std::vec;`, `use alloc::vec;`, `use core::assert_eq;`), so the name
+/// it binds is the standard macro (#15263). Only the crates that export the
+/// macro at their root count.
+fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
+    let exporters: &[&str] = match name {
+        "vec" | "format" => &["std", "alloc"],
+        "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq"
+        | "debug_assert_ne" | "matches" | "panic" | "unreachable" => &["std", "core"],
+        _ => &[],
+    };
+    let segments = use_tree_segments(item);
+    let segments: Vec<&str> = segments
+        .iter()
+        .map(|segment| segment.trim_start_matches("r#"))
+        .collect();
+    matches!(
+        segments.as_slice(),
+        [root, imported] if exporters.contains(root) && *imported == name
+    )
 }
 
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
@@ -3109,6 +3151,17 @@ fn empty_catch_all(item: &ast::MacroRules) -> bool {
 }
 
 fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
+    empty_macros_defined_in(root, false)
+}
+
+/// The empty catch-all `macro_rules!` defined once in `root`: at file or
+/// item-list level, and with `in_blocks` also as a statement in a block
+/// (a test-local `macro_rules! discard { ($($t:tt)*) => {}; }`, #15539),
+/// whose textual scope [`resolves_empty_local`] still checks.
+fn empty_macros_defined_in(
+    root: &SyntaxNode,
+    in_blocks: bool,
+) -> BTreeMap<String, ast::MacroRules> {
     let mut counts = BTreeMap::<String, usize>::new();
     let mut candidates = BTreeMap::new();
     for node in root.descendants() {
@@ -3126,7 +3179,9 @@ fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
             && let Some(rule) = rule
             && empty_catch_all(&rule)
             && rule.syntax().parent().is_some_and(|parent| {
-                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+                ast::SourceFile::can_cast(parent.kind())
+                    || ast::ItemList::can_cast(parent.kind())
+                    || (in_blocks && ast::StmtList::can_cast(parent.kind()))
             })
         {
             candidates.insert(name, rule);
@@ -3187,12 +3242,13 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
 }
 
 /// Discarded call-argument spans from the same bounded local resolver used by
-/// execution admission. This only removes evidence; workspace macro ambiguity
-/// still independently refuses positive assertion admission.
+/// execution admission, widened to empty macros a block defines (#15539).
+/// This only removes evidence; workspace macro ambiguity still independently
+/// refuses positive assertion admission.
 pub(crate) fn empty_local_macro_invocation_ranges(
     root: &SyntaxNode,
 ) -> Vec<std::ops::Range<usize>> {
-    let empty = local_empty_macros(root);
+    let empty = empty_macros_defined_in(root, true);
     if empty.is_empty() {
         return Vec::new();
     }

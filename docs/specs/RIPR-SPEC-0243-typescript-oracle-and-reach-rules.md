@@ -2683,6 +2683,45 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15393: an edit that changes only one default parameter value of the owner
+  (on a one-line signature or its own parameter line) is not observed when
+  every call of every direct, aliased or barrel-followed related test passes
+  a value at that position that cannot be `undefined` (a literal, object,
+  array, function, template or whole `new` expression, under any trailing
+  `as T`, `satisfies T` or `!` cast). Every owner call elsewhere in a related
+  test file, and in the owner's own module (its own body included), must fill
+  the position the same way, and no other workspace file may name the owner
+  outside a pure re-export. It reads `reachable_unrevealed` with infection
+  `no` (`default_not_applied`), naming the parameter and the observed calls.
+  The verdict stands on: an omitted argument; `undefined`, an identifier or a
+  spread argument; a relation through a wrapper or entry; another caller; a
+  default export or renaming re-export; an import that renames a binding or
+  has code after it on its line; a namespace import, `require`, dynamic
+  `import()`, `requireActual` or `importActual` of the owner's module or
+  of a barrel that re-exports it (its file stem, or its directory for an
+  `index` file) in another file; an import or re-export line with code after
+  its specifier; a loader or computed
+  key; an owner reference whose call arguments the reader cannot parse (a
+  comment before the parenthesis, an unbalanced argument); and a truncated
+  scan or a skipped symlink. The advice asks for a test call that omits the
+  argument.
+  Scope limit: the scan reads the TypeScript adapter's default handwritten
+  workspace files and ignores configured handwritten overrides, so callers
+  in pruned build directories, generated or minified files,
+  non-TS sources (`.vue`, `.svelte`, `.mdx`) or outside the workspace root
+  are not seen. `tests/unused_default_tests.rs` pins the reader
+  (`only_a_lone_default_value_edit_is_located`,
+  `only_arguments_that_cannot_be_undefined_fill_a_default`) and the
+  production path (`a_default_every_call_fills_is_not_exposed`,
+  `a_call_that_may_use_the_default_keeps_the_verdict`,
+  `a_call_the_argument_reader_drops_keeps_the_verdict`,
+  `a_caller_the_scan_cannot_resolve_keeps_the_verdict`,
+  `a_describe_titled_with_the_owner_name_is_not_a_caller`,
+  `a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses`,
+  `a_barrel_import_under_the_owner_name_is_followed`,
+  `code_after_an_import_and_a_namespace_import_keep_the_verdict`); the
+  honesty corpus case `typescript_vitest_unused_default_parameter` rejects
+  promotion independently.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -2796,6 +2835,10 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15393: `crates/ripr/src/analysis/language/typescript/unused_default_guard.rs`
+  locates the changed default and reads call arguments; `ts_unused_default`
+  in `classifier.rs` applies it in `ts_apply_post_ladder_rules` and the
+  infection stage, withdrawing credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 
