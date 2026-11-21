@@ -162,6 +162,34 @@ fn bare_repair_at_a_subdirectory_root_refuses_before_deciding_a_start() -> Resul
     Ok(())
 }
 
+/// #15488: the JSON spelling of the same refusal is the typed
+/// `cli_refusal` document (exit 3), not empty stdout, and still writes
+/// nothing under the subdirectory root.
+#[test]
+fn bare_repair_json_at_a_subdirectory_root_prints_the_typed_refusal() -> Result<(), String> {
+    let (_guard, _top, backend) = monorepo("bare-json")?;
+    let output = ripr(
+        &backend,
+        &["repair", "--root", &backend.to_string_lossy(), "--json"],
+    )?;
+    let stdout = stdout_of(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if output.status.code() != Some(3)
+        || !stdout.contains("\"status\": \"refused\"")
+        || !stdout.contains("\"code\": \"subdirectory_root\"")
+        || !stderr.contains("is not the exact Git top-level")
+    {
+        return Err(format!(
+            "expected exit 3 with a subdirectory_root cli_refusal, got {:?}:\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status.code()
+        ));
+    }
+    if backend.join("target").exists() {
+        return Err("the JSON refusal wrote under the subdirectory root".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_repair_refuses_a_subdirectory_root_before_writing_anything() -> Result<(), String> {
     let (_guard, _top, backend) = monorepo("refuse")?;

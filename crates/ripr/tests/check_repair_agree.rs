@@ -1212,12 +1212,20 @@ fn subdir_check_withholds_the_seam_start_and_names_the_top_level() -> Result<(),
         "check", "--root", "crate", "--base", "HEAD", "--format", "json",
     ])?;
     // A withheld route offers no repair entry at all: no command, no step.
-    let Err(error) = json_repair_route(&json) else {
-        return Err(format!(
-            "a subdirectory route must carry no repair entry:\n{json}"
-        ));
+    // The error must be the specific missing-repair one, so malformed JSON
+    // or a missing or multiple-route document fails here instead of passing.
+    let error = match json_repair_route(&json) {
+        Ok(_) => {
+            return Err(format!(
+                "a subdirectory route must carry no repair entry:\n{json}"
+            ));
+        }
+        Err(error) => error,
     };
-    let _ = error;
+    assert!(
+        error.starts_with("the finding route must carry a repair entry:"),
+        "expected the missing-repair error, got: {error}"
+    );
     Ok(())
 }
 

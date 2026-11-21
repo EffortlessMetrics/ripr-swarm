@@ -472,9 +472,10 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // with the cage's own reason. (The app-level selector stays usable on
     // non-attempt roots; this façade is where a start becomes an attempt.)
     if let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&options.root) {
-        return Err(CommandError::Failure(format!(
-            "repair start refused: {refusal}; rerun `ripr repair` from the Git top-level"
-        )));
+        return Err(typed_decision(
+            RepairRefusalCode::SubdirectoryRoot,
+            format!("repair start refused: {refusal}; rerun `ripr repair` from the Git top-level"),
+        ));
     }
     let mut unscoped: Option<UnscopedSelection> = None;
     let seam_id = match options.item.as_deref() {

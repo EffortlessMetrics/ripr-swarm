@@ -2472,6 +2472,18 @@ impl RepairStartGate {
 
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        // #15488: the root gate applies to gap-bound subjects too; a start
+        // under a subdirectory root refuses at the before phase regardless
+        // of subject namespace.
+        if self.apply_root_gate
+            && let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&self.root)
+        {
+            return Some(RepairStartRefusal {
+                reason: format!("{refusal}; rerun the start from the Git top-level"),
+                related_test: None,
+                kind: RefusalKind::Other,
+            });
+        }
         // #9103 (RIPR-SPEC-0311): a gap-bound attempt's subject is a
         // canonical TypeScript gap id, not a Rust seam, so this seam-inventory
         // gate has no verdict to give. Its admission is decided where the
@@ -3076,7 +3088,7 @@ pub(crate) fn check_repair_route(
     // and name the top-level; the attempt's own refusal stays the backstop.
     if let Some(top) = crate::edit_cage::enclosing_git_top_level_above(root) {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SubdirectoryRoot {
-            top_level: crate::output::path::display_path(&top),
+            top_level: crate::agent::loop_commands::root_path_display(&top),
         });
     }
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
@@ -3981,6 +3993,8 @@ pub(crate) enum RepairRefusalCode {
     AttemptStale,
     /// `continue`: the cage could not compare the files; the attempt is terminal.
     AttemptIncomparable,
+    /// The root is below the Git top-level, so a repair attempt cannot start there (#15488).
+    SubdirectoryRoot,
 }
 
 /// What the caller can do about a refusal, so retryable and terminal states
@@ -4011,7 +4025,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 20] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -4032,6 +4046,7 @@ impl RepairRefusalCode {
         Self::EditCageViolation,
         Self::AttemptStale,
         Self::AttemptIncomparable,
+        Self::SubdirectoryRoot,
     ];
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -4056,6 +4071,7 @@ impl RepairRefusalCode {
             Self::EditCageViolation => "edit_cage_violation",
             Self::AttemptStale => "attempt_stale",
             Self::AttemptIncomparable => "attempt_incomparable",
+            Self::SubdirectoryRoot => "subdirectory_root",
         }
     }
 
@@ -4080,7 +4096,8 @@ impl RepairRefusalCode {
             | Self::NoTestRoute
             | Self::NoCurrentAttempt
             | Self::AttemptBaselineBlocked
-            | Self::UnanchoredRoot => RepairRefusalDisposition::NotStarted,
+            | Self::UnanchoredRoot
+            | Self::SubdirectoryRoot => RepairRefusalDisposition::NotStarted,
         }
     }
 
@@ -4147,6 +4164,7 @@ impl RepairRefusalCode {
             "edit_cage_violation" => Self::EditCageViolation,
             "attempt_stale" => Self::AttemptStale,
             "attempt_incomparable" => Self::AttemptIncomparable,
+            "subdirectory_root" => Self::SubdirectoryRoot,
             _ => return None,
         })
     }
