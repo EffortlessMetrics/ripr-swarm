@@ -912,3 +912,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (43)
+
+Reason:
+RIPR-SPEC-0224: retain the unanchored preview oracle on its raw row (#15347).
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`

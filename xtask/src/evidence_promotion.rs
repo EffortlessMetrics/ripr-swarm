@@ -3356,7 +3356,13 @@ fn evidence_promotion_missing_human_oracle_projection_paths(
         && human_text.split("\n\n").any(|section| {
             let mut lines = section.lines();
             lines.next() == Some("Weakness")
-                && lines.any(|line| line == "  - No relevant oracle was detected")
+                && lines.any(|line| {
+                    line == "  - No relevant oracle was detected"
+                        || line
+                            .strip_prefix("  - Only heuristic TypeScript test links were found for `")
+                            .and_then(|rest| rest.strip_suffix("`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion"))
+                            .is_some_and(|owner| !owner.is_empty() && !owner.contains('`'))
+                })
         })
     {
         return Vec::new();

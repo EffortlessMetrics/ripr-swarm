@@ -341,3 +341,74 @@ fn python_headline_pairs_the_assertion_with_its_boundary_call() -> Result<(), St
     );
     Ok(())
 }
+
+/// These preview audit cases retain their independently graded advisory card
+/// even though the producer discloses only a heuristic test link.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn heuristic_preview_preserves_its_raw_test_and_repair_card_grade() -> Result<(), String> {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for (fixture, probe_id, name, kind, strength) in [
+        (
+            "typescript_awaited_promise_reject",
+            "probe:src_profile.ts:typescript_preview:9da98202",
+            "rejects missing profile id broadly",
+            "broad_error",
+            "weak",
+        ),
+        (
+            "typescript_probe_facts",
+            "probe:src_notify.js:typescript_preview:2f0e6fff",
+            "notify smoke",
+            "smoke_only",
+            "smoke",
+        ),
+        (
+            "typescript_mocked_module_limit",
+            "probe:src_discount.ts:typescript_preview:2396aec1",
+            "at threshold discounts",
+            "exact_value",
+            "strong",
+        ),
+        (
+            "javascript_js_preview",
+            "probe:src_discount.js:typescript_preview:8152c8c0",
+            "at threshold discounts",
+            "exact_value",
+            "strong",
+        ),
+        (
+            "typescript_static_limit_taxonomy",
+            "probe:src_dispatch.ts:typescript_preview:dd0f8848",
+            "dispatch smoke",
+            "smoke_only",
+            "smoke",
+        ),
+    ] {
+        let case = fixtures.join(fixture);
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .args(["check", "--format", "json", "--root"])
+            .arg(case.join("input"))
+            .arg("--diff")
+            .arg(case.join("diff.patch"))
+            .output()
+            .map_err(|e| e.to_string())?;
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let finding = report["findings"]
+            .as_array()
+            .and_then(|fs| fs.iter().find(|f| f["id"] == probe_id))
+            .ok_or_else(|| format!("missing {probe_id} in {fixture}"))?;
+        assert_eq!(finding["oracle_kind"], "unknown", "{fixture}");
+        assert_eq!(finding["oracle_strength"], "none", "{fixture}");
+        let row = finding["related_tests"]
+            .as_array()
+            .and_then(|rs| rs.iter().find(|r| r["name"] == name))
+            .ok_or_else(|| format!("missing {name} in {fixture}"))?;
+        for graded in [row, &finding["typescript_preview_card"]] {
+            assert_eq!(graded["oracle_kind"], kind, "{fixture}");
+            assert_eq!(graded["oracle_strength"], strength, "{fixture}");
+        }
+    }
+    Ok(())
+}

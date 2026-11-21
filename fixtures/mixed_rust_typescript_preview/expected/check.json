@@ -315,8 +315,8 @@
         "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
       },
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",

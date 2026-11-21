@@ -1066,6 +1066,9 @@ fn absent_finding_oracle_accepts_only_the_reported_weakness() {
         )
     };
     let row = "Evidence\n  - related test src/lib.rs:34 shadow uses strong exact value oracle: assert_eq!(other.clone(), other);";
+    let heuristic = "  - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion";
+    assert!(!verify(&format!("{row}\n{heuristic}")).is_empty());
+    assert!(verify(&format!("{row}\n\nWeakness\n{heuristic}")).is_empty());
     assert!(!verify(row).is_empty());
     assert!(!verify(&format!("{row}\n  - No relevant oracle was detected")).is_empty());
     assert!(
