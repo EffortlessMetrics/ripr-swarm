@@ -6396,6 +6396,7 @@ mod tests {
             ("1.71", "0.77"),
             ("1.72", "0.78"),
             ("1.73", "0.79"),
+            ("1.184", "0.186"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
