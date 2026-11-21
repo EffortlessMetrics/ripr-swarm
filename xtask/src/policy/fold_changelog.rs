@@ -4,7 +4,9 @@
 //! first `### <Section>` heading under `## Unreleased` in `CHANGELOG.md`, in
 //! file-name order, then deletes the folded fragment. The default writes
 //! nothing. Fragment validation is the `check-changelog-fragments` owner's
-//! `fragment_violations`, so the fold cannot accept what the check refuses.
+//! `fragment_violations`, so the fold cannot accept what the check refuses,
+//! and the command runs that owner's whole check before it folds, so a tree
+//! the check refuses is refused with both inputs untouched (#15606).
 
 use std::fs;
 use std::path::Path;
@@ -46,7 +48,7 @@ pub(super) struct FoldReport {
 
 pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
     let options = parse_args(args)?;
-    let report = fold_in(Path::new("."), &options)?;
+    let report = fold_checked(Path::new("."), &options)?;
     let verb = if options.write {
         "folded"
     } else {
@@ -82,7 +84,9 @@ pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
             }
             println!("release-cut check passed: {FRAGMENT_DIR}/ holds no fragments");
         } else {
-            println!("dry run: the release-cut check runs after --write");
+            println!(
+                "dry run: check-changelog-fragments passes now; the release-cut check runs after --write"
+            );
         }
     }
     Ok(())
@@ -152,6 +156,22 @@ fn parse_limit(value: &str) -> Result<usize, String> {
             "--limit needs a positive whole number, found `{value}`\n{USAGE}"
         )),
     }
+}
+
+/// The command's fold: the ordinary `check-changelog-fragments` check first,
+/// then [`fold_in`]. Nothing the fold writes can repair a violation that
+/// check reports, so a failing tree is refused before `CHANGELOG.md` is
+/// rewritten or a fragment is deleted, and a dry run fails the same way
+/// `--write` would (#15606).
+pub(super) fn fold_checked(root: &Path, options: &FoldOptions) -> Result<FoldReport, String> {
+    let violations = changelog_fragment_violations(root, false)?;
+    if !violations.is_empty() {
+        return Err(format!(
+            "refusing to fold: check-changelog-fragments fails on the current tree, nothing written:\n  {}",
+            violations.join("\n  ")
+        ));
+    }
+    fold_in(root, options)
 }
 
 pub(super) fn fold_in(root: &Path, options: &FoldOptions) -> Result<FoldReport, String> {
