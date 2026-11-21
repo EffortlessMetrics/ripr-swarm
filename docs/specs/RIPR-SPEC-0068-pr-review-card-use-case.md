@@ -428,6 +428,13 @@ and is `null` only when the domain marks a seam ineligible for canonical identit
   `working_set_card_reports_no_oracle_without_related_tests` pin the closed
   vocabulary and the honest no-oracle degradation.
 
+A same-file test can call a changed predicate or return-value owner while
+its unconditional assertion compares only an unrelated pure function on
+literal inputs. The compact evidence producer retains the direct call and
+withholds that assertion's observation and oracle credit. A conditional
+assertion, owner-dependent operand, or function outside the closed primitive
+grammar retains its existing evidence (#15807, RIPR-SPEC-0094).
+
 ### Canonical working-set identity (shipped)
 
 - Working-set cards carry the exact `canonical_gap_id` supplied by

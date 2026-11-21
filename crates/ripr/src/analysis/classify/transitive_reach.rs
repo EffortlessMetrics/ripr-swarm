@@ -1571,6 +1571,32 @@ impl OwnerReach<'_, '_> {
                 || returns_static_str(candidate, self.index))
     }
 
+    /// A same-file direct test can call the owner and independently compare
+    /// a closed value. Only its unconditional, identity-bound comparison
+    /// drops out of the working-set observation (#15807).
+    pub(in crate::analysis) fn direct_test_asserts_unrelated_constant(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &OracleFact,
+    ) -> bool {
+        if test.file != owner.file {
+            return false;
+        }
+        super::literal_assertion::is_unconditional_closed_call_assertion(test, assertion, &|path| {
+            let name = path.rsplit("::").next().unwrap_or(path);
+            self.assertion_calls_closed_constant(owner, test, assertion, path)
+                && self.index.files().get(&test.file).is_some_and(|file| {
+                    !super::reveal::file_imports_foreign_callee_name(
+                        &file.source,
+                        name,
+                        &Default::default(),
+                    )
+                })
+                && (path != name || !super::reveal::test_body_shadows_owner(test, name))
+        })
+    }
+
     fn opposite_kind_enum_path_is_closed(
         &self,
         function: &FunctionSummary,

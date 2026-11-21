@@ -52,14 +52,12 @@ pub(crate) struct CompactGripContext<'a> {
     /// parse, its line index, and its test-function lookup, built once per
     /// file instead of once per seam and related test.
     parsed_sources: Mutex<BTreeMap<&'a Path, Option<Arc<ParsedTestFile>>>>,
-    /// The "this assertion pins another function" decision per (owner, test,
-    /// oracle), keyed by the addresses of those index-resident records. The
-    /// decision reads only the index and the owner's reach, both fixed for
-    /// the context's life, so it never needs recomputing; every seam that
-    /// shares a related test and owner used to rebuild the assertion text.
-    /// Not window-cleared: nothing in here derives from bytes a window can
-    /// change. Three words per entry, so it stays small.
-    other_function_pin_decisions: Mutex<std::collections::HashMap<(usize, usize, usize), bool>>,
+    /// Cache an oracle refusal per index-resident owner, test and assertion.
+    /// A direct call requires the stronger closed-constant proof. Other
+    /// relations can refuse an assertion with the ordinary other-function test.
+    /// Both decisions depend only on the index and survive window boundaries.
+    other_function_pin_decisions:
+        Mutex<std::collections::HashMap<(usize, usize, usize, bool), bool>>,
     /// Manifest-backed default target identity, once per observer file.
     /// Small, immutable-index answers survive evidence window boundaries.
     default_unit_test_files: Mutex<BTreeMap<&'a Path, bool>>,
@@ -904,7 +902,7 @@ impl<'a> CompactGripContext<'a> {
         Some(digest)
     }
 
-    /// `decide` run once per (owner, test, oracle) identity. The three
+    /// `decide` run once per (owner, test, oracle, direct-call mode) identity. The three
     /// references must be the index's own records, so their addresses name
     /// them for the life of this context; `decide` runs outside the lock.
     pub(in crate::analysis::test_grip_evidence) fn other_function_pin_decision(
@@ -912,12 +910,14 @@ impl<'a> CompactGripContext<'a> {
         owner: &FunctionSummary,
         test: &TestSummary,
         oracle: &OracleFact,
+        direct: bool,
         decide: impl FnOnce() -> bool,
     ) -> bool {
         let key = (
             std::ptr::from_ref(owner) as usize,
             std::ptr::from_ref(test) as usize,
             std::ptr::from_ref(oracle) as usize,
+            direct,
         );
         if let Some(decision) = memo(&self.other_function_pin_decisions).get(&key) {
             return *decision;

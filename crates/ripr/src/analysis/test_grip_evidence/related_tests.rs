@@ -892,6 +892,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             owner_fn,
             &related_pairs,
             refuse,
+            seam.kind(),
             claims_pin.as_ref(),
         )
     });
