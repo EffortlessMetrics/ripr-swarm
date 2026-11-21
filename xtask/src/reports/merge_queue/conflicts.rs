@@ -197,22 +197,41 @@ impl Sweep<'_> {
         Ok(stdout)
     }
 
-    fn prepare(&self, base: &str, rows: &[Row]) -> Result<(), String> {
+    fn prepare(&self, base: &str, rows: &[Row], remote: &str) -> Result<(), String> {
         self.checked("git", &["init", "--bare", "--template=", "."], None)?;
-        self.checked(
-            "git",
-            &[
-                "remote",
-                "add",
-                "origin",
-                "git@github.com:EffortlessMetrics/ripr-swarm.git",
-            ],
-            None,
-        )?;
-        let mut wants = format!("+{base}:refs/heads/base\n");
-        for row in rows {
-            wants.push_str(&format!("+{}:refs/heads/pr-{}\n", row.head, row.pr));
+        self.checked("git", &["remote", "add", "origin", remote], None)?;
+        let base_ref = format!("+{base}:refs/heads/base\n");
+        let head_refs = |rows: &[Row]| {
+            rows.iter()
+                .map(|r| format!("+{}:refs/heads/pr-{}\n", r.head, r.pr))
+                .collect::<String>()
+        };
+        if self.fetch(&(base_ref.clone() + &head_refs(rows))).is_err() {
+            self.fetch(&base_ref)
+                .map_err(|reason| format!("fetch pinned main: {reason}"))?;
+            // Isolate an unavailable SHA without giving up the rest of the batch.
+            let mut batches = vec![rows];
+            while let Some(batch) = batches.pop() {
+                if Instant::now() >= self.deadline {
+                    break;
+                }
+                if self.fetch(&head_refs(batch)).is_err() && batch.len() > 1 {
+                    let (first, second) = batch.split_at(batch.len() / 2);
+                    batches.extend([second, first]);
+                }
+            }
         }
+        let (code, _) =
+            self.command("git", &[&format!("--attr-source={base}"), "version"], None)?;
+        if code != 0 {
+            return Err(format!(
+                "Git rejected the --attr-source option (exit {code}); use a Git build supporting pinned base attributes"
+            ));
+        }
+        Ok(())
+    }
+
+    fn fetch(&self, wants: &str) -> Result<(), String> {
         self.checked(
             "git",
             &[
@@ -225,22 +244,36 @@ impl Sweep<'_> {
                 "origin",
             ],
             Some(wants.as_bytes()),
-        )?;
-        let (code, _) =
-            self.command("git", &[&format!("--attr-source={base}"), "version"], None)?;
-        if code != 0 {
-            return Err(format!(
-                "Git rejected the --attr-source option (exit {code}); use a Git build supporting pinned base attributes"
-            ));
-        }
-        Ok(())
+        )
+        .map(|_| ())
     }
 
-    fn compare(&self, base: &str, head: &str) -> Result<BTreeSet<String>, String> {
+    fn compare(&self, base: &str, head: &str) -> Result<Option<BTreeSet<String>>, String> {
+        let paths = self.merge_result(base, base, head)?;
+        // Git labels file/directory relocations with the merge argument. Recompute
+        // using stable refs when either argument appears in a path; never rewrite names.
+        if paths
+            .as_ref()
+            .is_some_and(|paths| paths.iter().any(|p| p.contains(base) || p.contains(head)))
+        {
+            self.checked("git", &["update-ref", "--stdin"], Some(format!(
+                "update refs/heads/observed-main {base}\nupdate refs/heads/observed-pr {head}\n"
+            ).as_bytes()))?;
+            return self.merge_result(base, "observed-main", "observed-pr");
+        }
+        Ok(paths)
+    }
+
+    fn merge_result(
+        &self,
+        attr: &str,
+        base: &str,
+        head: &str,
+    ) -> Result<Option<BTreeSet<String>>, String> {
         let (status, out) = self.command(
             "git",
             &[
-                &format!("--attr-source={base}"),
+                &format!("--attr-source={attr}"),
                 "merge-tree",
                 "--write-tree",
                 "--name-only",
@@ -257,17 +290,17 @@ impl Sweep<'_> {
         }
         let (tree, paths) = parse_merge_tree_output(&out)?;
         validate_sha("merged tree", "tree", &tree)?;
-        if (status == 0) != paths.is_empty() {
+        if status == 0 && !paths.is_empty() {
             return Err("inconsistent merge-tree status and path inventory".into());
         }
-        Ok(paths.into_iter().collect())
+        Ok((status == 1).then(|| paths.into_iter().collect()))
     }
 
     fn classify(&self, base: &str, rows: &mut [Row]) {
         for row in rows {
             row.result = match self.compare(base, &row.head) {
-                Ok(paths) if paths.is_empty() => Outcome::Clean,
-                Ok(paths) => Outcome::Conflict {
+                Ok(None) => Outcome::Clean,
+                Ok(Some(paths)) => Outcome::Conflict {
                     paths: paths.into_iter().map(|p| (p, None)).collect(),
                     unattributed_reason: Some("first-parent history not examined".into()),
                 },
@@ -296,6 +329,11 @@ impl Sweep<'_> {
             else {
                 continue;
             };
+            if paths.is_empty() {
+                *unattributed_reason =
+                    Some("Git confirmed a conflict without individual unmerged paths".into());
+                continue;
+            }
             *unattributed_reason = Some(format!(
                 "no transition in the available {MAX_FIRST_PARENTS} first-parent edges"
             ));
@@ -305,7 +343,12 @@ impl Sweep<'_> {
                     break;
                 }
                 let prior = match self.compare(parent, &row.head) {
-                    Ok(paths) => paths,
+                    Ok(Some(prior)) if prior.is_empty() => {
+                        *unattributed_reason =
+                            Some("parent conflict has no individual unmerged paths".into());
+                        break;
+                    }
+                    Ok(paths) => paths.unwrap_or_default(),
                     Err(reason) => {
                         *unattributed_reason = Some(reason);
                         break;
@@ -341,7 +384,12 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     };
     let start = Instant::now();
     let out = Path::new(out);
-    fs::create_dir(out)
+    let mut directory = fs::DirBuilder::new();
+    directory.recursive(false);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut directory, 0o700);
+    directory
+        .create(out)
         .map_err(|e| format!("{} must be a new output directory: {e}", out.display()))?;
     let objects = out.join("objects.git");
     fs::create_dir(&objects).map_err(|e| e.to_string())?;
@@ -376,26 +424,36 @@ fn write_report(
             }
             fs::read(path).map_err(|e| format!("read saved queue pages: {e}"))?
         }
-        None => sweep.checked(
-            "gh",
-            &[
-                "api",
-                "graphql",
-                "--hostname",
-                "github.com",
-                "--paginate",
-                "--slurp",
-                "-f",
-                &query,
-            ],
-            None,
-        )?,
+        None => sweep
+            .checked(
+                "gh",
+                &[
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    "github.com",
+                    "--paginate",
+                    "--slurp",
+                    "-f",
+                    &query,
+                ],
+                None,
+            )
+            .map_err(|e| {
+                format!(
+                    "{e}; check gh auth status --hostname github.com and private queue read access"
+                )
+            })?,
     };
     let (base, mut rows) = parse_pages(&snapshot)?;
     fs::write(out.join("queue-pages.json"), snapshot).map_err(|e| e.to_string())?;
     let mut notes = Vec::new();
     if !rows.is_empty() {
-        match sweep.prepare(&base, &rows) {
+        match sweep.prepare(
+            &base,
+            &rows,
+            "git@github.com:EffortlessMetrics/ripr-swarm.git",
+        ) {
             Ok(()) => {
                 sweep.classify(&base, &mut rows);
                 if let Err(reason) = sweep.boundaries(&base, &mut rows) {

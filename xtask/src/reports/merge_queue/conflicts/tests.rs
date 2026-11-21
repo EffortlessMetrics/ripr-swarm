@@ -103,9 +103,9 @@ fn first_parent_transition_tracks_reintroduced_conflict_and_never_credits_a_pref
     let original = commit(&s, "original", None)?;
     let head = commit(&s, "candidate", Some(&original))?;
     let sibling = commit(&s, "sibling", Some(&original))?;
-    if !s.compare(&original, &head)?.is_empty()
-        || !s.compare(&original, &sibling)?.is_empty()
-        || s.compare(&head, &sibling)? != BTreeSet::from(["file name".to_owned()])
+    if s.compare(&original, &head)?.is_some()
+        || s.compare(&original, &sibling)?.is_some()
+        || s.compare(&head, &sibling)? != Some(BTreeSet::from(["file name".to_owned()]))
     {
         return Err("individually clean heads were confused with cumulative composition".into());
     }
@@ -171,6 +171,19 @@ fn empty_or_failed_replay_releases_only_its_own_object_store() -> Result<(), Str
     {
         return Err("expected only durable evidence after an empty complete census".into());
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if fs::metadata(&good)
+            .map_err(|e| e.to_string())?
+            .permissions()
+            .mode()
+            & 0o077
+            != 0
+        {
+            return Err("private queue evidence is accessible to other accounts".into());
+        }
+    }
     fs::write(&input, b"[]").map_err(|e| e.to_string())?;
     let bad = dir.join("invalid");
     if run(&args(&bad)).is_ok()
@@ -183,6 +196,168 @@ fn empty_or_failed_replay_releases_only_its_own_object_store() -> Result<(), Str
     }
     if run(&args(&good)).is_ok() || !good.join("queue-conflicts.json").is_file() {
         return Err("existing output directory was reused or changed".into());
+    }
+    fs::remove_dir_all(dir).map_err(|e| e.to_string())
+}
+
+#[test]
+fn directory_conflicts_preserve_status_and_true_history() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("queue-dir-conflicts");
+    let sweep = Sweep {
+        objects: &dir,
+        deadline: Instant::now() + Duration::from_secs(60),
+    };
+    sweep.checked("git", &["init", "--bare", "--template=", "."], None)?;
+    sweep.checked(
+        "git",
+        &["fast-import", "--quiet"],
+        Some(
+            br#"commit refs/heads/original
+mark :1
+committer Fixture <fixture@example.invalid> 1 +0000
+data 4
+base
+M 100644 inline z/b
+data 1
+b
+M 100644 inline z/c
+data 1
+c
+
+commit refs/heads/base
+mark :2
+committer Fixture <fixture@example.invalid> 2 +0000
+data 4
+move
+from :1
+R z/b y/b
+R z/c w/c
+
+commit refs/heads/pr
+committer Fixture <fixture@example.invalid> 3 +0000
+data 3
+add
+from :1
+M 100644 inline z/d
+data 1
+d
+
+commit refs/heads/file
+mark :4
+committer Fixture <fixture@example.invalid> 4 +0000
+data 4
+file
+from :1
+M 100644 inline tools
+data 1
+f
+
+commit refs/heads/later
+committer Fixture <fixture@example.invalid> 5 +0000
+data 5
+later
+from :4
+M 100644 inline unrelated
+data 1
+u
+
+commit refs/heads/directory
+committer Fixture <fixture@example.invalid> 6 +0000
+data 9
+directory
+from :1
+M 100644 inline tools/man
+data 1
+m
+
+done
+"#,
+        ),
+    )?;
+    let rev = |name: &str| -> Result<String, String> {
+        String::from_utf8(sweep.checked("git", &["rev-parse", name], None)?)
+            .map(|s| s.trim().to_owned())
+            .map_err(|e| e.to_string())
+    };
+    let base = rev("base")?;
+    let mut split = [row(&rev("pr")?)];
+    sweep.classify(&base, &mut split);
+    sweep.boundaries(&base, &mut split)?;
+    let [split] = &split;
+    if !matches!(&split.result,Outcome::Conflict{paths,unattributed_reason:Some(why)} if paths.is_empty() && why.contains("without individual"))
+    {
+        return Err("directory rename split lost Git's conflict without a path inventory".into());
+    }
+    let later = rev("later")?;
+    let mut collision = [row(&rev("directory")?)];
+    sweep.classify(&later, &mut collision);
+    sweep.boundaries(&later, &mut collision)?;
+    let [collision] = &collision;
+    let Outcome::Conflict { paths, .. } = &collision.result else {
+        return Err("missing collision".into());
+    };
+    let edge = paths
+        .get("tools~observed-main")
+        .and_then(Option::as_ref)
+        .ok_or("missing stable collision boundary")?;
+    if edge.introduced_at != rev("file")? || edge.first_parent != rev("original")? {
+        return Err("unrelated first-parent commit credited for a continuing collision".into());
+    }
+    let store = dir.join("replay");
+    fs::create_dir(&store).map_err(|e| e.to_string())?;
+    let replay = Sweep {
+        objects: &store,
+        deadline: sweep.deadline,
+    };
+    let available = Row {
+        pr: 2,
+        ..row(&rev("directory")?)
+    };
+    let mut batch = [row(&"f".repeat(40)), available];
+    replay.prepare(&later, &batch, dir.to_str().ok_or("non-UTF8 fixture")?)?;
+    replay.classify(&later, &mut batch);
+    let [missing, available] = &batch;
+    if !matches!(missing.result, Outcome::Unexamined { .. })
+        || !matches!(available.result, Outcome::Conflict { .. })
+    {
+        return Err("missing remote SHA lost independently fetchable head".into());
+    }
+    fs::remove_dir_all(dir).map_err(|e| e.to_string())
+}
+
+#[test]
+fn configured_external_driver_is_ignored_by_actual_comparison() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("queue-driver-control");
+    let file = dir.join("fixture.gitconfig");
+    fs::write(&file, b"[merge \"riprQueueFixture\"]\n driver = true\n")
+        .map_err(|e| e.to_string())?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let args=vec!["--exact".into(), "reports::merge_queue::conflicts::tests::first_parent_transition_tracks_reintroduced_conflict_and_never_credits_a_prefix".into()];
+    let result = capture_bytes_in_dir_with_input_env_budget(
+        &exe,
+        &args,
+        (&dir, None),
+        (
+            &[(
+                "GIT_CONFIG_GLOBAL",
+                file.to_str().ok_or("non-UTF8 fixture")?,
+            )],
+            &[],
+        ),
+        ByteCaptureBudget {
+            timeout: Duration::from_secs(110),
+            stdout_bytes: 65536,
+            stderr_bytes: 65536,
+        },
+        "queue configured driver regression",
+    )?;
+    if !result.status.is_some_and(|s| s.success())
+        || !String::from_utf8_lossy(&result.stdout).contains("1 passed")
+    {
+        return Err(format!(
+            "configured fixture driver bypassed isolated comparison: {}",
+            String::from_utf8_lossy(&result.stdout)
+        ));
     }
     fs::remove_dir_all(dir).map_err(|e| e.to_string())
 }

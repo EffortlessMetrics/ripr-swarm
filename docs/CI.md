@@ -1562,6 +1562,9 @@ the `mergeable_state` column.
 
 #### Inspect queued heads against main
 
+See the [operator observation contract](MERGE_WATCH_POLICY.md#operator-queue-conflict-observation-contract)
+for partial fetches, pathless conflicts and private output-directory permissions.
+
 Run `cargo xtask merge-queue conflicts <new-output-directory>` to inspect the
 current private swarm queue on demand. It requires Git with `--attr-source`
 and `merge-tree --write-tree`, authenticated read
