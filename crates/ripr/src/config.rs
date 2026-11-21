@@ -1219,7 +1219,10 @@ impl RiprConfig {
                 config.lsp.diagnostic_profile = Some(
                     LspDiagnosticProfile::parse(profile.get_ref()).map_err(|err| {
                         ConfigDiagnostic::at_value(
-                            format!("{err} in [lsp]"),
+                            format!(
+                                "{err} in [lsp]{}",
+                                near_value_hint(profile.get_ref(), &["actionable", "full"])
+                            ),
                             "lsp.diagnostic_profile",
                             profile.span(),
                             text,
@@ -1322,7 +1325,8 @@ impl RiprConfig {
                     if !crate::app::is_managed_perl_producer(name) {
                         return Err(Box::new(ConfigDiagnostic::at_value(
                             format!(
-                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp"
+                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp{}",
+                                near_value_hint(name, &["perl-ripr-facts", "perllsp", "perl-lsp"])
                             ),
                             "perl.producer",
                             value.span(),

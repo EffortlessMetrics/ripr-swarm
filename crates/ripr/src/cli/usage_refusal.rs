@@ -319,8 +319,33 @@ pub(super) fn document_for(args: &[String], error: &CommandError) -> Option<Stri
 /// failure leaves stdout empty: the prose error is still delivered.
 pub(super) fn emit_for(args: &[String], error: &CommandError) {
     if let Some(document) = document_for(args, error) {
+        let document = if context_compact_requested(args) {
+            crate::output::compact_json::finish(
+                document,
+                &crate::output::format::OutputFormat::JsonCompact,
+            )
+        } else {
+            document
+        };
         let _ = crate::cli::commands_context::write_stdout_refusal_json(document);
     }
+}
+
+/// `ripr context --format json-compact` compacts every JSON document on
+/// stdout, including the boundary's `selector_miss` refusal (#13356). Other
+/// commands keep their existing refusal presentation.
+fn context_compact_requested(args: &[String]) -> bool {
+    let mut words = args.iter().skip(1).map(String::as_str);
+    let is_context = words
+        .by_ref()
+        .find(|arg| !arg.starts_with('-'))
+        .is_some_and(|arg| arg == "context");
+    is_context
+        && args.iter().enumerate().any(|(i, arg)| {
+            arg == "--format=json-compact"
+                || (arg == "--format"
+                    && args.get(i + 1).is_some_and(|value| value == "json-compact"))
+        })
 }
 
 #[cfg(test)]
