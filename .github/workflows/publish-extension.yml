@@ -99,6 +99,11 @@ jobs:
       RAW_VERSION: ${{ github.event.inputs.version }}
       MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+          persist-credentials: false
+
       - name: Fetch the server manifest
         run: |
           version="${RAW_VERSION#v}"
@@ -115,36 +120,27 @@ jobs:
           echo "::error::server manifest was not available: $url"
           exit 1
 
-      - name: Verify the manifest against the receipted digest
-        run: |
-          version="${RAW_VERSION#v}"
-          generation="${version%%[-+]*}"
-          file="server/ripr-server-manifest-v${generation}.json"
-          actual="$(sha256sum "$file" | cut -d' ' -f1)"
-          [ "$actual" = "$MANIFEST_SHA256" ] \
-            || { echo "::error::manifest SHA-256 $actual does not match the receipted $MANIFEST_SHA256"; exit 1; }
-          jq -e --arg v "$generation" '.version == $v and (.assets | length) > 0' "$file" >/dev/null
-
       - name: Verify every archive the manifest names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.inputs.source_sha }}
         run: |
           set -euo pipefail
+          python3 -B .github/scripts/test_extension_release_assets.py
           version="${RAW_VERSION#v}"
-          generation="${version%%[-+]*}"
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}"
-          jq -r '.assets | to_entries[] | [.key, .value.url, .value.sha256] | @tsv' \
-            "server/ripr-server-manifest-v${generation}.json" \
-            | while IFS=$'\t' read -r target url sha; do
-                case "$url" in
-                  *..*) echo "::error::asset $target url $url contains '..'"; exit 1 ;;
-                  "$base"/*) ;;
-                  *) echo "::error::asset $target url $url is outside $base"; exit 1 ;;
-                esac
-                curl -fsSL -o server/asset "$url"
-                got="$(sha256sum server/asset | cut -d' ' -f1)"
-                [ "$got" = "$sha" ] \
-                  || { echo "::error::asset $target digest $got does not match manifest $sha"; exit 1; }
-                echo "verified $target"
-              done
+          tag="v${version}"
+          file="server/ripr-server-manifest-v${version}.json"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets > server/inventory.json
+          admit=(python3 .github/scripts/extension_release_assets.py --manifest "$file"
+            --digest "$MANIFEST_SHA256" --version "$version" --repository "$GITHUB_REPOSITORY"
+            --commit "$SOURCE_SHA" --tree "$(git rev-parse 'HEAD^{tree}')" --inventory server/inventory.json)
+          "${admit[@]}" > server/subjects
+          mkdir server/archives
+          while IFS= read -r subject; do
+            curl -fsSL -o "server/archives/$subject" "$base/$subject"
+          done < server/subjects
+          "${admit[@]}" --archives server/archives
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -192,8 +188,10 @@ jobs:
           version="${RAW_VERSION#v}"
           vsix="dist/ripr-${version}.vsix"
           mkdir -p dist
-          if gh release view "v${version}" --json assets --jq '.assets[].name' \
-              | grep -Fxq "ripr-${version}.vsix"; then
+          inventory="$(gh release view "v${version}" --json assets)"
+          count="$(jq -er --arg name "ripr-${version}.vsix" '[.assets[] | select(.name == $name)] | length' <<< "$inventory")"
+          [ "$count" -le 1 ] || { echo "::error::duplicate VSIX on release"; exit 1; }
+          if [ "$count" -eq 1 ]; then
             [ -n "$EXPECTED_VSIX_SHA256" ] \
               || { echo "::error::a VSIX is already attached; pass its digest as vsix_sha256"; exit 1; }
             gh release download "v${version}" --pattern "ripr-${version}.vsix" --dir dist
@@ -209,11 +207,19 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Download the verified server manifest
-        if: ${{ steps.existing.outputs.found != 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ripr-server-manifest
           path: ${{ github.workspace }}/server
+
+      - name: Produce the expected release catalog
+        working-directory: .
+        run: |
+          version="${RAW_VERSION#v}"
+          manifest="server/ripr-server-manifest-v${version}.json"
+          echo "$MANIFEST_SHA256  $manifest" | sha256sum -c -
+          cargo xtask release-distribution-catalog --product-version "$version" --channel stable \
+            --stable-tag "v${version}" --repository "$GH_REPO" --manifest "$manifest" --out server/distribution.json
 
       - name: Bind the receipted manifest digest into the editor descriptor
         if: ${{ steps.existing.outputs.found != 'true' }}
@@ -227,20 +233,19 @@ jobs:
             --manifest "server/ripr-server-manifest-v${generation}.json" \
             --manifest-sha256 "$MANIFEST_SHA256"
 
-      - name: Compile
-        if: ${{ steps.existing.outputs.found != 'true' }}
-        run: npm run compile
-
       - name: Package and verify VSIX
         if: ${{ steps.existing.outputs.found != 'true' }}
-        # Same inventory bounds and license-notice checks CI applies.
-        run: npm run package
+        working-directory: .
+        run: cargo xtask vscode-package --catalog server/distribution.json
 
       - name: Verify the VSIX
         run: |
           version="${RAW_VERSION#v}"
           vsix="dist/ripr-${version}.vsix"
           cargo xtask vscode-verify-vsix -- "$vsix"
+          count="$(unzip -Z1 "$vsix" | awk '$0 == "extension/distribution.json" { n++ } END { print n+0 }')"
+          [ "$count" -eq 1 ] || { echo "::error::expected one packaged catalog"; exit 1; }
+          unzip -p "$vsix" extension/distribution.json | cmp - ../../server/distribution.json
           # The admitted descriptor in the VSIX must carry the receipted digest.
           unzip -p "$vsix" extension/out/src/serverDescriptor.js | grep -Fq "$MANIFEST_SHA256" \
             || { echo "::error::VSIX does not embed the receipted manifest digest"; exit 1; }

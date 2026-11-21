@@ -789,18 +789,24 @@ SERVER_MANIFEST_SHA256="$(sha256sum "$PACKET_ROOT/ripr-server-manifest-v${VERSIO
 printf '%s\n' "$SERVER_MANIFEST_SHA256" > "$PACKET_ROOT/server-manifest.sha256"
 ```
 
-`publish-extension.yml` refuses a dispatch whose run commit is not `source_sha`
-or whose `v$VERSION` tag does not peel to it, re-downloads the manifest and
-every archive it names and compares them with `manifest_sha256`, requires
-`package.json` to equal the version, binds that digest into the VSIX through
-`cargo xtask release-bind-server-descriptor`, runs `npm run package` plus
-`cargo xtask vscode-verify-vsix`, and attaches one VSIX to the Release before
-either marketplace publish. The second channel's dispatch must pass the attached
-VSIX's digest as `vsix_sha256` (recorded below before that dispatch); it
-downloads the attached bytes, checks them against it, and each publish job
-re-checks their SHA-256 against the Release asset. The workflow cannot prove
-equivalence with the swarm qualification archives, whose commit and URLs
-differ; that remains outside this control (#3807 R8-F2).
+Before the source publisher can use the swarm workflow prepared under #9333,
+the source owner must adopt and verify it at the release commit. In that
+workflow the dispatch commit and the peeled stable tag must equal `source_sha`.
+The manifest's raw digest, product, repository, commit, tree, and target roster
+bind its relative subjects. Each expected archive must occur exactly once on
+the release and its size and SHA-256 must match the manifest.
+
+For a fresh VSIX the workflow binds the receipted digest into the editor
+descriptor and runs `cargo xtask vscode-package --catalog` with the stable
+catalog from `cargo xtask release-distribution-catalog`. It also checks the
+catalog bytes inside the VSIX against the generated catalog. On a second
+channel dispatch, supply the digest of the first attached VSIX as
+`vsix_sha256`. The workflow checks those exact bytes, the catalog, and the
+embedded manifest digest again. Each marketplace job rechecks the attachment
+digest. This stable dispatch accepts no RC placement. An RC catalog rehearsal
+requires an explicitly supplied RC tag and confers no publishing authority.
+Swarm qualification and source qualification have separate repository and
+commit identities (#3807 R8-F2).
 
 ```bash
 set -euo pipefail
