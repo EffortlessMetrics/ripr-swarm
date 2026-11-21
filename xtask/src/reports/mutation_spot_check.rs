@@ -2287,16 +2287,19 @@ fn recorded_genre_outcomes_by_language(report: &Value) -> Option<Value> {
             .and_then(Value::as_str)
             .unwrap_or(HARNESS_LANGUAGE)
             .to_string();
-        let (by_disposition, by_grip_class) = by_language
-            .entry(language)
-            .or_insert_with(|| (json!({}), json!({})));
-        if let Some(table) = repo.get("outcomes_by_disposition_and_genre") {
+        let disposition_table = repo.get("outcomes_by_disposition_and_genre");
+        let grip_class_table = repo.get("outcomes_by_grip_class_and_genre");
+        if disposition_table.is_some() || grip_class_table.is_some() {
             recorded = true;
-            merge_outcomes(by_disposition, table);
-        }
-        if let Some(table) = repo.get("outcomes_by_grip_class_and_genre") {
-            recorded = true;
-            merge_outcomes(by_grip_class, table);
+            let (by_disposition, by_grip_class) = by_language
+                .entry(language)
+                .or_insert_with(|| (json!({}), json!({})));
+            if let Some(table) = disposition_table {
+                merge_outcomes(by_disposition, table);
+            }
+            if let Some(table) = grip_class_table {
+                merge_outcomes(by_grip_class, table);
+            }
         }
     }
     recorded.then(|| {
@@ -4751,5 +4754,28 @@ mod tests {
         assert_eq!(out["seam_coverage"]["mutants_total"], 1745);
         fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    #[test]
+    fn recorded_genre_merge_adds_no_empty_language_entry() {
+        // A repo without recorded genre tables must not gain an empty
+        // language entry when another repo in the receipt has them.
+        let report = json!({
+            "repos": [
+                {"language": "rust",
+                 "outcomes_by_disposition_and_genre": {"canonical_precise": {"BinaryOperator": {"caught": 2}}},
+                 "outcomes_by_grip_class_and_genre": {"strongly_gripped": {"BinaryOperator": {"caught": 2}}}},
+                {"language": "typescript"},
+            ],
+        });
+        let by_language = recorded_genre_outcomes_by_language(&report).unwrap_or(json!({}));
+        assert_eq!(
+            by_language["rust"]["outcomes_by_disposition_and_genre"]["canonical_precise"]["BinaryOperator"]
+                ["caught"],
+            2
+        );
+        assert!(by_language.get("typescript").is_none());
+        let none = json!({"repos": [{"language": "typescript"}]});
+        assert!(recorded_genre_outcomes_by_language(&none).is_none());
     }
 }

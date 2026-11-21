@@ -1532,9 +1532,8 @@ fn checked_in_spot_check_receipt_still_yields_its_recorded_figures() -> Result<(
     ))
     .map_err(|err| err.to_string())?;
     assert_eq!(receipt["schema_version"], "ripr-mutation-spot-check-v2");
-    // The checked-in receipt predates genre retention: no genre key is present.
-    assert!(receipt.get("outcomes_by_disposition_and_genre").is_none());
-    assert!(receipt.get("genre_outcomes_by_language").is_none());
+    // Genre keys are additive in v2: whether the checked-in receipt has
+    // been refreshed to carry them or not, its recorded figures stand.
     assert_eq!(receipt["recall_of_missed"]["ungripped_missed"], 34);
     assert_eq!(receipt["recall_of_missed"]["missed_total"], 322);
     assert_eq!(
