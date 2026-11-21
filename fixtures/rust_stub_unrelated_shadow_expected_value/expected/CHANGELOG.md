@@ -11,3 +11,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_stub_unrelated_shadow_expected_value (2)
+
+Reason:
+RIPR-SPEC-0231: history-sync composition; repair-start refusal wording follows main's packet-missing text; class unchanged
+
+Command:
+`cargo xtask goldens bless rust_stub_unrelated_shadow_expected_value --reason "..."`
+
+Updated:
+- `expected/human.txt`

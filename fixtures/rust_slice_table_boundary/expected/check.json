@@ -35,7 +35,7 @@
         "expression": "samples.len() == 0"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach mean_latency: mean_lies_between_min_and_max"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach mean_latency: mean_latency_smoke, mean_lies_between_min_and_max"},
         "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 0"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
@@ -48,11 +48,11 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: 0", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)", "local flow reaches returned value: 0 (line 19)", "related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0);", "related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3);", "related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, \"{name:?}\");", "related test src/lib.rs:77 ratio_smoke uses no oracle", "related test src/lib.rs:71 small_orders_get_no_discount uses strong exact value oracle: assert_eq!(discount(total), want, \"total {total}\");", "source assertion argument value 0 at line 44", "source assertion argument value 2 at line 45", "source assertion argument value 3 at line 45", "source assertion argument value 4 at line 45", "source table row value \"\" at line 50", "source table row value \"Bob\" at line 50", "source table row value \"ada\" at line 50", "source table row value '?' at line 50", "missing discriminator samples.len() == 0: No related test call uses samples.len() equal to 0; observed samples.len() values: 1, 2, 3; target 0 value: 0"],
+      "evidence_path": ["reach yes: Related tests appear to reach mean_latency: mean_latency_smoke, mean_lies_between_min_and_max", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: 0", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)", "local flow reaches returned value: 0 (line 19)", "related test src/lib.rs:83 mean_latency_smoke uses no oracle", "related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0);", "related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3);", "related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, \"{name:?}\");", "related test src/lib.rs:77 ratio_smoke uses no oracle", "source assertion argument value 0 at line 44", "source assertion argument value 2 at line 45", "source assertion argument value 3 at line 45", "source assertion argument value 4 at line 45", "source table row value \"\" at line 50", "source table row value \"Bob\" at line 50", "source table row value \"ada\" at line 50", "source table row value '?' at line 50", "missing discriminator samples.len() == 0: No related test call uses samples.len() equal to 0; observed samples.len() values: 1, 2, 3; target 0 value: 0"],
       "flow_sinks": [
         {"kind":"return_value","text":"0","line":19}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 0", "Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)", "Related tests appear to reach mean_latency: mean_lies_between_min_and_max", "Related tests contain input values, but the equality-boundary check is missing"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 0", "Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)", "Related tests appear to reach mean_latency: mean_latency_smoke, mean_lies_between_min_and_max", "Related tests contain input values, but the equality-boundary check is missing"],
       "missing": ["Missing check value: samples.len() == 0", "No strong discriminator was detected"],
       "assertion_texts": {
         "44": "assert_eq!(average(&[]), 0);",
@@ -223,8 +223,20 @@
           "flow_sink": {"kind":"return_value","text":"0","line":19}
         }
       ],
-      "related_tests_total": 6,
+      "related_tests_total": 7,
       "related_tests": [
+        {
+          "name": "mean_latency_smoke",
+          "file": "src/lib.rs",
+          "line": 83,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        },
         {
           "name": "average_of_nothing_is_zero",
           "file": "src/lib.rs",
@@ -270,8 +282,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "no_assertion",
-          "why": "has no assertion"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "small_orders_get_no_discount",

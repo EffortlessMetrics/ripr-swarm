@@ -218,3 +218,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (18)
+
+Reason:
+RIPR-SPEC-0159: history-sync composition; main's limit wording composed with the import line's routing text; class unchanged
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

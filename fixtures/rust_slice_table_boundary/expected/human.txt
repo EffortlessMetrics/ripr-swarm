@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
   Missing check (1 of 2): samples.len() == 0
-  Related test (1 of 6 matched rows): src/lib.rs:77 ratio_smoke (has no assertion)
+  Related test (1 of 7 matched rows): src/lib.rs:83 mean_latency_smoke (has no assertion)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -29,7 +29,7 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
+    - reach yes: Related tests appear to reach mean_latency: mean_latency_smoke, mean_lies_between_min_and_max
     - infection weak: Related tests contain input values, but the equality-boundary check is missing
     - 19 more detail line(s) in --format human-full
 

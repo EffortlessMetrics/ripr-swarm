@@ -373,3 +373,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_slice_table_zero_elements (30)
+
+Reason:
+RIPR-SPEC-0001: history-sync composition; the related-test representative follows the composed selection order; class unchanged
+
+Command:
+`cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`
+
+Updated:
+- `expected/human.txt`

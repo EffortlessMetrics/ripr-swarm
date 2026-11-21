@@ -23,7 +23,7 @@ Shared evidence and guidance
   E8 [findings 1, 2]: source assertion argument value 5 at line 20
   E9 [findings 1, 2]: source assertion argument value 4 at line 21
   E10 [findings 1, 2]: source assertion argument value 9 at line 21
-  N1 [findings 1, 2]: Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`
+  N1 [findings 1, 2]: Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test
 
 Finding 1: WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:41e056ec

@@ -386,3 +386,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_slice_table_boundary (31)
+
+Reason:
+RIPR-SPEC-0001: history-sync composition; main's related-test selection lists mean_latency_smoke alongside the import line's rows; class unchanged
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
