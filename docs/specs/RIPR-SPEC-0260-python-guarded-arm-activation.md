@@ -10,7 +10,8 @@ Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/73
 [#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002),
 [#9184](https://github.com/EffortlessMetrics/ripr-swarm/issues/9184),
 [#9429](https://github.com/EffortlessMetrics/ripr-swarm/issues/9429),
-[#13621](https://github.com/EffortlessMetrics/ripr-swarm/issues/13621).
+[#13621](https://github.com/EffortlessMetrics/ripr-swarm/issues/13621),
+[#15970](https://github.com/EffortlessMetrics/ripr-swarm/issues/15970).
 
 Support-tier impact: Python preview adapter output only; no support-tier
 change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -76,6 +77,18 @@ bind:
   existing verdict, as do a chain condition containing `or`/`not` or a conditional expression
   (`a if b else c`), an
   unreadable row, and an `else` that closes a `for`/`while`/`try`.
+- Other statements in the arm (#15970): whether a line runs does not depend
+  on its shape. A local assignment (`m = 2 * months`), a call statement
+  (`LOG.append(m)`) and a continuation line of a wrapped statement
+  (`label, m` inside `text = describe(`) in a function or method body are
+  read by the same enclosing-guard walk as a `return`, with the same
+  fail-open shapes, and fail closed to `weakly_exposed` naming the same
+  guard. A continuation line is nested where its statement opens, so the walk
+  starts from the opening line. A changed `if`/`elif` condition keeps the
+  predicate boundary rule and a conditional expression keeps its own
+  unreached-arm reading (#9184); the guard walk applies when neither names a
+  gap. Class-body and module-body statements are not read: the call rows bind
+  the parameters of the owner, and those bodies have none.
 - Equality follows Python semantics for scalar literals: `True == 1` and
   `False == 0` hold, and `2 == True` does not, so a bool call argument is
   not excluded by a numeric guard (or vice versa).
@@ -279,6 +292,11 @@ text is display only and never feeds a decision:
   (`weakly_exposed`, missing `total < 0`) and its entering-input control
   (`exposed`); fixture `python_guarded_field_value_untaken` and its honesty
   corpus row pin the same verdict end to end.
+- `analysis::language::python::guarded_statement_tests` (#15970) covers an
+  assignment, a call statement, a string assignment and a continuation line
+  in an arm no input enters (`weakly_exposed`, missing
+  `months >= 1 and diff < 1000`), the entering-input control (`exposed`) and
+  the class-body scope control, through `PythonAdapter::analyze_diff`.
 - `analysis::language::python::classify::tests::else_arm_*` (including
   `else_text_inside_a_docstring_is_not_an_else_arm` and
   `nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row`)
@@ -309,7 +327,8 @@ text is display only and never feeds a decision:
   supplies the strong rows and the unbound-call flag the gate refuses on.
 - `crates/ripr/src/analysis/language/python/classify.rs` engages the gate
   for `return_value` and `field_construction` (#13621) probes with new-side
-  source.
+  source, and for the other statement shapes of a function or method body
+  (#15970), walking from the opening line of a wrapped statement.
 
 ## Metrics
 
