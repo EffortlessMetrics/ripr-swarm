@@ -75,6 +75,11 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
             ));
         }
     }
+    if let Some(negated) = schema.get("not")
+        && check(value, negated, root, location).is_ok()
+    {
+        return Err(format!("{location}: matched a `not` schema {negated}"));
+    }
     if let Some(condition) = schema.get("if") {
         let branch = if check(value, condition, root, location).is_ok() {
             "then"
@@ -220,6 +225,14 @@ fn check_object(
                 }
             }
         }
+        Some(Value::Bool(true)) => {}
+        Some(extra) if extra.is_object() => {
+            for (field, emitted) in object {
+                if !properties.contains_key(field) {
+                    check(emitted, extra, root, &format!("{location}.{field}"))?;
+                }
+            }
+        }
         Some(other) => {
             return Err(format!(
                 "{location}: unsupported `additionalProperties` value {other}"
@@ -290,6 +303,11 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
     {
         return Err(format!("{location}: shorter than minLength {minimum}"));
     }
+    if let Some(maximum) = schema.get("maxLength").and_then(Value::as_u64)
+        && (text.chars().count() as u64) > maximum
+    {
+        return Err(format!("{location}: longer than maxLength {maximum}"));
+    }
     if let Some(pattern) = schema.get("pattern").and_then(Value::as_str) {
         match pattern {
             SHA256_DIGEST_PATTERN => {
@@ -338,10 +356,12 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "if",
     "items",
     "maxItems",
+    "maxLength",
     "maximum",
     "minItems",
     "minLength",
     "minimum",
+    "not",
     "oneOf",
     "pattern",
     "prefixItems",
@@ -373,7 +393,9 @@ fn collect_unsupported(schema: &Value, found: &mut Vec<String>) {
                     collect_unsupported(member, found);
                 }
             }
-            "items" | "if" | "then" | "else" => collect_unsupported(nested, found),
+            "items" | "if" | "then" | "else" | "not" | "additionalProperties" => {
+                collect_unsupported(nested, found)
+            }
             "allOf" | "oneOf" | "prefixItems" => {
                 for member in nested.as_array().into_iter().flatten() {
                     collect_unsupported(member, found);

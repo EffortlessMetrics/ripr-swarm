@@ -37,11 +37,15 @@ struct RerunOptions {
     check_parity: bool,
 }
 
+/// The `ripr rerun --json` report version, published as
+/// `schemas/ripr/rerun.schema.json` and pinned there by the output-contract
+/// version gate (#3920).
+const TARGETED_RERUN_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
+
 /// The `ripr rerun --json` refusal envelope keys its document with the
-/// targeted rerun report's schema version (#7331). Owner: the
-/// `TargetedRerunReport.schema_version` literal in the report construction
-/// (pinned by the output-contract version gate), mirrored here because the
-/// report value exists only on the success path.
+/// targeted rerun report's schema version (#7331). The version gate pins this
+/// mirror and `TARGETED_RERUN_SCHEMA_VERSION` to their published schemas
+/// separately, so the two cannot drift apart unreported.
 const TARGETED_RERUN_REFUSAL_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1420,7 +1424,7 @@ fn report(
     scope_limitations: Vec<TargetedRerunScopeLimitation>,
 ) -> TargetedRerunReport {
     TargetedRerunReport {
-        schema_version: "ripr-targeted-rerun-v1",
+        schema_version: TARGETED_RERUN_SCHEMA_VERSION,
         state,
         selector,
         cache,
