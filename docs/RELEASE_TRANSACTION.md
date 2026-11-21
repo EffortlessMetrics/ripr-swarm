@@ -718,7 +718,8 @@ The #1470 record is a maintainer comment on the issue, not the issue body. It
 names the exact candidate and ship packet and states `authorized` or
 `not_authorized` independently for every item. Authorization for one item does
 not imply another. A missing, ambiguous, duplicated, or edited line is
-`not_authorized`. The check below reads these lines, with `=` or `:` as the
+`not_authorized`, and so is a record the issuer has followed with a later
+comment on #1470. The check below reads these lines, with `=` or `:` as the
 separator, as plain lines, list items, or table rows:
 
 ```text
@@ -737,19 +738,29 @@ VS Code Marketplace publication = authorized | not_authorized
 Open VSX publication = authorized | not_authorized
 ```
 
-#1470 and its amendments require more than this check reads: the remaining RC
-evidence digests, artifact-attestation permissions, each release
-secret/environment, and the one workflow or request path per channel. Read
-those rows in the retained record before each leaf. Where the record names a
-specific transaction or workflow path for a channel, that path governs and the
-matching template below must not be used in its place. When source lands the
-canonical packet verifier (`ripr#1651`), it replaces this line check.
+This line check is an operator pre-flight on the retained record. It is not
+the authority path. #1470's amendments place authority in canonical packets
+(`ripr#1651`), bound to an exact tag or continuation event (`ripr#1652`) and
+consumed by one publication owner (`ripr#1646`, with `ripr#1644`/`#1649`), and
+say the record cannot authorize `cargo publish`, `gh release`, or another
+workflow generically. A template below runs only when the record names that
+exact command or workflow as the channel's path. Otherwise stop: the channel
+belongs to the source transaction the record names. `ripr#1637`'s 2026-08-30
+amendment also makes that bridge a precondition of
+`stable_ready_same_candidate`; its 2026-11-11 floor does not restate it, and
+this runbook does not settle which holds.
+
+The check also does not read the remaining RC evidence digests,
+artifact-attestation permissions, or each release secret/environment. Read
+those rows in the retained record before each leaf.
 
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; capture the exact #1470 authorization comment and public state
 assert_live_pin_guard
 AUTHORIZATION_COMMENT_ID="${AUTHORIZATION_COMMENT_ID:?set to the numeric id of the ripr#1470 authorization comment}"
+# #1470 reserves the record to the release owner; organization membership is not enough.
+AUTHORIZATION_ISSUER=EffortlessSteven
 SHIP_PACKET_PR="${SHIP_PACKET_PR:?set to the ripr#1469 ship-packet PR number}"
 SHIP_PACKET="${SHIP_PACKET:?set to the retained immutable ripr#1469 ship packet}"
 SHIP_PACKET_SHA256="$(sha256sum "$SHIP_PACKET" | cut -d' ' -f1)"
@@ -769,7 +780,7 @@ set -euo pipefail
 # [READ-ONLY] repo=source/public services; fail closed on the #1470 record
 authorization_value() {
   # Prints the value of the one line that starts with this exact label.
-  # No such line, or more than one, is ambiguous and fails.
+  # No such line, more than one, or one whose value is not a single token fails.
   tr -d '\r' < "$AUTHORIZATION_BODY" | sed -e 's/[|*`]/ /g' -e 's/^[[:space:]]*-[[:space:]]//' |
     awk -v label="$1" '
       { sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "") }
@@ -777,23 +788,29 @@ authorization_value() {
         rest = substr($0, length(label) + 1)
         if (rest !~ /^[ \t:=]/) next
         sub(/^[ \t]*[:=]?[ \t]*/, "", rest)
-        if (rest == "" || rest ~ /[ \t]/) next
-        count += 1; value = rest
+        count += 1
+        if (rest == "" || rest ~ /[ \t]/) { bad = 1; next }
+        value = rest
       }
-      END { if (count != 1) exit 1; print value }'
+      END { if (count != 1 || bad) exit 1; print value }'
 }
 assert_authorization_current() {
   # #1470: re-read the record before every irreversible action; an edit invalidates it.
+  # Any later issuer comment on #1470 may supersede or withdraw the record: stop and rebind.
   gh api "repos/EffortlessMetrics/ripr/issues/comments/${AUTHORIZATION_COMMENT_ID}" --jq .body > "$PACKET_ROOT/publication-authorization-live.md" &&
-    cmp "$AUTHORIZATION_BODY" "$PACKET_ROOT/publication-authorization-live.md"
+    cmp "$AUTHORIZATION_BODY" "$PACKET_ROOT/publication-authorization-live.md" &&
+    gh api --paginate --slurp "repos/EffortlessMetrics/ripr/issues/1470/comments?per_page=100" > "$PACKET_ROOT/publication-authorization-thread.json" &&
+    jq -e --arg issuer "$AUTHORIZATION_ISSUER" --argjson id "$AUTHORIZATION_COMMENT_ID" '
+      [.[][]] | any(.id == $id) and ([.[] | select(.user.login == $issuer and .id > $id)] | length == 0)
+    ' "$PACKET_ROOT/publication-authorization-thread.json" >/dev/null
 }
 require_authorized() {
   assert_authorization_current && test "$(authorization_value "$1")" = authorized
 }
 test "$(jq -r .state "$AUTHORIZATION_ISSUE")" = open
-jq -e '(.issue_url | endswith("/repos/EffortlessMetrics/ripr/issues/1470")) and
-  (.author_association == "OWNER" or .author_association == "MEMBER") and
-  .created_at == .updated_at' "$AUTHORIZATION_RECEIPT" >/dev/null
+jq -e --arg issuer "$AUTHORIZATION_ISSUER" '(.issue_url | endswith("/repos/EffortlessMetrics/ripr/issues/1470")) and
+  .user.login == $issuer and .created_at == .updated_at' "$AUTHORIZATION_RECEIPT" >/dev/null
+assert_authorization_current
 test "$(authorization_value version)" = "$VERSION"
 test "$(authorization_value SOURCE_RELEASE_HEAD)" = "$SOURCE_RELEASE_HEAD"
 test "$(authorization_value SOURCE_RELEASE_TREE)" = "$SOURCE_RELEASE_TREE"
@@ -904,11 +921,29 @@ verify_publish_receipt
 record_crate_version ripr "$(jq -er .ripr_sha256 "$PUBLISH_RECEIPT")"
 ```
 
+#1470's first step is publish *and verify*: a clean locked install from the
+registry comes before the tag, because the registry API can list both versions
+while a fresh Cargo home still cannot resolve them. This is a version smoke
+only; `ripr#1481` owns the full public command-surface proof.
+
+```bash
+set -euo pipefail
+# [LOCAL-MUTATING] repo=packet; clean crates.io install in a fresh Cargo home and prefix, before the tag
+CRATE_INSTALL_ROOT="$(mktemp -d "$PACKET_ROOT/crate-install.XXXXXX")"
+CARGO_HOME="$CRATE_INSTALL_ROOT/cargo-home" cargo install ripr --version "=${VERSION}" --locked --root "$CRATE_INSTALL_ROOT/prefix"
+INSTALLED_VERSION="$("$CRATE_INSTALL_ROOT/prefix/bin/ripr" --version)"
+case "$INSTALLED_VERSION" in "ripr ${VERSION}" | "ripr ${VERSION} "*) ;; *) echo "installed binary reports: $INSTALLED_VERSION" >&2; exit 1 ;; esac
+jq -n --arg version "$VERSION" --arg reported "$INSTALLED_VERSION" \
+  --arg sha "$(sha256sum "$CRATE_INSTALL_ROOT/prefix/bin/ripr" | cut -d' ' -f1)" \
+  '{version: $version, source: "crates.io", reported: $reported, executable_sha256: $sha}' > "$PACKET_ROOT/crate-install-receipt.json"
+```
+
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 tag authorization only, after crates.io is verified
 assert_live_pin_guard
 require_authorized "v${VERSION} tag creation/push"
+jq -e --arg v "$VERSION" '.version == $v and .source == "crates.io" and (.executable_sha256 | test("^[0-9a-f]{64}$"))' "$PACKET_ROOT/crate-install-receipt.json" >/dev/null
 verify_publish_receipt
 verify_registry_response ripr-contract "$(jq -er .contract_sha256 "$PUBLISH_RECEIPT")" "$PACKET_ROOT/registry-ripr-contract-${VERSION}.json"
 verify_registry_response ripr "$(jq -er .ripr_sha256 "$PUBLISH_RECEIPT")" "$PACKET_ROOT/registry-ripr-${VERSION}.json"
@@ -978,7 +1013,10 @@ every archive it names and compares them with `manifest_sha256`, requires
 `package.json` to equal the version, binds that digest into the VSIX through
 `cargo xtask release-bind-server-descriptor`, runs `npm run package` plus
 `cargo xtask vscode-verify-vsix`, and attaches one VSIX to the Release before
-either marketplace publish. The second channel's dispatch must pass the attached
+either marketplace publish. Whichever marketplace dispatch runs first attaches
+the VSIX, so it also needs the VSIX-asset item; when VS Code Marketplace is
+withheld, skip its three blocks and the Open VSX dispatch becomes that first
+dispatch. The second channel's dispatch must pass the attached
 VSIX's digest as `vsix_sha256` (recorded below before that dispatch); it
 downloads the attached bytes, checks them against it, and each publish job
 re-checks their SHA-256 against the Release asset. The workflow cannot prove
@@ -1017,9 +1055,11 @@ printf '%s\n' "$VSIX_SHA256" > "$PACKET_ROOT/vsix.sha256"
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 Open VSX authorization only
 require_authorized "Open VSX publication"
+# With no earlier dispatch this one attaches the VSIX, which is its own #1470 item.
+test -n "${VSIX_SHA256:-}" || require_authorized "VSIX GitHub asset upload when applicable"
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx-before.json"
-gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f source_sha="$SOURCE_RELEASE_HEAD" -f manifest_sha256="$SERVER_MANIFEST_SHA256" -f vsix_sha256="$VSIX_SHA256" -f publish_vs_marketplace=false -f publish_open_vsx=true
+gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f source_sha="$SOURCE_RELEASE_HEAD" -f manifest_sha256="$SERVER_MANIFEST_SHA256" -f vsix_sha256="${VSIX_SHA256:-}" -f publish_vs_marketplace=false -f publish_open_vsx=true
 ```
 
 ```bash
@@ -1036,6 +1076,12 @@ After partial publication, stop later channels, record public state, and obtain
 a corrective-release decision through #1470. A failed marketplace does not
 invalidate a verified crate, tag, and server release. Never republish a crate
 version, delete or retarget a public tag, or claim a complete release.
+
+A withheld or failed marketplace leaves no run receipt. Section 7's
+publication receipt still loads the server, VS Code Marketplace, and Open VSX
+run receipts unconditionally, so it stops there. Do not fabricate a receipt:
+K waits for the terminal `ripr#1481` channel matrix and an owner-backed
+disposition for that channel.
 
 ### npm and PyPI
 
