@@ -695,10 +695,13 @@ impl TsAliasMap {
     }
 
     /// `true` only when nothing `tsc` could resolve sits at `candidate_base`:
-    /// its directory holds no entry named `<stem>` or `<stem>.<anything>`.
-    /// That rules out the routed source files, a declaration file, any other
-    /// extension `tsc` can be configured to load, and a directory it would
-    /// search for an index or a `package.json`. An unsafe candidate, or a
+    /// its directory holds no entry named `<stem>` or `<stem>.<anything>`,
+    /// where `<stem>` is the candidate's last segment up to its first `.`,
+    /// compared without regard to case. That rules out the routed source
+    /// files, a declaration file (`owner.d.ts`, `style.d.css.ts`), any other
+    /// extension `tsc` can be configured to load, a directory it would
+    /// search for an index or a `package.json`, and a differently-cased
+    /// file a case-insensitive host would open. An unsafe candidate, or a
     /// directory that cannot be listed, proves nothing.
     fn provably_absent(&self, candidate_base: &str) -> bool {
         if self.base_url_absolute
@@ -715,7 +718,8 @@ impl TsAliasMap {
         let (Some(parent), Some(stem)) = (candidate.parent(), candidate.file_name()) else {
             return false;
         };
-        let stem = stem.to_string_lossy();
+        let stem = stem.to_string_lossy().to_lowercase();
+        let stem = stem.split('.').next().unwrap_or_default();
         let entries = match std::fs::read_dir(parent) {
             Ok(entries) => entries,
             // No such directory: nothing can be in it. Any other failure
@@ -732,7 +736,8 @@ impl TsAliasMap {
             let name = entry.file_name();
             if name
                 .to_string_lossy()
-                .strip_prefix(stem.as_ref())
+                .to_lowercase()
+                .strip_prefix(stem)
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
             {
                 return false;
@@ -2985,6 +2990,7 @@ mod tests {
                 Some("generated/owner.vue"),
             ),
             ("json-module", "generated/*", Some("generated/owner.json")),
+            ("other-case", "generated/*", Some("generated/Owner.ts")),
             ("multi-star", "generated/*/*", None),
             ("parent-escape", "../generated/*", None),
             ("absolute", "/generated/*", None),
@@ -2998,6 +3004,18 @@ mod tests {
             assert_eq!(resolved(&map, "@/owner"), None, "{label}");
             let _ = std::fs::remove_dir_all(&root);
         }
+        // A dotted specifier's declaration file carries the extra extension
+        // in the middle of its name (`allowArbitraryExtensions`).
+        let root = temp_dir("fallback-unknown-arbitrary-extension");
+        write(&root, "src/style.css.ts", "export {}");
+        let map = fallback_map(&root, r#"["generated/*","src/*"]"#)?;
+        assert_eq!(
+            resolved(&map, "@/style.css").as_deref(),
+            Some("src/style.css.ts")
+        );
+        write(&root, "generated/style.d.css.ts", "export {}");
+        assert_eq!(resolved(&map, "@/style.css"), None);
+        let _ = std::fs::remove_dir_all(&root);
         // Two routed files at the earlier target are ambiguous, not absent.
         let root = temp_dir("fallback-unknown-ambiguous");
         write(&root, "src/owner.ts", "export function owner() {}");

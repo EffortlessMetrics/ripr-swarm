@@ -78,9 +78,12 @@ every ambiguity:
 - A `paths` value array is `tsc`'s fallback list and is walked in order: the
   first template whose candidate is exactly one workspace file wins. A later
   template is reached only when every earlier candidate is provably absent:
-  its directory holds no entry named `<stem>` or `<stem>.<anything>`, which
-  rules out a declaration file, any other extension `tsc` may load, and a
-  directory it would search for an index or `package.json`. An earlier
+  its directory holds no entry named `<stem>` or `<stem>.<anything>`, where
+  `<stem>` is the candidate's last segment up to its first `.`, compared
+  without regard to case. That rules out a declaration file (`owner.d.ts`,
+  `style.d.css.ts`), any other extension `tsc` may load, a directory it would
+  search for an index or `package.json`, and a differently-cased file a
+  case-insensitive host would open. An earlier
   candidate that is ambiguous, unsafe (`..`/absolute), multi-`*`, non-relative
   without a `baseUrl`, or present in a form this reader does not model ends
   the walk unresolved.
