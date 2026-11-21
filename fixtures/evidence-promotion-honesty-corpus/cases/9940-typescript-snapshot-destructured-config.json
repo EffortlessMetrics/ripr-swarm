@@ -1,0 +1,33 @@
+{
+  "id": "ts_committed_snapshot_destructured_config_write",
+  "language": "typescript",
+  "tier": "pure",
+  "source_fixture": "fixtures/typescript_snapshot_destructured_config_write",
+  "vector": "destructured_variable_member_write_changes_exported_snapshot_identity",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "snapshot",
+      "strength": "medium"
+    },
+    {
+      "type": "maximum_class",
+      "class": "weakly_exposed"
+    }
+  ]
+}
