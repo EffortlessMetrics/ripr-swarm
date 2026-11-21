@@ -1,7 +1,6 @@
 crates/ripr/src/edit_cage/mod.rs|Git path record is not UTF-8: {err}
 crates/ripr/src/edit_cage/mod.rs|a renamed path change requires previous_path
 crates/ripr/src/edit_cage/mod.rs|a {} path change must not carry previous_path
-crates/ripr/src/edit_cage/mod.rs|attempt root {} is not the exact Git top-level {}
 crates/ripr/src/edit_cage/mod.rs|baseline workflow projection `{path}` is not a regular file
 crates/ripr/src/edit_cage/mod.rs|git ls-files emitted malformed index record `{record}`
 crates/ripr/src/edit_cage/mod.rs|git ls-files emitted malformed stage metadata `{metadata}`
