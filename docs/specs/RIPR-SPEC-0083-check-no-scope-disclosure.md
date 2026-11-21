@@ -321,12 +321,15 @@ the parse label. The stderr zero-findings hedge and the label share one
 classification, `AnalysisLimitation::is_non_text_only` (#15862). A section
 counts as a mode change only with six-digit octal `old mode`/`new mode`
 values, and as a binary change only with a `Binary files ... differ`
-sentinel or a complete `git diff --binary` patch (the `GIT binary patch`
-marker, a `literal <n>` or `delta <n>` line and a data line in Git's
-base85 form: a length character and the matching count of base85
-characters, checked structurally and not decoded); a lookalike such as
-`old mode invalid`, a bare marker or a size line followed by other text keeps
-the parse label.
+sentinel or a complete `git diff --binary` patch: the `GIT binary patch`
+marker, then one or more blocks of a `literal <n>` or `delta <n>` line, data
+lines in Git's base85 form (a length character and the matching count of
+base85 characters, checked structurally and not decoded) and a closing blank
+line. Once the marker appears the patch must complete, even beside a valid
+mode pair, and any other line inside it makes the section malformed. A
+lookalike such as `old mode invalid`, a bare marker, a size line followed by
+other text, or a valid forward block with a corrupt reverse block keeps the
+parse label.
 
 ### Non-claims
 
@@ -414,7 +417,7 @@ the parse label.
 - `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_deleted_file_beside_another_change_is_named` (#15324: a deleted file beside another changed file is named on stderr; a diff with no deletion prints no deletion line)
 - `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete` (#15324: a binary-rendered `.rs` section, including a C-quoted name, makes the outcome incomplete with a typed limitation; a binary asset, a text-only diff, a binary source outside the `--path` scope or matched by an exact `--exclude` of its decoded name, and one under `target/ripr` stay complete)
 - `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_binary_rendered_copy_read_as_added_source_is_not_named_unread` (#15324: a copy destination read whole as added source is not named)
-- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_mode_only_diff_is_not_labelled_unparseable` (#15862: real git mode-only and `--binary` patches keep the `malformed_diff` token and well-formed detail in JSON and read the binary/file-mode label in human output and stderr; an invalid-mode lookalike, a bare `GIT binary patch` marker, a size line followed by non-base85 text and garbage input keep the parse label)
+- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_mode_only_diff_is_not_labelled_unparseable` (#15862: real git mode-only and `--binary` patches keep the `malformed_diff` token and well-formed detail in JSON and read the binary/file-mode label in human output and stderr; an invalid-mode lookalike, a bare `GIT binary patch` marker, a size line followed by non-base85 text, a corrupt reverse block, an unfinished patch after a valid mode pair and garbage input keep the parse label)
 - `crates/ripr/src/analysis/diff/path.rs::tests::prefixless_binary_sections_read_only_on_exact_agreement` (#15665: root-level, nested and quoted prefixless sections are read; prefixed, renamed, deleted and traversal sections are not)
 - `crates/ripr/src/analysis/diff/parse.rs::tests::binary_sections_record_their_own_decoded_path` (#15324: modified, added, quoted, renamed and mnemonic binary sections record their decoded path; deleted and text sections do not)
 - `crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::only_unread_routed_sources_are_named` (#15324: routed source paths are named, assets and paths already read are not)

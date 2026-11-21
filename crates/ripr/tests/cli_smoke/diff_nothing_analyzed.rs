@@ -321,6 +321,11 @@ const INVALID_MODE_LIB: &str =
 const BARE_BINARY_MARKER: &str = "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 0\n";
 const NON_PAYLOAD_BINARY: &str =
     "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 0\nnot payload\n";
+// A valid forward block whose reverse block is not payload, and an
+// unfinished patch after a valid mode pair.
+const CORRUPT_REVERSE_BINARY: &str = "diff --git a/logo.png b/logo.png\nindex 8352675d67aed6625ece79af41c27fdb4ee2e867..1592e5c60f1a460928916dc5681fee1a9bd10868 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nnot payload\n\n";
+const MODE_THEN_BARE_MARKER: &str =
+    "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\nGIT binary patch\n";
 
 /// #15862: a well-formed binary- or mode-only diff keeps the `malformed_diff`
 /// schema token, but the human limitation line must not call it unparseable
@@ -381,6 +386,8 @@ fn a_mode_only_diff_is_not_labelled_unparseable() -> TestResult {
         ("diff-invalid-mode-label", INVALID_MODE_LIB),
         ("diff-bare-binary-marker-label", BARE_BINARY_MARKER),
         ("diff-non-payload-binary-label", NON_PAYLOAD_BINARY),
+        ("diff-corrupt-reverse-binary-label", CORRUPT_REVERSE_BINARY),
+        ("diff-mode-then-bare-marker-label", MODE_THEN_BARE_MARKER),
         ("diff-garbage-label-control", "this is not a diff\n"),
     ] {
         let (human, stderr, json) = run(name, &[section])?;

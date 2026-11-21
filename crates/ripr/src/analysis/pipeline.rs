@@ -3691,39 +3691,85 @@ use crate::analysis_outcome::NON_TEXT_ONLY_DETAIL;
 /// a malformed binary sentinel) keeps the generic malformed-diff wording.
 fn has_only_non_text_changes(diff_text: &str) -> bool {
     let mut sections = 0usize;
-    let mut binary = false;
-    let (mut old_mode, mut new_mode) = (false, false);
+    let mut section: Option<NonTextSection> = None;
     let mut all_ok = true;
-    let mut in_section = false;
-    let mut binary_patch = BinaryPatchProgress::default();
     for line in diff_text.lines() {
         let line = line.trim_end_matches('\r');
         if line.starts_with("@@") {
             return false;
         }
         if line.starts_with("diff --git ") {
-            if in_section {
-                all_ok &= binary || (old_mode && new_mode);
-            }
-            in_section = true;
+            all_ok &= section.is_none_or(|section| section.is_complete());
+            section = Some(NonTextSection::default());
             sections += 1;
-            binary = false;
-            old_mode = false;
-            new_mode = false;
-            binary_patch = BinaryPatchProgress::default();
             continue;
         }
-        if !in_section {
-            continue;
+        if let Some(section) = section.as_mut() {
+            section.read(line);
         }
-        binary |= is_binary_sentinel(line) || binary_patch.complete_after(line);
-        old_mode |= is_git_mode_line(line, "old mode ");
-        new_mode |= is_git_mode_line(line, "new mode ");
     }
-    if in_section {
-        all_ok &= binary || (old_mode && new_mode);
-    }
+    all_ok &= section.is_none_or(|section| section.is_complete());
     sections > 0 && all_ok
+}
+
+/// What one `diff --git` section has shown of a non-text change (#15862).
+#[derive(Clone, Copy, Default)]
+struct NonTextSection {
+    sentinel: bool,
+    old_mode: bool,
+    new_mode: bool,
+    patch: BinaryPatchState,
+}
+
+impl NonTextSection {
+    fn read(&mut self, line: &str) {
+        if self.patch == BinaryPatchState::Absent {
+            if line == "GIT binary patch" {
+                self.patch = BinaryPatchState::Header;
+                return;
+            }
+            self.sentinel |= is_binary_sentinel(line);
+            self.old_mode |= is_git_mode_line(line, "old mode ");
+            self.new_mode |= is_git_mode_line(line, "new mode ");
+            return;
+        }
+        self.patch = self.patch.after(line);
+    }
+
+    /// A started binary patch must be complete, whatever mode lines precede
+    /// it; otherwise a sentinel or a full mode pair is required.
+    fn is_complete(self) -> bool {
+        match self.patch {
+            BinaryPatchState::Absent => self.sentinel || (self.old_mode && self.new_mode),
+            state => state == BinaryPatchState::BlockEnd,
+        }
+    }
+}
+
+/// A `git diff --binary` patch: the `GIT binary patch` marker, then one or
+/// more blocks of a `literal <n>` or `delta <n>` line, base85 data lines and a
+/// blank line (#15862). Every data line is checked for shape; any other line
+/// inside the patch makes it invalid, and only a closed block completes it.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum BinaryPatchState {
+    #[default]
+    Absent,
+    Header,
+    Size,
+    Data,
+    BlockEnd,
+    Invalid,
+}
+
+impl BinaryPatchState {
+    fn after(self, line: &str) -> Self {
+        match self {
+            Self::Header | Self::BlockEnd if is_binary_patch_size(line) => Self::Size,
+            Self::Size | Self::Data if is_base85_data_line(line) => Self::Data,
+            Self::Data if line.is_empty() => Self::BlockEnd,
+            _ => Self::Invalid,
+        }
+    }
 }
 
 /// `old mode <m>` / `new mode <m>` with a six-digit octal Git mode (#15862);
@@ -3731,32 +3777,6 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
 fn is_git_mode_line(line: &str, prefix: &str) -> bool {
     line.strip_prefix(prefix)
         .is_some_and(|mode| mode.len() == 6 && mode.bytes().all(|b| matches!(b, b'0'..=b'7')))
-}
-
-/// A `git diff --binary` patch counts only once it is complete enough to be
-/// real: the `GIT binary patch` header, a `literal <n>` or `delta <n>` line,
-/// then a base85 data line (#15862). The marker alone, or a
-/// `literal 0` with no payload, stays unrecognized.
-#[derive(Clone, Copy, Default)]
-enum BinaryPatchProgress {
-    #[default]
-    Idle,
-    Header,
-    Size,
-}
-
-impl BinaryPatchProgress {
-    /// Advances on `line`; true when `line` completes a binary patch.
-    fn complete_after(&mut self, line: &str) -> bool {
-        let (next, complete) = match *self {
-            _ if line == "GIT binary patch" => (Self::Header, false),
-            Self::Header if is_binary_patch_size(line) => (Self::Size, false),
-            Self::Size if is_base85_data_line(line) => (Self::Idle, true),
-            _ => (Self::Idle, false),
-        };
-        *self = next;
-        complete
-    }
 }
 
 /// One line of Git's base85 binary payload: a length character (`A`-`Z` for
@@ -5152,6 +5172,10 @@ mod tests {
             );
         }
         // Real `git diff --binary` output is recognized (#15862) ...
+        // A mode change carried with a complete binary patch.
+        assert!(has_only_non_text_changes(
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nindex 8352675..1592e5c\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
+        ));
         // A new one-byte file: the forward `literal 1` and reverse `literal 0`
         // data lines are both base85 lines git emitted.
         assert!(has_only_non_text_changes(
@@ -5171,6 +5195,11 @@ mod tests {
             "diff --git a/x b/x\nGIT binary patch\nliteral 0\n\n",
             "diff --git a/x b/x\nGIT binary patch\nKcmZQzWCj2L2ml2D\n",
             "diff --git a/x b/x\nGIT binary patch\nliteral 0\nnot payload\n",
+            // A started patch must complete even beside a valid mode pair.
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nGIT binary patch\n",
+            // A malformed reverse block, or a forward block never closed.
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nnot payload\n\n",
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n",
             "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2\n",
             "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQ WCj2L2ml2D\n",
             "diff --git a/x b/x\nold mode invalid\nnew mode invalid\n",
