@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7 +7 @@
+-        if self.0 > 100 { Money(self.0 - other.0) } else { Money(0) }
++        if self.0 > 100 { Money(self.0 + other.0) } else { Money(0) }

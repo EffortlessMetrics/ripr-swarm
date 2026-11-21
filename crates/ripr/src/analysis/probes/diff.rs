@@ -3249,7 +3249,7 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
 
 /// Byte lengths of the text the two lines share at the start and at the
 /// end. The suffix never reaches back into the prefix.
-fn common_prefix_suffix(added_line: &str, removed_line: &str) -> (usize, usize) {
+pub(super) fn common_prefix_suffix(added_line: &str, removed_line: &str) -> (usize, usize) {
     let mut prefix = 0;
     for (added, removed) in added_line.chars().zip(removed_line.chars()) {
         if added != removed {

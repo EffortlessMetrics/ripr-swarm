@@ -303,6 +303,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             selected.push((candidate, candidate_key));
         }
     }
+    if let Some(removed) = removed_text {
+        retarget_inline_branch_value_edit(&facts.source, line, removed, &mut selected, &mut parsed);
+    }
     for (shape, _) in &mut selected {
         shape.standalone_call = parser_call_shape_is_standalone(facts, shape);
     }
@@ -321,6 +324,162 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .then(left.text.cmp(right.text))
     });
     selected.into_iter().map(|(shape, _)| shape).collect()
+}
+
+type SelectedShape<'a> = (ParserProbeShape<'a>, Option<(u8, bool, usize)>);
+
+/// One line's text with formatting removed but token spelling kept: string
+/// and char literals are copied verbatim, a whitespace run becomes one space
+/// only where it separates two word characters (`x as u32`), and is dropped
+/// elsewhere. Returns `None` for text this scan does not model (raw strings,
+/// unterminated literals, comments), so callers fail closed.
+pub(super) fn formatting_free_text(text: &str) -> Option<String> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut pending_space = false;
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        if c.is_whitespace() {
+            pending_space = true;
+            i += 1;
+            continue;
+        }
+        if pending_space && out.ends_with(word) && word(c) {
+            out.push(' ');
+        }
+        pending_space = false;
+        let next = chars.get(i + 1).copied();
+        if c == '/' && matches!(next, Some('/' | '*')) {
+            return None;
+        }
+        if c == 'r' && matches!(next, Some('"' | '#')) && !out.ends_with(word) {
+            return None;
+        }
+        let literal_end = match c {
+            '"' => Some(literal_close(&chars, i, '"')?),
+            // `'x'` / `'\n'` is a char literal; `'a` alone is a lifetime.
+            '\'' if chars.get(i + 2) == Some(&'\'') || next == Some('\\') => {
+                Some(literal_close(&chars, i, '\'')?)
+            }
+            _ => None,
+        };
+        let end = literal_end.unwrap_or(i);
+        out.extend(&chars[i..=end]);
+        i = end + 1;
+    }
+    Some(out)
+}
+
+/// Index of the unescaped `quote` closing the literal opened at `open`.
+fn literal_close(chars: &[char], open: usize, quote: char) -> Option<usize> {
+    let mut i = open + 1;
+    while let Some(&c) = chars.get(i) {
+        match c {
+            '\\' => i += 2,
+            c if c == quote => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// F1: an edit on an `if`'s condition line that misses the condition and
+/// lies inside a branch block (`if price > 100 { 10 } else { 0 }` to
+/// `{ 15 }`) did not change the predicate, so the predicate's boundary is not
+/// the discriminator for it: a `price == 100` test passes on both sides.
+/// When the edit is inside a value the owner returns, the unchanged
+/// predicate shape leaves the line and that value is the line's
+/// `return_value` shape, as it is when it sits on its own line (#14385).
+/// Otherwise another selected shape that spans the edit (`return 15`) stands
+/// for it; with none, the line keeps its predicate shape (a non-returned value
+/// has no shape of its own to take its place).
+fn retarget_inline_branch_value_edit<'a>(
+    source: &'a str,
+    line: usize,
+    removed: &str,
+    selected: &mut Vec<SelectedShape<'a>>,
+    parsed: &mut Option<Option<ra_ap_syntax::Parse<ast::SourceFile>>>,
+) {
+    let Some(position) = selected
+        .iter()
+        .position(|(shape, _)| shape.family == ProbeFamily::Predicate && !shape.unsafe_boundary)
+    else {
+        return;
+    };
+    let Some(line_range) = source_line_byte_range(source, line) else {
+        return;
+    };
+    let Some(head) = source.get(line_range.clone()) else {
+        return;
+    };
+    let lead = line_range.start + (head.len() - head.trim_start().len());
+    let (head, removed) = (head.trim(), removed.trim());
+    // A formatting-only edit (`{ 10 }` to `{ 10}`, `price + 1` to `price +1`)
+    // changes no value; the line keeps its prior reading. Lines compare as
+    // token text, so whitespace inside a literal (`"a b"` to `"ab"`) stays a
+    // real edit; a line the scan cannot tokenize never takes this shortcut.
+    if let (Some(head_tokens), Some(removed_tokens)) =
+        (formatting_free_text(head), formatting_free_text(removed))
+        && head_tokens == removed_tokens
+    {
+        return;
+    }
+    let (prefix, suffix) = super::diff::common_prefix_suffix(head, removed);
+    let edit = lead + prefix..lead + head.len() - suffix;
+    let Some(parse) = parsed
+        .get_or_insert_with(|| last_file_parse(source))
+        .as_ref()
+    else {
+        return;
+    };
+    let Some(branch) = crate::analysis::syntax::ra::inline_branch_edit(
+        &parse.tree(),
+        source,
+        selected[position].0.start_byte,
+        edit.clone(),
+    ) else {
+        return;
+    };
+    let spans_edit = |shape: &ParserProbeShape<'_>| {
+        shape.start_byte <= edit.start && edit.end <= shape.start_byte + shape.text.len()
+    };
+    let Some((value, true)) = branch.value else {
+        // Not a returned value: the predicate leaves only when another shape
+        // on the line (`return 15`) spans the edit and stands for it. With
+        // none, the line keeps today's reading rather than an unmodeled one.
+        if selected
+            .iter()
+            .enumerate()
+            .any(|(at, (shape, _))| at != position && spans_edit(shape))
+        {
+            selected.remove(position);
+        }
+        return;
+    };
+    let Some(value_text) = source.get(value.clone()) else {
+        return;
+    };
+    selected.remove(position);
+    // A returned-value shape elsewhere on the line is not this edit's.
+    selected.retain(|(shape, _)| shape.family != ProbeFamily::ReturnValue || spans_edit(shape));
+    if !selected
+        .iter()
+        .any(|(shape, _)| shape.family == ProbeFamily::ReturnValue)
+    {
+        selected.push((
+            ParserProbeShape {
+                family: ProbeFamily::ReturnValue,
+                start_line: line,
+                start_byte: value.start,
+                text: value_text,
+                standalone_call: true,
+                unsafe_boundary: false,
+                unsafe_interior: false,
+            },
+            None,
+        ));
+    }
 }
 
 thread_local! {

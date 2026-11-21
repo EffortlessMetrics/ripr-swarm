@@ -48,6 +48,8 @@ pub(in crate::analysis) use fmt_dispatch::{
     assertion_pins_display_string, changes_only_string_literals, is_display_fmt_owner,
 };
 
+pub(in crate::analysis) use operator_dispatch::operator_assertions_skip_branch;
+
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
 /// every probe; `None` (no workspace root, narrower diff passes) disables

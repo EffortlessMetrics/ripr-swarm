@@ -683,6 +683,37 @@ fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
 }
 
 #[test]
+fn inline_operator_branch_credit_tracks_the_receiver() -> Result<(), String> {
+    let edited = Case {
+        old_line: "        if self.0 > 100 { Money(self.0 - other.0) } else { Money(0) }",
+        new_line: "        if self.0 > 100 { Money(self.0 + other.0) } else { Money(0) }",
+        ..ADD
+    };
+    for (label, assertion, expected) in [
+        (
+            "misses_then",
+            "assert_eq!(Money(2) + Money(3), Money(0));",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "takes_then",
+            "assert_eq!(Money(101) + Money(3), Money(104));",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let rows = findings_of(&with_body(edited, label, assertion))?;
+        assert_eq!(rows.len(), 1, "{label}");
+        assert_eq!(
+            rows[0].probe.family,
+            ripr::ProbeFamily::ReturnValue,
+            "{label}"
+        );
+        assert_eq!(rows[0].class, expected, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
 fn grouped_self_import_binds_the_enclosing_type_name() -> Result<(), String> {
     let base = Case {
         label: "grouped_self",

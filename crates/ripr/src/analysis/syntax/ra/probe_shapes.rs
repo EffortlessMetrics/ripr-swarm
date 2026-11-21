@@ -79,7 +79,10 @@ impl ProbeShapeNodes {
 /// tails that are `match`/loops follow `is_tail_return_value_text` and get no
 /// shape. A value on a line of its `if`'s condition gets none: an inline branch
 /// already flows to the return through that line's predicate (#7626), and a
-/// second shape there would add a row the predicate already judges.
+/// second shape there would add a row the predicate already judges. An edit
+/// on that line that misses the condition is the value's, not the
+/// predicate's; diff probing retargets it through
+/// [`inline_branch_edit`].
 pub(super) fn push_tail_if_branch_return_values(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
@@ -114,41 +117,7 @@ pub(super) fn push_tail_if_branch_return_values(
         let own_line = !condition_lines
             .as_ref()
             .is_some_and(|lines| lines.contains(&value_line));
-        // A nested control-flow branch tail is decided by AST kind, not text,
-        // so `if\n` or `match\n` formatting cannot admit the whole expression.
-        let control_flow = matches!(
-            value,
-            ast::Expr::IfExpr(_)
-                | ast::Expr::MatchExpr(_)
-                | ast::Expr::WhileExpr(_)
-                | ast::Expr::ForExpr(_)
-                | ast::Expr::LoopExpr(_)
-        );
-        // A comparison or boolean branch value is already a predicate probe;
-        // a second, weaker return-value row on the same expression would be a
-        // false actionable gap when the predicate is discriminated
-        // (verdict corpus `spec-b-0159-recursive-helper`).
-        // Parentheses and `!` wrap the same predicate, so they are peeled first.
-        let mut core = value.clone();
-        loop {
-            let inner = match &core {
-                ast::Expr::ParenExpr(paren) => paren.expr(),
-                ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
-                    prefix.expr()
-                }
-                _ => None,
-            };
-            match inner {
-                Some(inner) => core = inner,
-                None => break,
-            }
-        }
-        let predicate_value = ast::BinExpr::cast(core.syntax().clone()).is_some_and(|inner| {
-            inner
-                .op_kind()
-                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
-        });
-        if own_line && !control_flow && !predicate_value && is_tail_return_value_text(&value_text) {
+        if own_line && returnable_branch_value(&value, &value_text) {
             push_probe_shape(
                 shapes,
                 line_index,
@@ -171,6 +140,173 @@ pub(super) fn push_tail_if_branch_return_values(
             }
         }
         push_tail_if_branch_return_values(shapes, line_index, text, source, &value);
+    }
+}
+
+/// Whether a branch tail of an owner-tail `if` reads as a returned value:
+/// not a nested control-flow expression (decided by AST kind, not text, so
+/// `if\n` or `match\n` formatting cannot admit the whole expression) and
+/// not a comparison or boolean value. A comparison branch value is already a
+/// predicate probe; a second, weaker return-value row on the same expression
+/// would be a false actionable gap when the predicate is discriminated
+/// (verdict corpus `spec-b-0159-recursive-helper`). Parentheses and `!` wrap
+/// the same predicate, so they are peeled first.
+fn returnable_branch_value(value: &ast::Expr, value_text: &str) -> bool {
+    let control_flow = matches!(
+        value,
+        ast::Expr::IfExpr(_)
+            | ast::Expr::MatchExpr(_)
+            | ast::Expr::WhileExpr(_)
+            | ast::Expr::ForExpr(_)
+            | ast::Expr::LoopExpr(_)
+    );
+    let mut core = value.clone();
+    loop {
+        let inner = match &core {
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
+                prefix.expr()
+            }
+            _ => None,
+        };
+        match inner {
+            Some(inner) => core = inner,
+            None => break,
+        }
+    }
+    let predicate_value = ast::BinExpr::cast(core.syntax().clone()).is_some_and(|inner| {
+        inner
+            .op_kind()
+            .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+    });
+    !control_flow && !predicate_value && is_tail_return_value_text(value_text)
+}
+
+/// Where an edit on an `if`'s condition line falls when it misses the
+/// condition and lies wholly inside one branch block (F1:
+/// `if price > 100 { 10 } else { 0 }` to `{ 15 }`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InlineBranchEdit {
+    /// The branch block's tail value when it holds the edit and shares the
+    /// condition's line, with whether the owner returns it.
+    pub(crate) value: Option<(std::ops::Range<usize>, bool)>,
+}
+
+/// The branch an edit on an `if`'s condition line changed, when the edit
+/// missed the condition. The `if` is the one whose condition starts at
+/// `condition_start`; `edit` is the changed byte range of the head line.
+/// `Some` only when the edit starts past the condition's end and lies
+/// strictly inside the braces of the `then` block or a plain `else` block (an
+/// `else if` link is a predicate of its own and is not read here). A tail value is reported only
+/// on the condition's line; its flag says whether the owner returns it: the
+/// `if` is the owner body's tail, possibly through `else if` links and branch
+/// tails, it has an `else`, and the value passes [`returnable_branch_value`],
+/// the rule that gives the same value on its own line a `return_value` shape
+/// (#14385), minus error values (their `error_path` twin is not modeled
+/// here). `source` is the text `root` was parsed from. Anything the parse
+/// cannot place answers `None`.
+pub(crate) fn inline_branch_edit(
+    root: &ast::SourceFile,
+    source: &str,
+    condition_start: usize,
+    edit: std::ops::Range<usize>,
+) -> Option<InlineBranchEdit> {
+    let condition_offset = u32::try_from(condition_start).ok()?;
+    let token = root
+        .syntax()
+        .token_at_offset(condition_offset.into())
+        .right_biased()?;
+    let if_expr = token.parent_ancestors().find_map(|node| {
+        let if_expr = ast::IfExpr::cast(node)?;
+        let condition = if_expr.condition()?;
+        (usize::from(condition.syntax().text_range().start()) == condition_start).then_some(if_expr)
+    })?;
+    let condition_end = usize::from(if_expr.condition()?.syntax().text_range().end());
+    // An empty `edit` is a pure deletion at that point.
+    if edit.start < condition_end {
+        return None;
+    }
+    let covers = |range: ra_ap_syntax::TextRange| {
+        usize::from(range.start()) <= edit.start && edit.end <= usize::from(range.end())
+    };
+    let mut blocks = Vec::new();
+    if let Some(block) = if_expr.then_branch() {
+        blocks.push(block);
+    }
+    if let Some(ast::ElseBranch::Block(block)) = if_expr.else_branch() {
+        blocks.push(block);
+    }
+    // The edit must lie strictly between the block's `{` and `}`. The shared
+    // ` { 1 }` tail of `if a && b { 1 }` to `if a { 1 }` puts the deletion
+    // on the `{` byte as an empty edit; that is the condition's change, and
+    // reading it as the block's would hand the line to a spanning shape.
+    let inside = |range: ra_ap_syntax::TextRange| {
+        usize::from(range.start()) < edit.start && edit.end < usize::from(range.end())
+    };
+    let block = blocks
+        .into_iter()
+        .find(|block| inside(block.syntax().text_range()))?;
+    let value = block
+        .tail_expr()
+        .filter(|value| covers(value.syntax().text_range()))
+        .and_then(|value| {
+            let range = value.syntax().text_range();
+            let range = usize::from(range.start())..usize::from(range.end());
+            // A value on its own line already has its own shape.
+            if source.get(condition_end..range.start)?.contains('\n') {
+                return None;
+            }
+            let value_text = source.get(range.clone())?;
+            let returned = if_expr.else_branch().is_some()
+                && returnable_branch_value(&value, value_text)
+                && !has_error_path_text(value_text)
+                && if_is_owner_tail(&if_expr);
+            Some((range, returned))
+        });
+    Some(InlineBranchEdit { value })
+}
+
+/// Whether `if_expr` is what its owner `fn` returns as its body's tail,
+/// directly or as the tail of a branch (or `else if`) of such an `if`. The
+/// same chain [`push_tail_if_branch_return_values`] walks down.
+fn if_is_owner_tail(if_expr: &ast::IfExpr) -> bool {
+    let mut node = if_expr.syntax().clone();
+    loop {
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        if let Some(outer) = ast::IfExpr::cast(parent.clone()) {
+            // `else if`: the nested `if` is the outer one's else branch.
+            if matches!(outer.else_branch(), Some(ast::ElseBranch::IfExpr(nested)) if nested.syntax() == &node)
+            {
+                node = parent;
+                continue;
+            }
+            return false;
+        }
+        // A block's tail sits in its statement list.
+        let is_tail = ast::StmtList::cast(parent.clone())
+            .and_then(|list| list.tail_expr())
+            .is_some_and(|tail| tail.syntax() == &node);
+        if !is_tail {
+            return false;
+        }
+        let Some(block) = parent.parent().and_then(ast::BlockExpr::cast) else {
+            return false;
+        };
+        // A block's syntax parent is the `fn` for the owner body, the `if`
+        // for a branch block.
+        let Some(holder) = block.syntax().parent() else {
+            return false;
+        };
+        if ast::Fn::can_cast(holder.kind()) {
+            return true;
+        }
+        if ast::IfExpr::can_cast(holder.kind()) {
+            node = holder;
+            continue;
+        }
+        return false;
     }
 }
 
