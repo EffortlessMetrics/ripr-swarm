@@ -210,6 +210,10 @@ conditions pass. Direct expected-head squash is a refused historical route
 (#14247); do not arm generic auto-merge instead. Preserve actual required checks
 and approvals; this guidance does not change triggers, settings or result producers.
 
+The [staged admission route](docs/MERGE_FLOW.md#staged-admission-and-group-qualification)
+has separate acceptance and installation requirements. Leave the label unapplied
+when the installed qualification for the selected surface exceeds the authorized budget.
+
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
 CI green to request CI or promote an incomplete final-merge review to clearance.

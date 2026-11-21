@@ -72,8 +72,8 @@ The selected, reviewed candidate uses the installed qualification route. Apply
 integration judgment, then use
 [the native-queue procedure](MERGE_FLOW.md#native-queue-landing-procedure)
 for conditional landing and actual-G qualification. Auxiliary event retirement
-does not replace that producer with cheap H admission. Retire its label request
-only after the replacement is qualified and enforced.
+does not replace that producer with cheap H admission. The [staged generation](MERGE_FLOW.md#staged-admission-and-group-qualification)
+retains the explicit label for metadata-only admission after protected installation.
 The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed
