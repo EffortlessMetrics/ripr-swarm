@@ -58,6 +58,8 @@ fixtures = [
   "fixtures/rust_computed_return_tail_other_branch",
   "fixtures/rust_computed_return_tail_wrapping_local",
   "fixtures/rust_computed_return_tail_primitive_alias",
+  "fixtures/rust_computed_return_tail_crate_qualified",
+  "fixtures/rust_computed_return_tail_crate_rebound",
 ]
 code = [
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",

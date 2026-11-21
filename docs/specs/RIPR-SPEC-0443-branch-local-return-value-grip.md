@@ -340,6 +340,11 @@ local wraps, so the call takes the other branch) and
 `fixtures/rust_computed_return_tail_primitive_alias` (not promoted: the
 same wrap through `pub type i32 = u8;`) pin both sides in the
 evidence-promotion honesty corpus.
+`fixtures/rust_computed_return_tail_crate_qualified` (promoted: the pin is
+spelled through the package's own library path) and
+`fixtures/rust_computed_return_tail_crate_rebound` (not promoted: the test
+file declares a module with the library's name) pin the own-crate spelling
+there too.
 
 ## Test Mapping
 
