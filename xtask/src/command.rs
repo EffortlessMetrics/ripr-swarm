@@ -986,7 +986,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "merge-queue conflict-notice <new-output-directory> <pr> <main> <head> [--post]",
             "external_state_mutating",
-            "<new-output-directory>/queue-conflict-notice.json and, only with --post, one GitHub PR comment",
+            "Pending and final queue-conflict-notice JSON receipts in <new-output-directory> and, only with --post, one GitHub PR comment",
             true,
             false,
             "Rechecks one observed main/head conflict and previews its advisory. Explicit --post may add one PR comment.",

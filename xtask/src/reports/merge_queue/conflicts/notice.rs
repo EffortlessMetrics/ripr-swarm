@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::fmt::Write;
 use std::fs;
+use std::io::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -225,13 +226,44 @@ enum Disposition {
     Posted(u64),
 }
 
+enum DeliveryFailure {
+    NotSubmitted(String),
+    Unconfirmed(String),
+}
+
+impl DeliveryFailure {
+    fn status(&self) -> &'static str {
+        match self {
+            Self::NotSubmitted(_) => "not_submitted",
+            Self::Unconfirmed(_) => "unconfirmed",
+        }
+    }
+}
+
+impl From<String> for DeliveryFailure {
+    fn from(error: String) -> Self {
+        Self::NotSubmitted(error)
+    }
+}
+
+impl From<DeliveryFailure> for String {
+    fn from(error: DeliveryFailure) -> Self {
+        match error {
+            DeliveryFailure::NotSubmitted(cause) => format!("comment not submitted: {cause}"),
+            DeliveryFailure::Unconfirmed(cause) => format!(
+                "submission unconfirmed: {cause}; inspect GitHub and the pending intent before considering another post"
+            ),
+        }
+    }
+}
+
 fn deliver(
     api: &impl NoticeApi,
     subject: &Subject<'_>,
     initial: &Member,
     body: Option<&str>,
     post: bool,
-) -> Result<Disposition, String> {
+) -> Result<Disposition, DeliveryFailure> {
     let Some(body) = body else {
         return Ok(Disposition::Unproved);
     };
@@ -240,15 +272,71 @@ fn deliver(
     }
     let last = api.live(subject)?;
     if last.entry != initial.entry || last.viewer != initial.viewer {
-        return Err(
+        return Err(DeliveryFailure::NotSubmitted(
             "native queue entry or authenticated viewer changed during verification".into(),
-        );
+        ));
     }
     if post {
-        api.post(subject, body).map(Disposition::Posted)
+        api.post(subject, body)
+            .map(Disposition::Posted)
+            .map_err(DeliveryFailure::Unconfirmed)
     } else {
         Ok(Disposition::Preview)
     }
+}
+
+// with_objects gives each attempt an exclusive new directory. Only complete
+// records acquire their public filename. A terminal write never opens the intent.
+fn commit_record(path: &Path, record: &Value) -> Result<(), String> {
+    let stage = path.with_extension("partial");
+    let bytes = serde_json::to_vec_pretty(record).map_err(|e| e.to_string())?;
+    let write = || -> std::io::Result<()> {
+        let mut file = fs::File::create_new(&stage)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&stage, path)
+    };
+    write().map_err(|e| format!("could not commit {}: {e}", path.display()))
+}
+
+fn record_delivery(
+    out: &Path,
+    api: &impl NoticeApi,
+    subject: &Subject<'_>,
+    initial: &Member,
+    row: &Row,
+    post: bool,
+) -> Result<(), String> {
+    let body = advisory(subject, row);
+    let mut receipt = json!({"schema_version":1,"repository":REPO,"main":subject.main,"entry":initial.entry,"row":row,"body":body,"post_requested":post,"disposition":"pending"});
+    let intent = out.join("queue-conflict-notice-pending.json");
+    commit_record(&intent, &receipt).map_err(|e| format!("comment not submitted: {e}"))?;
+    let outcome = match deliver(api, subject, initial, body.as_deref(), post) {
+        Ok(done) => {
+            receipt["disposition"] = json!(done);
+            Ok(())
+        }
+        Err(failure) => {
+            receipt["disposition"] = json!(failure.status());
+            let message = String::from(failure);
+            receipt["error"] = json!(message);
+            Err(message)
+        }
+    };
+    let terminal = out.join("queue-conflict-notice.json");
+    if let Err(local) = commit_record(&terminal, &receipt) {
+        let delivery = match outcome {
+            Ok(()) => format!("delivery outcome {}", receipt["disposition"]),
+            Err(cause) => cause,
+        };
+        return Err(format!(
+            "{delivery}; {local}; pending intent: {}",
+            intent.display()
+        ));
+    }
+    println!("{}: {}", terminal.display(), receipt["disposition"]);
+    outcome
 }
 
 pub(in crate::reports::merge_queue) fn run(args: &[String]) -> Result<(), String> {
@@ -298,29 +386,7 @@ pub(in crate::reports::merge_queue) fn run(args: &[String]) -> Result<(), String
         )?;
         sweep.classify(main, std::slice::from_mut(&mut row));
         let _history = sweep.attribute_history(main, std::slice::from_mut(&mut row));
-        let body = advisory(&subject, &row);
-        let path = out.join("queue-conflict-notice.json");
-        let mut receipt = json!({"schema_version":1,"repository":REPO,"main":main,"entry":initial.entry,"row":row,"body":body,"post_requested":post,"disposition":"pending"});
-        let write = |record: &Value| {
-            fs::write(
-                &path,
-                serde_json::to_vec_pretty(record).map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| e.to_string())
-        };
-        write(&receipt)?;
-        match deliver(&sweep, &subject, &initial, body.as_deref(), post) {
-            Ok(done) => receipt["disposition"] = json!(done),
-            Err(error) => {
-                receipt["disposition"] = json!("unconfirmed");
-                receipt["error"] = json!(error);
-                write(&receipt)?;
-                return Err(error);
-            }
-        }
-        write(&receipt)?;
-        println!("{}: {}", path.display(), receipt["disposition"]);
-        Ok(())
+        record_delivery(out, &sweep, &subject, &initial, &row, post)
     })
 }
 

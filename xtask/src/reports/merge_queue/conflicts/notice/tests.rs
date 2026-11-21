@@ -111,6 +111,17 @@ struct FakeApi {
     fail_read: Cell<bool>,
     lose_acknowledgement: bool,
 }
+impl FakeApi {
+    fn new(lose_acknowledgement: bool) -> Self {
+        Self {
+            state: RefCell::new(membership()),
+            comments: RefCell::new(json!([[]])),
+            writes: Cell::new(0),
+            fail_read: Cell::new(false),
+            lose_acknowledgement,
+        }
+    }
+}
 impl NoticeApi for FakeApi {
     fn live(&self, s: &Subject<'_>) -> Result<Member, String> {
         if self.fail_read.get() {
@@ -135,13 +146,7 @@ impl NoticeApi for FakeApi {
 fn explicit_notice_rechecks_membership_and_suppresses_the_next_serial_post() -> Result<(), String> {
     let s = subject();
     let initial = s.member(&membership())?;
-    let api = FakeApi {
-        state: RefCell::new(membership()),
-        comments: RefCell::new(json!([[]])),
-        writes: Cell::new(0),
-        fail_read: Cell::new(false),
-        lose_acknowledgement: false,
-    };
+    let api = FakeApi::new(false);
     let body = advisory(&s, &conflict()).ok_or("missing fixture notice")?;
     if deliver(&api, &s, &initial, Some(&body), false)? != Disposition::Preview
         || deliver(&api, &s, &initial, None, true)? != Disposition::Unproved
@@ -185,18 +190,103 @@ fn accepted_comment_with_missing_acknowledgement_is_found_on_retry() -> Result<(
     let target = subject();
     let initial = target.member(&membership())?;
     let body = advisory(&target, &conflict()).ok_or("missing fixture notice")?;
-    let api = FakeApi {
-        state: RefCell::new(membership()),
-        comments: RefCell::new(json!([[]])),
-        writes: Cell::new(0),
-        fail_read: Cell::new(false),
-        lose_acknowledgement: true,
-    };
+    let api = FakeApi::new(true);
     if deliver(&api, &target, &initial, Some(&body), true).is_ok()
         || deliver(&api, &target, &initial, Some(&body), true)? != Disposition::AlreadyPosted
         || api.writes.get() != 1
     {
         return Err("an unacknowledged remote write must be discovered before retry".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_intent_commit_prevents_submission() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = crate::tests::temp_dir("notice-intent-fault");
+    let target = subject();
+    let api = FakeApi::new(false);
+    fs::create_dir(dir.join("queue-conflict-notice-pending.json"))?;
+    let initial = target.member(&membership())?;
+    let result = record_delivery(&dir, &api, &target, &initial, &conflict(), true);
+    let error = result.err().ok_or("accepted an uncommitted intent")?;
+    if !error.contains("comment not submitted") || api.writes.get() != 0 {
+        return Err(error.into());
+    }
+    fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn refused_final_reads_are_recorded_as_not_submitted() -> Result<(), Box<dyn std::error::Error>> {
+    let target = subject();
+    let initial = target.member(&membership())?;
+    for failure in [
+        "membership unavailable",
+        "entry replaced",
+        "comment history unavailable",
+    ] {
+        let dir = crate::tests::temp_dir("notice-read-fault");
+        let api = FakeApi::new(false);
+        match failure {
+            "membership unavailable" => api.fail_read.set(true),
+            "entry replaced" => {
+                api.state.borrow_mut()["data"]["repository"]["pullRequest"]["mergeQueueEntry"]["id"] =
+                    json!("replacement")
+            }
+            _ => *api.comments.borrow_mut() = Value::Null,
+        }
+        let result = record_delivery(&dir, &api, &target, &initial, &conflict(), true);
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(dir.join("queue-conflict-notice.json"))?)?;
+        if result.is_ok() || api.writes.get() != 0 || receipt["disposition"] != "not_submitted" {
+            return Err(format!("wrong receipt for {failure}: {receipt}").into());
+        }
+        fs::remove_dir_all(dir)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_terminal_commit_preserves_intent_and_remote_outcome()
+-> Result<(), Box<dyn std::error::Error>> {
+    let target = subject();
+    let initial = target.member(&membership())?;
+    let row = conflict();
+    let body = advisory(&target, &row).ok_or("missing fixture notice")?;
+    let expected = serde_json::to_vec_pretty(
+        &json!({"schema_version":1,"repository":REPO,"main":MAIN,"entry":"first","row":row,"body":body,"post_requested":true,"disposition":"pending"}),
+    )?;
+    for lost_ack in [false, true] {
+        let api = FakeApi::new(lost_ack);
+        let dir = crate::tests::temp_dir("notice-terminal-fault");
+        fs::create_dir(dir.join("queue-conflict-notice.json"))?;
+        let result = record_delivery(&dir, &api, &target, &initial, &row, true);
+        let error = result
+            .err()
+            .ok_or("terminal receipt unexpectedly committed")?;
+        let remote = if lost_ack {
+            "server accepted the comment but the reply was lost"
+        } else {
+            r#"{"posted":47}"#
+        };
+        if !error.contains(remote)
+            || !error.contains("could not commit")
+            || api.writes.get() != 1
+            || fs::read(dir.join("queue-conflict-notice-pending.json"))? != expected
+        {
+            return Err(format!("incomplete outcome after terminal failure: {error}").into());
+        }
+        let retry = crate::tests::temp_dir("notice-after-terminal-fault");
+        record_delivery(&retry, &api, &target, &initial, &row, false)?;
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(retry.join("queue-conflict-notice.json"))?)?;
+        if receipt["disposition"] != "already_posted" || api.writes.get() != 1 {
+            return Err(
+                "read-only reconciliation did not find the previously posted notice".into(),
+            );
+        }
+        fs::remove_dir_all(retry)?;
+        fs::remove_dir_all(dir)?;
     }
     Ok(())
 }

@@ -1636,8 +1636,14 @@ existing comments across all pages and checks current main, PR head and native
 entry again immediately before submission. Serialize attempts for the same
 PR. GitHub's comment endpoint has no atomic membership check or unique marker
 constraint. The comment therefore names both observed commits. A later serial
-run suppresses the same trusted marker. After an uncertain submission, inspect
-GitHub and the receipt before retrying. The scheduled watchdog does not run
+run suppresses the same trusted marker. The command commits the immutable
+`queue-conflict-notice-pending.json` intent before dispatch and writes the final
+`queue-conflict-notice.json` separately. A failed final membership or comment
+read records `not_submitted`. A transport failure after dispatch records
+`unconfirmed`. If the terminal receipt cannot be committed, the diagnostic
+retains the comment ID or the transport error alongside the storage error.
+After an uncertain submission, inspect GitHub and the pending intent, then
+run a preview in a fresh directory to reconcile the trusted marker. The scheduled watchdog does not run
 this command.
 
 ### Issue Staleness Watchdog
