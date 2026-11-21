@@ -4523,6 +4523,13 @@ mod tests {
         ] {
             let mut doc = read_json(directory.join(name))?;
             check(&doc, true, name)?;
+            for (key, value) in doc.as_object().ok_or("expected report object")? {
+                if key != "base" && genuine.get(key).is_none() {
+                    let mut mixed = genuine.clone();
+                    mixed[key] = value.clone();
+                    check(&mixed, false, key)?;
+                }
+            }
             doc["root"] = serde_json::json!("");
             check(&doc, false, name)?;
             doc["status"] = genuine["status"].clone();
