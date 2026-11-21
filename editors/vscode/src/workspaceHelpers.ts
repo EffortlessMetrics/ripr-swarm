@@ -156,12 +156,92 @@ async function folderRootHasAnalyzableProjectMarker(
   return false;
 }
 
-/** True when any workspace folder root carries a marker ripr can analyze by default. */
+// A repository often keeps its project one or two folders down
+// (`backend/Cargo.toml`, `packages/app/tsconfig.json`), and the server
+// analyzes it from the repository root. The nested check is presence-only and
+// bounded, so a large tree cannot slow activation (#15916).
+export const NESTED_PROJECT_MARKER_MAX_DEPTH = 3;
+export const NESTED_PROJECT_MARKER_MAX_DIRS = 512;
+// Narrower than the root set: below the root, `requirements.txt`, `tox.ini`
+// and `noxfile.py` sit in docs and tooling folders of projects in other
+// languages, and a nested `ripr.toml` does not configure the opened root.
+// The Python names mirror `NESTED_PYTHON_PACKAGE_MARKERS` in
+// `crates/ripr/src/config/python.rs`.
+export const NESTED_PROJECT_MARKERS: ReadonlySet<string> = new Set([
+  'Cargo.toml',
+  'pyproject.toml',
+  'setup.py',
+  'setup.cfg',
+  'pytest.ini',
+  ...TYPESCRIPT_PROJECT_MARKERS,
+]);
+// Dependency, build and environment folders: a marker inside one belongs to
+// another project. Mirrors `PYTHON_EXCLUDED_DIRS` plus `vendor` in the same
+// server file; hidden folders are skipped by name.
+const NESTED_PROJECT_MARKER_SKIPPED_DIRS: ReadonlySet<string> = new Set([
+  'target',
+  'node_modules',
+  '__pycache__',
+  'venv',
+  'env',
+  'site-packages',
+  'dist',
+  'build',
+  'vendor',
+]);
+
+async function folderHasNestedAnalyzableProjectMarker(folderUri: vscode.Uri): Promise<boolean> {
+  let level = [folderUri];
+  let visited = 0;
+  // Depth 0 is the folder root, whose own markers the caller already checked.
+  for (let depth = 0; depth <= NESTED_PROJECT_MARKER_MAX_DEPTH && level.length > 0; depth++) {
+    const next: vscode.Uri[] = [];
+    for (const dir of level) {
+      let entries: [string, vscode.FileType][];
+      try {
+        entries = await vscode.workspace.fs.readDirectory(dir);
+      } catch {
+        continue;
+      }
+      for (const [name, type] of entries) {
+        if (depth > 0 && (type & vscode.FileType.File) !== 0 && NESTED_PROJECT_MARKERS.has(name)) {
+          return true;
+        }
+        // A symlinked folder is not entered: it can point back up the tree.
+        if (
+          type !== vscode.FileType.Directory ||
+          name.startsWith('.') ||
+          NESTED_PROJECT_MARKER_SKIPPED_DIRS.has(name)
+        ) {
+          continue;
+        }
+        if (visited >= NESTED_PROJECT_MARKER_MAX_DIRS) {
+          return false;
+        }
+        visited += 1;
+        next.push(vscode.Uri.joinPath(dir, name));
+      }
+    }
+    level = next;
+  }
+  return false;
+}
+
+/**
+ * True when any workspace folder carries a marker ripr can analyze by default:
+ * at its root, or in a folder up to `NESTED_PROJECT_MARKER_MAX_DEPTH` levels
+ * below it.
+ */
 export async function workspaceHasAnalyzableProject(
   folders: readonly vscode.WorkspaceFolder[]
 ): Promise<boolean> {
   for (const folder of folders) {
     if (await folderRootHasAnalyzableProjectMarker(folder.uri)) {
+      return true;
+    }
+  }
+  for (const folder of folders) {
+    if (await folderHasNestedAnalyzableProjectMarker(folder.uri)) {
       return true;
     }
   }
