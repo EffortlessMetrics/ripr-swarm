@@ -289,6 +289,7 @@ fn records_jsonl(repos: &[RepoRun]) -> String {
                 "line": record.line,
                 "expression": record.expression,
                 "mutant": record.mutant,
+                "genre": normalized_genre(&record.genre),
             });
             out.push_str(&line.to_string());
             out.push('\n');
@@ -1055,6 +1056,12 @@ struct Record {
     /// ripr's own classification token for a synthetic-diff record; empty for
     /// the Rust span join, whose `grip_class` is the seam's.
     verdict_token: String,
+    /// The mutation genre retained from the producing tool: the
+    /// cargo-mutants `genre` for a Rust span-join record, or the producing
+    /// tool's mutator name for a synthetic-diff record. Empty when the
+    /// producer named none; renderers normalize an empty genre to
+    /// `unknown_genre`, never inventing one at the source.
+    genre: String,
 }
 
 /// Seam id to source expression, from the repo exposure JSON.
@@ -1196,21 +1203,26 @@ fn classify_records(
             mutant,
             operator_token,
             verdict_token: String::new(),
+            genre: genre.to_string(),
         });
     }
-    let unjoined = |runtime: &Value, disposition: String| Record {
-        disposition,
-        join_method: String::new(),
-        grip_class: String::new(),
-        outcome: text(runtime, "/runtime_outcome"),
-        seam_id: String::new(),
-        seam_kind: String::new(),
-        file: text(runtime, "/file"),
-        line: runtime.get("line").and_then(Value::as_u64).unwrap_or(0),
-        expression: None,
-        mutant: text(runtime, "/mutant_id"),
-        operator_token: "not_applicable",
-        verdict_token: String::new(),
+    let unjoined = |runtime: &Value, disposition: String| {
+        let mutant = text(runtime, "/mutant_id");
+        Record {
+            disposition,
+            join_method: String::new(),
+            grip_class: String::new(),
+            outcome: text(runtime, "/runtime_outcome"),
+            seam_id: String::new(),
+            seam_kind: String::new(),
+            file: text(runtime, "/file"),
+            line: runtime.get("line").and_then(Value::as_u64).unwrap_or(0),
+            expression: None,
+            genre: genres.get(&mutant).cloned().unwrap_or_default(),
+            mutant,
+            operator_token: "not_applicable",
+            verdict_token: String::new(),
+        }
     };
     for (key, disposition) in [
         ("ambiguous_file_line_matches", "ambiguous_file_line"),
@@ -1463,6 +1475,7 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
             )
         })
         .collect::<serde_json::Map<_, _>>();
+    let (by_disposition_genre, by_grip_genre) = merged_genre_cross_tabs(&repos);
     let by_disposition_value = json!(by_disposition);
     let mut language_outcomes: BTreeMap<String, Value> = BTreeMap::new();
     for repo in all_repos {
@@ -1490,6 +1503,9 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
             .cloned()
             .collect::<Vec<_>>(),
         "outcomes_by_disposition_and_grip_class": by_disposition,
+        "outcomes_by_disposition_and_genre": by_disposition_genre,
+        "outcomes_by_grip_class_and_genre": by_grip_genre,
+        "genre_outcomes_by_language": genre_outcomes_by_language(all_repos),
         "scored_families": families,
         "recall_of_missed": recall,
         "seam_coverage": coverage,
@@ -1543,6 +1559,8 @@ fn repo_entry(repo: &RepoRun) -> Value {
         "calibration_metrics": repo.metrics,
         "pairings": pairing_counts(&repo.records, methods),
         "outcomes_by_disposition_and_grip_class": outcome_table(&repo.records),
+        "outcomes_by_disposition_and_genre": disposition_genre_table(&repo.records),
+        "outcomes_by_grip_class_and_genre": grip_genre_table(&repo.records),
     });
     if let (Some(extra), Some(fields)) = (
         repo.synthetic.as_ref().and_then(Value::as_object),
@@ -1620,6 +1638,7 @@ fn synthetic_section(repos: &[&RepoRun], examples: usize) -> Value {
             )
         })
         .collect::<serde_json::Map<_, _>>();
+    let (synthetic_by_disposition_genre, synthetic_by_grip_genre) = merged_genre_cross_tabs(repos);
     let canonical = records_total - exclusions.values().sum::<usize>();
     json!({
         "agreement_method": synthetic_diff::AGREEMENT_METHOD,
@@ -1631,6 +1650,8 @@ fn synthetic_section(repos: &[&RepoRun], examples: usize) -> Value {
         "scored_families": families,
         "verdict_tokens_by_outcome": tokens,
         "outcomes_by_disposition_and_grip_class": outcomes,
+        "outcomes_by_disposition_and_genre": synthetic_by_disposition_genre,
+        "outcomes_by_grip_class_and_genre": synthetic_by_grip_genre,
         "disagreement_examples": disagreement_examples,
     })
 }
@@ -1827,6 +1848,106 @@ fn outcome_table(
             .or_default() += 1;
     }
     table
+}
+
+/// Genre label a renderer emits for a record: the retained producer genre,
+/// or `unknown_genre` when the producer named none. The record itself keeps
+/// the empty string, so no producer or re-derivation invents a genre the
+/// source never carried.
+fn normalized_genre(genre: &str) -> &str {
+    if genre.is_empty() {
+        "unknown_genre"
+    } else {
+        genre
+    }
+}
+
+/// Disposition, genre and outcome counts of one record set:
+/// `outcomes_by_disposition_and_genre` shaped.
+fn disposition_genre_table(
+    records: &[Record],
+) -> BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> {
+    let mut table: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> = BTreeMap::new();
+    for record in records {
+        *table
+            .entry(record.disposition.clone())
+            .or_default()
+            .entry(normalized_genre(&record.genre).to_string())
+            .or_default()
+            .entry(record.outcome.clone())
+            .or_default() += 1;
+    }
+    table
+}
+
+/// Grip class, genre and outcome counts of one record set:
+/// `outcomes_by_grip_class_and_genre` shaped. A record with no grip class is
+/// `no_joined_seam`, as in `outcome_table`.
+fn grip_genre_table(
+    records: &[Record],
+) -> BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> {
+    let mut table: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> = BTreeMap::new();
+    for record in records {
+        let grip_class = if record.grip_class.is_empty() {
+            "no_joined_seam"
+        } else {
+            record.grip_class.as_str()
+        };
+        *table
+            .entry(grip_class.to_string())
+            .or_default()
+            .entry(normalized_genre(&record.genre).to_string())
+            .or_default()
+            .entry(record.outcome.clone())
+            .or_default() += 1;
+    }
+    table
+}
+
+/// The two genre cross-tabs of a set of repos, merged across those repos.
+fn merged_genre_cross_tabs(repos: &[&RepoRun]) -> (Value, Value) {
+    let mut by_disposition = json!({});
+    let mut by_grip_class = json!({});
+    for repo in repos {
+        merge_outcomes(
+            &mut by_disposition,
+            &json!(disposition_genre_table(&repo.records)),
+        );
+        merge_outcomes(&mut by_grip_class, &json!(grip_genre_table(&repo.records)));
+    }
+    (by_disposition, by_grip_class)
+}
+
+/// Genre cross-tabs merged per language, so each language keeps its own
+/// genre vocabulary (cargo-mutants genres, a Stryker or Python mutator name)
+/// apart from the others. Languages with no records are absent. Rust
+/// diff-mode runs stay out: their genres live in the `rust_diff_mode_verdict`
+/// section, never mixed with the span-join figures.
+fn genre_outcomes_by_language(all_repos: &[RepoRun]) -> Value {
+    let mut by_language: BTreeMap<String, Vec<&RepoRun>> = BTreeMap::new();
+    for repo in all_repos
+        .iter()
+        .filter(|repo| !repo.records.is_empty() && repo.language != RUST_DIFF_MODE)
+    {
+        by_language
+            .entry(repo.language.clone())
+            .or_default()
+            .push(repo);
+    }
+    let languages = by_language
+        .into_iter()
+        .map(|(language, repos)| {
+            let (by_disposition, by_grip_class) = merged_genre_cross_tabs(&repos);
+            (
+                language,
+                json!({
+                    "outcomes_by_disposition_and_genre": by_disposition,
+                    "outcomes_by_grip_class_and_genre": by_grip_class,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    Value::Object(languages)
 }
 
 /// Add every count of `src` into `dst`, both `outcomes_by_disposition_and_grip_class`
@@ -2060,6 +2181,13 @@ fn rederive_summaries(path: &Path) -> Result<(), String> {
     );
     report["recall_of_missed"] = recall;
     report["seam_coverage"] = coverage;
+    // Genre cross-tabs are additive in the same v2 schema: re-derive the
+    // per-language merge only from per-repo genre tables a receipt already
+    // records. An old v2 receipt without them keeps every genre key absent;
+    // none is fabricated here, and recorded genre tables stay untouched.
+    if let Some(by_language) = recorded_genre_outcomes_by_language(&report) {
+        report["genre_outcomes_by_language"] = by_language;
+    }
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize {}: {err}", path.display()))?;
     fs::write(path, format!("{json_text}\n"))
@@ -2135,6 +2263,58 @@ fn recorded_repo_outcomes(
         "{} mixes languages without per-repo outcome tables; re-run the harness to split recall by language",
         path.display()
     ))
+}
+
+/// Per-language merge of the genre cross-tabs a recorded report already
+/// carries on its repos. Returns `None` when no repo records a genre table,
+/// so a caller leaves the receipt's genre keys exactly as they were.
+fn recorded_genre_outcomes_by_language(report: &Value) -> Option<Value> {
+    let mut by_language: BTreeMap<String, (Value, Value)> = BTreeMap::new();
+    let mut recorded = false;
+    // Only the receipt's `repos` (span-join and synthetic-diff repos): Rust
+    // diff-mode repos keep their genre tables in their own section.
+    let repos = report
+        .get("repos")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    for repo in repos {
+        if repo.get("language").and_then(Value::as_str) == Some(RUST_DIFF_MODE) {
+            continue;
+        }
+        let language = repo
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or(HARNESS_LANGUAGE)
+            .to_string();
+        let (by_disposition, by_grip_class) = by_language
+            .entry(language)
+            .or_insert_with(|| (json!({}), json!({})));
+        if let Some(table) = repo.get("outcomes_by_disposition_and_genre") {
+            recorded = true;
+            merge_outcomes(by_disposition, table);
+        }
+        if let Some(table) = repo.get("outcomes_by_grip_class_and_genre") {
+            recorded = true;
+            merge_outcomes(by_grip_class, table);
+        }
+    }
+    recorded.then(|| {
+        Value::Object(
+            by_language
+                .into_iter()
+                .map(|(language, (by_disposition, by_grip_class))| {
+                    (
+                        language,
+                        json!({
+                            "outcomes_by_disposition_and_genre": by_disposition,
+                            "outcomes_by_grip_class_and_genre": by_grip_class,
+                        }),
+                    )
+                })
+                .collect(),
+        )
+    })
 }
 
 fn example(repo: &RepoRun, record: &Record) -> Value {
@@ -2315,6 +2495,16 @@ fn spot_check_markdown(report: &Value) -> String {
             }
         }
     }
+    out.push_str(&genre_cross_tab_markdown(
+        report.get("outcomes_by_disposition_and_genre"),
+        "Outcomes by disposition and genre",
+        "Disposition",
+    ));
+    out.push_str(&genre_cross_tab_markdown(
+        report.get("outcomes_by_grip_class_and_genre"),
+        "Outcomes by grip class and genre",
+        "Grip class",
+    ));
     out.push_str(&derived_summaries_markdown(report));
     out.push_str("\n## Disagreement examples\n\n");
     let mut any = false;
@@ -2366,6 +2556,32 @@ fn spot_check_markdown(report: &Value) -> String {
         "Rust diff-mode verdicts via ripr check --diff",
     ));
     out.push_str(&pilot::markdown(report));
+    out
+}
+
+/// One genre cross-tab as a Markdown table, or nothing when the receipt
+/// carries no such table (a receipt written before genre retention).
+fn genre_cross_tab_markdown(table: Option<&Value>, heading: &str, first_column: &str) -> String {
+    let Some(rows) = table
+        .and_then(Value::as_object)
+        .filter(|rows| !rows.is_empty())
+    else {
+        return String::new();
+    };
+    let mut out =
+        format!("\n## {heading}\n\n| {first_column} | Genre | Outcomes |\n| --- | --- | --- |\n");
+    for (primary, genres) in rows {
+        for (genre, outcomes) in genres.as_object().into_iter().flatten() {
+            let cells = outcomes
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(outcome, count)| format!("{outcome} {count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("| {primary} | {genre} | {cells} |\n"));
+        }
+    }
     out
 }
 
@@ -2439,6 +2655,16 @@ fn synthetic_markdown(report: &Value, key: &str, title: &str) -> String {
                 .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0)),
         ));
     }
+    out.push_str(&genre_cross_tab_markdown(
+        section.get("outcomes_by_disposition_and_genre"),
+        "Outcomes by disposition and genre",
+        "Disposition",
+    ));
+    out.push_str(&genre_cross_tab_markdown(
+        section.get("outcomes_by_grip_class_and_genre"),
+        "Outcomes by grip class and genre",
+        "Grip class",
+    ));
     for (verdict, rows) in section
         .get("disagreement_examples")
         .and_then(Value::as_object)
@@ -3582,6 +3808,7 @@ mod tests {
             mutant: format!("src/a.ts:2:1: M [{outcome}] id=1"),
             operator_token: "not_applicable",
             verdict_token: token.to_string(),
+            genre: "EqualityOperator".to_string(),
         }
     }
 
@@ -3726,6 +3953,7 @@ mod tests {
             mutant: "src/a.rs:3:7: replace > with < in f".to_string(),
             operator_token: "present",
             verdict_token: String::new(),
+            genre: "BinaryOperator".to_string(),
         }
     }
 
@@ -4309,6 +4537,219 @@ mod tests {
         assert!(markdown.contains("0.97 (docs/METRICS.md release ladder R2)"));
         assert!(markdown.contains("agent-chosen: a majority"));
         assert!(!markdown.contains("one crate, one diff, one run"));
+        Ok(())
+    }
+
+    #[test]
+    fn genre_is_retained_for_matched_and_unjoined_records() -> Result<(), String> {
+        let calibration = calibration_v2(
+            json!([
+                {"join_method": "span_containment",
+                 "static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "missed"}}
+            ]),
+            json!([{"runtime": {"mutant_id": "src/a.rs:5:5: delete ! in g", "file": "src/a.rs", "line": 5, "runtime_outcome": "caught"}}]),
+            json!([]),
+            json!([
+                {"mutant_id": "src/a.rs:7:5: replace f -> bool with true", "file": "src/a.rs", "line": 7,
+                 "runtime_outcome": "missed", "unmatched_reason": "no_containing_seam"},
+                {"mutant_id": "src/a.rs:9:5: replace * with + in h", "file": "src/a.rs", "line": 9,
+                 "runtime_outcome": "caught", "unmatched_reason": "no_containing_seam"}
+            ]),
+        );
+        let exposure = json!({"seams": [{"seam_id": "s1", "expression": "i > 0"}]});
+        let genres = BTreeMap::from([
+            (
+                "src/a.rs:3:9: replace > with < in f".to_string(),
+                "BinaryOperator".to_string(),
+            ),
+            (
+                "src/a.rs:5:5: delete ! in g".to_string(),
+                "UnaryOperator".to_string(),
+            ),
+            (
+                "src/a.rs:7:5: replace f -> bool with true".to_string(),
+                "FnValue".to_string(),
+            ),
+        ]);
+        let records = classify_records(&calibration, &exposure, &genres)?;
+        let genre_of = |needle: &str| {
+            records
+                .iter()
+                .find(|record| record.mutant.contains(needle))
+                .map(|record| record.genre.as_str())
+        };
+        assert_eq!(genre_of("replace > with <"), Some("BinaryOperator"));
+        assert_eq!(genre_of("delete ! in g"), Some("UnaryOperator"));
+        assert_eq!(genre_of("replace f -> bool"), Some("FnValue"));
+        // Absent from mutants.json: retained as empty, normalized only at render.
+        assert_eq!(genre_of("replace * with +"), Some(""));
+        assert_eq!(normalized_genre(""), "unknown_genre");
+        let report = build_report(&[repo_run(records)], 5, TEST_ANALYZER);
+        assert_eq!(
+            report["outcomes_by_disposition_and_genre"]["unmatched_no_containing_seam"]["unknown_genre"]
+                ["caught"],
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn genre_cross_tabs_sum_to_totals_and_keep_language_vocabularies_apart() {
+        let mut unknown = span_join_record("strongly_gripped", "caught");
+        unknown.genre = String::new();
+        let rust = repo_run(vec![span_join_record("ungripped", "missed"), unknown]);
+        let mut ts = repo_run(vec![
+            synthetic_record(CANONICAL_PRECISE, "exposed", "caught"),
+            synthetic_record(CANONICAL_PRECISE, "exposed", "missed"),
+        ]);
+        ts.name = "pkg".to_string();
+        ts.language = "typescript".to_string();
+        ts.synthetic = Some(json!({"agreement_method": synthetic_diff::AGREEMENT_METHOD}));
+        ts.pilot = Err("n/a".to_string());
+        let report = build_report(&[rust, ts], 5, TEST_ANALYZER);
+        let total = |table: &Value| sum_outcomes(table, |_, _, _| true);
+        // Top level is the Rust span join only: both cross-tabs sum to it.
+        assert_eq!(
+            total(&report["outcomes_by_disposition_and_genre"]),
+            total(&report["outcomes_by_disposition_and_grip_class"])
+        );
+        assert_eq!(total(&report["outcomes_by_disposition_and_genre"]), 2);
+        assert_eq!(
+            report["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]["BinaryOperator"]["missed"],
+            1
+        );
+        assert_eq!(
+            report["outcomes_by_grip_class_and_genre"]["strongly_gripped"]["unknown_genre"]["caught"],
+            1
+        );
+        // Per-repo tables carry each repo's own records.
+        assert_eq!(
+            total(&report["repos"][0]["outcomes_by_disposition_and_genre"]),
+            2
+        );
+        assert_eq!(
+            total(&report["repos"][1]["outcomes_by_grip_class_and_genre"]),
+            2
+        );
+        // The synthetic section keeps the TypeScript mutator vocabulary.
+        let section = &report["synthetic_diff_verdict"];
+        assert_eq!(total(&section["outcomes_by_disposition_and_genre"]), 2);
+        assert_eq!(
+            section["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]["EqualityOperator"]["caught"],
+            1
+        );
+        assert!(
+            section["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]
+                .get("BinaryOperator")
+                .is_none()
+        );
+        // Per-language merges stay apart.
+        let by_language = &report["genre_outcomes_by_language"];
+        assert_eq!(
+            by_language["rust"]["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]["BinaryOperator"]
+                ["missed"],
+            1
+        );
+        assert!(
+            by_language["rust"]["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]
+                .get("EqualityOperator")
+                .is_none()
+        );
+        assert_eq!(
+            by_language["typescript"]["outcomes_by_grip_class_and_genre"]["strongly_gripped"]["EqualityOperator"]
+                ["caught"],
+            1
+        );
+        assert!(
+            by_language["typescript"]["outcomes_by_grip_class_and_genre"]["strongly_gripped"]
+                .get("BinaryOperator")
+                .is_none()
+        );
+        let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("## Outcomes by disposition and genre"));
+        assert!(markdown.contains("| canonical_precise | BinaryOperator | missed 1 |"));
+        assert!(markdown.contains("## Outcomes by grip class and genre"));
+        assert!(markdown.contains("| strongly_gripped | unknown_genre | caught 1 |"));
+    }
+
+    #[test]
+    fn records_jsonl_carries_the_retained_genre() -> Result<(), String> {
+        let mut unknown = synthetic_record(CANONICAL_PRECISE, "exposed", "caught");
+        unknown.genre = String::new();
+        let run = repo_run(vec![
+            synthetic_record(CANONICAL_PRECISE, "exposed", "caught"),
+            unknown,
+        ]);
+        let text = records_jsonl(&[run]);
+        let lines: Vec<Value> = text
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(|err| err.to_string())?;
+        assert_eq!(lines[0]["genre"], "EqualityOperator");
+        assert_eq!(lines[1]["genre"], "unknown_genre");
+        Ok(())
+    }
+
+    #[test]
+    fn rederive_preserves_recorded_genre_and_invents_none_for_old_receipts() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-rederive-genre-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("report.json");
+        // A receipt with recorded genre tables keeps them exactly.
+        let report = build_report(
+            &[repo_run(vec![span_join_record("ungripped", "missed")])],
+            5,
+            TEST_ANALYZER,
+        );
+        fs::write(&path, report.to_string()).map_err(|err| err.to_string())?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(
+            out["outcomes_by_disposition_and_genre"],
+            report["outcomes_by_disposition_and_genre"]
+        );
+        assert_eq!(
+            out["outcomes_by_grip_class_and_genre"],
+            report["outcomes_by_grip_class_and_genre"]
+        );
+        assert_eq!(
+            out["repos"][0]["outcomes_by_disposition_and_genre"],
+            report["repos"][0]["outcomes_by_disposition_and_genre"]
+        );
+        assert_eq!(
+            out["genre_outcomes_by_language"],
+            report["genre_outcomes_by_language"]
+        );
+        // An old v2 receipt without genre tables gains none.
+        let old = json!({
+            "schema_version": SCHEMA_VERSION,
+            "outcomes_by_disposition_and_grip_class": baseline_outcomes(),
+            "repos": [{"name": "demo"}],
+            "status": "advisory",
+        });
+        fs::write(&path, old.to_string()).map_err(|err| err.to_string())?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert!(out.get("outcomes_by_disposition_and_genre").is_none());
+        assert!(out.get("outcomes_by_grip_class_and_genre").is_none());
+        assert!(out.get("genre_outcomes_by_language").is_none());
+        assert!(
+            out["repos"][0]
+                .get("outcomes_by_disposition_and_genre")
+                .is_none()
+        );
+        assert_eq!(out["recall_of_missed"]["ungripped_missed"], 34);
+        assert_eq!(out["recall_of_missed"]["missed_total"], 322);
+        assert_eq!(out["recall_of_missed"]["flagged_or_unknown_missed"], 189);
+        assert_eq!(out["seam_coverage"]["no_containing_seam"], 843);
+        assert_eq!(out["seam_coverage"]["mutants_total"], 1745);
+        fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
         Ok(())
     }
 }

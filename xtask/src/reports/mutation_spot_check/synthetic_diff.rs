@@ -518,6 +518,7 @@ fn record(
         ),
         operator_token: "not_applicable",
         verdict_token: token.to_string(),
+        genre: mutant.mutator.clone(),
     }
 }
 
@@ -891,6 +892,21 @@ mod tests {
     }
 
     const SOURCE: &str = "export function discount(total: number, qty: number): number {\n  if (qty >= 10) {\n    return total * 0.9;\n  }\n  return total;\n}\n";
+
+    #[test]
+    fn record_retains_the_mutator_as_genre() {
+        let mut mutant = mutant("7", (2, 6), (2, 15), "qty > 10", "missed");
+        mutant.mutator = "ConditionalExpression".to_string();
+        let scored = record(
+            "src/price.ts",
+            &mutant,
+            CANONICAL_PRECISE,
+            Some(("exposed", "typescript:src/price.ts::discount", None)),
+        );
+        assert_eq!(scored.genre, "ConditionalExpression");
+        let excluded = record("src/price.ts", &mutant, "no_finding_on_mutated_lines", None);
+        assert_eq!(excluded.genre, "ConditionalExpression");
+    }
 
     #[test]
     fn single_line_edit_builds_a_one_hunk_diff_and_the_mutated_file() -> Result<(), String> {
