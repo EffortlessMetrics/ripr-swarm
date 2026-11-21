@@ -571,7 +571,7 @@ mod tests {
                 )),
                 "{refused:?}"
             );
-            assert!(!proposal.exists(), "a stale proposal survived a refusal");
+            assert!(!proposal.exists(), "a stale proposal remained after a refusal");
             write_file(&golden, &kept)?;
             crate::fixture_contracts::check_fixture_contracts()
         })
