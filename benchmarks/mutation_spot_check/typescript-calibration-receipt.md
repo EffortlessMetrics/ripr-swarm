@@ -18,9 +18,9 @@ weak verdicts are unscored, never successes.
 | pricing-shipping-ge-to-gt | comparison_operator | caught | exposed | strongly_gripped | agree |
 | pricing-tier-gold-ge-to-gt | comparison_operator | missed | weakly_exposed | weakly_gripped | unscored |
 | pricing-tier-silver-ge-to-gt | comparison_operator | caught | exposed | strongly_gripped | agree |
-| pricing-discount-gold-10-to-20 | arithmetic_operator | missed | weakly_exposed | weakly_gripped | unscored |
-| pricing-discount-silver-5-to-6 | arithmetic_operator | missed | weakly_exposed | weakly_gripped | unscored |
-| pricing-tax-8-to-9 | arithmetic_operator | missed | weakly_exposed | weakly_gripped | unscored |
+| pricing-discount-gold-10-to-20 | constant_replacement | missed | weakly_exposed | weakly_gripped | unscored |
+| pricing-discount-silver-5-to-6 | constant_replacement | missed | weakly_exposed | weakly_gripped | unscored |
+| pricing-tax-8-to-9 | constant_replacement | missed | weakly_exposed | weakly_gripped | unscored |
 | pricing-total-plus-to-minus | arithmetic_operator | caught | exposed | strongly_gripped | agree |
 | pricing-parse-le-to-lt | comparison_operator | caught | weakly_exposed | weakly_gripped | unscored |
 | pricing-receipt-footer-text | constant_replacement | missed | no_static_path | ungripped | agree |

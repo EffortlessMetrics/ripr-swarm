@@ -11,17 +11,20 @@
 mod tests {
     use serde_json::Value;
 
-    fn receipt() -> Value {
+    fn receipt() -> Result<Value, String> {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../benchmarks/mutation_spot_check/typescript-calibration-receipt.json"
         );
-        let text = std::fs::read_to_string(path).unwrap_or_else(|err| panic!("read {path}: {err}"));
-        serde_json::from_str(&text).expect("receipt is valid JSON")
+        let text = std::fs::read_to_string(path).map_err(|err| format!("read {path}: {err}"))?;
+        serde_json::from_str(&text).map_err(|err| format!("receipt is valid JSON: {err}"))
     }
 
-    fn rows(receipt: &Value) -> &[Value] {
-        receipt["mutants"].as_array().expect("mutants array")
+    fn rows(receipt: &Value) -> Result<&[Value], String> {
+        receipt["mutants"]
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or_else(|| "mutants array".to_string())
     }
 
     fn rate(num: u64, den: u64) -> Option<f64> {
@@ -29,9 +32,9 @@ mod tests {
     }
 
     #[test]
-    fn receipt_has_at_least_ten_mutants_across_two_operators() {
-        let receipt = receipt();
-        let rows = rows(&receipt);
+    fn receipt_has_at_least_ten_mutants_across_two_operators() -> Result<(), String> {
+        let receipt = receipt()?;
+        let rows = rows(&receipt)?;
         assert!(rows.len() >= 10, "got {} mutants", rows.len());
         let operators: std::collections::BTreeSet<&str> = rows
             .iter()
@@ -45,12 +48,13 @@ mod tests {
             receipt["summary"]["mutants_total"].as_u64(),
             Some(rows.len() as u64)
         );
+        Ok(())
     }
 
     #[test]
-    fn runtime_outcomes_are_never_static_classes() {
-        let receipt = receipt();
-        for row in rows(&receipt) {
+    fn runtime_outcomes_are_never_static_classes() -> Result<(), String> {
+        let receipt = receipt()?;
+        for row in rows(&receipt)? {
             let outcome = row["runtime_outcome"].as_str().unwrap_or("");
             assert!(
                 ["caught", "missed", "unscoreable"].contains(&outcome),
@@ -61,12 +65,28 @@ mod tests {
             assert_ne!(outcome, row["ripr_classification"].as_str().unwrap_or("\0"));
         }
         assert_eq!(receipt["summary"]["unknowns_are_successes"], false);
+        Ok(())
     }
 
     #[test]
-    fn summary_is_rederived_from_rows_and_unknowns_are_unscored() {
-        let receipt = receipt();
-        let rows = rows(&receipt);
+    fn summary_is_rederived_from_rows_and_unknowns_are_unscored() -> Result<(), String> {
+        let receipt = receipt()?;
+        let rows = rows(&receipt)?;
+        // Re-derive scoring eligibility instead of trusting the scored flag:
+        // a row is eligible only when its grip, runtime outcome and
+        // disposition all qualify, so omitting an eligible row cannot pass.
+        for row in rows {
+            let eligible = ["strongly_gripped", "ungripped"]
+                .contains(&row["grip_class"].as_str().unwrap_or(""))
+                && ["caught", "missed"].contains(&row["runtime_outcome"].as_str().unwrap_or(""))
+                && row["disposition"] == "canonical_precise";
+            assert_eq!(
+                row["scored"] == true,
+                eligible,
+                "{} scored flag disagrees with re-derived eligibility",
+                row["id"]
+            );
+        }
         let scored: Vec<&Value> = rows.iter().filter(|r| r["scored"] == true).collect();
         // Only strongly_gripped / ungripped claim pairs may be scored.
         for row in &scored {
@@ -130,26 +150,32 @@ mod tests {
             summary["confusion_scored_only"]["ungripped_missed"].as_u64(),
             Some(tn)
         );
-        let check_rate =
-            |key: &str, num: u64, den: u64| match (summary[key].as_f64(), rate(num, den)) {
-                (None, None) => {}
-                (Some(got), Some(want)) => {
-                    assert!((got - want).abs() < 1e-9, "{key}: {got} != {want}")
-                }
-                other => panic!("{key} mismatch: {other:?} vs recomputed {num}/{den}"),
-            };
-        check_rate("discriminator_precision", tp, tp + fp);
-        check_rate("missed_recall_strict", tn, tn + fp);
-        check_rate("caught_recall", tp, tp + fn_);
+        let check_rate = |key: &str, num: u64, den: u64| -> Result<(), String> {
+            match (summary[key].as_f64(), rate(num, den)) {
+                (None, None) => Ok(()),
+                (Some(got), Some(want)) if (got - want).abs() < 1e-9 => Ok(()),
+                (Some(got), Some(want)) => Err(format!("{key}: {got} != {want}")),
+                other => Err(format!(
+                    "{key} mismatch: {other:?} vs recomputed {num}/{den}"
+                )),
+            }
+        };
+        check_rate("discriminator_precision", tp, tp + fp)?;
+        check_rate("missed_recall_strict", tn, tn + fp)?;
+        check_rate("caught_recall", tp, tp + fn_)?;
+        Ok(())
     }
 
     #[test]
-    fn baselines_passed_so_runtime_outcomes_are_meaningful() {
-        let receipt = receipt();
-        let baselines = receipt["baselines"].as_object().expect("baselines");
+    fn baselines_passed_so_runtime_outcomes_are_meaningful() -> Result<(), String> {
+        let receipt = receipt()?;
+        let baselines = receipt["baselines"]
+            .as_object()
+            .ok_or_else(|| "baselines".to_string())?;
         assert!(!baselines.is_empty());
         for (name, baseline) in baselines {
             assert_eq!(baseline["passed"], true, "baseline {name} did not pass");
         }
+        Ok(())
     }
 }

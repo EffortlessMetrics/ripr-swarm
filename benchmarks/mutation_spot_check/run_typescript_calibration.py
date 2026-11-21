@@ -30,18 +30,31 @@ SCORED_GRIPS = {"strongly_gripped", "ungripped"}
 
 
 def run(cmd, cwd, timeout=180):
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, "timeout"
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
+def resolve_executable(value: str, root: Path) -> str:
+    p = Path(value)
+    if p.is_absolute() or len(p.parts) <= 1:
+        return value
+    return str((root / p).resolve())
+
+
 def copy_subject(src: Path, dst: Path):
+    if dst.exists():
+        shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
         "node_modules", "__pycache__", ".pytest_cache", "*.pyc"))
 
 
 def verdict_for(check: dict, rel_file: str, line: int):
     """Return (token, grip, disposition). Mirrors synthetic_diff::read_verdict."""
-    complete = check.get("analysis_outcome", {}).get("analysis_complete") is True
+    complete = (check.get("analysis_outcome") or {}).get("analysis_complete") is True
     matched = []
     for f in check.get("findings", []) or []:
         probe = f.get("probe", {}) or {}
@@ -77,10 +90,12 @@ def main() -> int:
     root = Path(args.repo_root).resolve()
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     subjects = {s["name"]: s for s in manifest["subjects"]}
+    args.ripr = resolve_executable(args.ripr, root)
+    args.node = resolve_executable(args.node, root)
     _, ripr_version = run([args.ripr, "--version"], root)
     _, node_version = run([args.node, "--version"], root)
 
-    scratch_root = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="ripr-ts-cal-"))
+    scratch_root = (Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="ripr-ts-cal-"))).resolve()
     scratch_root.mkdir(parents=True, exist_ok=True)
     rows, baselines = [], {}
     try:

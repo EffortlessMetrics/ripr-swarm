@@ -1417,6 +1417,15 @@ reason = "Stdlib-only bounded TypeScript calibration harness (#12901): applies r
 covered_by = ["cargo test -p xtask --bin xtask typescript_calibration", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/mutation_spot_check/test_run_typescript_calibration.py"
+kind = "benchmark_test"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "tooling"
+reason = "Unit tests for the bounded TypeScript calibration runner helpers (#12901): timeout and UTF-8 handling, verdict parsing, executable and scratch path resolution, and subject copying; stdlib only."
+covered_by = ["python benchmarks/mutation_spot_check/test_run_typescript_calibration.py", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "tools/ci/shard-verifier-artifact.py"
 kind = "shard_verifier_bootstrap"
 owner = "ci/shard-verifier"
