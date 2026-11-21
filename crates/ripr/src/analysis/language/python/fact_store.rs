@@ -82,7 +82,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// drop such calls, so a parametrized bare assertion stays smoke.
 /// `28`: each test records the same-file value helpers its body calls
 /// (#15350); older entries lack them, so the helper never relates the test.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "28";
+/// `29`: a handler whose every decorator is a static route decorator records
+/// its bare callees (#14150); older entries leave them empty, so a helper the
+/// handler calls never relates through the route.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "29";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

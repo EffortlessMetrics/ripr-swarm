@@ -77,6 +77,11 @@ pub(super) enum PythonRelationKind {
     /// The test calls a same-module caller of the owner, and no test calls the
     /// owner itself (#4568). Reach evidence only; never an oracle.
     HelperOwnerCall,
+    /// The test requests, through a client identified as the handler's own
+    /// application, a route whose handler directly calls the owner (#14150).
+    /// Reach evidence only; never an oracle: the response assertion is not
+    /// shown to observe the helper's changed behavior.
+    RouteHelperCall,
     /// The test calls a function of another module that imports and calls
     /// the owner, possibly through same-module callers on either side, and no
     /// test calls the owner itself (#12955). Reach evidence only; the
@@ -111,6 +116,7 @@ impl PythonRelationKind {
             Self::FixtureName => 1,
             Self::FixtureOwnerCall => 2,
             Self::HelperOwnerCall => 2,
+            Self::RouteHelperCall => 2,
             Self::CrossModuleCallerCall => 2,
             Self::CliRunnerInvoke => 2,
             Self::ActivationLimited => 0,
@@ -156,6 +162,7 @@ impl PythonRelationKind {
             Self::FixtureName => "fixture_name",
             Self::FixtureOwnerCall => "fixture_owner_call",
             Self::HelperOwnerCall => "helper_owner_call",
+            Self::RouteHelperCall => "route_helper_call",
             Self::CrossModuleCallerCall => "cross_module_caller_call",
             Self::CliRunnerInvoke => "cli_runner_invoke",
             Self::ActivationLimited => "test_activation_unestablished",
@@ -583,18 +590,28 @@ fn helper_candidates_from_callers<'a>(
         };
         for test in reached {
             if seen.insert((test.file.as_path(), test.qualified_name.as_str())) {
+                // An identified route request reaches a helper only when the
+                // routed handler calls it directly (#14150): one hop, resolved
+                // through the handler module's own binding of the owner. A
+                // handler further away keeps the generic caller reading.
+                let via_route = !caller.route_paths.is_empty()
+                    && caller_directly_calls_owner(caller, owner, owners)
+                    && related_test_relation(test, caller)
+                        == Some(PythonRelationKind::ApiClientRouteCall);
                 found.push(HelperOwnerCallCandidate {
                     candidate: PythonRelatedCandidate {
                         test,
                         relation: if super::test_activation::activation_control(test).is_some() {
                             PythonRelationKind::ActivationLimited
+                        } else if via_route {
+                            PythonRelationKind::RouteHelperCall
                         } else if cross_module {
                             PythonRelationKind::CrossModuleCallerCall
                         } else {
                             PythonRelationKind::HelperOwnerCall
                         },
                     },
-                    caller: if cross_module && caller.file != owner.file {
+                    caller: if (cross_module || via_route) && caller.file != owner.file {
                         format!(
                             "{} ({})",
                             caller.qualified_name,
@@ -603,7 +620,7 @@ fn helper_candidates_from_callers<'a>(
                     } else {
                         caller.qualified_name.clone()
                     },
-                    cross_module,
+                    cross_module: cross_module && !via_route,
                 });
             }
         }
@@ -616,6 +633,24 @@ fn helper_candidates_from_callers<'a>(
             .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
     });
     found
+}
+
+/// Whether `caller` calls `owner` itself, under the name its own module
+/// binds the owner to: the bare name in the owner's file, or the exact
+/// `from <owner module> import <name>` binding elsewhere (#14150, #12955).
+fn caller_directly_calls_owner(
+    caller: &PythonOwner,
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+) -> bool {
+    if caller.file == owner.file {
+        return caller
+            .module_callees
+            .iter()
+            .any(|callee| callee == &owner.name);
+    }
+    cross_module_owner_binding(caller, owner, owners)
+        .is_some_and(|local| caller.module_callees.iter().any(|callee| callee == local))
 }
 
 fn top_level_function(candidate: &PythonOwner) -> bool {

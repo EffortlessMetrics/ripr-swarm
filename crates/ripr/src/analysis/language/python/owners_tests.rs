@@ -575,6 +575,9 @@ fn owner_from_function(
         .map(|class| format!("{}.{name}", innermost_class(class)))
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
+    // Counted on the decorator expressions here, before `async_def` joins
+    // the recorded decorator names below.
+    let routed_handler = !route_paths.is_empty() && decorators.len() == route_paths.len();
     let route_returns_body = !route_paths.is_empty()
         && route_returns_body(decorators, body)
         && !super::module_constants::mentions_identifier(
@@ -615,7 +618,11 @@ fn owner_from_function(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
     );
-    let module_callees = if transparent_decorators || click_command {
+    // A handler whose every decorator is a static route decorator is called
+    // by the framework when its route is requested, so a helper it calls is
+    // reached through the handler (#14150), like a click command through its
+    // invocation. Any other decorator may wrap or replace the call.
+    let module_callees = if transparent_decorators || click_command || routed_handler {
         super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters)
     } else {
         Vec::new()
