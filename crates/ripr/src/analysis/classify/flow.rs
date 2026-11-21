@@ -2204,9 +2204,28 @@ fn is_obvious_return_expression(text: &str) -> bool {
         || trimmed.contains('(')
         || trimmed.contains('"')
         || trimmed.chars().any(|ch| ch.is_ascii_digit())
+        // #15029: a char literal is a value as plainly as a digit or a
+        // string literal is (`c == ',' || c == ';'`).
+        || contains_char_literal(trimmed)
         || [" + ", " - ", " * ", " / ", " % "]
             .iter()
             .any(|operator| trimmed.contains(operator))
+}
+
+/// Whether `text` holds a char literal: `'x'` or an escape such as `'\\n'`.
+/// A lifetime (`'a`) has no closing quote right after its first char, so it
+/// is not one.
+fn contains_char_literal(text: &str) -> bool {
+    text.match_indices('\'').any(|(at, _)| {
+        let mut chars = text[at + 1..].chars();
+        match chars.next() {
+            // An escape: the escaped char, then a closing quote within the
+            // longest escape (`\\u{10FFFF}`).
+            Some('\\') => chars.next().is_some() && chars.take(9).any(|ch| ch == '\''),
+            Some('\'') | None => false,
+            Some(_) => chars.next() == Some('\''),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -2273,6 +2292,29 @@ mod tests {
                 "{discarded}: {sinks:?}"
             );
         }
+    }
+
+    /// #15029: a char-literal chain on the owner's tail sinks to the return
+    /// like its integer twin; a lifetime is not a char literal.
+    #[test]
+    fn char_literal_tail_reaches_the_return_sink() {
+        for text in [
+            "c == ',' || c == ';'",
+            "c == '\\n'",
+            "c == '\\''",
+            "c == '\\u{1F600}'",
+        ] {
+            assert!(contains_char_literal(text), "{text}");
+            assert!(is_obvious_return_expression(text), "{text}");
+        }
+        for text in ["x as &'a str", "a || b", "'", "''", "'a"] {
+            assert!(!contains_char_literal(text), "{text}");
+        }
+        let owner = tail_owner("pub fn is_sep(c: char) -> bool {\n    c == ',' || c == ';'\n}");
+        let probe = probe(ProbeFamily::ReturnValue, "c == ',' || c == ';'", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert_eq!(sinks.len(), 1, "{sinks:?}");
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
     }
 
     #[test]

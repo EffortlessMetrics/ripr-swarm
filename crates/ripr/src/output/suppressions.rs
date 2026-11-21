@@ -113,6 +113,7 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
     let mut violations = Vec::new();
     let mut schema_line = None;
     let mut current: Option<PendingSuppression> = None;
+    let mut in_unknown_table = false;
 
     for (index, line) in text.lines().enumerate() {
         let line_number = index + 1;
@@ -120,11 +121,24 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        if trimmed == "[[suppressions]]" {
+        if trimmed.starts_with('[') {
             if let Some(pending) = current.take() {
                 finalize_suppression(pending, &mut entries, &mut violations);
             }
-            current = Some(PendingSuppression::new(line_number));
+            if is_suppressions_entry_header(trimmed) {
+                in_unknown_table = false;
+                current = Some(PendingSuppression::new(line_number));
+            } else {
+                // The header already fails the load. Its keys are not
+                // top-level (TOML scopes them to that table), so reporting
+                // each one as an unsupported top-level field would bury the
+                // one real mistake under a cascade (#15252).
+                in_unknown_table = true;
+                violations.push(format!(
+                    "{SUPPRESSIONS_PATH}:{line_number} unsupported table header `{trimmed}`; each entry starts with `[[suppressions]]`{}",
+                    entry_header_hint(trimmed)
+                ));
+            }
             continue;
         }
         let Some((key, raw)) = trimmed.split_once('=') else {
@@ -133,6 +147,9 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
             ));
             continue;
         };
+        if in_unknown_table {
+            continue;
+        }
         let key = key.trim();
         let raw = raw.trim();
         if let Some(pending) = current.as_mut() {
@@ -195,7 +212,8 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
                     pending.language_status = Some((parsed, line_number));
                 }),
                 _ => violations.push(format!(
-                    "{SUPPRESSIONS_PATH}:{line_number} unsupported `[[suppressions]]` field `{key}`"
+                    "{SUPPRESSIONS_PATH}:{line_number} unsupported `[[suppressions]]` field `{key}`{}",
+                    spelling_hint(key, ENTRY_FIELDS)
                 )),
             }
         } else if key == "schema_version" {
@@ -217,7 +235,8 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
             }
         } else {
             violations.push(format!(
-                "{SUPPRESSIONS_PATH}:{line_number} unsupported top-level field `{key}`"
+                "{SUPPRESSIONS_PATH}:{line_number} unsupported top-level field `{key}`{}",
+                top_level_field_hint(key)
             ));
         }
     }
@@ -326,6 +345,78 @@ impl PendingSuppression {
     }
 }
 
+/// Every field a `[[suppressions]]` entry accepts, for near-miss hints only.
+/// The parser's match arms above are the authority; a test checks that each
+/// name listed here is accepted (an omitted one only loses its hint).
+const ENTRY_FIELDS: &[&str] = &[
+    "kind",
+    "finding_id",
+    "test",
+    "path",
+    "function",
+    "reason",
+    "owner",
+    "expires",
+    "scope",
+    "created_at",
+    "last_seen",
+    "review_by",
+    "expected_visibility",
+    "static_class",
+    "language",
+    "language_status",
+];
+
+/// `[[suppressions]]`, also with TOML's optional inner spaces
+/// (`[[ suppressions ]]`) or a trailing comment.
+fn is_suppressions_entry_header(trimmed: &str) -> bool {
+    table_header_parts(trimmed)
+        .is_some_and(|(array, name, rest)| array && name == "suppressions" && is_comment_tail(rest))
+}
+
+/// `(is_array_header, table_name, text_after_the_closing_brackets)`.
+fn table_header_parts(trimmed: &str) -> Option<(bool, &str, &str)> {
+    if let Some(inner) = trimmed.strip_prefix("[[") {
+        let (name, rest) = inner.split_once("]]")?;
+        return Some((true, name.trim(), rest.trim()));
+    }
+    let inner = trimmed.strip_prefix('[')?;
+    let (name, rest) = inner.split_once(']')?;
+    Some((false, name.trim(), rest.trim()))
+}
+
+fn is_comment_tail(rest: &str) -> bool {
+    rest.is_empty() || rest.starts_with('#')
+}
+
+/// Names the one valid header when the rejected one is a near miss of it:
+/// a single-bracket `[suppressions]`, or a misspelled table name.
+fn entry_header_hint(trimmed: &str) -> &'static str {
+    let near = table_header_parts(trimmed)
+        .is_some_and(|(_, name, _)| crate::config::did_you_mean(name, &["suppressions"]).is_some());
+    if near {
+        " (did you mean `[[suppressions]]`?)"
+    } else {
+        ""
+    }
+}
+
+fn spelling_hint(value: &str, candidates: &[&str]) -> String {
+    crate::config::did_you_mean(value, candidates)
+        .map(|nearest| format!(" (did you mean `{nearest}`?)"))
+        .unwrap_or_default()
+}
+
+/// An entry field written before any `[[suppressions]]` header is a missing
+/// header, not a misspelling.
+fn top_level_field_hint(key: &str) -> String {
+    if ENTRY_FIELDS.contains(&key) {
+        "; it belongs inside a `[[suppressions]]` entry".to_string()
+    } else {
+        spelling_hint(key, &["schema_version"])
+    }
+}
+
 fn assign_field<F>(raw: &str, line_number: usize, violations: &mut Vec<String>, mut assign: F)
 where
     F: FnMut(String),
@@ -358,8 +449,9 @@ fn finalize_suppression(
             Some(kind) => Some(kind),
             None => {
                 violations.push(format!(
-                    "{SUPPRESSIONS_PATH}:{line} unsupported kind `{value}`; supported: {}",
-                    SuppressionKind::supported().join(", ")
+                    "{SUPPRESSIONS_PATH}:{line} unsupported kind `{value}`; supported: {}{}",
+                    SuppressionKind::supported().join(", "),
+                    spelling_hint(&value, SuppressionKind::supported())
                 ));
                 None
             }
@@ -618,6 +710,22 @@ pub fn is_iso_date(value: &str) -> bool {
     (1..=12).contains(&m) && (1..=31).contains(&d)
 }
 
+/// Read a root-relative suppressions manifest that the checkout itself
+/// controls, shared by every loader of it (`check`, `config validate`,
+/// `policy suppression-health`). `Ok(None)` when nothing is there.
+///
+/// A link inside the checkout can point anywhere, and the parser echoes the
+/// keys of whatever it reads, so the manifest goes through the root-contained
+/// reader: a manifest that resolves outside the root (through the file or any
+/// parent directory) is refused before reading, naming only the configured
+/// path, and a FIFO cannot block the run (#15546).
+pub(crate) fn read_root_manifest(
+    root: &Path,
+    relative_path: &Path,
+) -> Result<Option<String>, String> {
+    crate::bounded_input::read_root_metadata_toml(root, relative_path, "suppressions manifest")
+}
+
 /// Loads suppressions relative to the analyzed workspace root. Returns
 /// an empty list when the file does not exist (the normal case for
 /// projects with no accepted debt). Parse violations are returned via
@@ -627,12 +735,9 @@ pub fn load_suppressions_for_root_at(
     root: &Path,
     relative_path: &Path,
 ) -> Result<Vec<SuppressionEntry>, Vec<String>> {
-    let path = root.join(relative_path);
-    if !path.exists() {
+    let Some(text) = read_root_manifest(root, relative_path).map_err(|err| vec![err])? else {
         return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|err| vec![format!("failed to read {}: {err}", path.display())])?;
+    };
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
         Ok(entries)
@@ -2560,6 +2665,112 @@ mod audit_controls {
         Ok(())
     }
 
+    /// A checkout can make its suppressions manifest a link to a file outside
+    /// the repository; the parser would echo that file's keys (#15546). The
+    /// loader must refuse it by configured path only, while an in-root link
+    /// keeps working.
+    #[cfg(unix)]
+    #[test]
+    fn root_loader_refuses_a_manifest_link_that_leaves_the_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-suppression-link-escape-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("repo");
+        std::fs::create_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
+        let outside = base.join("outside-secret.toml");
+        std::fs::write(&outside, "outside_secret_key = \"value\"\n").map_err(|e| e.to_string())?;
+        let manifest = Path::new(".ripr/suppressions.toml");
+        std::os::unix::fs::symlink(&outside, root.join(manifest)).map_err(|e| e.to_string())?;
+
+        let refused = load_suppressions_for_root_at(&root, manifest)
+            .err()
+            .ok_or("a manifest link out of the root must be refused")?;
+        let text = refused.join("\n");
+        assert!(
+            text.contains("resolves outside the repository root"),
+            "{text}"
+        );
+        assert!(text.contains(".ripr/suppressions.toml"), "{text}");
+        assert!(!text.contains("outside_secret_key"), "{text}");
+        assert!(!text.contains("outside-secret"), "{text}");
+
+        // Control: the same link target inside the root is read and parsed,
+        // so the refusal above is containment, not a broken link.
+        let inside = root.join("policy.toml");
+        std::fs::write(&inside, VALID).map_err(|e| e.to_string())?;
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&inside, root.join(manifest)).map_err(|e| e.to_string())?;
+        assert_eq!(
+            load_suppressions_for_root_at(&root, manifest)
+                .map_err(|e| e.join("\n"))?
+                .len(),
+            1
+        );
+        // An in-root FIFO is refused instead of blocking the read.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        let made = std::process::Command::new("mkfifo")
+            .arg(root.join(manifest))
+            .status()
+            .map_err(|e| format!("mkfifo: {e}"))?;
+        assert!(made.success(), "mkfifo failed");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = root.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(load_suppressions_for_root_at(&probe, manifest));
+        });
+        let refused = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|e| format!("a FIFO manifest blocked the loader: {e}"))?;
+        let refused = refused
+            .err()
+            .ok_or("a FIFO manifest must be refused")?
+            .join("\n");
+        assert!(refused.contains("not a regular file"), "{refused}");
+
+        // A link loop is an unreadable manifest, not an absent one.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink("suppressions.toml", root.join(manifest))
+            .map_err(|e| e.to_string())?;
+        let refused = read_root_manifest(&root, manifest)
+            .err()
+            .ok_or("a manifest link loop must be refused, not read as absent")?;
+        assert!(refused.contains("cannot be resolved"), "{refused}");
+        assert!(refused.contains(".ripr/suppressions.toml"), "{refused}");
+
+        // A parent-directory link (`.ripr -> outside`) escapes the same way.
+        std::fs::remove_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
+        let outside_dir = base.join("outside-dir");
+        std::fs::create_dir_all(&outside_dir).map_err(|e| e.to_string())?;
+        std::fs::write(
+            outside_dir.join("suppressions.toml"),
+            "outside_dir_key = \"value\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside_dir, root.join(".ripr")).map_err(|e| e.to_string())?;
+        let refused = load_suppressions_for_root_at(&root, manifest)
+            .err()
+            .ok_or("a parent-directory link out of the root must be refused")?
+            .join("\n");
+        assert!(
+            refused.contains("resolves outside the repository root"),
+            "{refused}"
+        );
+        assert!(!refused.contains("outside_dir_key"), "{refused}");
+        // The shared reader that `policy suppression-health` uses refuses too.
+        let shared = read_root_manifest(&root, manifest)
+            .err()
+            .ok_or("the shared manifest reader must refuse the escape")?;
+        assert!(
+            shared.contains("resolves outside the repository root"),
+            "{shared}"
+        );
+        assert!(!shared.contains("outside-dir"), "{shared}");
+        std::fs::remove_dir_all(&base).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     #[test]
     fn duplicate_empty_optional_values_are_not_silently_replaced() {
         for key in [
@@ -2640,3 +2851,6 @@ mod audit_controls {
         );
     }
 }
+
+#[cfg(test)]
+mod typo_hint_tests;

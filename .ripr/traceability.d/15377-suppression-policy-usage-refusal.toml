@@ -1,0 +1,7 @@
+# --suppression-policy on a format that cannot apply it is a usage refusal (#15377).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::suppression_policy_is_refused_on_formats_that_cannot_apply_it",
+  "crates/ripr/tests/cli_smoke.rs::check_suppression_policy_rejects_unsupported_formats",
+]

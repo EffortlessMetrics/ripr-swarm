@@ -6,7 +6,19 @@ use super::{
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const JSON_CHECKSUM: &str = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14";
+/// serde_json releases whose `json!` expansion is audited for the closed
+/// literal grammar (RIPR-SPEC-0197): `src/macros.rs` is byte-identical across
+/// them. Each version is bound to its crates.io checksum.
+const AUDITED_JSON_RELEASES: &[(&str, &str)] = &[
+    (
+        "1.0.151",
+        "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+    ),
+    (
+        "1.0.154",
+        "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6",
+    ),
+];
 
 /// An audited registry implementation under ordinary Cargo/cache integrity
 /// assumptions. The resolved dependency edge, not its spelling in a lockfile,
@@ -686,7 +698,17 @@ pub(super) fn json_manifest_digests(
 }
 
 pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity> {
-    verified_registry_identity(root, "serde_json", "1.0.151", JSON_CHECKSUM)
+    // The lockfile only selects which audited release to prove; the resolved
+    // metadata edge and checksum checks below remain the authority.
+    let packages = locked_packages(root, "serde_json")?;
+    let [package] = packages.as_slice() else {
+        return None;
+    };
+    let locked = package.get("version").and_then(toml::Value::as_str)?;
+    let (version, checksum) = AUDITED_JSON_RELEASES
+        .iter()
+        .find(|(version, _)| *version == locked)?;
+    verified_registry_identity(root, "serde_json", version, checksum)
 }
 
 fn verified_registry_identity(

@@ -2,8 +2,8 @@ use crate::analysis;
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
-    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
-    reconcile_root,
+    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_path_value,
+    expect_value, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -14,6 +14,17 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
+
+/// Missing-required-input refusals (#14076). Each names where the value comes
+/// from, so the reader is not left at "requires X". The exact text is pinned
+/// by `tests/cli_error_message_snapshots.rs`.
+const ZERO_STATUS_REQUIRES_DELTA: &str = "zero status requires --delta <path>; pass the baseline debt delta JSON that `ripr baseline diff` writes, for example `--delta target/ripr/reports/baseline-debt-delta.json`";
+const CALIBRATE_REQUIRES_MUTANTS_JSON: &str = "calibrate cargo-mutants requires --mutants-json <path>; run `cargo mutants` first, then pass its `mutants.out` directory or `mutants.out/outcomes.json`";
+const CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON: &str = "calibrate cargo-mutants requires --repo-exposure-json <path>; capture one with `ripr check --format repo-exposure-json > repo-exposure.json`, then pass `--repo-exposure-json repo-exposure.json`";
+const PR_LEDGER_REQUIRES_PR_NUMBER: &str = "pr-ledger record requires --pr-number <value>; pass the pull request number or a local identifier, for example `--pr-number 123`";
+const PR_LEDGER_REQUIRES_BASE: &str = "pr-ledger record requires --base <revision>; pass the pull request's base commit, for example `--base origin/main`";
+const PR_LEDGER_REQUIRES_HEAD: &str = "pr-ledger record requires --head <revision>; pass the pull request's head commit, for example `--head HEAD`";
+const PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT: &str = "pr-review front-panel requires at least one explicit artifact input; pass one, for example `--pr-guidance target/ripr/review/comments.json` (run `ripr help pr-review` for the list)";
 
 #[path = "commands/agent.rs"]
 mod agent;
@@ -269,7 +280,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     let options = parse_evidence_health_options(args)?;
     if !options.root.is_dir() {
         return Err(format!(
-            "evidence-health root {} is not a directory",
+            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
             options.root.display()
         ));
     }
@@ -484,6 +495,7 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
         .recommendation_calibration
         .as_ref()
         .map(|path| output::ripr_zero_status::display_path(path));
+    let mut reads = SuppliedInputReads::default();
     let input = output::ripr_zero_status::RiprZeroStatusInput {
         root: ".".to_string(),
         generated_at: baseline_created_at()?,
@@ -496,8 +508,8 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
         baseline_json: options
             .baseline
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline", path)),
-        delta_json: read_optional_text_for_report("baseline debt delta", &options.delta),
+            .map(|path| reads.read_json("--baseline", "baseline", path)),
+        delta_json: reads.read_json("--delta", "baseline debt delta", &options.delta),
         gap_ledger_json: options
             .gap_ledger
             .as_ref()
@@ -526,7 +538,7 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     // (#9856): a run that routed from nothing must not look like a healthy
     // run in the terminal or in `2>&1` CI logs.
     emit_report_warnings(output::ripr_zero_status::ripr_zero_status_warnings(&report));
-    Ok(())
+    reads.finish("zero status")
 }
 
 fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
@@ -863,6 +875,35 @@ fn coverage_grip_frontier(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    // A supplied input the report could not use means the frontier could not
+    // complete (exit 2, docs/EXIT_CODES.md); the report is already written.
+    let failures = output::coverage_grip_frontier::coverage_grip_frontier_input_failures(&report);
+    if !failures.is_empty() {
+        let supplied = [
+            ("--coverage", &options.coverage),
+            ("--ledger", &options.ledger),
+            ("--baseline-delta", &options.baseline_delta),
+            ("--zero-status", &options.zero_status),
+        ]
+        .iter()
+        .filter_map(|(flag, path)| {
+            path.as_ref().map(|path| {
+                format!(
+                    "{flag} {}",
+                    output::coverage_grip_frontier::display_path(path)
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+        return Err(format!(
+            "coverage-grip frontier could not use {} supplied input{}: {}; the report was written as `{status}`. Pass a readable --coverage, --ledger, --baseline-delta or --zero-status file produced by its owning command, or drop the flag to leave that input out (supplied: {supplied})",
+            failures.len(),
+            if failures.len() == 1 { "" } else { "s" },
+            failures.join("; "),
+            status = output::coverage_grip_frontier::coverage_grip_frontier_status(&report),
+        ));
+    }
     Ok(())
 }
 
@@ -951,11 +992,9 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
         i += 1;
     }
 
-    let mutants_json = mutants_json
-        .ok_or_else(|| "calibrate cargo-mutants requires --mutants-json <path>".to_string())?;
-    let repo_exposure_json = repo_exposure_json.ok_or_else(|| {
-        "calibrate cargo-mutants requires --repo-exposure-json <path>".to_string()
-    })?;
+    let mutants_json = mutants_json.ok_or_else(|| CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())?;
+    let repo_exposure_json =
+        repo_exposure_json.ok_or_else(|| CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())?;
     if let Some(out) = out.as_deref() {
         refuse_output_naming_input(
             "calibrate cargo-mutants",
@@ -1169,7 +1208,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
                 let reconciled = reconcile_root(
                     &root,
                     root_explicit,
-                    expect_value(args, i, "--root")?,
+                    expect_path_value(args, i, "--root")?,
                     "evidence-health",
                 )?;
                 root = reconciled;
@@ -1177,15 +1216,15 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
             }
             "--out" => {
                 i += 1;
-                out = PathBuf::from(expect_value(args, i, "--out")?);
+                out = PathBuf::from(expect_path_value(args, i, "--out")?);
             }
             "--out-md" => {
                 i += 1;
-                out_md = PathBuf::from(expect_value(args, i, "--out-md")?);
+                out_md = PathBuf::from(expect_path_value(args, i, "--out-md")?);
             }
             "--mutation-calibration" => {
                 i += 1;
-                mutation_calibration = Some(PathBuf::from(expect_value(
+                mutation_calibration = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--mutation-calibration",
@@ -1265,7 +1304,7 @@ fn parse_ripr_zero_status_options(args: &[String]) -> Result<RiprZeroStatusOptio
         i += 1;
     }
 
-    let delta = delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?;
+    let delta = delta.ok_or_else(|| ZERO_STATUS_REQUIRES_DELTA.to_string())?;
     refuse_output_naming_input(
         "zero status",
         &[("--out", &out), ("--out-md", &out_md)],
@@ -1485,10 +1524,10 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         {
             forbidden.push(input);
         }
-        if forbidden
-            .iter()
-            .any(|path| output::path::same_output_leaf(jsonl, path))
-        {
+        if forbidden.iter().any(|path| {
+            output::path::same_output_leaf(jsonl, path)
+                || output::path::output_replaces_input(jsonl, path)
+        }) {
             return Err(
                 "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
                     .to_string(),
@@ -1497,10 +1536,9 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
     }
 
     Ok(PrEvidenceLedgerOptions {
-        pr_number: pr_number
-            .ok_or_else(|| "pr-ledger record requires --pr-number <value>".to_string())?,
-        base: base.ok_or_else(|| "pr-ledger record requires --base <revision>".to_string())?,
-        head: head.ok_or_else(|| "pr-ledger record requires --head <revision>".to_string())?,
+        pr_number: pr_number.ok_or_else(|| PR_LEDGER_REQUIRES_PR_NUMBER.to_string())?,
+        base: base.ok_or_else(|| PR_LEDGER_REQUIRES_BASE.to_string())?,
+        head: head.ok_or_else(|| PR_LEDGER_REQUIRES_HEAD.to_string())?,
         labels,
         gate,
         baseline_delta,
@@ -1524,6 +1562,8 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
     let mut existing_comments = None;
     let mut mode = output::pr_inline_comment_publish_plan::CommentMode::Off;
     let mut pull_request = None;
+    let mut token_seen: Option<bool> = None;
+    let mut write_seen: Option<bool> = None;
     let mut event_name = None;
     let mut head_repo = None;
     let mut base_repo = None;
@@ -1578,9 +1618,10 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
             "--pull-request" => {
                 i += 1;
                 let value = non_empty_string_arg(args, i, "--pull-request", "pr-comments plan")?;
-                pull_request = Some(value.parse::<u64>().map_err(|err| {
-                    format!("pr-comments plan --pull-request must be a positive integer: {err}")
-                })?);
+                pull_request = Some(crate::cli::commands_numeric::parse_positive_u64(
+                    &value,
+                    "--pull-request",
+                )?);
             }
             "--event-name" => {
                 i += 1;
@@ -1609,17 +1650,36 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
                     "pr-comments plan",
                 )?);
             }
-            "--token-available" => token_available = true,
-            "--no-token" => token_available = false,
-            "--write-permission" => write_permission = true,
-            "--no-write-permission" => write_permission = false,
+            "--token-available" | "--no-token" => {
+                let available = args[i] == "--token-available";
+                if token_seen.is_some_and(|prior| prior != available) {
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --token-available or --no-token, not both; pass only one",
+                    ));
+                }
+                token_seen = Some(available);
+                token_available = available;
+            }
+            "--write-permission" | "--no-write-permission" => {
+                let granted = args[i] == "--write-permission";
+                if write_seen.is_some_and(|prior| prior != granted) {
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --write-permission or --no-write-permission, not both; pass only one",
+                    ));
+                }
+                write_seen = Some(granted);
+                write_permission = granted;
+            }
             "--max-inline-comments" => {
                 i += 1;
                 let value =
                     non_empty_string_arg(args, i, "--max-inline-comments", "pr-comments plan")?;
-                max_inline_comments = value.parse::<usize>().map_err(|err| {
-                    format!("pr-comments plan --max-inline-comments must be a number: {err}")
-                })?;
+                max_inline_comments = crate::cli::commands_numeric::parse_non_negative_usize(
+                    &value,
+                    "--max-inline-comments",
+                )?;
             }
             "--out" => {
                 i += 1;
@@ -1833,9 +1893,7 @@ fn parse_pr_review_front_panel_options(
         && coverage_frontier.is_none()
         && receipt.is_none()
     {
-        return Err(
-            "pr-review front-panel requires at least one explicit artifact input".to_string(),
-        );
+        return Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string());
     }
 
     refuse_output_naming_input(
@@ -1993,6 +2051,56 @@ pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<
     })
 }
 
+/// Collects the explicitly supplied report inputs that could not be read, so a
+/// command can write its report and then refuse with exit 2 instead of
+/// printing only `Wrote ...` for a typo'd path. A flag whose file may
+/// legitimately be absent (an append-target history) reads without recording.
+#[derive(Default)]
+pub(super) struct SuppliedInputReads {
+    failures: Vec<String>,
+}
+
+impl SuppliedInputReads {
+    pub(super) fn read(&mut self, flag: &str, label: &str, path: &Path) -> Result<String, String> {
+        let read = read_optional_text_for_report(label, path);
+        if let Err(err) = &read {
+            self.failures.push(format!("{flag}: {err}"));
+        }
+        read
+    }
+
+    /// [`Self::read`] for a flag that must hold JSON: readable-but-malformed
+    /// text is recorded too. The text is still returned so the report builds
+    /// and discloses the input the way it always did.
+    pub(super) fn read_json(
+        &mut self,
+        flag: &str,
+        label: &str,
+        path: &Path,
+    ) -> Result<String, String> {
+        let read = self.read(flag, label, path)?;
+        if let Err(err) = serde_json::from_str::<serde_json::Value>(&read) {
+            self.failures.push(format!(
+                "{flag}: {label} {} is not valid JSON: {err}",
+                output::baseline_delta::display_path(path)
+            ));
+        }
+        Ok(read)
+    }
+
+    pub(super) fn finish(self, command: &str) -> Result<(), String> {
+        if self.failures.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+            "{command} could not read {} supplied input{}: {}; the report was still written with that input marked unavailable. Pass an existing file holding valid JSON (or the file type the flag names) to each flag named, or drop the flag to leave that input out",
+            self.failures.len(),
+            if self.failures.len() == 1 { "" } else { "s" },
+            self.failures.join("; ")
+        ))
+    }
+}
+
 /// Like `read_optional_text_for_report`, but a missing file reads `not found`
 /// (#9851 vocabulary) instead of the host's errno text. Kept separate because
 /// some policy reports still classify a missing input by that errno text.
@@ -2059,11 +2167,12 @@ fn read_optional_manifest_for_report(
     root: &Path,
     manifest: &Path,
 ) -> Option<Result<String, String>> {
-    let read_path = if manifest.is_absolute() {
-        manifest.to_path_buf()
-    } else {
-        root.join(manifest)
-    };
+    if !manifest.is_absolute() {
+        // The default manifest is checkout content: share the contained,
+        // regular-file read the other suppressions loaders use (#15546).
+        return crate::output::suppressions::read_root_manifest(root, manifest).transpose();
+    }
+    let read_path = manifest.to_path_buf();
     match crate::bounded_input::read_to_string(&read_path) {
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
@@ -2125,12 +2234,13 @@ fn non_empty_string_arg(
     }
 }
 
+pub(super) const OUTCOME_FORMAT_NAMES: &[&str] = &["md", "markdown", "text", "json"];
+
 fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
-    const ACCEPTED: &[&str] = &["md", "markdown", "text", "json"];
     match value {
         "md" | "markdown" | "text" => Ok(OutcomeFormat::Markdown),
         "json" => Ok(OutcomeFormat::Json),
-        _ => Err(unknown_value("outcome format", value, ACCEPTED)),
+        _ => Err(unknown_value("outcome format", value, OUTCOME_FORMAT_NAMES)),
     }
 }
 
@@ -3209,7 +3319,7 @@ mod tests {
         assert_eq!(pr_review(&args(&[])), Ok(()));
         assert_eq!(
             pr_review(&args(&["front-panel"])),
-            Err("pr-review front-panel requires at least one explicit artifact input".to_string())
+            Err(PR_REVIEW_FRONT_PANEL_REQUIRES_INPUT.to_string())
         );
         assert_eq!(
             pr_review(&args(&["bogus"])),
@@ -3258,7 +3368,7 @@ mod tests {
         assert_eq!(zero(&args(&[])), Ok(()));
         assert_eq!(
             zero(&args(&["status"])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             zero(&args(&["unknown"])),
@@ -3266,7 +3376,7 @@ mod tests {
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&[])),
-            Err("zero status requires --delta <path>".to_string())
+            Err(ZERO_STATUS_REQUIRES_DELTA.to_string())
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&["--delta", ""])),
@@ -3752,6 +3862,7 @@ mod tests {
             Ok(PolicySuppressionHealthOptions {
                 root: PathBuf::from("."),
                 manifest: PathBuf::from(".ripr/suppressions.toml"),
+                manifest_explicit: true,
                 out: PathBuf::from("target/ripr/reports/suppression-health.json"),
                 out_md: PathBuf::from("target/ripr/reports/suppression-health.md"),
             })
@@ -4663,7 +4774,7 @@ language = "rust"
                 "--gate",
                 "gate.json"
             ])),
-            Err("pr-ledger record requires --pr-number <value>".to_string())
+            Err(PR_LEDGER_REQUIRES_PR_NUMBER.to_string())
         );
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[
@@ -4954,16 +5065,16 @@ language = "rust"
         assert!(rendered.contains("missing.json"), "{rendered}");
     }
     #[test]
-    fn zero_status_missing_delta_completes_with_warnings() -> Result<(), String> {
-        // Same #9856 contract as first-action: exit 0, report keeps its
-        // warnings, and stderr renders the same non-empty warning text.
+    fn zero_status_missing_delta_writes_report_then_refuses() -> Result<(), String> {
+        // Same as first-action (#15254): the report keeps its warnings and
+        // stderr renders them, but the unreadable input refuses with exit 2.
         let dir = unique_command_test_dir("zero-status-missing-delta");
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("create zero status missing-delta dir: {err}"))?;
         let missing = dir.join("missing-delta.json");
         let out = dir.join("ripr-zero-status.json");
         let out_md = dir.join("ripr-zero-status.md");
-        zero(&args(&[
+        let refusal = zero(&args(&[
             "status",
             "--delta",
             &missing.display().to_string(),
@@ -4972,7 +5083,12 @@ language = "rust"
             "--out-md",
             &out_md.display().to_string(),
         ]))
-        .map_err(|err| format!("missing-input zero status must complete (exit 0): {err}"))?;
+        .err()
+        .ok_or("missing-input zero status must refuse (exit 2, #15254)")?;
+        assert!(
+            refusal.contains("--delta") && refusal.contains("Pass an existing file"),
+            "{refusal}"
+        );
         let json =
             std::fs::read_to_string(&out).map_err(|err| format!("read zero status JSON: {err}"))?;
         let value: serde_json::Value = serde_json::from_str(&json)
@@ -5703,11 +5819,11 @@ language = "rust"
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--repo-exposure-json", "repo.json"])),
-            Err("calibrate cargo-mutants requires --mutants-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_MUTANTS_JSON.to_string())
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--mutants-json", "mutants.json"])),
-            Err("calibrate cargo-mutants requires --repo-exposure-json <path>".to_string())
+            Err(CALIBRATE_REQUIRES_REPO_EXPOSURE_JSON.to_string())
         );
     }
     #[test]
@@ -7114,6 +7230,7 @@ language = "rust"
     fn init_ci_github_writes_workflow_and_preserves_existing_config() -> Result<(), String> {
         let dir = unique_command_test_dir("init-ci");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let config = dir.join(CONFIG_FILE_NAME);
         std::fs::write(&config, "# existing policy\n")
             .map_err(|err| format!("write existing config: {err}"))?;
@@ -7143,6 +7260,7 @@ language = "rust"
         let workflow_dir = dir.join(".github/workflows");
         std::fs::create_dir_all(&workflow_dir)
             .map_err(|err| format!("create workflow dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let workflow = workflow_dir.join("ripr.yml");
         std::fs::write(&workflow, "name: Existing\n")
             .map_err(|err| format!("write existing workflow: {err}"))?;

@@ -1162,7 +1162,7 @@ pub(crate) fn latest_attempt_for_seam(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::repair_attempt::{
         REPAIR_ATTEMPT_SCHEMA_VERSION, RepairAttemptId, RepairAttemptState,
     };
@@ -2140,7 +2140,7 @@ mod tests {
     /// witness is observable and a wrong bind would fail its test. The gap id
     /// is caller-chosen: producer-shaped ids exercise the structured branch,
     /// the seam's own content-hash id the legacy branch.
-    fn producer_gap_finding(
+    pub(crate) fn producer_gap_finding(
         id: &str,
         gap_id: &str,
         file: &str,

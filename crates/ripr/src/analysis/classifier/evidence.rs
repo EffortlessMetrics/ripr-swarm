@@ -25,7 +25,7 @@ use crate::analysis::classify::{
     unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
-    assertion_reads_placeholder, mask_comments_and_strings, placeholder_bound_variables,
+    PlaceholderScope, assertion_reads_placeholder, mask_comments_and_strings,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
@@ -645,6 +645,7 @@ impl ClassifiedProbeEvidence {
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
                 unary_tail: context.unary_tail.as_ref(),
+                literal_condition: context.literal_condition.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -803,6 +804,11 @@ impl ClassifiedProbeEvidence {
             }
             None => (flow_sinks, propagation_witness),
         };
+        // #15104: the changed whole-body constant tail is the owner's return,
+        // but a `cfg` gate may compile this owner out for a twin the tests
+        // run instead (the shared owner's gate decision). No direct-return
+        // edge on it completes, whichever witness proposed one.
+        let propagation_witness = propagation_witness.filter(|_| !context.owner_may_be_swapped);
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -897,6 +903,23 @@ impl ClassifiedProbeEvidence {
                         ),
                     )
                 }
+            }
+            _ => propagate,
+        };
+        // #15104: nor may the sinks alone credit it (fail closed).
+        let propagate = match context.owner_fn {
+            Some(owner)
+                if context.owner_may_be_swapped
+                    && matches!(propagate.state, StageState::Yes | StageState::Weak) =>
+            {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Propagation unknown: a `cfg` gate may compile `{}` out for a twin the related tests run instead (cfg_gated_owner)",
+                        owner.name
+                    ),
+                )
             }
             _ => propagate,
         };
@@ -1325,20 +1348,28 @@ impl ClassifiedProbeEvidence {
         // A file that rebinds a primitive type name (`type i32 = u8;`, or a
         // `use` naming one) can change the width a primitive-spelled type in
         // the owner has, which the fold cannot see (#14950 review).
-        let owner_types_are_primitive = context.owner_fn.is_some_and(|owner| {
-            owner_constants.as_deref().is_some_and(|source| {
-                owner
-                    .start_line
-                    .checked_sub(1)
-                    .and_then(|index| source.lines().nth(index))
-                    .is_some_and(|line| !line.starts_with(char::is_whitespace))
-                    && !file_may_rebind_primitive_type(source)
+        // The scan reads the whole file, so it runs at most once per probe
+        // and only for a probe the pin can admit: asked eagerly, every
+        // probe of a file read the file again (#15621).
+        let owner_types_are_primitive = std::cell::OnceCell::new();
+        let owner_types_are_primitive = || {
+            *owner_types_are_primitive.get_or_init(|| {
+                context.owner_fn.is_some_and(|owner| {
+                    owner_constants.as_deref().is_some_and(|source| {
+                        owner
+                            .start_line
+                            .checked_sub(1)
+                            .and_then(|index| source.lines().nth(index))
+                            .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                            && !file_may_rebind_primitive_type(source)
+                    })
+                })
             })
-        });
+        };
         let reached_tail_pin = |test: &TestSummary, assertion: &OracleFact| {
             matches!(context.probe.family, ProbeFamily::ReturnValue)
                 && owner_name_unique
-                && owner_types_are_primitive
+                && owner_types_are_primitive()
                 && bool_field_pin_admitted(test, assertion)
                 && context.owner_fn.is_some_and(|owner| {
                     crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
@@ -2044,6 +2075,18 @@ impl ClassifiedProbeEvidence {
         } else {
             discriminate
         };
+        // #14936: a deleted `if <cond> { return <constant>; }` whose constant
+        // is the candidate owner's whole-body constant tail returns the same
+        // value on both sides for every input the guard took, so an exact pin
+        // on the owner's return does not discriminate the deletion.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(agreement) = context.deleted_guard_agreement.as_ref()
+        {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, agreement.summary())
+        } else {
+            discriminate
+        };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
         let reach_ruled_out = reach.state == StageState::No
@@ -2338,15 +2381,19 @@ impl ClassifiedProbeEvidence {
         // assertion earns nothing instead of reading "no assertion".
         if assertion_refusal.is_none() && discriminate.state != StageState::Yes {
             for (test, _) in &context.related_tests {
-                let placeholders = placeholder_bound_variables(test.body.as_str());
-                if placeholders.is_empty() {
-                    continue;
-                }
+                let scope = PlaceholderScope::from_body(test.body.as_str());
                 // #14883: the same read test the lowering uses, so a message
                 // word or a string literal naming the placeholder is not a read.
                 let Some(assertion) = test.assertions.iter().find(|assertion| {
                     assertion.strength == OracleStrength::Unknown
-                        && assertion_reads_placeholder(&assertion.text, &placeholders)
+                        && assertion_reads_placeholder(
+                            &assertion.text,
+                            &scope.on_line(
+                                test.body.as_str(),
+                                assertion.line.saturating_sub(test.start_line),
+                                &assertion.text,
+                            ),
+                        )
                 }) else {
                     continue;
                 };
@@ -2484,6 +2531,19 @@ impl ClassifiedProbeEvidence {
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
 
+        // A file or module link can hide a real call through an entry point.
+        // Report only that reach was not established for this assertion-free row.
+        for test in &mut related_tests {
+            if test.miss == Some(RelatedTestMiss::NoAssertion)
+                && matches!(
+                    test.relation_reason,
+                    Some(RelationReason::SameTestFile | RelationReason::SameModule)
+                )
+                && !implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+            {
+                test.miss = Some(RelatedTestMiss::NoCallPath);
+            }
+        }
         super::super::classify::split_assertion_not_credited_misses(
             context,
             pin_syntax,

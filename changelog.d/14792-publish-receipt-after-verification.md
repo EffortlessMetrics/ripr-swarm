@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask publish-dry-run` now writes `target/package/publish-receipt.json` only after the packaged `ripr` generates a lockfile and compiles against the packaged `ripr-contract`, records `verification: packaged-check-passed` in the receipt, and clears any earlier receipt before the first publish step, so a failed rehearsal cannot leave evidence that satisfies the documented pre-publish gate (#14792).

@@ -1,0 +1,2 @@
+crates/ripr/tests/baseline_owner_opt_out.rs|Command::new|2|cli-tests|Runs the built ripr binary (gate check, check, reports gap-ledger, gate evaluate, baseline create/diff/update) and git (init, add, commit) inside an isolated temp repository with a private RIPR_CACHE_DIR to prove a #[mutants::skip] added after a baseline is withheld, not resolved. No shell, network, or user-repository mutation.
+crates/ripr/tests/baseline_owner_opt_out.rs|use std::process::Command|1|cli-tests|Import for the two spawn sites described above.

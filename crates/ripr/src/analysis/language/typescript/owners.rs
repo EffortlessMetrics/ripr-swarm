@@ -2188,7 +2188,7 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
 /// literal spelling `require("<literal>")["member"]`), for `const f =
 /// require("./y").f` (#9188). `None` for any other initializer, so a call on
 /// the member, a computed key and a dynamic `require` argument stay unread.
-fn require_member_source(
+pub(super) fn require_member_source(
     expr: &Expression<'_>,
     namespaces: &std::collections::HashMap<String, String>,
 ) -> Option<(String, String)> {
@@ -3192,31 +3192,31 @@ fn collect_ambient_ranges(
     }
 }
 
+/// The binding that owns a member chain, including optional and TS-wrapped accesses.
+pub(super) fn member_root_name<'a>(mut expr: &'a Expression<'_>) -> Option<&'a str> {
+    loop {
+        match expr.get_inner_expression() {
+            Expression::Identifier(id) => return Some(id.name.as_str()),
+            Expression::StaticMemberExpression(member) => expr = &member.object,
+            Expression::ComputedMemberExpression(member) => expr = &member.object,
+            Expression::ChainExpression(chain) => match &chain.expression {
+                oxc_ast::ast::ChainElement::StaticMemberExpression(member) => expr = &member.object,
+                oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                    expr = &member.object
+                }
+                _ => return None,
+            },
+            _ => return None,
+        }
+    }
+}
+
 /// Every identifier whose members the statements may replace: the root of a
 /// member assignment target (`lib.f = v`, `lib.a.b = v`, `lib[k] = v`), of a
 /// `delete lib.f`, or any use of the bare namespace beyond a member read
 /// (`Object.assign(lib, ...)`, `Object.defineProperty(lib, ...)`).
 fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
     use oxc_ast::ast::Expression;
-    fn root(mut expr: &Expression<'_>) -> Option<String> {
-        loop {
-            match expr.get_inner_expression() {
-                Expression::Identifier(id) => return Some(id.name.to_string()),
-                Expression::StaticMemberExpression(member) => expr = &member.object,
-                Expression::ComputedMemberExpression(member) => expr = &member.object,
-                Expression::ChainExpression(chain) => match &chain.expression {
-                    oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
-                        expr = &member.object
-                    }
-                    oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
-                        expr = &member.object
-                    }
-                    _ => return None,
-                },
-                _ => return None,
-            }
-        }
-    }
     // A namespace used any way but as the object of a member read or a
     // destructuring initializer (`const again = lib`, `f(lib)`, `{ lib }`)
     // escapes, and what it reaches can replace members.
@@ -3233,23 +3233,29 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
         ) {
             match target {
                 oxc_ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => {
-                    self.mutated.extend(root(&member.object));
+                    self.mutated
+                        .extend(member_root_name(&member.object).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
-                    self.mutated.extend(root(&member.object));
+                    self.mutated
+                        .extend(member_root_name(&member.object).map(str::to_owned));
                 }
                 // `(lib.f as any) = stub`: the member read underneath is a write.
                 oxc_ast::ast::SimpleAssignmentTarget::TSAsExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSSatisfiesExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSNonNullExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSTypeAssertion(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 _ => {}
             }
@@ -3258,7 +3264,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
 
         fn visit_unary_expression(&mut self, unary: &oxc_ast::ast::UnaryExpression<'a>) {
             if unary.operator == oxc_ast::ast::UnaryOperator::Delete {
-                self.mutated.extend(root(&unary.argument));
+                self.mutated
+                    .extend(member_root_name(&unary.argument).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_unary_expression(self, unary);
         }
@@ -3271,7 +3278,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 call.callee.get_inner_expression(),
                 Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
             ) {
-                self.mutated.extend(root(&call.callee));
+                self.mutated
+                    .extend(member_root_name(&call.callee).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_call_expression(self, call);
         }
@@ -3286,7 +3294,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 tagged.tag.get_inner_expression(),
                 Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
             ) {
-                self.mutated.extend(root(&tagged.tag));
+                self.mutated
+                    .extend(member_root_name(&tagged.tag).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_tagged_template_expression(self, tagged);
         }
