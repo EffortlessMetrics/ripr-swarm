@@ -25,7 +25,7 @@ Changed
   before: raw.parse().unwrap_or(0)
   after:  raw.parse().unwrap_or(1)
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::parse_limit
@@ -52,7 +52,7 @@ Changed
   before: parse_limit(raw) > 0
   after:  parse_limit(raw) > 1
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::limit_exceeds_default

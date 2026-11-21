@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/collection_config_tests.rs::norecursedirs_plain_interior_slash_path_is_evaluated",
+]

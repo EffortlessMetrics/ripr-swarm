@@ -284,6 +284,32 @@ file. Such a diff gets the skipped-submodule notice and never the "non-source
 file" explanation, and a document that quotes a commit line is not mistaken for
 a gitlink (#10648).
 
+### Deleted files and sources git printed as binary (#15324)
+
+A deleted file has no new-side code and seeds no probe. When the result has
+no findings, `check` names the deleted files on stderr whatever else changed:
+`ripr: diff deleted N file(s) (<paths>); ...`. With no other analyzable
+change the line keeps its deletion-only wording; beside another changed file
+it says the result covers only the other changed files.
+
+Git prints `Binary files a/<path> and b/<path> differ` instead of hunks for a
+file it treats as binary, which for a source file usually means a `-diff` or
+`binary` attribute in `.gitattributes`, or a NUL byte in the file. A section
+like that for a path in a language ripr routes carries a
+`language_scope_unsupported` limitation at the `diff_parse` stage that names
+the files, the likely cause and the recovery (remove the attribute for source
+files, or pass a `git diff --text` patch with `--diff`), so the outcome is
+never complete over the unread change. The diff parser records each binary
+section's path from its own header or rename/copy metadata, with the same
+quoting and side-prefix rules as any other section, and drops paths outside
+the requested `--path` or `--exclude` scope. ripr's own artifacts and a copy
+destination read whole as added source (#15121) are not named. Binary assets
+and deleted files keep their existing handling. A `--no-prefix` binary section
+(`diff --git src/x.rs src/x.rs` with `Binary files src/x.rs and src/x.rs
+differ`) is read by its whole path only when the header and the sentinel
+repeat the same token, so a prefixed, mnemonic or renamed section is never
+respelled (#15665). Paths in both lines are written terminal-safe.
+
 ### Non-claims
 
 - This spec does NOT change the exit code or gate authority.
@@ -367,6 +393,12 @@ a gitlink (#10648).
 - `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::head_is_contained_only_when_the_merge_base_is_head_and_the_base_is_ahead` (#14265: the contained-HEAD predicate and its refusals, including an unresolved base tip)
 - `crates/ripr/src/output/human.rs::tests::a_base_that_already_contains_head_names_that_cause_in_the_headline` (#14265: the contained-HEAD headline in both human forms, beside the same-commit, working-tree and changed-files controls)
+- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_deleted_file_beside_another_change_is_named` (#15324: a deleted file beside another changed file is named on stderr; a diff with no deletion prints no deletion line)
+- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete` (#15324: a binary-rendered `.rs` section, including a C-quoted name, makes the outcome incomplete with a typed limitation; a binary asset, a text-only diff, a binary source outside the `--path` scope or matched by an exact `--exclude` of its decoded name, and one under `target/ripr` stay complete)
+- `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_binary_rendered_copy_read_as_added_source_is_not_named_unread` (#15324: a copy destination read whole as added source is not named)
+- `crates/ripr/src/analysis/diff/path.rs::tests::prefixless_binary_sections_read_only_on_exact_agreement` (#15665: root-level, nested and quoted prefixless sections are read; prefixed, renamed, deleted and traversal sections are not)
+- `crates/ripr/src/analysis/diff/parse.rs::tests::binary_sections_record_their_own_decoded_path` (#15324: modified, added, quoted, renamed and mnemonic binary sections record their decoded path; deleted and text sections do not)
+- `crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::only_unread_routed_sources_are_named` (#15324: routed source paths are named, assets and paths already read are not)
 - `crates/ripr/tests/cli_smoke.rs::check_on_a_branch_its_base_already_contains_names_that_cause` (#14265: built binary on a branch behind `main`, both `HEAD~1` arms, explicit `--base`, and a feature-branch control)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)
 - `crates/ripr/src/output/github.rs::tests::render_no_scope_outcome_is_a_warning_not_a_clean_notice` (#13658: a producer-declared `NoScope` outcome emits the `ripr nothing analyzed` warning, never the all-clear notice)
@@ -375,6 +407,8 @@ a gitlink (#10648).
 
 - `crates/ripr/tests/cli_smoke.rs::check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun` (#14423: agent `stop=` and JSON `scope_route` name the last-commit rerun, the rerun analyzes it, also for an `origin/main` default base; root commit, detached HEAD, feature branch, ignored and untracked source keep no route)
 - `crates/ripr/tests/cli_smoke.rs::check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only` (#13644: human-only last-commit fallback, stderr label, drill-ins on `HEAD~1`, JSON unchanged, explicit `--base` not rescoped, clone with `origin/main`, ignored source keeps the empty result)
+- `crates/ripr/tests/cli_smoke/leftover_check_honesty.rs::discarded_last_commit_retry_prints_no_deletion_note` (#15330: a discarded deletion-only retry prints no "diff deleted" note; explicit `--base HEAD~1` keeps it)
+- `crates/ripr/tests/cli_smoke/leftover_check_honesty.rs::adopted_last_commit_retry_prints_its_buffered_disclosures` (#15330: an adopted retry prints its buffered rename note before the last-commit label)
 
 ## Implementation Mapping
 
@@ -385,6 +419,7 @@ a gitlink (#10648).
 - `crates/ripr/src/output/github.rs` — emits the `ripr no analysis scope` annotation with the same range wording; also emits the `ripr nothing analyzed` warning for a producer-declared `NoScope` outcome (#13658).
 - `crates/ripr/src/output/human/agent.rs` — refuses `done` and prints the `stop=nothing was in scope` line for a producer-declared `NoScope` outcome (#13658).
 - `crates/ripr/src/output/json/report.rs` — emits additive `scope_disclosures[]` when `no_scope_provided`.
+- `crates/ripr/src/analysis/diff_intake_disclosure.rs` — the deleted-file stderr line and the binary-rendered source selection, detail and recovery (#15324); `crates/ripr/src/analysis/diff/parse.rs` records each deleted and binary section's path.
 
 ## CI Proof
 
@@ -427,6 +462,12 @@ a gitlink (#10648).
   retry spends only the remaining `--timeout` (skipped below one second) and
   is labeled on stderr only after its result replaces the output, never
   through the progress stream; its git probes honor `--git-timeout`.
+  The retry's post-analysis diff disclosures (deletion-only, rename,
+  submodule, symlink, unanalyzed, artifact, zero-file and truncated-stream
+  notes) are buffered and print, before that label, only when its result
+  replaces the output; a discarded retry prints none of them (#15330). Other
+  stderr lines (the committed-history missing-path note and `--verbose`
+  diagnostics) still print as the retry runs.
 
 ## Metrics
 

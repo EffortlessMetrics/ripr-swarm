@@ -238,6 +238,7 @@ impl SeamSpec {
         with_target: bool,
     ) -> Self {
         self.related.push(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 10,

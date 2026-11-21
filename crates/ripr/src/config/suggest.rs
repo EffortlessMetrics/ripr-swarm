@@ -91,7 +91,7 @@ pub(super) fn expected_fields(error: &str) -> Vec<&str> {
 
 /// The closest candidate within a small edit distance, or `None` when nothing
 /// is close enough to be a believable typo. Ties go to the first candidate.
-pub(super) fn did_you_mean<'a>(key: &str, candidates: &[&'a str]) -> Option<&'a str> {
+pub(crate) fn did_you_mean<'a>(key: &str, candidates: &[&'a str]) -> Option<&'a str> {
     let length = key.chars().count();
     let limit = (length / 3).clamp(1, 3);
     candidates

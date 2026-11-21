@@ -325,4 +325,69 @@ mod tests {
 
         assert_ne!(left.fingerprint, right.fingerprint);
     }
+
+    const LADDER: [&str; 6] = ["strong", "medium", "weak", "smoke", "unknown", "none"];
+
+    /// Each strength is its own strongest oracle, and any rung beats every
+    /// rung below it, so the ladder is read in full rather than at its ends.
+    #[test]
+    fn every_strength_rung_round_trips_and_outranks_the_rungs_below() {
+        for (index, strength) in LADDER.iter().enumerate() {
+            let alone = [entry("exact_value", strength, "direct_owner_call")];
+            assert_eq!(
+                TestEvidenceSummary::strongest_oracle_from(&alone),
+                *strength,
+                "{strength} alone"
+            );
+            for weaker in &LADDER[index + 1..] {
+                let pair = [
+                    entry("exact_value", weaker, "direct_owner_call"),
+                    entry("exact_value", strength, "direct_owner_call"),
+                ];
+                assert_eq!(
+                    TestEvidenceSummary::strongest_oracle_from(&pair),
+                    *strength,
+                    "{strength} over {weaker}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn from_parts_orders_related_tests_down_the_strength_ladder() {
+        let mut shuffled: Vec<TestEvidenceEntry> = LADDER
+            .iter()
+            .rev()
+            .map(|strength| entry("exact_value", strength, "direct_owner_call"))
+            .collect();
+        shuffled.push(entry("exact_value", "unrecognized", "direct_owner_call"));
+        shuffled.rotate_left(2);
+        let summary = TestEvidenceSummary::from_parts("gap:ladder", shuffled, &[]);
+        let order: Vec<&str> = summary
+            .related_tests
+            .iter()
+            .map(|related| related.oracle_strength.as_str())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "strong",
+                "medium",
+                "weak",
+                "smoke",
+                "unknown",
+                "none",
+                "unrecognized"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unrecognized_strength_reports_unknown_not_none() {
+        let entries = [entry("exact_value", "unrecognized", "direct_owner_call")];
+        assert_eq!(
+            TestEvidenceSummary::strongest_oracle_from(&entries),
+            "unknown"
+        );
+    }
 }

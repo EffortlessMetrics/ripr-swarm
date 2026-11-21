@@ -1,0 +1,59 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/hidden_row_span_fallback/input
+config: <cwd>/fixtures/hidden_row_span_fallback/input/ripr.toml
+
+Summary: 12 changed behaviors checked: 0 appear noticed by tests, 12 partly noticed, 0 reached but not noticed, 0 no test path. 12 found, 0 suppressed by your settings
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 24 changed line(s), 12 candidate line(s), 12 changed behavior(s) checked, 12 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview has owner, related-test, oracle, and changed-behavior evidence but lacks a complete repair packet contract); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  File: src/limits.ts:3
+  Language: typescript
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
+  Why weak: test reach to this change is not established
+  Changed behavior: throw new RangeError("read limit exceeded");
+  Missing check (1 of 2): Only heuristic TypeScript test links were found for `check`; verify the
+    suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Related test: tests/limits.test.ts:1 check smoke
+  Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
+    exact-value assertion for the missing check `throws RangeError matching "read limit exceeded"`;
+    no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are
+    available
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach weak: 1 related test(s) found for owner `check`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/hidden_row_span_fallback/input --diff <cwd>/fixtures/hidden_row_span_fallback/diff.patch --mode fast probe:src_limits.ts:typescript_preview:c71c6b41
+  ripr context --root <cwd>/fixtures/hidden_row_span_fallback/input --diff <cwd>/fixtures/hidden_row_span_fallback/diff.patch --mode fast --at probe:src_limits.ts:typescript_preview:c71c6b41
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
+
+Hidden:
+  11 lower-priority finding(s) omitted from default human output (TypeScript preview: 11).
+    - src/limits.ts:6-36 (11 distinct lines) (weak); 11 changed behaviors in `check`; kind: error_path; reason: Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

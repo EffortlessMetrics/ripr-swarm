@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-partial-dictionary",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "partial/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "partial/core.py",
+      "sha256": "7e13c61dd9db5fe7c7334c3f737d79028fec382a75bd8c009516a54fc79c747d"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "aafcfc399c29e2e97cf941e8aac6a765e4b5f99b529255893020779c61a92255"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "3525eaa1109d363e8ed920aa9ac6be57fbed8cb77781e519657a3198df067168"
+    }
+  ]
+}
