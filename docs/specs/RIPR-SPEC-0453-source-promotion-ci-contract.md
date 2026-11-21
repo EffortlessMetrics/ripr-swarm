@@ -554,6 +554,8 @@ carry `rehearsal_only: true`. The public source repository retains promotion aut
 
 - Workflow: `.github/workflows/source-promotion-contract.yml`
 - Staged pre-merge workflow: `.github/workflows/source-promotion-composition.yml`
+  in the public source repository only. Swarm does not install it because its
+  workflow lifecycle policy refuses `pull_request_target` subscribers.
 - Staged pre-merge trusted-base script:
   `.github/scripts/source-promotion-composition.sh`
 - Staged Git-object workflow tests: `xtask/tests/staged_promotion_workflow.rs`

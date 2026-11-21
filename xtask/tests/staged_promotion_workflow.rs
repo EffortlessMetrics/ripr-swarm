@@ -32,13 +32,40 @@ fn identity_gate() -> Result<String, String> {
     workflow_section("staged-preview-begin", "staged-preview-end")
 }
 
+/// The base-owned composition gate is installed only in the public source
+/// repository. The swarm tree omits it because swarm's workflow lifecycle
+/// policy refuses every `pull_request_target` subscriber except the labeled
+/// conflict notice. Absence is accepted only while that policy is in the tree,
+/// so a tree with neither the gate nor the refusal fails.
+fn composition_workflow(root: &Path) -> Result<Option<String>, String> {
+    let path = root.join(".github/workflows/source-promotion-composition.yml");
+    if path.exists() {
+        return fs::read_to_string(path)
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    let policy = fs::read_to_string(root.join("tools/repo-policy/src/workflow_lifecycle.rs"))
+        .map_err(|e| {
+            format!("composition gate is absent and the swarm lifecycle policy is unreadable: {e}")
+        })?;
+    let refusal = "\"pull_request_target\" => {\n                    path == CONFLICT_NOTICE && configuration == [\"types: [labeled]\"]";
+    if !policy.contains(refusal) {
+        return Err(
+            "composition gate is absent but the lifecycle policy no longer refuses pull_request_target"
+                .into(),
+        );
+    }
+    Ok(None)
+}
+
 #[test]
 fn composition_check_revalidates_body_edits() -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("missing root")?;
-    let path = root.join(".github/workflows/source-promotion-composition.yml");
-    let workflow = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let Some(workflow) = composition_workflow(root)? else {
+        return Ok(());
+    };
     if !workflow.contains("types: [opened, synchronize, reopened, edited]") {
         return Err("promotion control body edits must retrigger qualification".into());
     }
@@ -51,8 +78,9 @@ fn composition_gate_is_base_owned_read_only_pull_request_target_without_skip_tra
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("missing root")?;
-    let path = root.join(".github/workflows/source-promotion-composition.yml");
-    let workflow = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let Some(workflow) = composition_workflow(root)? else {
+        return Ok(());
+    };
     for required in [
         "pull_request_target:",
         "branches: [main]",
@@ -132,9 +160,17 @@ fn documented_and_rendered_merge_commands_bind_live_head_in_both_modes() -> Resu
         .ok_or("missing root")?;
     let workflow = fs::read_to_string(root.join(".github/workflows/source-promotion-contract.yml"))
         .map_err(|e| e.to_string())?;
-    let spec =
-        fs::read_to_string(root.join("docs/specs/RIPR-SPEC-0177-source-promotion-ci-contract.md"))
-            .map_err(|e| e.to_string())?;
+    // The same spec is numbered 0177 in the public source and 0453 in swarm.
+    let spec = ["0177", "0453"]
+        .iter()
+        .map(|id| {
+            root.join(format!(
+                "docs/specs/RIPR-SPEC-{id}-source-promotion-ci-contract.md"
+            ))
+        })
+        .find(|path| path.exists())
+        .ok_or("missing source-promotion CI contract spec")
+        .and_then(|path| fs::read_to_string(path).map_err(|_| "unreadable spec"))?;
     let documented = spec
         .split("```bash\n")
         .nth(1)
@@ -148,13 +184,18 @@ fn documented_and_rendered_merge_commands_bind_live_head_in_both_modes() -> Resu
         .next()
         .ok_or("missing guard end")?;
     let guard = format!("{guard}\n          esac\n");
-    let render_start = workflow
-        .find("            echo \"gh pr merge $PR_NUMBER")
-        .ok_or("missing command renderer")?;
-    let renderer = workflow[render_start..]
-        .split("            echo '```'")
-        .next()
-        .ok_or("missing renderer end")?;
+    // Swarm's dispatch-only rehearsal never renders a merge command. It must
+    // say so; a workflow with neither the renderer nor that statement fails.
+    let renderer = match workflow.find("            echo \"gh pr merge $PR_NUMBER") {
+        Some(render_start) => Some(
+            workflow[render_start..]
+                .split("            echo '```'")
+                .next()
+                .ok_or("missing renderer end")?,
+        ),
+        None if workflow.contains("Only the public repository can authorize promotion.") => None,
+        None => return Err("missing command renderer".into()),
+    };
     let normalize = |command: &str| {
         command
             .replace("\\\n", " ")
@@ -186,18 +227,20 @@ fn documented_and_rendered_merge_commands_bind_live_head_in_both_modes() -> Resu
         if command != expected {
             return Err(format!("{mode}: documentation binds the wrong identity"));
         }
-        let rendered = Command::new("bash")
-            .args(["-c", renderer])
-            .env("PR_NUMBER", "123")
-            .env("PR_HEAD", head)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !rendered.status.success()
-            || normalize(&String::from_utf8_lossy(&rendered.stdout)) != expected
-        {
-            return Err(format!(
-                "{mode}: rendered command differs from specification"
-            ));
+        if let Some(renderer) = renderer {
+            let rendered = Command::new("bash")
+                .args(["-c", renderer])
+                .env("PR_NUMBER", "123")
+                .env("PR_HEAD", head)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !rendered.status.success()
+                || normalize(&String::from_utf8_lossy(&rendered.stdout)) != expected
+            {
+                return Err(format!(
+                    "{mode}: rendered command differs from specification"
+                ));
+            }
         }
         for (candidate, accepted) in [
             (command, true),
