@@ -62,6 +62,16 @@ through R2 (precision at least 97%, recall at least 80%, repair starts on
 at least 80% of reported gaps). Unmeasured is not met, and fixture, spec, or
 traceability counts alone are not coverage.
 
+Semantic capability completeness and evidence completeness are separate.
+A class an adapter never emits (today: `propagation_unknown` for Python
+and TypeScript) is not positive coverage and must not be given a fictitious
+golden. For such a class, full coverage instead requires enforceable
+non-emission evidence: a documented waiver in the language's verdict
+corpus, a `static_unknown` `must_not_promote` honesty control built to
+reach that stage, and a mapped discriminating test pinning the
+non-emission. Only emitted classes require the positive golden, honesty,
+and traceability pins above.
+
 This definition is currently adopted for Rust, TypeScript, and Python.
 JavaScript is served by the TypeScript adapter and tracked with TypeScript
 until it carries distinct controls. Perl remains `not_proven` and the
