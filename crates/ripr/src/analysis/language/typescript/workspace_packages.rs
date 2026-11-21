@@ -266,6 +266,17 @@ impl WorkspacePackages {
             .map(|(package, _)| package.dir.as_path())
     }
 
+    /// Whether `specifier` is, or lies below, any workspace package name,
+    /// including a name several packages share (which resolves to none).
+    pub(crate) fn names_package(&self, specifier: &str) -> bool {
+        self.by_name.keys().any(|name| {
+            specifier == name
+                || specifier
+                    .strip_prefix(name.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
     /// The package whose name is the longest `/`-bounded prefix of
     /// `specifier`, with the remaining subpath in exports form (`.`, `./x`).
     fn package_for(&self, specifier: &str) -> Option<(&WorkspacePackage, String)> {
@@ -547,6 +558,49 @@ mod tests {
             unrelated.resolve("@acme/utils"),
             Some(PathBuf::from("packages/utils/src/index.ts"))
         );
+        Ok(())
+    }
+
+    /// With referenced sibling projects, a specifier one project's `paths`
+    /// claim and another would resolve as a workspace package has two
+    /// answers; project membership is not modeled, so neither is credited.
+    #[test]
+    fn referenced_project_claim_conflicts_with_a_workspace_package() -> Result<(), String> {
+        let root = super::super::tests::ts_unique_tempdir("workspace-packages-references")?;
+        super::super::tests::ts_write_file(
+            &root.join("packages/utils/package.json"),
+            r#"{"name":"@acme/utils","exports":{".":"./src/index.ts"}}"#,
+        )?;
+        super::super::tests::ts_write_file(
+            &root.join("packages/utils/src/index.ts"),
+            "export {}\n",
+        )?;
+        super::super::tests::ts_write_file(&root.join("local/utils.ts"), "export {}\n")?;
+        super::super::tests::ts_write_file(
+            &root.join("tsconfig.json"),
+            r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.node.json"}]}"#,
+        )?;
+        super::super::tests::ts_write_file(
+            &root.join("tsconfig.app.json"),
+            r#"{"compilerOptions":{"paths":{"@acme/*":["./local/*"],"@/*":["./local/*"]}}}"#,
+        )?;
+        super::super::tests::ts_write_file(&root.join("tsconfig.node.json"), "{}")?;
+        let files = vec![
+            PathBuf::from("packages/utils/src/index.ts"),
+            PathBuf::from("local/utils.ts"),
+        ];
+        let packages = WorkspacePackages::discover(&root, &files);
+        assert_eq!(
+            packages.resolve("@acme/utils"),
+            Some(PathBuf::from("packages/utils/src/index.ts"))
+        );
+        let map = super::super::tsconfig::load_alias_map(&root)
+            .ok_or("the solution-style config should load")?
+            .with_workspace_packages(packages);
+        assert_eq!(map.resolve("@acme/utils"), None);
+        // No package of this name exists, so the claiming project's answer
+        // is the only one.
+        assert_eq!(map.resolve("@/utils"), Some(PathBuf::from("local/utils.ts")));
         Ok(())
     }
 

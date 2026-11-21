@@ -236,3 +236,52 @@ fn fallback_array_stops_at_a_first_target_it_cannot_rule_out() -> Result<(), Str
     )?;
     expect_unresolved(&subject.json()?, "declaration file at the first target")
 }
+
+const SOLUTION_ROOT: &str = "{\"files\":[],\"references\":[{\"path\":\"./tsconfig.app.json\"},{\"path\":\"./tsconfig.node.json\"}]}";
+
+/// The Vite template layout: a solution-style root whose `paths` live in the
+/// `tsconfig.app.json` it references.
+#[test]
+fn solution_style_root_relates_the_test_through_its_referenced_project() -> Result<(), String> {
+    let subject = Subject::create_with(TYPESCRIPT_ON, "tsconfig.json", SOLUTION_ROOT)?;
+    subject.write(
+        "tsconfig.app.json",
+        "{\"compilerOptions\":{\"paths\":{\"@/*\":[\"./src/*\"]}},\"include\":[\"src\"]}",
+    )?;
+    subject.write(
+        "tsconfig.node.json",
+        "{\"compilerOptions\":{\"strict\":true},\"include\":[\"vite.config.ts\"]}",
+    )?;
+    expect_related(&subject.json()?, "referenced sibling project")
+}
+
+/// Two referenced projects map the same alias to different files. Which one
+/// compiles the test is not modeled, so neither is credited.
+#[test]
+fn referenced_projects_that_disagree_leave_the_alias_unresolved() -> Result<(), String> {
+    let subject = Subject::create_with(TYPESCRIPT_ON, "tsconfig.json", SOLUTION_ROOT)?;
+    subject.write(
+        "tsconfig.app.json",
+        "{\"compilerOptions\":{\"paths\":{\"@/*\":[\"./src/*\"]}}}",
+    )?;
+    subject.write(
+        "tsconfig.node.json",
+        "{\"compilerOptions\":{\"paths\":{\"@/*\":[\"./other/*\"]}}}",
+    )?;
+    subject.write(
+        "other/pricing.ts",
+        "export function discountRate(tier: string): number {\n  return tier === \"pro\" ? 0.1 : 0;\n}\n",
+    )?;
+    expect_unresolved(&subject.json()?, "disagreeing referenced projects")
+}
+
+/// A reference this reader cannot open is a project it cannot rule out.
+#[test]
+fn unreadable_reference_leaves_the_alias_unresolved() -> Result<(), String> {
+    let subject = Subject::create_with(TYPESCRIPT_ON, "tsconfig.json", SOLUTION_ROOT)?;
+    subject.write(
+        "tsconfig.app.json",
+        "{\"compilerOptions\":{\"paths\":{\"@/*\":[\"./src/*\"]}}}",
+    )?;
+    expect_unresolved(&subject.json()?, "missing tsconfig.node.json")
+}

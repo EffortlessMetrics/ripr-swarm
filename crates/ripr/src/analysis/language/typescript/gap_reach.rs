@@ -1170,6 +1170,39 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_referenced_sibling_project_is_exempt_only_when_the_map_compiled_it() -> Result<(), String>
+    {
+        let root = temp_root("referenced-sibling-identity")?;
+        let write = |name: &str, text: &str| {
+            std::fs::write(root.join(name), text).map_err(|err| format!("write {name}: {err}"))
+        };
+        write(
+            "tsconfig.json",
+            r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.node.json"}]}"#,
+        )?;
+        write(
+            "tsconfig.app.json",
+            r#"{"compilerOptions":{"paths":{"@app/*":["./src/*"]}},"include":["src"]}"#,
+        )?;
+        write("tsconfig.node.json", r#"{"include":["vite.config.ts"]}"#)?;
+        let map = super::super::tsconfig::load_alias_map(&root)
+            .ok_or("the solution-style root must load")?;
+        let hiding = resolution_config_hides_imports(&root, Some(&map));
+        assert!(!hiding.everywhere && hiding.dirs.is_empty());
+
+        // A project config nobody references is not part of the map.
+        write(
+            "tsconfig.spec.json",
+            r#"{"compilerOptions":{"paths":{"lib/*":["./src/*"]}}}"#,
+        )?;
+        let map = super::super::tsconfig::load_alias_map(&root)
+            .ok_or("the solution-style root must still load")?;
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     fn check_in(root: &Path, entries: &[(&str, &str)], changed: &[&str], gap: &str) -> bool {
         let (owned, ()) = files(entries);
         let sources: HashMap<String, &String> = owned

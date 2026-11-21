@@ -74,7 +74,7 @@ OFF preserved the existing conservative behavior; the amendment above flips it t
 every ambiguity:
 
 - Missing file, JSONC parse error, or a config chain that sets neither `compilerOptions.baseUrl` nor `compilerOptions.paths` â†’ `None`.
-- `references` present fails closed. `extends` chains are followed up to 8 hops when every target is a relative (`./`, `../`) path naming a regular, non-symlinked file inside the workspace root (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration, anchored at the directory of the config that declares it (as `tsc` resolves an inherited `baseUrl`). `paths` templates resolve against that anchored `baseUrl`. A `baseUrl` with `..` segments is accepted when its anchored location stays inside the workspace; one that escapes it or is absolute keeps the named limitation. A target without a `.json` suffix tries `<target>.json` first, as `tsc` does. An explicit `null` `baseUrl` or `paths` clears the inherited value. Package-name bases, bases outside the root or reached through a symlinked file or directory, cycles (at any depth), over-deep chains, and missing or invalid targets fail closed, except that an unfollowable base (never a cycle) is ignored when the extending config itself declares a non-null `baseUrl` and `paths`, because nothing it could inherit changes alias resolution.
+- `references` are read one level deep (see the solution-style amendment below); a `references` entry that cannot be read exactly fails closed. `extends` chains are followed up to 8 hops when every target is a relative (`./`, `../`) path naming a regular, non-symlinked file inside the workspace root (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration, anchored at the directory of the config that declares it (as `tsc` resolves an inherited `baseUrl`). `paths` templates resolve against that anchored `baseUrl`. A `baseUrl` with `..` segments is accepted when its anchored location stays inside the workspace; one that escapes it or is absolute keeps the named limitation. A target without a `.json` suffix tries `<target>.json` first, as `tsc` does. An explicit `null` `baseUrl` or `paths` clears the inherited value. Package-name bases, bases outside the root or reached through a symlinked file or directory, cycles (at any depth), over-deep chains, and missing or invalid targets fail closed, except that an unfollowable base (never a cycle) is ignored when the extending config itself declares a non-null `baseUrl` and `paths`, because nothing it could inherit changes alias resolution.
 - A `paths` value array is `tsc`'s fallback list and is walked in order: the
   first template whose candidate is exactly one workspace file wins. A later
   template is reached only when every earlier candidate is provably absent:
@@ -104,6 +104,29 @@ base whose own `paths` were replaced); extraction-gap scoping in
 `gap_reach.rs` exempts only those, so a sibling `tsconfig.spec.json` or the
 unselected `jsconfig.json` that remaps resolution keeps
 `typescript_test_extraction_partial` disclosed.
+
+Amendment (solution-style `references`): the Vite template keeps `paths` in a
+`tsconfig.app.json` that a solution-style root (`"files": []` plus
+`references`) points at. `tsc` compiles each referenced project with that
+project's own options, so the loader compiles every referenced config that
+sits in the SAME directory as the selected config into its own project map
+(its own `extends` chain, `baseUrl` and `paths` anchors). Project membership
+(`include`/`files`) is still not modeled. A specifier therefore resolves only
+when every project whose `paths` keys claim it resolve it to the same file,
+and no project without a claim would resolve it as a workspace package;
+otherwise it stays unresolved and disclosed. A solution-style config
+(`"files": []`, no `include` entries, no `extends`) compiles no file, so its own
+`paths` are not a project; any other referencing config is one. A referenced
+config in a different directory is checked but not consulted: its importers
+are governed by the nearest-config rule of the #12754 amendment. The whole
+config fails closed when `references` is not an array of `{ "path": ... }`
+entries, has more than 32 entries, names a target that is not a regular
+non-symlinked file inside the workspace (`<path>` when it ends in `.json`,
+else `<path>/tsconfig.json`, as `tsc` reads it), or names a same-directory
+project that is unreadable, cannot be compiled, or has `references` of its
+own. `references` on an `extends` base are ignored, since `tsc` never
+inherits them. The referenced project configs join the map's compiled-config
+identity, so extraction-gap scoping exempts them and nothing else.
 
 `TsAliasMap::resolve(specifier) -> Option<PathBuf>` returns a workspace-
 relative path ONLY when ALL of:
@@ -152,7 +175,7 @@ through a relative in-root `extends` chain, or cannot be read or parsed. The
 package map follows the same rules as the root map (single-`*`, one candidate,
 unique file, no `..`/absolute), anchors `baseUrl` at the directory of the config that declares it (#11204),
 and shares the workspace-package table. It fails closed (unresolved, with the
-existing `typescript_path_alias_unresolved` disclosure, whose cause names the package config) when the config uses `references` or an `extends`
+existing `typescript_path_alias_unresolved` disclosure, whose cause names the package config) when the config uses a `references` or `extends`
 form the loader cannot follow, is unreadable or invalid, or when `tsconfig.json` and
 `jsconfig.json` in one directory both own `paths`; a specifier that neither the root map
 nor the unusable package config's own `paths` keys claim (a workspace package
@@ -257,7 +280,7 @@ Resolution is file-only: `load_alias_map` reads
 `compilerOptions.baseUrl` (optional, #12760) and `compilerOptions.paths` from the first of
 `tsconfig.json` / `jsconfig.json` found at the workspace root, merged
 over its `extends` chain under the limits above. It does
-NOT follow `references`; per-package configs are resolved per importer as described in the #12754 amendment above.
+follow `references` only to same-directory project configs (solution-style amendment above); per-package configs are resolved per importer as described in the #12754 amendment above.
 
 ### Resolution decision tree
 
@@ -376,7 +399,7 @@ nonempty extracted owners and tests.
 
 ## Non-Goals
 
-- Following `references` chains, package-name (`node_modules`) `extends` bases, or bases outside the workspace root or behind a symlink. Relative in-root bases, including cross-directory ones, are followed (#11204).
+- Following `references` beyond same-directory project configs one level deep, package-name (`node_modules`) `extends` bases, or bases outside the workspace root or behind a symlink. Relative in-root bases, including cross-directory ones, are followed (#11204).
 - Full TypeScript project-graph or compilation-unit resolution (`include`/`files`, named configs such as `tsconfig.spec.json`, `references` membership). The per-importer nearest package config of the #12754 amendment is in scope.
 - Node.js module resolution (bare specifier without paths alias).
 - Dynamic or computed paths keys.
