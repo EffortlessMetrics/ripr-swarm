@@ -1378,6 +1378,24 @@ the call's literal is the compared value (#15287). An operand the owner
 rebinds in any other way still keeps the limitation, unless the tests also
 pass unread inputs as above, which fail closed.
 
+A changed equality or inequality comparison (`n == 11` -> `n == 10`,
+`n != 11` -> `n != 10`, the operator unchanged) follows the same rule with a
+different witness: a strong related call counts only when the old and the new
+comparison give it different results, because an input that satisfies both, or
+neither, passes either way (#15287). An operand may be a slice of an owner
+parameter with integer-literal bounds and no step (`tag[:4]`, `name[-3:]`),
+read against a plain string-literal argument, a literal default or an
+unrebound test-module constant. When a slice bound and its compared literal
+move together (`tag[:4] != "musl"` -> `tag[:3] != "mus"`) no operand is
+shared, so the missing discriminator is the pair itself,
+`(tag[:3] == "mus") != (tag[:4] == "musl")`, and the reason lists the slice
+values the calls produced. A string with a backslash or quote, a stepped or
+computed slice, a rebound parameter, and a call whose argument cannot be read
+leave the witness unknown, and a `!=` finding reads `weakly_exposed`; for
+`==`, a call whose old comparison cannot be read keeps the earlier reading,
+where placing the new equality is the witness. An operator
+flip (`==` -> `!=`) and an identity test (`is`) stay outside this gate.
+
 For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
 integer bound, a closed generator walk can resolve a rebound parameter. It
 accepts only an owner consisting of the loop, whose body is `yield name`

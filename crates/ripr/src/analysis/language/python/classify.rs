@@ -1137,7 +1137,8 @@ fn classify_change_for_owner_inner<'a>(
     // oracle that calls the owner away from that boundary still passes after
     // the change. The same fail-closed rule covers an equality-to-equality
     // constant change (`n == 11` -> `n == 10`): input 20 takes the else branch
-    // both ways. `!=` and `is` stay outside the gate. Mirror the Rust
+    // both ways, and a `!=` comparison whose operands changed. `is` and
+    // operator flips stay outside the gate. Mirror the Rust
     // activation rule: once a strong related test calls the owner with literal
     // arguments, `exposed` requires one of those calls to bind both operands
     // to equal values (or, for `==` -> `==`, either compared literal).

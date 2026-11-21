@@ -1,0 +1,156 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_slice_comparison_witness_control/input",
+  "config_path": "<cwd>/fixtures/python_slice_comparison_witness_control/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:4561980b97caa69e1039698cf67001fbf52dbb28b7574cffe0def071c4643f38","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_fx_core.py:python_preview:d40e537d",
+      "canonical_gap_id": "gap:python:src/fx/core.py:is_musl:predicate_boundary:predicate:tag[3]!=mus",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/fx/core.py:is_musl:predicate_boundary:predicate:tag[3]!=mus",
+        "language": "python",
+        "file": "src/fx/core.py",
+        "owner": "is_musl",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "tag[3]!=mus"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_fx_core.py:python_preview:d40e537d",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/fx/core.py",
+        "line": 2,
+        "expression": "    if tag[:3] != \"mus\":",
+        "owner": "python:src/fx/core.py::is_musl"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"2 related Python test(s) found for owner `is_musl`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if tag[:3] != \"mus\":`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 2 related Python test(s) found for owner `is_musl`", "infection yes: Changed Python predicate can alter branch selection: `if tag[:3] != \"mus\":`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if tag[:3] != \"mus\": (line 2)", "related test tests/test_t.py:4 test_musl uses strong exact value oracle: assert is_musl(\"musllinux_1_1_x86_64\") is True", "related test tests/test_t.py:8 test_short_prefix uses strong exact value oracle: assert is_musl(\"musx\") is True", "source function argument value tag = \"musllinux_1_1_x86_64\" at line 5", "source function argument value tag = \"musx\" at line 9", "source function argument value tag[:3] == \"mus\" at line 9"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if tag[:3] != \"mus\":","line":2}
+      ],
+      "evidence": ["owner: is_musl", "owner_kind: function", "test_framework: pytest (test_musl)", "test_verify_command: python -m pytest tests/test_t.py::test_musl (test_musl)", "related_test_relation: syntactic_call (test_musl)", "test_oracle: exact_value strong (test_musl)", "test_framework: pytest (test_short_prefix)", "test_verify_command: python -m pytest tests/test_t.py::test_short_prefix (test_short_prefix)", "related_test_relation: syntactic_call (test_short_prefix)", "test_oracle: exact_value strong (test_short_prefix)"],
+      "missing": ["Related Python test reaches `is_musl` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
+      "assertion_texts": {
+        "5": "assert is_musl(\"musllinux_1_1_x86_64\") is True",
+        "9": "assert is_musl(\"musx\") is True"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "tag = \"musllinux_1_1_x86_64\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 9,
+            "value": "tag = \"musx\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 9,
+            "value": "tag[:3] == \"mus\"",
+            "context": "function_argument",
+            "provenance": "assert is_musl(\"musx\") is True | tag[:3] = \"mus\"; literal operand \"mus\""
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "tag = \"musllinux_1_1_x86_64\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 9,
+          "value": "tag = \"musx\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 9,
+          "value": "tag[:3] == \"mus\"",
+          "context": "function_argument",
+          "provenance": "assert is_musl(\"musx\") is True | tag[:3] = \"mus\"; literal operand \"mus\""
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "test_musl",
+          "file": "tests/test_t.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert is_musl(\"musllinux_1_1_x86_64\") is True"
+        },
+        {
+          "name": "test_short_prefix",
+          "file": "tests/test_t.py",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert is_musl(\"musx\") is True"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "tag, mus",
+      "observed_sink": "assert is_musl(\"musllinux_1_1_x86_64\") is True",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/fx/core.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/fx/core.py","digest":"sha256:9d067d725208592025b0ff9ab610ce7da4369e16b7f5676370da65a766470993"}]}
+}

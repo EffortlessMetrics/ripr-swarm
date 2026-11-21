@@ -1,0 +1,9 @@
+diff --git a/src/fx/core.py b/src/fx/core.py
+--- a/src/fx/core.py
++++ b/src/fx/core.py
+@@ -1,4 +1,4 @@
+ def is_musl(tag):
+-    if tag[:4] != "musl":
++    if tag[:3] != "mus":
+         return False
+     return True

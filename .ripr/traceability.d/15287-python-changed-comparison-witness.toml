@@ -1,0 +1,25 @@
+# A changed `!=` comparison needs an input the old and new comparison split (#15287).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::equality_predicate_gate_does_not_swallow_operator_flips_or_identity_forms",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::inequality_constant_change_needs_an_input_on_either_constant",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::slice_comparison_change_is_weak_when_every_input_gives_both_versions_one_result",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::slice_comparison_change_is_exposed_by_an_input_the_two_versions_split",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::slice_comparison_change_fails_closed_on_unread_shapes",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::slice_comparison_reads_negative_and_clamped_bounds",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/boundary.rs",
+]
+fixtures = [
+  "fixtures/python_slice_comparison_no_witness",
+  "fixtures/python_slice_comparison_witness_control",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_slice_comparison_no_witness",
+  "fixtures/python_slice_comparison_witness_control",
+]
