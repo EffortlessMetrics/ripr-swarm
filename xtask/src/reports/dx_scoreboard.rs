@@ -2035,13 +2035,31 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     // Recall-of-missed and no-seam rows are generated from the receipt's own
     // counts, never copied from its rounded shares: a hand-derived share that
     // disagrees with the counts fails ingest instead of trending (#12900).
-    if let Some((share, ungripped, missed)) = spot_check_ratio(
+    let ungripped_row = spot_check_ratio(
         &value["recall_of_missed"],
         "ungripped_missed",
         "missed_total",
         "ungripped_share_of_missed",
         "recall_of_missed",
-    )? {
+    )?;
+    let flagged_row = spot_check_ratio(
+        &value["recall_of_missed"],
+        "flagged_or_unknown_missed",
+        "missed_total",
+        "flagged_or_unknown_share_of_missed",
+        "recall_of_missed",
+    )?;
+    // The producer's flagged-or-unknown class includes ungripped, so a
+    // receipt that counts more ungripped than flagged-or-unknown is
+    // contradictory even when each ratio is internally consistent.
+    if let (Some((_, ungripped, _)), Some((_, flagged, _))) = (ungripped_row, flagged_row)
+        && ungripped > flagged
+    {
+        return Err(format!(
+            "mutation spot-check `recall_of_missed` counts {ungripped} ungripped of {flagged} flagged-or-unknown; the flagged-or-unknown class includes ungripped, so it cannot be smaller"
+        ));
+    }
+    if let Some((share, ungripped, missed)) = ungripped_row {
         rows.push(json!({
             "id": "trust.mutation_recall_of_missed",
             "value": share,
@@ -2050,13 +2068,7 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             ),
         }));
     }
-    if let Some((share, flagged, missed)) = spot_check_ratio(
-        &value["recall_of_missed"],
-        "flagged_or_unknown_missed",
-        "missed_total",
-        "flagged_or_unknown_share_of_missed",
-        "recall_of_missed",
-    )? {
+    if let Some((share, flagged, missed)) = flagged_row {
         rows.push(json!({
             "id": "trust.mutation_recall_flagged_or_unknown",
             "value": share,

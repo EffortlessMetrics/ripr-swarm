@@ -1659,6 +1659,43 @@ fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(),
 }
 
 #[test]
+fn a_receipt_counting_more_ungripped_than_flagged_or_unknown_fails_ingest() {
+    // The producer's flagged-or-unknown class includes ungripped, so this
+    // receipt is contradictory even though each ratio is internally
+    // consistent (#12900).
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": {
+            "missed_total": 10,
+            "ungripped_missed": 2,
+            "ungripped_share_of_missed": 0.2,
+            "flagged_or_unknown_missed": 1,
+            "flagged_or_unknown_share_of_missed": 0.1,
+        },
+        "seam_coverage": {
+            "mutants_total": 1745,
+            "no_containing_seam": 843,
+            "no_containing_seam_share": 0.483,
+        },
+    });
+    let error = mutation_spot_check_to_input(&receipt).expect_err("contradictory counts");
+    assert!(
+        error.contains("counts 2 ungripped of 1 flagged-or-unknown"),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_non_object_spot_check_section_fails_with_its_name() {
     // A present-but-malformed section must name itself. Indexing a string
     // yields Null, which would otherwise report a missing integer key and
