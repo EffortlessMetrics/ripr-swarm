@@ -12591,6 +12591,368 @@ fn ts_fieldconstruction_changed_field_read_stays_exposed() -> Result<(), String>
     Ok(())
 }
 
+/// #15285: `??` -> `||` differs only for a falsy non-nullish operand
+/// (`""`, `0`, `false`). A test that only supplies `"-"` passes on both
+/// versions, so it must read `weakly_exposed`, not `exposed`.
+#[test]
+fn ts_input_class_nullish_to_or_without_falsy_input_downgrades() -> Result<(), String> {
+    let owner_src = "export function joinWords(words: string[], delimiter?: string): string {\n  return words.join(delimiter ?? \" \");\n}\n";
+    let test_src = "import { joinWords } from \"./owner\";\ntest(\"dash\", () => { expect(joinWords([\"a\", \"b\"], \"-\")).toBe(\"a-b\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return words.join(delimiter || \" \");",
+        Some("  return words.join(delimiter ?? \" \");"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "?? -> || with no falsy input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control: a test supplying the falsy class (`""`) discriminates
+/// `??` from `||`, so it stays `exposed`.
+#[test]
+fn ts_input_class_nullish_to_or_with_falsy_input_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function joinWords(words: string[], delimiter?: string): string {\n  return words.join(delimiter ?? \" \");\n}\n";
+    let test_src = "import { joinWords } from \"./owner\";\ntest(\"empty\", () => { expect(joinWords([\"a\", \"b\"], \"\")).toBe(\"ab\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return words.join(delimiter || \" \");",
+        Some("  return words.join(delimiter ?? \" \");"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "?? -> || with an empty-string input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: dropping `.trim()` differs only for whitespace-padded input.
+/// A test with only unpadded input must read `weakly_exposed`.
+#[test]
+fn ts_input_class_dropped_trim_without_padded_input_downgrades() -> Result<(), String> {
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"plain\", () => { expect(slugify(\"Hello World\")).toBe(\"hello world\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "dropped .trim() with no padded input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control: a padded input discriminates a dropped `.trim()`.
+#[test]
+fn ts_input_class_dropped_trim_with_padded_input_stays_exposed() -> Result<(), String> {
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"padded\", () => { expect(slugify(\"  Hello World  \")).toBe(\"hello world\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "dropped .trim() with a padded input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control (method owner): a padded argument supplied through an
+/// instance receiver (`new TokenValidator(...)` then
+/// `validator.validate(" abc ")`) witnesses the added `.trim()`, so the
+/// finding stays `exposed`. Mirrors
+/// `typescript_same_method_owner_identity_positive`, which must never lose
+/// `exposed`.
+#[test]
+fn ts_input_class_trim_on_method_with_padded_instance_input_stays_exposed() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"padded\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\" abc \")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "padded instance input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 (method owner): the same method change with only an unpadded
+/// instance input must read `weakly_exposed`.
+#[test]
+fn ts_input_class_trim_on_method_without_padded_input_downgrades() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"plain\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\"abc\")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "unpadded instance input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: a changed destructured default differs only when the field is
+/// omitted. A test that always supplies the field cannot discriminate it,
+/// so it must not read `exposed`. (On this shape the changed line is not
+/// itself a return sink, so the pre-existing observation guard already
+/// caps it; the input-class guard keeps that cap if credit ever reaches
+/// the `Exposed` branch.)
+#[test]
+fn ts_input_class_later_trim_edit_without_padded_input_downgrades() -> Result<(), String> {
+    // An unchanged `.trim()` earlier in the line must not hide the edited
+    // one: `a.trim() + text.trim()` -> `a.trim() + text` differs only for
+    // padded `text`.
+    let owner_src = "export function label(a: string, text: string): string {\n  return a.trim() + text.trim();\n}\n";
+    let test_src = "import { label } from \"./owner\";\ntest(\"plain\", () => { expect(label(\"x\", \"Hello\")).toBe(\"xHello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return a.trim() + text;",
+        Some("  return a.trim() + text.trim();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "later .trim() edit with no padded input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_optional_trim_with_null_input_stays_exposed() -> Result<(), String> {
+    // `text?.trim()` -> `text` also differs for `null` (old `undefined`,
+    // new `null`), so a null-supplying test discriminates it.
+    let owner_src = "export function show(text?: string | null): string {\n  return text?.trim() ?? \"none\";\n}\n";
+    let test_src = "import { show } from \"./owner\";\ntest(\"null\", () => { expect(show(null)).toBe(\"none\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text ?? \"none\";",
+        Some("  return text?.trim() ?? \"none\";"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "?.trim() removal with a null input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_escaped_padding_stays_exposed() -> Result<(), String> {
+    // Padding written as an escape (`\t`) discriminates a dropped `.trim()`.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"tab\", () => { expect(slugify(\"\\tHello\")).toBe(\"hello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "escaped padding must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_unicode_escape_padding_stays_exposed() -> Result<(), String> {
+    // Padding written as a unicode escape in the source literal
+    // (`"\\u0020Hello"`) discriminates a dropped `.trim()`.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"u\", () => { expect(slugify(\"\\u0020Hello\")).toBe(\"hello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "unicode-escaped padding must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_escaped_backslash_not_padded_downgrades() -> Result<(), String> {
+    // A literal backslash followed by `t` (`"\\\\tHello"` in source) is
+    // not padding: the escaped backslash consumes the pair, so no test
+    // supplies the whitespace class and the finding downgrades.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"bs\", () => { expect(slugify(\"\\\\tHello\")).toBe(\"\\\\thello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "escaped backslash must not count as padding, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_destructured_default_with_supplied_field_not_exposed() -> Result<(), String> {
+    let owner_src = "export function greet(options: { name: string; punct?: string }): string {\n  const { name, punct = \"!\" } = options;\n  return name + punct;\n}\n";
+    let test_src = "import { greet } from \"./owner\";\ntest(\"supplied\", () => { expect(greet({ name: \"a\", punct: \"!\" })).toBe(\"a!\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  const { name, punct = \"?\" } = options;",
+        Some("  const { name, punct = \"!\" } = options;"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "destructured default with the field always supplied must not read exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// #14814 control: a whole-object assertion pins every field, the changed one
 /// included, and keeps its verdict. Recorded on base as `exposed`; this test
 /// pins that it does not move.

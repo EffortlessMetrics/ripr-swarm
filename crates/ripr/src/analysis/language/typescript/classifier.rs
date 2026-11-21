@@ -2546,6 +2546,577 @@ pub(crate) fn ts_returned_expression_unexercised(
     evaluated
 }
 
+// ── Input-class witness (#15285) ────────────────────────────────────────────
+//
+// Some edits differ only for one named input class: `??` -> `||` only for a
+// falsy non-nullish operand, a dropped `.trim()` only for whitespace-padded
+// input, and a changed destructured default only when the field is omitted.
+// An exact oracle on other inputs passes on both versions, so `Exposed`
+// requires a related strong assertion whose owner call supplies that class.
+// Anything unparseable keeps `witnessed == false` for a detected shape
+// (fail closed); undetected shapes keep the ladder result.
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TsInputClassKind {
+    FalsyNonNullish,
+    WhitespacePadded,
+    OmittedDestructuredField { field: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TsInputClassTarget {
+    /// Position of the call argument feeding the changed operand, when known.
+    index: Option<usize>,
+    /// Object field of that argument the operand reads, when it reads one.
+    field: Option<String>,
+    /// Array position of that argument the operand reads, when it reads one.
+    position: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TsInputClassChange {
+    kind: TsInputClassKind,
+    target: TsInputClassTarget,
+    /// The change removed `?.trim()`, whose semantics also differ for
+    /// `null`/`undefined` inputs (old result `undefined`, new result the
+    /// input itself), so those literals also witness it.
+    optional_trim: bool,
+}
+
+impl TsInputClassChange {
+    fn limitation(&self, owner_name: &str) -> String {
+        let (class, example) = match &self.kind {
+            TsInputClassKind::FalsyNonNullish => (
+                "a falsy non-nullish operand (\"\", 0, or false)",
+                "an empty string, 0, or false",
+            ),
+            TsInputClassKind::WhitespacePadded => (
+                "a whitespace-padded string",
+                "a string with leading or trailing whitespace",
+            ),
+            TsInputClassKind::OmittedDestructuredField { field } => {
+                return format!(
+                    "The change to `{owner_name}` only differs when the destructured field `{field}` is omitted, and no related test calls `{owner_name}` without supplying `{field}`; an exact assertion on a call that supplies it passes on both versions. Add a call that omits `{field}`."
+                );
+            }
+        };
+        format!(
+            "The change to `{owner_name}` only differs for {class}, and no related test calls `{owner_name}` with {example}; an exact assertion on the tested inputs passes on both versions. Add a call with {example}."
+        )
+    }
+
+    /// Whether one tested owner-call argument list supplies the input class.
+    fn supplied_by(&self, arguments: &[String]) -> bool {
+        let Some(index) = self.target.index else {
+            return false;
+        };
+        if let TsInputClassKind::OmittedDestructuredField { field } = &self.kind {
+            let Some(argument) = arguments.get(index) else {
+                return true;
+            };
+            let argument = argument.trim();
+            let Some(inner) = argument
+                .strip_prefix('{')
+                .and_then(|rest| rest.strip_suffix('}'))
+            else {
+                return false;
+            };
+            let Some(entries) = balanced_call_arguments(&format!("{inner})")) else {
+                return false;
+            };
+            return entries.iter().all(|entry| {
+                let head = entry.split_once(':').map_or(entry.as_str(), |(key, _)| key);
+                head.trim().trim_matches(['"', '\'']) != field.as_str()
+            }) || entries.iter().any(|entry| {
+                let Some((key, value)) = entry.split_once(':') else {
+                    return false;
+                };
+                key.trim().trim_matches(['"', '\'']) == field.as_str()
+                    && value.trim() == "undefined"
+            });
+        }
+        let Some(argument) = arguments.get(index) else {
+            return false;
+        };
+        let Some(value) = ts_input_class_nested_value(argument, &self.target) else {
+            return false;
+        };
+        match self.kind {
+            TsInputClassKind::FalsyNonNullish => ts_is_falsy_non_nullish_literal(&value),
+            TsInputClassKind::WhitespacePadded => {
+                ts_is_padded_string_literal(&value)
+                    || (self.optional_trim && matches!(value.trim(), "null" | "undefined"))
+            }
+            TsInputClassKind::OmittedDestructuredField { .. } => false,
+        }
+    }
+}
+
+/// The value of `argument` at the target's field/position, or the argument
+/// itself for a plain parameter read.
+fn ts_input_class_nested_value(argument: &str, target: &TsInputClassTarget) -> Option<String> {
+    let argument = argument.trim();
+    if let Some(field) = &target.field {
+        let inner = argument.strip_prefix('{')?.strip_suffix('}')?;
+        let entries = balanced_call_arguments(&format!("{inner})"))?;
+        // A spread entry can override the named field with an unreadable
+        // value; fail closed instead of reading the first entry.
+        if entries.iter().any(|entry| entry.trim().starts_with("...")) {
+            return None;
+        }
+        // Later entries override earlier ones in an object literal.
+        return entries.iter().rev().find_map(|entry| {
+            let (key, value) = entry.split_once(':')?;
+            (key.trim().trim_matches(['"', '\'']) == field.as_str())
+                .then(|| value.trim().to_string())
+        });
+    }
+    if let Some(position) = target.position {
+        let inner = argument.strip_prefix('[')?.strip_suffix(']')?;
+        let entries = balanced_call_arguments(&format!("{inner})"))?;
+        return entries.get(position).map(|value| value.trim().to_string());
+    }
+    Some(argument.to_string())
+}
+
+fn ts_is_falsy_non_nullish_literal(value: &str) -> bool {
+    let value = value.trim();
+    if matches!(value, "\"\"" | "''" | "``" | "false" | "NaN" | "0n") {
+        return true;
+    }
+    // A plain zero in any spelling (`0`, `-0`, `0.0`, `00`).
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    !digits.is_empty()
+        && digits.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+        && digits.chars().any(|ch| ch.is_ascii_digit())
+        && digits.replace('.', "").chars().all(|ch| ch == '0')
+}
+
+fn ts_is_padded_string_literal(value: &str) -> bool {
+    let value = value.trim();
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 {
+        return false;
+    }
+    let quote = bytes[0];
+    if !matches!(quote, b'"' | b'\'' | b'`') || bytes[bytes.len() - 1] != quote {
+        return false;
+    }
+    if quote == b'`' && value.contains("${") {
+        return false;
+    }
+    let inner = &value[1..value.len() - 1];
+    if inner.is_empty() {
+        return false;
+    }
+    // Whitespace written as an escape (`\t`, `\n`, `\r`, `\u0020`,
+    // `\x09`, ...) pads the value exactly like a literal space.
+    if inner.trim() != inner {
+        return true;
+    }
+    let decoded = ts_decode_simple_escapes(inner);
+    decoded.trim() != decoded
+}
+
+/// Decode simple whitespace escapes in a string-literal body; any other
+/// escape keeps its backslash so non-whitespace content is untouched.
+fn ts_decode_simple_escapes(inner: &str) -> String {
+    let bytes = inner.as_bytes();
+    let mut out = String::with_capacity(inner.len());
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if bytes[at] == b'\\' && at + 1 < bytes.len() {
+            match bytes[at + 1] {
+                b'\\' => {
+                    out.push('\\');
+                    at += 2;
+                    continue;
+                }
+                b't' => {
+                    out.push('\t');
+                    at += 2;
+                    continue;
+                }
+                b'n' => {
+                    out.push('\n');
+                    at += 2;
+                    continue;
+                }
+                b'r' => {
+                    out.push('\r');
+                    at += 2;
+                    continue;
+                }
+                b'u' | b'x' => {
+                    let digits = if bytes[at + 1] == b'u' { 4 } else { 2 };
+                    let hex = inner.get(at + 2..at + 2 + digits);
+                    if let Some(hex) = hex
+                        && let Ok(code) = u32::from_str_radix(hex, 16)
+                        && let Some(ch) = char::from_u32(code)
+                        && ch.is_whitespace()
+                    {
+                        out.push(ch);
+                        at += 2 + digits;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let ch_len = inner[at..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&inner[at..at + ch_len]);
+        at += ch_len;
+    }
+    out
+}
+
+/// The call-argument target read by the trailing operand of `text` (the
+/// expression before a changed operator or `.trim()`).
+fn ts_input_class_target(text: &str, owner: &TypeScriptOwner) -> Option<TsInputClassTarget> {
+    // Find the cut on the masked text so punctuation inside literals or
+    // comments cannot become the cut point; indices are length-preserving.
+    let masked = ts_mask_literals_and_comments(text);
+    let cut = masked.rfind(['(', ',', ';']).map_or(0, |at| at + 1);
+    let mut tail = text[cut..].trim();
+    for keyword in ["return ", "await ", "typeof ", "yield "] {
+        if let Some(rest) = tail.strip_prefix(keyword) {
+            tail = rest.trim_start();
+        }
+    }
+    tail = tail.trim_start_matches(['(', '!']);
+    // A trailing operand after a binary `+` is the operand the changed
+    // operator or `.trim()` reads (`a.trim() + text.trim()` reads `text`).
+    if let Some(plus) = tail.rfind(" + ") {
+        let after = &tail[plus + 3..];
+        if !after.contains('(') {
+            tail = after.trim_start();
+        }
+    }
+    let base_end = tail
+        .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+        .unwrap_or(tail.len());
+    let base = &tail[..base_end];
+    if base.is_empty()
+        || !base.starts_with(|ch: char| ch.is_alphabetic() || matches!(ch, '_' | '$'))
+    {
+        return None;
+    }
+    let mut field = None;
+    let mut position = None;
+    let rest = tail[base_end..].trim_start();
+    if let Some(after_dot) = rest.strip_prefix('.').or_else(|| rest.strip_prefix("?.")) {
+        let prop_end = after_dot
+            .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+            .unwrap_or(after_dot.len());
+        if prop_end > 0 {
+            field = Some(after_dot[..prop_end].to_string());
+        }
+    } else if let Some(after_close) = rest
+        .strip_prefix('[')
+        .and_then(|after_open| after_open.strip_suffix(']'))
+    {
+        let key = after_close.trim();
+        if let Ok(at) = key.parse::<usize>() {
+            position = Some(at);
+        } else {
+            field = Some(key.trim_matches(['"', '\'']).to_string());
+        }
+    }
+    let mut index = owner.params.iter().position(|param| param == base);
+    if index.is_none()
+        && owner.params.is_empty()
+        && field.is_none()
+        && position.is_none()
+        && rest.is_empty()
+    {
+        // A bare non-parameter name with no recorded parameters is a
+        // destructured field of the first argument (`{ sep }` style owners).
+        index = Some(0);
+        field = Some(base.to_string());
+    }
+    Some(TsInputClassTarget {
+        index,
+        field,
+        position,
+    })
+}
+
+/// Replace the characters at char position `at` (length `len`) in `text`.
+fn ts_replace_char_span(text: &str, at: usize, len: usize, replacement: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    for (index, ch) in text.chars().enumerate() {
+        if index < at || index >= at + len {
+            out.push(ch);
+        } else if index == at {
+            out.push_str(replacement);
+        }
+    }
+    Some(out)
+}
+
+/// Remove the characters at char position `at` (length `len`) in `text`.
+fn ts_remove_char_span(text: &str, at: usize, len: usize) -> Option<String> {
+    ts_replace_char_span(text, at, len, "")
+}
+
+/// Char position of `needle` in `masked` (literals blanked) at or after
+/// `char_from`, mapped back to the original text by char count, so
+/// operators inside strings never match.
+fn ts_masked_find_from(masked: &str, needle: &str, char_from: usize) -> Option<usize> {
+    let tail: String = masked.chars().skip(char_from).collect();
+    tail.find(needle)
+        .map(|byte_at| char_from + tail[..byte_at].chars().count())
+}
+
+/// Detect the #15285 input-class shapes `old_line` -> `new_line`.
+fn ts_input_class_change(
+    old_line: &str,
+    new_line: &str,
+    owner: &TypeScriptOwner,
+) -> Option<TsInputClassChange> {
+    let (old_trim, new_trim) = (old_line.trim(), new_line.trim());
+    // `??` <-> `||` as the only change. Every occurrence is tried: an
+    // unchanged operator earlier in the line must not hide the edited one.
+    for (from, to) in [("??", "||"), ("||", "??")] {
+        let masked = ts_mask_literals_and_comments(old_trim);
+        let mut search_from = 0usize;
+        while let Some(at) = ts_masked_find_from(&masked, from, search_from) {
+            if ts_replace_char_span(old_trim, at, from.len(), to).as_deref() == Some(new_trim) {
+                let operand_end = old_trim
+                    .char_indices()
+                    .nth(at)
+                    .map_or(old_trim.len(), |(byte_at, _)| byte_at);
+                return ts_input_class_target(&old_trim[..operand_end], owner).map(|target| {
+                    TsInputClassChange {
+                        kind: TsInputClassKind::FalsyNonNullish,
+                        target,
+                        optional_trim: false,
+                    }
+                });
+            }
+            search_from = at + from.len();
+        }
+    }
+    // A dropped (or added) `.trim()` as the only change (all occurrences).
+    for (with_trim, without_trim) in [(old_trim, new_trim), (new_trim, old_trim)] {
+        let masked = ts_mask_literals_and_comments(with_trim);
+        for needle in [".trim()", "?.trim()"] {
+            let mut search_from = 0usize;
+            while let Some(at) = ts_masked_find_from(&masked, needle, search_from) {
+                if ts_remove_char_span(with_trim, at, needle.len()).as_deref() == Some(without_trim)
+                {
+                    let receiver_end = with_trim
+                        .char_indices()
+                        .nth(at)
+                        .map_or(with_trim.len(), |(byte_at, _)| byte_at);
+                    return ts_input_class_target(&with_trim[..receiver_end], owner).map(
+                        |target| TsInputClassChange {
+                            kind: TsInputClassKind::WhitespacePadded,
+                            target,
+                            optional_trim: needle.starts_with('?'),
+                        },
+                    );
+                }
+                search_from = at + needle.len();
+            }
+        }
+    }
+    // A changed destructured default as the only change.
+    ts_destructured_default_change(old_trim, new_trim, owner)
+}
+
+/// The destructured-default shape: both lines share one `{ ... }` pattern
+/// whose entries differ only in one entry's default value.
+fn ts_destructured_default_change(
+    old_line: &str,
+    new_line: &str,
+    owner: &TypeScriptOwner,
+) -> Option<TsInputClassChange> {
+    let parse = |line: &str| -> Option<(usize, usize, Vec<String>)> {
+        // Brace matching on the masked line: braces inside literals or
+        // comments (e.g. a `"}"` default) must not move the close.
+        let masked = ts_mask_literals_and_comments(line);
+        let open = masked.find('{')?;
+        let mut depth = 0usize;
+        let mut close = None;
+        for (index, ch) in masked.char_indices().skip_while(|(at, _)| *at < open) {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close = close?;
+        let entries = balanced_call_arguments(&format!("{})", &line[open + 1..close]))?;
+        Some((open, close, entries))
+    };
+    let (old_open, old_close, old_entries) = parse(old_line)?;
+    let (new_open, new_close, new_entries) = parse(new_line)?;
+    if old_entries.len() != new_entries.len()
+        || old_line[..old_open] != new_line[..new_open]
+        || old_line[old_close..] != new_line[new_close..]
+    {
+        return None;
+    }
+    let mut differing = old_entries
+        .iter()
+        .zip(&new_entries)
+        .filter(|(old, new)| old != new);
+    let (old_entry, new_entry) = differing.next()?;
+    if differing.next().is_some() {
+        return None;
+    }
+    let head = |entry: &str| -> String {
+        let head = entry.split_once('=').map_or(entry, |(head, _)| head);
+        let head = head.split_once(':').map_or(head, |(head, _)| head);
+        head.trim().trim_start_matches("...").trim().to_string()
+    };
+    let field = head(old_entry);
+    if field.is_empty()
+        || field != head(new_entry)
+        || !(old_entry.contains('=') || new_entry.contains('='))
+        || !field
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
+    {
+        return None;
+    }
+    // The destructured source: `... } = source` (a body destructure or a
+    // parenthesised assignment), else the destructured parameter itself.
+    let after = old_line[old_close + 1..].trim_start();
+    let source = after
+        .strip_prefix('=')
+        .map(str::trim_start)
+        .and_then(|rest| {
+            let end = rest
+                .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+                .unwrap_or(rest.len());
+            (end > 0).then(|| rest[..end].to_string())
+        });
+    let index = match &source {
+        Some(source) => owner.params.iter().position(|param| param == source),
+        None => {
+            let prefix = &old_line[..old_open];
+            let open_paren = prefix.rfind('(')?;
+            let between = &prefix[open_paren + 1..];
+            Some(between.matches(',').count())
+        }
+    };
+    // Only a destructuring position counts: a declaration/parameter
+    // pattern (`const { ... } = ...`, `{ ... } = ...`, or a parameter
+    // list). An object-literal comparison elsewhere is not a default.
+    let trimmed_start = old_line.trim_start();
+    let destructure_context = old_line.contains("} =")
+        || trimmed_start.starts_with("const ")
+        || trimmed_start.starts_with("let ")
+        || trimmed_start.starts_with("var ")
+        || (trimmed_start.starts_with('(') && old_line.contains('{'));
+    if !destructure_context {
+        return None;
+    }
+    Some(TsInputClassChange {
+        kind: TsInputClassKind::OmittedDestructuredField { field },
+        target: TsInputClassTarget {
+            index,
+            field: None,
+            position: None,
+        },
+        optional_trim: false,
+    })
+}
+
+/// Arguments of an instance-method owner call in `observed`
+/// (`receiver.method(...)`) where `receiver` is bound in the test body to
+/// `new <owner class>(...)`. Method owners are called through instances,
+/// not namespaces, so the namespace-receiver path cannot see them
+/// (typescript_same_method_owner_identity_positive).
+fn ts_instance_owner_call_arguments(
+    test: &TypeScriptTest,
+    observed: &str,
+    owner: &TypeScriptOwner,
+) -> Option<Vec<String>> {
+    let class_name = owner.class_name.as_deref()?;
+    let observed = observed.trim();
+    for receiver in instance_call_receivers(observed, &owner.name) {
+        let needle = format!("{receiver} = new {class_name}(");
+        let alt = format!("{receiver} = new {class_name} (");
+        if !test.body_text.contains(&needle) && !test.body_text.contains(&alt) {
+            continue;
+        }
+        let rest = observed.strip_prefix(&receiver)?.trim_start();
+        let rest = rest.strip_prefix('.')?.trim_start();
+        let rest = rest.strip_prefix(owner.name.as_str())?.trim_start();
+        if ts_is_one_argument_list(rest) {
+            return balanced_call_arguments(&rest[1..]).map(positional_prefix);
+        }
+    }
+    None
+}
+
+/// Whether some strong, pinned assertion of an oracle relation calls the
+/// owner with an argument supplying the changed input class (#15285).
+fn ts_input_class_witnessed(
+    change: &TsInputClassChange,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        let test = candidate.test;
+        if !candidate.relation.uses_oracle()
+            || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        {
+            return false;
+        }
+        let receivers =
+            unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        test.assertions.iter().any(|assertion| {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !assertion_expected_side_is_pinned(assertion)
+            {
+                return false;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                return false;
+            };
+            if assertion_is_self_comparing(assertion, observed) {
+                return false;
+            }
+            let Some(arguments) =
+                ts_observed_owner_call_arguments(test, assertion, &names, owner, &receivers)
+                    .or_else(|| ts_instance_owner_call_arguments(test, observed, owner))
+            else {
+                return false;
+            };
+            let arguments =
+                substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+            change.supplied_by(&arguments)
+        })
+    })
+}
+
+/// The detected input-class change, when no related call supplies its class.
+fn ts_unwitnessed_input_class_change(
+    old_line_text: Option<&str>,
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<TsInputClassChange> {
+    let change = ts_input_class_change(old_line_text?, line_text, owner)?;
+    (!ts_input_class_witnessed(&change, owner, candidates, alias_map, workspace_root))
+        .then_some(change)
+}
+
 /// Whether the line opens a method-shaped block (`name(args) {`) that is not
 /// a control-flow head.
 fn nested_method_head(line: &str) -> bool {
@@ -8602,10 +9173,25 @@ pub(crate) fn classify_resolved_owner(
             workspace_root,
             !pin_facts.is_empty() || lookup_change.is_some(),
         );
+    // #15285: a change that only differs for a named input class is not
+    // observed unless a related call supplies that class.
+    let unwitnessed_input_class = if strong_oracle_present {
+        ts_unwitnessed_input_class_change(
+            old_line_text,
+            line_text,
+            owner,
+            related_candidates,
+            alias_map,
+            workspace_root,
+        )
+    } else {
+        None
+    };
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
         && lookup_witnessed
         && !returned_expression_unexercised
+        && unwitnessed_input_class.is_none()
         && (field_update_witnessed
             || ts_changed_value_is_observed(
                 &probe_shape,
@@ -8764,9 +9350,9 @@ pub(crate) fn classify_resolved_owner(
         // Strong oracle exists but observation guard failed: downgrade to
         // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
         // predicate boundary is not witnessed (RIPR-SPEC-0027).
-        let named_limitation = if let Some(change) =
-            lookup_change.as_ref().filter(|_| !lookup_witnessed)
-        {
+        let named_limitation = if let Some(change) = &unwitnessed_input_class {
+            change.limitation(&owner.name)
+        } else if let Some(change) = lookup_change.as_ref().filter(|_| !lookup_witnessed) {
             format!(
                 "The change to `{}` only moves the lookup-table value for {}, and no strong assertion calls `{}` with a changed key; an exact assertion on another key passes on both versions. Add a case that looks up a changed key.",
                 owner.name,
