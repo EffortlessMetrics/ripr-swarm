@@ -314,6 +314,7 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/review-comments.valid.json",
             "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
             "tests/fixtures/verification/ripr/review-comments.capped.valid.json",
+            "tests/fixtures/verification/ripr/review-comments.receipt-v0-1.valid.json",
         ],
         excluded: &[],
     },
