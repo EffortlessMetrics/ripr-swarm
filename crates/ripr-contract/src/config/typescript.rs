@@ -205,7 +205,14 @@ pub fn is_detectable_generated_typescript_path(path: &Path) -> bool {
 /// so the real functions would be dead code in a rust-only build. The
 /// exclusion authorities above stay real in every lane (#10730).
 #[cfg(any(feature = "lang-typescript", test))]
-pub const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &["tsconfig.json", "jsconfig.json"];
+pub const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &[
+    "tsconfig.json",
+    "jsconfig.json",
+    // A Deno project runs TypeScript natively and often has no `package.json`
+    // or `tsconfig.json` (#15623).
+    "deno.json",
+    "deno.jsonc",
+];
 #[cfg(any(feature = "lang-typescript", test))]
 pub const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 
@@ -873,6 +880,145 @@ mod tests {
         assert!(!detect_typescript_project(&root));
         write(&root, "tests/cart.test.ts")?;
         assert!(detect_typescript_project(&root), "harness sanity");
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn declared_handwritten_files_keep_only_their_own_ancestors_reachable() {
+        let declared = vec!["public/vendor/app.js".to_string()];
+        assert!(declared_typescript_handwritten_under(
+            &declared,
+            Path::new("public")
+        ));
+        assert!(declared_typescript_handwritten_under(
+            &declared,
+            Path::new("public/vendor")
+        ));
+        assert!(
+            declared_typescript_handwritten_under(&declared, Path::new("")),
+            "the repository root is an ancestor of every declaration"
+        );
+        for near_miss in ["pub", "public/vend", "vendor", "public/vendor/app"] {
+            assert!(
+                !declared_typescript_handwritten_under(&declared, Path::new(near_miss)),
+                "{near_miss} is a name prefix, not an ancestor directory"
+            );
+        }
+        assert!(!declared_typescript_handwritten_under(&[], Path::new("")));
+    }
+
+    #[test]
+    fn generated_path_form_reads_only_the_file_name() {
+        assert!(is_detectable_generated_typescript_path(Path::new(
+            "src/cart.generated.ts"
+        )));
+        assert!(is_detectable_generated_typescript_path(Path::new(
+            "public/app.min.js"
+        )));
+        assert!(!is_detectable_generated_typescript_path(Path::new(
+            "src/cart.ts"
+        )));
+        assert!(
+            !is_detectable_generated_typescript_path(Path::new("x.generated.d/cart.ts")),
+            "a generated-looking directory does not make its files generated"
+        );
+    }
+
+    #[test]
+    fn marker_names_canonicalize_to_their_own_table_only() {
+        assert_eq!(
+            javascript_led_manifest_name("package.json"),
+            Some("package.json")
+        );
+        assert_eq!(javascript_led_manifest_name("tsconfig.json"), None);
+        assert_eq!(
+            typescript_project_marker_name("tsconfig.json"),
+            Some("tsconfig.json")
+        );
+        assert_eq!(
+            typescript_project_marker_name("jsconfig.json"),
+            Some("jsconfig.json")
+        );
+        assert_eq!(typescript_project_marker_name("package.json"), None);
+        assert_eq!(typescript_source_dir_marker_name("src"), Some("src"));
+        assert_eq!(typescript_source_dir_marker_name("tests"), Some("tests"));
+        assert_eq!(
+            typescript_source_dir_marker_name("test"),
+            None,
+            "`test` is a package-led directory, not a TypeScript source marker"
+        );
+    }
+
+    #[test]
+    fn declaration_suffix_alone_is_not_a_declaration_name() {
+        for declaration in ["types.d.ts", "types.d.mts", "types.d.cts"] {
+            assert!(
+                !is_detectable_typescript_source_name(declaration),
+                "{declaration} is a declaration file"
+            );
+        }
+        assert!(
+            is_detectable_typescript_source_name(".d.ts"),
+            "a bare suffix has no stem, so it is ordinary source like `min.js`"
+        );
+        assert!(is_detectable_typescript_source_name("card.ts"));
+    }
+
+    #[test]
+    fn source_dir_marker_reports_presence_under_that_marker_only() -> Result<(), String> {
+        let root = detection_root("source-dir-marker")?;
+        assert!(!source_dir_contains_detectable_typescript(&root, "src"));
+        write(&root, "src/deep/cart.ts")?;
+        assert!(source_dir_contains_detectable_typescript(&root, "src"));
+        assert!(!source_dir_contains_detectable_typescript(&root, "tests"));
+        write(&root, "tests/.hidden/cart.test.ts")?;
+        assert!(
+            source_dir_contains_detectable_typescript(&root, "tests"),
+            "the root source walk keeps its historical hidden-directory walk"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// One level below the root, or one level below a workspace container,
+    /// a package is judged by the root markers; a non-container directory's
+    /// grandchildren, hidden and excluded children never count.
+    #[test]
+    fn nested_packages_select_the_adapter_only_at_the_documented_depths() -> Result<(), String> {
+        let root = detection_root("nested")?;
+        write(&root, "library/src/deep/index.ts")?;
+        assert!(
+            detect_typescript_project(&root),
+            "valibot-style `library/src` below a non-source child"
+        );
+        std::fs::remove_dir_all(root.join("library")).map_err(|err| err.to_string())?;
+
+        write(&root, "docs/site/src/index.ts")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "a non-container child's grandchild is not a package"
+        );
+        write(&root, "packages/remeda/src/deep/index.ts")?;
+        assert!(
+            detect_typescript_project(&root),
+            "a workspace container's child is a package"
+        );
+        std::fs::remove_dir_all(root.join("packages")).map_err(|err| err.to_string())?;
+
+        write(&root, "lib/.cache/src/index.ts")?;
+        write(&root, "lib/src/.hidden/index.ts")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "nested candidates skip hidden directories"
+        );
+        write(&root, "node_modules/tsconfig.json")?;
+        write(&root, "dist/tsconfig.json")?;
+        write(&root, ".config/tsconfig.json")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "excluded and hidden children never carry a marker"
+        );
+        write(&root, "app/tsconfig.json")?;
+        assert!(detect_typescript_project(&root), "child marker sanity");
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 }

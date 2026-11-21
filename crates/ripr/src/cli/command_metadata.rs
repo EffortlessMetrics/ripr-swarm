@@ -1605,8 +1605,8 @@ const METADATA: &[CommandMetadata] = &[
             "bound source files under --root",
         ],
         outputs: CommandOutputs {
-            default: Some("target/ripr/reports/kani.json under --root"),
-            optional: &["target/ripr/reports/kani.md under --root"],
+            default: Some("target/ripr/reports/kani-import.json under --root"),
+            optional: &["target/ripr/reports/kani-import.md under --root"],
         },
         state_target: None,
         accepts_json_flag: JsonFlag::None,

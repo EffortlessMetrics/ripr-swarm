@@ -106,7 +106,11 @@ fn plain_change_type(family: &ProbeFamily) -> &'static str {
         ProbeFamily::Predicate => "a condition or comparison changed",
         ProbeFamily::ReturnValue => "a returned value changed",
         ProbeFamily::ErrorPath => "error handling changed",
-        ProbeFamily::CallDeletion => "a call was removed",
+        // `call_deletion` names the probe ripr runs on a changed line that
+        // makes a call (would a test notice if the call were gone?), not the
+        // diff's edit: the call itself may be added, changed, removed, or
+        // untouched beside the edit (`f(x) > 0` -> `f(x) > 1`) (#15271).
+        ProbeFamily::CallDeletion => "a line that makes a call changed",
         ProbeFamily::FieldConstruction => "a constructed field changed",
         ProbeFamily::SideEffect => "a side effect changed",
         ProbeFamily::MatchArm => "a match arm changed",
@@ -317,7 +321,9 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     let changed = crate::output::flow_sink_line::with_arm_result(finding, changed);
-    out.push_str(&format!("  Changed behavior: {}\n", one_line(&changed)));
+    let changed = evidence_value(finding, crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX)
+        .unwrap_or(&changed);
+    out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
     if let Some((label, value)) = &digest_missing {
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
@@ -667,6 +673,59 @@ fn match_arm_head_only_note(
     ))
 }
 
+/// The note under a predicate's `after` row when `after` is only the new
+/// condition but `before` is the whole old line (#15420).
+///
+/// The producer cuts `before` to the old condition only when the edit stays
+/// inside it. When the block body changed too (`if total >= 100 { total - 10 }`
+/// to `if total > 200 { total - 25 }`), `before` stays the whole old line,
+/// because classifiers rebuild the old owner from it and a cut would hide the
+/// body change. The bare condition then reads as if the block were deleted,
+/// so the row says it is the condition and where the new line is. The block
+/// is located on comment/string-masked text, so a `{` inside a literal is not
+/// a block. Display only: `before` and `after` are printed unchanged.
+fn condition_only_note(
+    finding: &Finding,
+    before: Option<&str>,
+    after: &str,
+    root: &Path,
+) -> Option<String> {
+    if finding.probe.family != ProbeFamily::Predicate {
+        return None;
+    }
+    let after = after.trim();
+    let before = before?.trim();
+    if before == after || crate::analysis::mask_comments_and_strings(after).contains('{') {
+        return None;
+    }
+    // A block opens at bracket depth zero; a `{` inside parentheses or
+    // brackets is a closure body or struct literal within a cut condition
+    // (`v.iter().any(|x| { x > 1 })`), not a whole line's block.
+    let mut depth = 0_usize;
+    let opens_block = crate::analysis::mask_comments_and_strings(before)
+        .bytes()
+        .any(|byte| match byte {
+            b'(' | b'[' => {
+                depth += 1;
+                false
+            }
+            b')' | b']' => {
+                depth = depth.saturating_sub(1);
+                false
+            }
+            b'{' => depth == 0,
+            _ => false,
+        });
+    if !opens_block {
+        return None;
+    }
+    Some(format!(
+        "          (condition only; before is the whole old line; open {}:{} to read the new line)\n",
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        finding.probe.location.line
+    ))
+}
+
 pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -715,6 +774,9 @@ pub(super) fn render_finding_with_shared_sections(
     if let Some(after) = &finding.probe.after {
         out.push_str(&wrapped_fragment("  after:  ", after));
         if let Some(note) = match_arm_head_only_note(finding, before_text, after, root) {
+            out.push_str(&note);
+        }
+        if let Some(note) = condition_only_note(finding, before_text, after, root) {
             out.push_str(&note);
         }
     } else {

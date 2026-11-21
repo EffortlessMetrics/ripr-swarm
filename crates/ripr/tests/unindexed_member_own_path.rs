@@ -1,8 +1,10 @@
-//! Production-path witness for #14260: in draft mode a workspace member
-//! outside the index that reaches its own files through `#[path]` does not
-//! switch placement off for the indexed package. Every shape that could
-//! compile an indexed file (the #10149 doubt) still does. Static evidence
-//! only: the native runs recorded on the issue are the execution proof.
+//! Production-path witness for #14260 and #14116: in draft mode a workspace
+//! member outside the index that reaches its own files through `#[path]` or
+//! `include!` does not switch placement off for the indexed package, and one
+//! that mounts an indexed file withholds placement from that file only. Every
+//! shape whose reach cannot be bounded (the #10149 doubt) still switches it
+//! off. Static evidence only: the native runs recorded on the issues are the
+//! execution proof.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -24,7 +26,8 @@ const OWN_PATH: &str = "#[path = \"../support.rs\"]\nmod support;\n";
 /// The finding for `app`'s changed `x * 4` (was `x * 3`). `tool` is a member
 /// that does not depend on `app`, so a draft index leaves it out; `files` are
 /// written under `tool/`. `app/src/par.rs` holds a private foreign glob that
-/// is confined to its own module only while placement is available.
+/// is confined to its own module only while placement is available;
+/// `app/src/helper.rs` is a plain module a member may mount instead.
 fn finding(mode: Mode, files: &[(&str, &str)]) -> Result<Finding, String> {
     finding_with_links(mode, files, &[])
 }
@@ -73,8 +76,9 @@ fn finding_with_links(
     )?;
     write(
         "app/src/lib.rs",
-        "mod par;\nmod suite;\n\npub fn weight(x: u32) -> u32 {\n    x * 4\n}\n",
+        "mod par;\nmod suite;\nmod helper;\npub fn weight(x: u32) -> u32 {\n    x * 4\n}\n",
     )?;
+    write("app/src/helper.rs", "pub fn helper() -> u32 {\n    1\n}\n")?;
     write(
         "app/src/par.rs",
         "use rayon::prelude::*;\n\npub fn noop() {}\n",
@@ -106,7 +110,7 @@ fn finding_with_links(
         #[cfg(not(unix))]
         return Err(format!("symlink {link} -> {target} needs Unix"));
     }
-    let diff = "diff --git a/app/src/lib.rs b/app/src/lib.rs\nindex 0000000..1111111 100644\n--- a/app/src/lib.rs\n+++ b/app/src/lib.rs\n@@ -3,4 +3,4 @@\n \n pub fn weight(x: u32) -> u32 {\n-    x * 3\n+    x * 4\n }\n";
+    let diff = "diff --git a/app/src/lib.rs b/app/src/lib.rs\nindex 0000000..1111111 100644\n--- a/app/src/lib.rs\n+++ b/app/src/lib.rs\n@@ -3,4 +3,4 @@\n mod helper;\n pub fn weight(x: u32) -> u32 {\n-    x * 3\n+    x * 4\n }\n";
     write("diff.patch", diff)?;
     let output = check_workspace(CheckInput {
         root: root.clone(),
@@ -146,7 +150,8 @@ fn assert_credited(label: &str, found: &Finding) {
     assert_eq!(refusals(found), Vec::<&str>::new(), "{label}");
 }
 
-/// Placement is off, so the glob in another module of `app` blocks credit.
+/// Placement is off, or `app/src/par.rs` itself is mounted, so the glob in
+/// that module of `app` blocks credit.
 fn assert_withheld(label: &str, found: &Finding) {
     assert_ne!(found.class, ExposureClass::Exposed, "{label}");
     let refusals = refusals(found);
@@ -219,6 +224,54 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect::<Vec<_>>();
     assert_credited("70 explicit targets, draft", &finding(Mode::Draft, &many)?);
+
+    // A manifest root is resolved from the member, never from the process's
+    // working directory (the test runs from `crates/ripr`, which has its
+    // own `src/lib.rs`).
+    let declared = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"tool\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+        ),
+        ("src/lib.rs", "mod support;\n"),
+        ("src/support.rs", SUPPORT),
+    ];
+    assert_credited(
+        "declared lib path, draft",
+        &finding(Mode::Draft, &declared)?,
+    );
+
+    // An `include!` of the member's own file is the member's own source.
+    let include = [
+        ("src/lib.rs", "include!(\"../support.rs\");\n"),
+        ("support.rs", SUPPORT),
+    ];
+    assert_credited("own include!, draft", &finding(Mode::Draft, &include)?);
+
+    // The member is read whole, so a long chain of its own path-named files
+    // stays inside it.
+    let names = (0..70)
+        .map(|index| format!("p{index}.rs"))
+        .collect::<Vec<_>>();
+    let mut chain: Vec<(String, String)> = vec![
+        ("src/lib.rs".to_string(), OWN_PATH.to_string()),
+        (
+            "support.rs".to_string(),
+            format!("#[path = \"{}\"]\nmod hop;\n", names[0]),
+        ),
+    ];
+    for (index, name) in names.iter().enumerate() {
+        let body = match names.get(index + 1) {
+            Some(next) => format!("#[path = \"{next}\"]\nmod hop;\n"),
+            None => SUPPORT.to_string(),
+        };
+        chain.push((name.clone(), body));
+    }
+    let chain = chain
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect::<Vec<_>>();
+    assert_credited("long own path chain, draft", &finding(Mode::Draft, &chain)?);
     Ok(())
 }
 
@@ -226,14 +279,10 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
 fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -> Result<(), String>
 {
     let lib = |text: &'static str| [("src/lib.rs", text), ("support.rs", SUPPORT)];
-    let cases: [(&str, Vec<(&str, &str)>); 13] = [
+    let cases: [(&str, Vec<(&str, &str)>); 18] = [
         (
             "path leaves the member",
             lib("#[path = \"../../app/src/par.rs\"]\nmod par;\n").to_vec(),
-        ),
-        (
-            "include! in the root",
-            lib("include!(\"../support.rs\");\n").to_vec(),
         ),
         ("path target is missing", vec![("src/lib.rs", OWN_PATH)]),
         (
@@ -315,34 +364,48 @@ fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -
             "inner path attribute",
             lib("#![path = \"../support.rs\"]\n").to_vec(),
         ),
+        (
+            "include! leaves the member",
+            lib("include!(\"../../app/src/helper.rs\");\n").to_vec(),
+        ),
+        (
+            "include! is not one literal",
+            lib("include!(concat!(\"../\", \"support.rs\"));\n").to_vec(),
+        ),
+        (
+            "included file names a path",
+            vec![
+                ("src/lib.rs", "include!(\"../support.rs\");\n"),
+                ("support.rs", "#[path = \"deep/leaf.rs\"]\nmod leaf;\n"),
+                ("deep/leaf.rs", SUPPORT),
+            ],
+        ),
+        (
+            "manifest root leaves the member",
+            vec![
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"tool\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\npath = \"../app/src/par.rs\"\n",
+                ),
+                ("src/unused.rs", SUPPORT),
+            ],
+        ),
+        (
+            "path names a non-Rust member file that mounts",
+            vec![
+                ("src/lib.rs", "#[path = \"../mount.inc\"]\nmod mount;\n"),
+                ("mount.inc", "#[path = \"../app/src/par.rs\"]\nmod par;\n"),
+            ],
+        ),
+        (
+            "mounted file declares a module",
+            lib("#[path = \"../../app/src/lib.rs\"]\nmod app;\n").to_vec(),
+        ),
     ];
     for (label, files) in cases {
         assert_withheld(label, &finding(Mode::Draft, &files)?);
     }
 
-    // A chain of path-named files past the walk's budget is read as a mount.
-    let names = (0..70)
-        .map(|index| format!("p{index}.rs"))
-        .collect::<Vec<_>>();
-    let mut chain: Vec<(String, String)> = vec![
-        ("src/lib.rs".to_string(), OWN_PATH.to_string()),
-        (
-            "support.rs".to_string(),
-            format!("#[path = \"{}\"]\nmod hop;\n", names[0]),
-        ),
-    ];
-    for (index, name) in names.iter().enumerate() {
-        let body = match names.get(index + 1) {
-            Some(next) => format!("#[path = \"{next}\"]\nmod hop;\n"),
-            None => SUPPORT.to_string(),
-        };
-        chain.push((name.clone(), body));
-    }
-    let chain = chain
-        .iter()
-        .map(|(path, text)| (path.as_str(), text.as_str()))
-        .collect::<Vec<_>>();
-    assert_withheld("path chain past the budget", &finding(Mode::Draft, &chain)?);
     Ok(())
 }
 
@@ -352,5 +415,38 @@ fn a_crate_root_linked_to_an_indexed_file_withholds_draft_placement() -> Result<
     let files = [("src/lib.rs", OWN_PATH), ("support.rs", SUPPORT)];
     let found = finding_with_links(Mode::Draft, &files, &[("src/main.rs", "app/src/par.rs")])?;
     assert_withheld("root symlinked to an indexed file", &found);
+    Ok(())
+}
+
+/// #14116: a member that mounts one indexed file withholds placement from
+/// that file only. The glob in `app/src/par.rs` stays confined to its module
+/// while the member mounts `app/src/helper.rs`, and blocks credit again when
+/// the mounted file is `par.rs` itself.
+#[test]
+fn a_member_mounting_one_indexed_file_keeps_placement_for_the_others() -> Result<(), String> {
+    let mounts_helper = [(
+        "src/lib.rs",
+        "#[path = \"../../app/src/helper.rs\"]\nmod helper;\n",
+    )];
+    assert_credited(
+        "mounts helper.rs, draft",
+        &finding(Mode::Draft, &mounts_helper)?,
+    );
+    let nested = [
+        ("src/lib.rs", "mod inner;\n"),
+        (
+            "src/inner.rs",
+            "#[path = \"../../app/src/helper.rs\"]\nmod helper;\n",
+        ),
+    ];
+    assert_credited(
+        "child mounts helper.rs, draft",
+        &finding(Mode::Draft, &nested)?,
+    );
+    let mounts_par = [(
+        "src/lib.rs",
+        "#[path = \"../../app/src/par.rs\"]\nmod par;\n",
+    )];
+    assert_withheld("mounts par.rs, draft", &finding(Mode::Draft, &mounts_par)?);
     Ok(())
 }

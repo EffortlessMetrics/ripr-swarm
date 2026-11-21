@@ -1,0 +1,6 @@
+# A plain import of a verification-prelude crate's name keeps its glob foreign (#14116).
+[[extend]]
+id = "RIPR-SPEC-0369"
+fixtures = [
+  "fixtures/verification_prelude_glob_plain_import",
+]
