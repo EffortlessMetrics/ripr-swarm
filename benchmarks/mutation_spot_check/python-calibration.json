@@ -1,0 +1,44 @@
+{
+  "schema_version": "ripr-python-mutant-calibration-v1",
+  "issue": 12901,
+  "note": "Bounded in-repo Python real-mutant calibration (#12901). Subjects are the authored Python verdict-corpus projects; every mutant is a real source edit executed against the subject's own pytest suite and scored against a ripr check --diff verdict on the mutated line. Runtime outcomes are only caught/missed/unscoreable; ripr classifications are never rewritten as runtime outcomes.",
+  "subjects": [
+    {
+      "name": "authored-py-pytest-pricing",
+      "path": "fixtures/python-verdict-corpus/subjects/authored-py-pytest-pricing",
+      "test_command": ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
+    },
+    {
+      "name": "authored-py-grid-arithmetic",
+      "path": "fixtures/python-verdict-corpus/subjects/authored-py-grid-arithmetic",
+      "test_command": ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
+    },
+    {
+      "name": "authored-py-grid-boundary",
+      "path": "fixtures/python-verdict-corpus/subjects/authored-py-grid-boundary",
+      "test_command": ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
+    }
+  ],
+  "mutants": [
+    {"id": "pricing-shipping-ge-to-gt", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "    if subtotal_cents >= FREE_SHIPPING_CENTS:", "mutated": "    if subtotal_cents > FREE_SHIPPING_CENTS:"},
+    {"id": "pricing-tier-gold-ge-to-gt", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "    if points >= 5000:", "mutated": "    if points > 5000:"},
+    {"id": "pricing-discount-eq-to-ne", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: == -> !=", "original": "    if tier == \"gold\":", "mutated": "    if tier != \"gold\":"},
+    {"id": "pricing-discount-rate-10-to-20", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "arithmetic_operator", "mutator": "ConstantInExpression: 10 -> 20 in discount rate", "original": "        return subtotal_cents * 10 // 100", "mutated": "        return subtotal_cents * 20 // 100"},
+    {"id": "pricing-tax-rate-8-to-9", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "arithmetic_operator", "mutator": "ConstantInExpression: 8 -> 9 in tax rate", "original": "    return subtotal_cents * 8 // 100", "mutated": "    return subtotal_cents * 9 // 100"},
+    {"id": "pricing-total-plus-to-minus", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: + -> -", "original": "    return subtotal_cents + tax_cents(subtotal_cents)", "mutated": "    return subtotal_cents - tax_cents(subtotal_cents)"},
+    {"id": "pricing-parse-le-to-lt", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: <= -> <", "original": "    if value <= 0:", "mutated": "    if value < 0:"},
+    {"id": "pricing-loyalty-divisor-100-to-10", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "constant_replacement", "mutator": "ConstantReplacement: // 100 -> // 10", "original": "    return subtotal_cents // 100", "mutated": "    return subtotal_cents // 10"},
+    {"id": "pricing-bulk-ge-to-gt", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "    if quantity >= bulk_threshold:", "mutated": "    if quantity > bulk_threshold:"},
+    {"id": "pricing-bulk-factor-9-to-8", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "arithmetic_operator", "mutator": "ConstantInExpression: 9 -> 8 in bulk factor", "original": "        return unit_cents * quantity * 9 // 10", "mutated": "        return unit_cents * quantity * 8 // 10"},
+    {"id": "grid-line-total-mul-to-add", "subject": "authored-py-grid-arithmetic", "file": "grid_arithmetic/core.py", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "    return qty * price", "mutated": "    return qty + price"},
+    {"id": "grid-area-mul-to-add", "subject": "authored-py-grid-arithmetic", "file": "grid_arithmetic/core.py", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "    return width * height", "mutated": "    return width + height"},
+    {"id": "grid-scaled-mul-to-add", "subject": "authored-py-grid-arithmetic", "file": "grid_arithmetic/core.py", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "    return qty * unit", "mutated": "    return qty + unit"},
+    {"id": "grid-seconds-60-to-61", "subject": "authored-py-grid-arithmetic", "file": "grid_arithmetic/core.py", "operator_family": "constant_replacement", "mutator": "ConstantReplacement: 60 -> 61", "original": "    return minutes * 60", "mutated": "    return minutes * 61"},
+    {"id": "grid-tip-mul-to-add", "subject": "authored-py-grid-arithmetic", "file": "grid_arithmetic/core.py", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "    return bill * rate", "mutated": "    return bill + rate"},
+    {"id": "pricing-silver-rate-5-to-6", "subject": "authored-py-pytest-pricing", "file": "pricing/core.py", "operator_family": "arithmetic_operator", "mutator": "ConstantInExpression: 5 -> 6 in silver discount rate", "original": "        return subtotal_cents * 5 // 100", "mutated": "        return subtotal_cents * 6 // 100"},
+    {"id": "pricing-receipt-footer-text", "subject": "authored-py-pytest-pricing", "file": "pricing/receipts.py", "operator_family": "constant_replacement", "mutator": "ConstantReplacement: footer wording", "original": "    return f\"Thank you for shopping at {store_name}!\"", "mutated": "    return f\"Thanks for shopping at {store_name}!\""},
+    {"id": "boundary-is-adult-ge-to-gt", "subject": "authored-py-grid-boundary", "file": "grid_boundary/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "    return age >= 18", "mutated": "    return age > 18"},
+    {"id": "boundary-can-retire-ge-to-gt", "subject": "authored-py-grid-boundary", "file": "grid_boundary/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "    return age >= 67", "mutated": "    return age > 67"},
+    {"id": "boundary-overweight-ge-to-gt", "subject": "authored-py-grid-boundary", "file": "grid_boundary/core.py", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "    return grams >= 2000", "mutated": "    return grams > 2000"}
+  ]
+}

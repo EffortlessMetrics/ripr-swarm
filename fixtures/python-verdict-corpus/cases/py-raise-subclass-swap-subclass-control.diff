@@ -1,0 +1,9 @@
+diff --git a/vers/parse.py b/vers/parse.py
+--- a/vers/parse.py
++++ b/vers/parse.py
+@@ -11,4 +11,4 @@
+ def parse_strict(text):
+     if not text.strip():
+-        raise InvalidVersion("invalid version")
++        raise ValueError("invalid version")
+     return int(text)

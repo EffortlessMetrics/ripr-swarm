@@ -23,6 +23,8 @@ mod agent_policy_guidance;
 #[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
 #[path = "cli_smoke/agent_seam_preview_route.rs"]
 mod agent_seam_preview_route;
+#[path = "cli_smoke/argument_value_validation.rs"]
+mod argument_value_validation;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
@@ -65,8 +67,15 @@ mod diff_selection;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/discarded_matches.rs"]
 mod discarded_matches;
+// The fixtures assert the Rust + Python enablement tip, which only names
+// adapters compiled into this build.
+#[cfg(all(feature = "lang-rust", feature = "lang-python"))]
+#[path = "cli_smoke/doctor_subdirectory_root.rs"]
+mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/explicit_input_refusals.rs"]
+mod explicit_input_refusals;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(unix)]
@@ -86,6 +95,8 @@ mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
+#[path = "cli_smoke/json_refusal_next_steps.rs"]
+mod json_refusal_next_steps;
 #[path = "cli_smoke/leftover_check_honesty.rs"]
 mod leftover_check_honesty;
 #[path = "cli_smoke/leftover_hints.rs"]
@@ -95,6 +106,8 @@ mod leftover_status;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/legend_first_run.rs"]
 mod legend_first_run;
+#[path = "cli_smoke/missing_root_refusal.rs"]
+mod missing_root_refusal;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
@@ -125,6 +138,8 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[path = "cli_smoke/root_default_outputs.rs"]
+mod root_default_outputs;
 // Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
@@ -2794,6 +2809,54 @@ fn config_validate_hints_follow_the_parser_reason_not_source_text() -> Result<()
 }
 
 #[test]
+fn config_validate_rejects_an_override_for_an_excluded_package()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_external_workspace("config-override-exclude")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    for (dir, name) in [("one", "alpha"), ("two", "beta")] {
+        let package = root.join("members").join(dir);
+        std::fs::create_dir_all(package.join("src"))?;
+        std::fs::write(package.join("src/lib.rs"), "")?;
+        std::fs::write(
+            package.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )?;
+    }
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[[overrides]]\ncrate = \"beta\"\nseverity.findings.weakly_exposed = \"note\"\n",
+    )?;
+    let manifest = root.join("Cargo.toml");
+    let members = "[workspace]\nresolver = \"3\"\nmembers = [\"members/*\"]\n";
+    let validate = || {
+        run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["config", "validate"],
+        )
+    };
+
+    std::fs::write(&manifest, members)?;
+    let included = validate()?;
+    assert_success(&included);
+    let stdout = String::from_utf8(included.stdout)?;
+    assert!(stdout.contains("ripr.toml valid"), "{stdout}");
+    assert!(included.stderr.is_empty(), "{:?}", included.stderr);
+
+    std::fs::write(manifest, format!("{members}exclude = [\"members/two\"]\n"))?;
+    let excluded = validate()?;
+    assert_eq!(excluded.status.code(), Some(2), "{excluded:?}");
+    assert!(excluded.stdout.is_empty(), "{excluded:?}");
+    let stderr = String::from_utf8(excluded.stderr)?;
+    assert!(
+        stderr.contains("[[overrides]] crate = \"beta\" does not match a Cargo package"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("(known: alpha)"), "{stderr}");
+    Ok(())
+}
+
+#[test]
 fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("config-validate-parent")?;
@@ -3789,6 +3852,34 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
         stderr.contains("--suppression-policy applies to the findings-based check formats"),
         "stderr: {stderr}"
     );
+
+    // #15377: the refusal is a usage error, so the machine formats write no
+    // `run_status=analysis_failed` record an agent would read as an analyzer
+    // failure; stdout stays empty and stderr names the requested format.
+    for format in ["sarif", "agent", "json-terse", "sarif-compact"] {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "--format",
+            format,
+            "--suppression-policy",
+            &policy_arg,
+        ]);
+        assert_eq!(output.status.code(), Some(2), "{format}");
+        assert!(
+            output.stdout.is_empty(),
+            "{format}: stdout {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("--format {format} does not apply it")),
+            "{format}: stderr {stderr}"
+        );
+    }
     Ok(())
 }
 
@@ -4827,14 +4918,23 @@ fn context_selector_miss_emits_cli_refusal_only_for_json_request() -> Result<(),
     ]);
     let value = assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
     // `next` is never lifted from the miss prose, which embeds the selector:
-    // a selector shaped like a runnable command stays `null`.
-    assert_eq!(value["error"]["next"], serde_json::Value::Null);
+    // it is the listing command the owner composed from the typed run
+    // (#15260), and a selector shaped like a runnable command never reaches it.
+    let next = value["error"]["next"]["command"]
+        .as_str()
+        .ok_or("the selector miss must carry the owner's listing command")?
+        .to_string();
+    assert!(next.starts_with("ripr check --root "), "{next}");
+    assert!(next.ends_with(" --json"), "{next}");
+    assert_eq!(value["error"]["next"]["purpose"], "follow_stated_step");
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains(&format!("`{next}`")), "{message}");
     let hostile = "`ripr check --json` probe:nope.rs:1:absent-6834";
     let hostile_out = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", hostile, "--json",
     ]);
     let hostile_value = assert_cli_refusal(&hostile_out, "selector_miss", hostile, "")?;
-    assert_eq!(hostile_value["error"]["next"], serde_json::Value::Null);
+    assert_eq!(hostile_value["error"]["next"]["command"], next.as_str());
     let plain = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector,
     ]);
@@ -19306,7 +19406,8 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
         "--out-md",
         &missing_md.display().to_string(),
     ]);
-    assert_success(&missing);
+    // An unreadable required input writes the report, then refuses (#15254).
+    assert_eq!(missing.status.code(), Some(2));
     let missing_json =
         std::fs::read_to_string(&missing_out).map_err(|e| format!("read missing delta: {e}"))?;
     assert!(missing_json.contains("\"missing_current_input\": 1"));
@@ -25804,7 +25905,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         assert_success(&check);
         let artifact_text = std::fs::read_to_string(&artifact)
             .map_err(|err| format!("artifact was not written: {err}"))?;
-        assert!(artifact_text.contains("\"ripr-check-artifact-v1\""));
+        assert!(artifact_text.contains("\"ripr-check-artifact-v2\""));
         assert!(artifact_text.contains("\"identity\""));
         assert!(artifact_text.contains("\"diff_bytes_hash\""));
         assert_sample_diff_artifact(&artifact_text, &fixture.0, "draft")?;
@@ -26039,7 +26140,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult
         );
 
         // Unsupported schema version.
-        let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
+        let stale = original.replace("ripr-check-artifact-v2", "ripr-check-artifact-v1");
         assert_ne!(stale, original, "schema mutation must change the artifact");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
@@ -27492,10 +27593,12 @@ fn receipt_check_rejects_present_invalid_canonical_gap_id() -> Result<(), Box<dy
         write(identity)?;
         let bad = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
         assert_eq!(bad.status.code(), Some(2), "{label}: should exit 2");
-        assert!(
-            bad.stdout.is_empty(),
-            "{label}: stdout must be empty, got {}",
-            String::from_utf8_lossy(&bad.stdout)
+        // #15260: under `--json` the refusal is the shared document on stdout.
+        let refusal: serde_json::Value = serde_json::from_slice(&bad.stdout)?;
+        assert_eq!(refusal["status"], "refused", "{label}: {refusal:#}");
+        assert_eq!(
+            refusal["error"]["code"], "input_unusable",
+            "{label}: {refusal:#}"
         );
         let stderr = String::from_utf8_lossy(&bad.stderr);
         assert!(
@@ -31629,7 +31732,8 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
 
 /// #11598: `RIPR_QUIET` reaches the direct `ripr agent repair` phases: the
 /// narration and `wrote` lines drop, while the result (the attempt command)
-/// still prints. The control run without it narrates.
+/// and the output-location warning still print. The control run without it
+/// narrates.
 #[test]
 fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -31673,6 +31777,13 @@ fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
     assert!(
         quiet.contains("ripr: attempt next command: "),
         "the result must survive quiet: {quiet}"
+    );
+    // #15282 item 8: the output-location warning is not narration. A
+    // redirect into the worktree fails the attempt, and quiet runs are the
+    // agent runs that redirect, so it stays (the help says so).
+    assert!(
+        quiet.contains("ripr: write this command's output outside the repo"),
+        "the output-location warning must survive quiet: {quiet}"
     );
     Ok(())
 }
@@ -36956,9 +37067,10 @@ fn pr_comments_raw_stdin_from_endless_stream_is_refused_at_input_limit()
     Ok(())
 }
 
-/// These two flags fold an unreadable artifact into their established
-/// "missing" state rather than reporting the read error, so the limit never
-/// reaches stderr. What the bounded reader changes for them is that the
+/// These two flags fold an unreadable artifact into a "missing" state rather
+/// than reporting the read error, so the limit never reaches stderr; both now
+/// refuse with exit 2 (`pr-summary --baseline` since #15254, as an explicitly
+/// named unusable input). What the bounded reader changes for them is that the
 /// command finishes with its ordinary exit code instead of being ended for lack of
 /// memory (no exit code) or outliving the deadline.
 #[cfg(unix)]
@@ -36968,7 +37080,7 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
     let cwd = unique_temp_workspace("endless-artifact-degrade");
     std::fs::create_dir_all(&cwd)?;
     let cases: [(&[&str], i32); 2] = [
-        (&["pr-summary", "--baseline", "/dev/zero"], 0),
+        (&["pr-summary", "--baseline", "/dev/zero"], 2),
         (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
     ];
     let result = (|| {
@@ -37180,8 +37292,11 @@ fn doctor_does_not_run_a_repository_selected_toolchain_path() -> Result<(), Stri
                 return Ok(());
             }
             std::fs::remove_file(&marker).map_err(|err| format!("reset marker: {err}"))?;
+            // `--root .`: the fixture sits under the test TMPDIR, inside this
+            // repository's Cargo workspace, which implicit doctor would widen
+            // to exactly as `ripr check` does (#15304).
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .arg("doctor")
+                .args(["doctor", "--root", "."])
                 .current_dir(&root)
                 .env_remove("RUSTUP_TOOLCHAIN")
                 .output()
@@ -37245,7 +37360,9 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
             dirs.extend(std::env::split_paths(&path));
             let path = std::env::join_paths(dirs).map_err(|err| format!("PATH: {err}"))?;
             let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
-                .args(["--verbose", "doctor"])
+                // `--root .`: diagnose the fixture, not the enclosing Cargo
+                // workspace that holds the test TMPDIR (#15304).
+                .args(["--verbose", "doctor", "--root", "."])
                 .current_dir(&root)
                 .env("PATH", path)
                 .output()
@@ -38009,8 +38126,9 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
 }
 
 /// #8652: through the public `check` path, an unqualified base that only
-/// exists as a remote-tracking ref names that full ref, and the suggested
-/// ref then loads instead of failing again.
+/// exists as a remote-tracking ref names that ref (#15484: as `origin/topic`,
+/// since that short name resolves to it), and the suggested ref then loads
+/// instead of failing again.
 #[test]
 fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -38047,7 +38165,8 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--base refs/remotes/origin/topic"),
+        stderr.contains("The fetched branch is `origin/topic`")
+            && stderr.contains("--base origin/topic`"),
         "the public failure must name the resolvable tracking ref: {stderr}"
     );
     let suggested = run_ripr(&[
@@ -38055,7 +38174,7 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
         "--root",
         &root.display().to_string(),
         "--base",
-        "refs/remotes/origin/topic",
+        "origin/topic",
     ]);
     assert!(
         suggested.status.success(),
@@ -38111,7 +38230,7 @@ fn check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch()
                 && stderr.contains(&format!("Pass the range's start: `--base {start}`")),
             "{range}: the refusal must name the range and the base to pass: {stderr}"
         );
-        for wrong in ["git fetch", "Check the spelling", "the fetched branch"] {
+        for wrong in ["git fetch", "Check the spelling", "fetched branch"] {
             assert!(
                 !stderr.contains(wrong),
                 "{range}: a range must get no `{wrong}` advice: {stderr}"
@@ -38645,4 +38764,107 @@ fn tree_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
         }
     }
     Ok(found)
+}
+
+/// #15326: a clean checkout of any default branch whose base resolves to the
+/// remote-tracking ref (`origin/<name>`) is on the comparison base, in the same
+/// words the bare-name `main` case gets; no `--worktree` advice applies to a
+/// clean tree. A feature branch with an empty diff keeps its own wording.
+#[test]
+fn check_clean_default_branch_with_remote_base_says_comparison_base() -> Result<(), String> {
+    for name in ["master", "trunk"] {
+        let up = unique_temp_workspace(&format!("remote-base-up-{name}"));
+        std::fs::create_dir_all(up.join("src")).map_err(|e| format!("create src: {e}"))?;
+        run_git(&up, &["init", "-b", name])?;
+        run_git(&up, &["config", "user.email", "test@test.com"])?;
+        run_git(&up, &["config", "user.name", "Test"])?;
+        std::fs::write(
+            up.join("src/lib.rs"),
+            "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+        )
+        .map_err(|e| format!("write lib.rs: {e}"))?;
+        std::fs::write(
+            up.join("Cargo.toml"),
+            "[package]\nname = \"remote-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|e| format!("write Cargo.toml: {e}"))?;
+        run_git(&up, &["add", "."])?;
+        run_git(&up, &["commit", "-m", "initial"])?;
+        run_git(&up, &["commit", "--allow-empty", "-m", "second"])?;
+        let up_str = up.to_string_lossy().into_owned();
+        let cl = unique_temp_workspace(&format!("remote-base-cl-{name}"));
+        let cl_str = cl.to_string_lossy().into_owned();
+        run_git(&up, &["clone", "-q", &up_str, &cl_str])?;
+        let output = run_ripr(&["check", "--root", &cl_str]);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let on_base = format!("you are on `origin/{name}`, which is the comparison base");
+        if !stdout.contains(&on_base) || stdout.contains("--worktree") {
+            return Err(format!(
+                "{name}: clean default branch must say it is on the comparison base without --worktree; got:\n{stdout}"
+            ));
+        }
+        // Discriminating negative: a feature branch at the same commit is not
+        // the base branch, so the on-base wording must not appear.
+        run_git(&cl, &["checkout", "-q", "-b", "feature"])?;
+        let feature = run_ripr(&["check", "--root", &cl_str]);
+        assert_success(&feature);
+        let feature_out = String::from_utf8_lossy(&feature.stdout).into_owned();
+        if feature_out.contains("which is the comparison base") {
+            return Err(format!(
+                "{name}: a feature branch must not claim to be the comparison base; got:\n{feature_out}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #15326 / #7644: a feature-branch clone whose `origin/HEAD` tracks the
+/// feature branch resolves the base to `origin/feature` at HEAD's commit, the
+/// same shape as a default-branch clone, but the real base is elsewhere. It
+/// must keep the probed `--base` advice, not claim to be on the comparison base.
+#[test]
+fn check_feature_branch_clone_with_remote_base_keeps_base_candidate_advice() -> Result<(), String> {
+    let up = unique_temp_workspace("remote-base-up-feature-clone");
+    std::fs::create_dir_all(up.join("src")).map_err(|e| format!("create src: {e}"))?;
+    run_git(&up, &["init", "-b", "trunk"])?;
+    run_git(&up, &["config", "user.email", "test@test.com"])?;
+    run_git(&up, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        up.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|e| format!("write lib.rs: {e}"))?;
+    std::fs::write(
+        up.join("Cargo.toml"),
+        "[package]\nname = \"remote-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    run_git(&up, &["add", "."])?;
+    run_git(&up, &["commit", "-m", "initial"])?;
+    run_git(&up, &["checkout", "-q", "-b", "feature"])?;
+    std::fs::write(
+        up.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a - b }\n",
+    )
+    .map_err(|e| format!("write lib.rs: {e}"))?;
+    run_git(&up, &["commit", "-am", "feature change"])?;
+    let up_str = up.to_string_lossy().into_owned();
+    let cl = unique_temp_workspace("remote-base-cl-feature-clone");
+    let cl_str = cl.to_string_lossy().into_owned();
+    run_git(&up, &["clone", "-q", &up_str, &cl_str])?;
+    let output = run_ripr(&["check", "--root", &cl_str]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !stdout.contains("`origin/feature`") {
+        return Err(format!(
+            "fixture precondition: the default base must resolve to origin/feature; got:\n{stdout}"
+        ));
+    }
+    if stdout.contains("which is the comparison base") || !stdout.contains("--base origin/trunk") {
+        return Err(format!(
+            "a feature-branch clone must keep the probed --base advice; got:\n{stdout}"
+        ));
+    }
+    Ok(())
 }

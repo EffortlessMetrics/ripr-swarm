@@ -326,6 +326,17 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             candidate_index.base_may_rebind_trusted_macros(),
         )
     });
+    // #14936: a deleted early return giving the value the remaining tail
+    // gives is not discriminated by a pin on the owner's return.
+    context.deleted_guard_agreement = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::deleted_guard_agreement(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
     // #15104: the legacy constant-tail edge reads only the new-side owner,
     // so it asks the shared owner's gate decision whether a test may run a
     // `cfg` twin instead, only for a probe that edge would read.
@@ -365,6 +376,17 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             changed,
             index,
             candidate_index.owner_pin_syntax(),
+            candidate_index.module_declarations(),
+        )
+    });
+    // #14816: an `if` condition forced to a literal `true`/`false`, read
+    // from the diff so the base-side owner is established.
+    context.literal_condition = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        super::classify::literal_condition_change(
+            probe,
+            owner,
+            changed,
+            index,
             candidate_index.module_declarations(),
         )
     });
@@ -1370,9 +1392,9 @@ pub(super) mod tests {
         );
     }
 
-    // #7532: withholding as `static_unknown` reports the misses `reveal`
-    // recorded, not the `no_call_path` the `no_static_path` annotation wrote,
-    // and not none.
+    // The two parse functions leave both callers' paths to op unresolved.
+    // Withholding clears the file-only no_call_path, including for the
+    // assertion-free caller (#7532, #14808).
     #[test]
     fn given_withheld_helper_uniqueness_finding_then_rows_keep_reveal_misses() {
         let unasserted = test_calling("src/op.rs", "accepts_wildcard", "parse", "parse(\">=1.0\")");
@@ -1403,11 +1425,7 @@ pub(super) mod tests {
             rows,
             vec![
                 ("accepts_caret", Some(RelationReason::SameTestFile), None),
-                (
-                    "accepts_wildcard",
-                    Some(RelationReason::SameTestFile),
-                    Some(RelatedTestMiss::NoAssertion)
-                ),
+                ("accepts_wildcard", Some(RelationReason::SameTestFile), None),
             ]
         );
     }

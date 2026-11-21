@@ -58,10 +58,30 @@ pub(crate) struct CustomLibRoot {
 type ImportNames = BTreeMap<(PathBuf, PathBuf), Vec<String>>;
 /// Foreign-export answers per (owner crate root, item name).
 type ForeignExports = BTreeMap<(PathBuf, String), bool>;
+/// Name-independent library-export summaries per owner crate root.
+type LibraryExportSummaries = BTreeMap<PathBuf, Arc<LibraryExportSummary>>;
 /// Selected library root and its witnessed literal macro-export lines.
 type LibraryMacroExports = (PathBuf, BTreeMap<String, usize>);
 /// Negative-only export witnesses per (consumer directory, imported crate).
 type ImportedMacroExports = BTreeMap<(PathBuf, String), Option<Arc<LibraryMacroExports>>>;
+
+/// Everything `library_may_export_other` reads from an owner's library that
+/// does not depend on the item name asked about (#15329). Computed once per
+/// owner crate root so each further name costs only a scan of the retained
+/// text, not a re-mask and re-extraction of every library file.
+#[derive(Debug, Default)]
+pub(crate) struct LibraryExportSummary {
+    /// A name-independent fail-closed condition fired (no source directory,
+    /// unresolved `include!`, a file without a crate root, or a library file
+    /// that uses `include!`). The remaining fields are then empty.
+    pub(crate) always_exports: bool,
+    /// Comment- and string-masked source of every library file.
+    pub(crate) masked_files: Vec<String>,
+    /// Module names the library declares and no import also binds.
+    pub(crate) modules: BTreeSet<String>,
+    /// The `use ..;` text of every plain `pub use` in the owner's files.
+    pub(crate) public_uses: Vec<String>,
+}
 
 /// Per-analysis cache of member-crate import names, keyed by the test file's
 /// directory and the owner's crate root. Clones share the cache.
@@ -75,6 +95,11 @@ pub(crate) struct MemberCrates {
     /// Per (crate root, item name): whether the library may export a
     /// foreign item of that name, computed by the classifier.
     foreign_exports: Arc<Mutex<ForeignExports>>,
+    /// Per crate root: the name-independent part of the same question, so the
+    /// per-name memo above only ever scans retained text (#15329). A second
+    /// map beside `foreign_exports` because the summary is keyed by owner
+    /// alone and shared by every name.
+    library_exports: Arc<Mutex<LibraryExportSummaries>>,
     /// All possible library target roots in the selected manifest epoch.
     /// Missing inventory authority never establishes binary-only ownership.
     library_roots: Arc<OnceLock<Option<BTreeSet<PathBuf>>>>,
@@ -93,6 +118,7 @@ impl MemberCrates {
             names: Arc::default(),
             library_names: Arc::default(),
             foreign_exports: Arc::default(),
+            library_exports: Arc::default(),
             library_roots: Arc::default(),
             imported_macro_exports: Arc::default(),
             custom_lib_roots: Arc::default(),
@@ -128,6 +154,27 @@ impl MemberCrates {
             known.insert(key, answer);
         }
         answer
+    }
+
+    /// `compute`'s summary for `owner_root`, computed once per analysis.
+    pub(crate) fn library_export_summary(
+        &self,
+        owner_root: &Path,
+        compute: impl FnOnce() -> LibraryExportSummary,
+    ) -> Arc<LibraryExportSummary> {
+        if let Some(known) = self
+            .library_exports
+            .lock()
+            .ok()
+            .and_then(|known| known.get(owner_root).cloned())
+        {
+            return known;
+        }
+        let summary = Arc::new(compute());
+        if let Ok(mut known) = self.library_exports.lock() {
+            known.insert(owner_root.to_path_buf(), Arc::clone(&summary));
+        }
+        summary
     }
 
     /// The crate identifiers through which `test_file`'s crate imports the
@@ -737,7 +784,16 @@ fn selected_library_roots(read_root: &Path) -> Option<BTreeSet<PathBuf>> {
 fn rust_files_indexed(directory: &Path, indexed: &std::collections::BTreeSet<PathBuf>) -> bool {
     let mut pending = vec![directory.to_path_buf()];
     while let Some(current) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&current) else {
+        // #15753: a relative `--root .` makes the root package directory the
+        // empty path, which `read_dir` refuses. Read it as `.`, the way
+        // `snapshot_root` does; entry paths stay root-relative after
+        // `lexical`, matching the indexed set.
+        let readable = if current.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            current.as_path()
+        };
+        let Ok(entries) = std::fs::read_dir(readable) else {
             return false;
         };
         for entry in entries {

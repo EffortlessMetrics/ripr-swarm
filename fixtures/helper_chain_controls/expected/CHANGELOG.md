@@ -443,3 +443,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — helper_chain_controls (34)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless helper_chain_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

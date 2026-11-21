@@ -398,6 +398,9 @@ fn durable_attempt_document(
         limitations.insert(0, limitation);
     }
     limitations.extend(route_limitations);
+    if let Some(limitation) = route_projection_limitation(&command_routes) {
+        limitations.push(limitation.to_string());
+    }
     if let Some(limitation) =
         crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
     {
@@ -410,7 +413,7 @@ fn durable_attempt_document(
     limitations.push("ordinary next-action displays bind the portable root `.` and are presentation only; the host-local root path is intentionally not projected and a display is never execution authority; trust-bound or store-qualified continuations keep their persisted advanced spelling".to_string());
     // #8766: a restart the shared repair gate refuses is named as by-hand work.
     limitations.extend(selected.restart_withheld.clone());
-    json!({
+    let mut document = json!({
         "schema_version": REPAIR_ATTEMPT_SCHEMA_VERSION,
         "attempt_id": manifest.repair_attempt_id.as_str(),
         "origin": "durable_store",
@@ -444,7 +447,15 @@ fn durable_attempt_document(
             "receipt": format!("ripr://receipt/{}", manifest.repair_attempt_id.as_str()),
         },
         "claim_boundary": "Read-only projection of one durable repair attempt from this session's root store, loaded and digest-validated by the shared repair-attempt authority on every read. MCP did not create it and executes nothing it names; the host-local root path is intentionally not projected.",
-    })
+    });
+    // Retained limitations, non-claims and routes are producer text that may
+    // spell the checkout; `next_command` keeps its own portable-root contract.
+    for field in ["limitations", "non_claims", "command_routes"] {
+        if let Some(entry) = document.get_mut(field) {
+            project_root_relative(entry, root);
+        }
+    }
+    document
 }
 
 fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
@@ -668,7 +679,7 @@ pub(super) fn durable_receipt_document(
     {
         limitations.insert(0, limitation);
     }
-    json!({
+    let mut projected = json!({
         "schema_version": RECEIPT_STATUS_SCHEMA_VERSION,
         "receipt_id": attempt_id,
         "status": status,
@@ -696,7 +707,276 @@ pub(super) fn durable_receipt_document(
         "links": {
             "repair_attempt": format!("ripr://repair-attempt/{attempt_id}"),
         },
-    })
+    });
+    // The embedded CLI receipt keeps host-absolute paths on disk; the MCP
+    // projection never returns them (ADR 0022).
+    project_root_relative(&mut projected, root);
+    projected
+}
+
+/// Rewrite every string in `value` that spells the host-local repository root
+/// into its root-relative form: `<root>/a/b` becomes `a/b`, a bare `<root>`
+/// becomes `.`, and a bare root token before whitespace, end or punctuation
+/// becomes `.` (so `--root <root> check` stays runnable from the root).
+/// Both the spelling the server was given and its canonical form are matched,
+/// because the CLI records the canonical root in receipts and manifests.
+fn project_root_relative(value: &mut Value, root: &Path) {
+    let mut spellings = vec![root.display().to_string()];
+    if let Ok(canonical) = std::fs::canonicalize(root) {
+        spellings.push(canonical.display().to_string());
+    }
+    project_root_relative_with(value, &root_spellings(&spellings));
+}
+
+/// Whether `spelling` is a Windows-form root: one that starts with a drive
+/// letter and colon, a verbatim prefix (backslash-backslash-question-backslash
+/// or `//?/`) or a UNC double-backslash prefix. Only these forms treat a
+/// backslash as a separator; on any other root a backslash is a legal literal
+/// name character (a Unix root may even end in one).
+fn is_windows_root_form(spelling: &str) -> bool {
+    let body = spelling
+        .strip_prefix("\\\\?\\")
+        .or_else(|| spelling.strip_prefix("//?/"))
+        .unwrap_or(spelling);
+    let bytes = body.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    drive || spelling.starts_with("\\\\") || spelling.starts_with("//?/")
+}
+
+/// One matchable spelling of the repository root. `windows` is classified
+/// once from the raw spelling it was derived from, so a forward-slash twin of
+/// a UNC or verbatim root (`//server/share`) still treats a backslash as a
+/// separator, while a Unix root (even `//x/y`) never does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RootSpelling {
+    text: String,
+    windows: bool,
+}
+
+/// Normalize root spellings: add the forward-slash form, trim trailing
+/// separators, drop empty or filesystem-root spellings (rewriting those would
+/// corrupt every path), dedupe, and order longest first. Backslashes are
+/// trimmed and normalized only for Windows-form roots; a non-Windows root
+/// keeps them literal.
+fn root_spellings(raw: &[String]) -> Vec<RootSpelling> {
+    let mut out: Vec<RootSpelling> = Vec::new();
+    let mut push = |candidate: &str, windows: bool| {
+        if !out.iter().any(|existing| existing.text == candidate) {
+            out.push(RootSpelling {
+                text: candidate.to_string(),
+                windows,
+            });
+        }
+    };
+    for spelling in raw {
+        let windows = is_windows_root_form(spelling);
+        let separators: &[char] = if windows { &['/', '\\'] } else { &['/'] };
+        // Windows verbatim roots also appear without their prefix; a verbatim
+        // UNC root (`\\?\UNC\server\share`) appears as `\\server\share`.
+        let mut forms = vec![spelling.clone()];
+        if windows {
+            for verbatim in ["\\\\?\\", "//?/"] {
+                if let Some(stripped) = spelling.strip_prefix(verbatim) {
+                    if let Some(share) = stripped
+                        .strip_prefix("UNC\\")
+                        .or_else(|| stripped.strip_prefix("UNC/"))
+                    {
+                        forms.push(format!("\\\\{share}"));
+                    } else {
+                        forms.push(stripped.to_string());
+                    }
+                }
+            }
+        }
+        for form in forms {
+            let mut candidates = vec![form.clone()];
+            if windows {
+                candidates.push(form.replace('\\', "/"));
+            }
+            for candidate in candidates {
+                let trimmed = candidate.trim_end_matches(separators);
+                let body = trimmed
+                    .strip_prefix("\\\\?\\")
+                    .or_else(|| trimmed.strip_prefix("//?/"))
+                    .unwrap_or(trimmed);
+                let bytes = body.as_bytes();
+                let drive = windows
+                    && bytes.len() > 2
+                    && bytes[0].is_ascii_alphabetic()
+                    && bytes[1] == b':'
+                    && matches!(bytes[2], b'/' | b'\\');
+                let unc = windows && body.len() > 2 && body.starts_with("\\\\");
+                // The verbatim UNC spelling itself (`\\?\UNC\server\share`).
+                let verbatim_unc = windows
+                    && body.len() < trimmed.len()
+                    && body.len() > 4
+                    && (body.starts_with("UNC\\") || body.starts_with("UNC/"));
+                if !(body.starts_with('/') || drive || unc || verbatim_unc) || body.ends_with(':') {
+                    continue;
+                }
+                push(trimmed, windows);
+                if drive {
+                    // Drive letters compare case-insensitively.
+                    let mut swapped = trimmed.to_string();
+                    let offset = trimmed.len() - body.len();
+                    let letter = bytes[0] as char;
+                    let other = if letter.is_ascii_uppercase() {
+                        letter.to_ascii_lowercase()
+                    } else {
+                        letter.to_ascii_uppercase()
+                    };
+                    swapped.replace_range(offset..=offset, &other.to_string());
+                    push(&swapped, windows);
+                }
+            }
+        }
+    }
+    out.sort_by_key(|spelling| std::cmp::Reverse(spelling.text.len()));
+    out
+}
+
+fn is_path_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '/' | '\\')
+}
+
+fn project_root_text(text: &str, root: &RootSpelling) -> String {
+    let spelling = root.text.as_str();
+    if text == spelling {
+        return ".".to_string();
+    }
+    // A backslash separates components only after a Windows-form root.
+    let windows = root.windows;
+    let is_separator = |c: char| c == '/' || (windows && c == '\\');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut previous: Option<char> = None;
+    while let Some(index) = rest.find(spelling) {
+        let (head, tail) = rest.split_at(index);
+        out.push_str(head);
+        let after_root = &tail[spelling.len()..];
+        // A `file://` scheme or extra leading slashes sit before the root; they
+        // are part of the same path token, not a preceding path component.
+        let token_len = out.trim_end_matches('/').len();
+        let slashes = out.len() - token_len;
+        let token_start = &out[..token_len];
+        let lead_char = token_start.chars().next_back();
+        let scheme = slashes >= 2 && token_start.ends_with("file:");
+        // `https:///root/x` keeps its scheme and slashes; only a bare leading
+        // `//root` or a `file://` prefix is dropped.
+        let keep_scheme_slashes = slashes >= 1 && !scheme && lead_char == Some(':');
+        let leading = slashes >= 1
+            && !scheme
+            && !keep_scheme_slashes
+            && lead_char.is_none_or(|c| !is_path_char(c));
+        let before = if scheme {
+            token_start.trim_end_matches("file:").chars().next_back()
+        } else if leading || keep_scheme_slashes {
+            lead_char
+        } else {
+            out.chars().next_back()
+        }
+        .or(previous);
+        let start_ok = before.is_none_or(|c| !is_path_char(c));
+        let next = after_root.chars().next();
+        // A run of dots (sentence end or ellipsis) is punctuation, not a name.
+        let trailing_dots = after_root.trim_start_matches('.');
+        let sentence_dots = next == Some('.')
+            && trailing_dots
+                .chars()
+                .next()
+                .is_none_or(|c| !is_path_char(c));
+        if !start_ok || next.is_some_and(|c| !is_separator(c) && is_path_char(c) && !sentence_dots)
+        {
+            // Not a whole-root occurrence (sibling prefix or longer path).
+            out.push_str(spelling);
+            previous = spelling.chars().next_back();
+            rest = after_root;
+            continue;
+        }
+        if keep_scheme_slashes && spelling.starts_with('/') {
+            // The root's own leading slash completed the host-less `://`.
+            out.push('/');
+        }
+        if scheme {
+            out.truncate(token_len - "file:".len());
+        } else if leading {
+            out.truncate(token_len);
+        }
+        if next.is_some_and(is_separator) {
+            // Skip the whole separator run: `<root>//x` names `x`, never the
+            // absolute `/x`.
+            rest = after_root.trim_start_matches(is_separator);
+            previous = None;
+            // A root that starts the string value makes the value a path, so
+            // the remainder is a relative path kept verbatim, even a child name
+            // that begins with whitespace or punctuation (` artifacts/x`,
+            // `;x`, `,x`); only an empty remainder is the root itself, `.`.
+            // Mid-string (prose or a command), `<root>/` names the root when
+            // nothing path-like follows: end of string, whitespace, or a prose
+            // punctuation character followed by whitespace or end. So
+            // `--root <root>/ check` stays runnable as `--root . check`.
+            let at_value_start = out.is_empty();
+            let mut chars = rest.chars();
+            let names_root = match chars.next() {
+                None => true,
+                Some(_) if at_value_start => false,
+                Some(c) if c.is_whitespace() => true,
+                Some(c) => {
+                    matches!(c, ',' | ';' | ':' | ')' | '"' | '\'' | '`')
+                        && chars.next().is_none_or(char::is_whitespace)
+                }
+            };
+            if names_root {
+                out.push('.');
+            }
+        } else {
+            // A bare root token (followed by whitespace, end or punctuation)
+            // stands for the repository root itself, which is `.`.
+            out.push('.');
+            rest = after_root;
+            previous = Some('.');
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn project_root_string(text: &str, spellings: &[RootSpelling]) -> String {
+    let mut text = text.to_string();
+    for spelling in spellings {
+        if text.contains(spelling.text.as_str()) {
+            text = project_root_text(&text, spelling);
+        }
+    }
+    text
+}
+
+/// Walk strings and object keys alike.
+fn project_root_relative_with(value: &mut Value, spellings: &[RootSpelling]) {
+    match value {
+        Value::String(text) => *text = project_root_string(text, spellings),
+        Value::Array(items) => {
+            for item in items {
+                project_root_relative_with(item, spellings);
+            }
+        }
+        Value::Object(map) => {
+            let entries = std::mem::take(map);
+            for (key, mut item) in entries {
+                project_root_relative_with(&mut item, spellings);
+                map.insert(project_root_string(&key, spellings), item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Command routes are rewritten with the root projected away, so they are only
+/// runnable from the repository root.
+fn route_projection_limitation(routes: &[Value]) -> Option<&'static str> {
+    (!routes.is_empty()).then_some(
+        "command_routes project the host-local root as `.` and repository-relative paths (the root path is not returned); run them from the repository root",
+    )
 }
 
 /// How an agent re-checks its own test edit. ripr never runs the tests; the
@@ -722,6 +1002,13 @@ pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
     })
 }
 
+/// True when `token` can be pasted into a shell command unquoted.
+fn shell_safe_token(token: &str) -> bool {
+    !token
+        .chars()
+        .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
+}
+
 /// The one machine-readable next step for a refused `ripr_prepare_repair`,
 /// derived from the same typed reason the shared gate produced. It adds no
 /// verdict: a terminal refusal never becomes a route the gate refused.
@@ -730,6 +1017,7 @@ fn refusal_next(
     class: &str,
     canonical_id: &str,
     stub_route: Option<&(String, usize, &'static str)>,
+    stub_seam_id: Option<&str>,
     terminal_static_limit: Option<&Value>,
 ) -> Value {
     let gap_route = json!({
@@ -739,7 +1027,7 @@ fn refusal_next(
     let (kind, detail, mcp, verify) = match reason {
         "seam_already_gripped" if class == "exposed" => (
             "nothing_to_do",
-            "existing tests already grip this seam; no static gap remains to repair",
+            "nothing to do: existing tests already grip this seam, so the change is already pinned and no static gap remains to repair. This is the closed-gap success state; isError only means no repair transaction was created",
             Value::Null,
             Value::Null,
         ),
@@ -808,19 +1096,39 @@ fn refusal_next(
     // `ripr repair` names: the shared resolver derives the test skeleton from
     // the changed code. Guidance only: it grants no repair readiness. A path
     // that would need shell quoting names no command rather than a wrong one.
+    // An unquotable seam id names no command either, never the `--at` form
+    // that the id replaced because it refuses as ambiguous.
+    let command = match (stub_route, stub_seam_id) {
+        (Some(_), Some(id)) => {
+            shell_safe_token(id).then(|| format!("ripr agent stub --seam-id {id}"))
+        }
+        (Some((file, line, family)), None) => shell_safe_token(file)
+            .then(|| format!("ripr agent stub --at {file}:{line} --kind {family}")),
+        (None, _) => None,
+    };
     if matches!(reason, "seam_not_found" | "seam_ambiguous")
-        && let Some((file, line, family)) = stub_route
-        && !file
-            .chars()
-            .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
+        && let Some(command) = command
     {
         next["stub_route"] = json!({
-            "command": format!("ripr agent stub --at {file}:{line} --kind {family}"),
+            "command": command,
             "run_from": "the repository root",
             "note": "writes nothing without --write; derives a test skeleton from the changed code. Fill its todo!() values by hand, then re-check with after_editing_tests. This route does not make the item repair-ready.",
         });
     }
     next
+}
+
+/// The next step for a repair start held only by an uncommitted inline test
+/// target (#11397): commit or stash that file, as `ripr repair` says, then
+/// refresh. Refreshing the unchanged tree cannot lift the hold.
+fn held_target_next(file: &str) -> Value {
+    json!({
+        "kind": "commit_then_refresh",
+        "reason": super::repair_admission::SEAM_GATE_REFUSED,
+        "detail": format!("the repair start is held because `{file}` has uncommitted changes; commit or stash `{file}`, then run ripr_refresh again. Re-running ripr_refresh on the unchanged tree returns the same refusal"),
+        "mcp": { "tool": "ripr_refresh", "arguments": {} },
+        "after_editing_tests": Value::Null,
+    })
 }
 
 impl WorkspaceSession {
@@ -865,9 +1173,18 @@ impl WorkspaceSession {
                     .unwrap_or(""),
                 &item.canonical_id,
                 item.stub_route.as_ref(),
+                item.stub_seam_id.as_deref(),
                 item.terminal_static_limit().as_ref(),
             );
             let mut next = next;
+            // A seam held only by an uncommitted inline test target: a refresh
+            // of the same tree reproduces the refusal, so the step is the
+            // commit the CLI names, not an edit-and-recheck loop.
+            if reason == super::repair_admission::SEAM_GATE_REFUSED
+                && let Some(file) = readiness.held_file.as_deref()
+            {
+                next = held_target_next(file);
+            }
             if next["after_editing_tests"].is_object() {
                 next["after_editing_tests"] = verify_after_editing_tests(snapshot.base.as_deref());
             }
@@ -1300,6 +1617,275 @@ pub(super) mod injected_prepare_panic {
 
 #[cfg(test)]
 pub(super) mod tests {
+
+    fn projected(text: &str, roots: &[&str]) -> String {
+        let spellings = root_spellings(&roots.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+        let mut value = Value::String(text.to_string());
+        project_root_relative_with(&mut value, &spellings);
+        value.as_str().unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn root_projection_matches_given_and_canonical_spellings() {
+        let roots = ["/var/w/repo-link", "/private/var/w/repo"];
+        assert_eq!(projected("/var/w/repo-link/a/b.json", &roots), "a/b.json");
+        assert_eq!(
+            projected("/private/var/w/repo/a/b.json", &roots),
+            "a/b.json"
+        );
+        assert_eq!(projected("/private/var/w/repo", &roots), ".");
+    }
+
+    #[test]
+    fn root_projection_never_rewrites_a_filesystem_root() {
+        assert_eq!(projected("/usr/lib/x", &["/"]), "/usr/lib/x");
+        assert!(root_spellings(&["/".to_string(), "".to_string()]).is_empty());
+        // A relative root such as `.` must never rewrite every dot.
+        assert!(root_spellings(&[".".to_string(), "repo".to_string()]).is_empty());
+        assert_eq!(projected("a.b/c.d", &["."]), "a.b/c.d");
+    }
+
+    #[test]
+    fn root_projection_trims_trailing_separators() {
+        assert_eq!(projected("/w/repo/a/b", &["/w/repo/"]), "a/b");
+        assert_eq!(projected("/w/repo", &["/w/repo/"]), ".");
+    }
+
+    #[test]
+    fn root_projection_leaves_sibling_prefixes_alone() {
+        assert_eq!(projected("/w/repo2/x", &["/w/repo"]), "/w/repo2/x");
+        assert_eq!(projected("/q/w/repo/x", &["/w/repo"]), "/q/w/repo/x");
+    }
+
+    #[test]
+    fn root_projection_keeps_bare_root_arguments_runnable() {
+        assert_eq!(
+            projected("ripr check --root /w/repo check", &["/w/repo"]),
+            "ripr check --root . check"
+        );
+        assert_eq!(projected("see /w/repo...", &["/w/repo"]), "see ....");
+        assert_eq!(projected("see /w/repo… ", &["/w/repo"]), "see .… ");
+        assert_eq!(projected("https:///w/repo/x", &["/w/repo"]), "https:///x");
+    }
+
+    #[test]
+    fn root_projection_keeps_unix_backslashes_literal() {
+        // On Unix a backslash is a legal name character, so a root ending in
+        // one keeps it, and a backslash after a Unix root is not a separator.
+        let unix_root = "/w/repo\\";
+        assert_eq!(
+            root_spellings(&[unix_root.to_string()]),
+            vec![RootSpelling {
+                text: unix_root.to_string(),
+                windows: false,
+            }]
+        );
+        assert_eq!(
+            projected("/w/repo\\/target/result.json", &[unix_root]),
+            "target/result.json"
+        );
+        assert_eq!(projected("/w/repo\\", &[unix_root]), ".");
+        // A Windows-form root still trims and normalizes its backslashes.
+        let up = 'C';
+        assert_eq!(
+            projected(
+                &format!("{up}:/w/repo/a.json"),
+                &[format!("{up}:\\w\\repo\\").as_str()]
+            ),
+            "a.json"
+        );
+        // The `/w/repo` sibling with a literal backslash name is untouched.
+        assert_eq!(
+            projected("/w/repo\\x/a.json", &["/w/repo"]),
+            "/w/repo\\x/a.json"
+        );
+        assert_eq!(projected("/w/repo/a\\b.json", &["/w/repo"]), "a\\b.json");
+    }
+
+    #[test]
+    fn root_projection_never_inserts_a_dot_before_a_child_name() {
+        // Once a separator follows the root, the rest is a relative path,
+        // even when its first name begins with whitespace or punctuation.
+        assert_eq!(
+            projected("/w/repo/ artifacts/after.json", &["/w/repo"]),
+            " artifacts/after.json"
+        );
+        assert_eq!(
+            projected("/w/repo/;x/after.json", &["/w/repo"]),
+            ";x/after.json"
+        );
+        assert_eq!(projected("/w/repo/,x.json", &["/w/repo"]), ",x.json");
+    }
+
+    #[test]
+    fn root_projection_skips_every_consecutive_separator() {
+        // `<root>//x` names `x`, never the absolute `/x` or `\\x`.
+        assert_eq!(projected("/w/repo//x", &["/w/repo"]), "x");
+        assert_eq!(
+            projected("see /w/repo///x/y.rs", &["/w/repo"]),
+            "see x/y.rs"
+        );
+        assert_eq!(projected("/w/repo//", &["/w/repo"]), ".");
+        let up = 'C';
+        let root = format!("{up}:\\w\\repo");
+        assert_eq!(projected(&format!("{root}\\\\x"), &[root.as_str()]), "x");
+        assert_eq!(projected(&format!("{root}\\/x"), &[root.as_str()]), "x");
+        // A Unix root skips only `/`; a following backslash is a literal name.
+        assert_eq!(projected("/w/repo/\\x", &["/w/repo"]), "\\x");
+    }
+
+    #[test]
+    fn root_projection_matches_unc_and_verbatim_unc_roots() {
+        let unc = "\\\\server\\share";
+        let forward = "//server/share";
+        for text in [
+            format!("{unc}\\a.json"),
+            format!("{forward}\\a.json"),
+            format!("{forward}/a.json"),
+            format!("{unc}/a.json"),
+        ] {
+            assert_eq!(projected(&text, &[unc]), "a.json", "{text}");
+        }
+        let spellings = root_spellings(&[unc.to_string()]);
+        assert!(
+            spellings.iter().all(|spelling| spelling.windows),
+            "{spellings:?}"
+        );
+        assert!(
+            spellings.iter().any(|spelling| spelling.text == unc),
+            "{spellings:?}"
+        );
+
+        let verbatim = "\\\\?\\UNC\\server\\share";
+        for text in [
+            format!("{verbatim}\\a.json"),
+            format!("{unc}\\a.json"),
+            format!("{forward}\\a.json"),
+            format!("{forward}/a.json"),
+        ] {
+            assert_eq!(projected(&text, &[verbatim]), "a.json", "{text}");
+        }
+    }
+
+    #[test]
+    fn root_projection_keeps_backslashes_literal_on_a_double_slash_unix_root() {
+        let root = "//x/y";
+        assert_eq!(
+            root_spellings(&[root.to_string()]),
+            vec![RootSpelling {
+                text: root.to_string(),
+                windows: false,
+            }]
+        );
+        assert_eq!(projected("//x/y/a.json", &[root]), "a.json");
+        assert_eq!(projected("//x/y\\a.json", &[root]), "//x/y\\a.json");
+    }
+
+    #[test]
+    fn root_projection_keeps_bare_root_prose_punctuation() {
+        assert_eq!(projected("/w/repo/", &["/w/repo"]), ".");
+        assert_eq!(projected("see /w/repo/, then", &["/w/repo"]), "see ., then");
+        assert_eq!(projected("at /w/repo/; done", &["/w/repo"]), "at .; done");
+        assert_eq!(projected("(in /w/repo/)", &["/w/repo"]), "(in .)");
+        // Mid-string, `<root>/` before whitespace names the root, so prose
+        // and command routes stay runnable from the repository root.
+        assert_eq!(projected("in /w/repo/ now", &["/w/repo"]), "in . now");
+        assert_eq!(
+            projected("cd /w/repo/ && make", &["/w/repo"]),
+            "cd . && make"
+        );
+        assert_eq!(
+            projected("ripr check --root /w/repo/ check", &["/w/repo"]),
+            "ripr check --root . check"
+        );
+        assert_eq!(
+            projected("open /w/repo/ artifacts/after.json", &["/w/repo"]),
+            "open . artifacts/after.json"
+        );
+        assert_eq!(projected("in /w/repo/ ", &["/w/repo"]), "in . ");
+        assert_eq!(projected("see /w/repo, then", &["/w/repo"]), "see ., then");
+        assert_eq!(projected("see /w/repo; x", &["/w/repo"]), "see .; x");
+    }
+
+    #[test]
+    fn root_projection_rewrites_object_keys() {
+        let spellings = root_spellings(&["/w/repo".to_string()]);
+        let mut value = json!({"/w/repo/a.json": {"/w/repo": "/w/repo/b"}});
+        project_root_relative_with(&mut value, &spellings);
+        assert_eq!(value, json!({"a.json": {".": "b"}}));
+    }
+
+    #[test]
+    fn route_limitation_present_only_with_routes() {
+        assert!(route_projection_limitation(&[]).is_none());
+        let routes = [json!({"argv": ["ripr"]})];
+        let text = route_projection_limitation(&routes).unwrap_or_default();
+        assert!(text.contains("repository root"), "{text}");
+    }
+
+    #[test]
+    fn root_projection_handles_globs_urls_verbatim_and_lookalikes() {
+        // Drive letters are spliced in so fixture text carries no literal local path.
+        let (up, lo) = ('C', 'c');
+        assert_eq!(projected("see /w/repo/*.rs", &["/w/repo"]), "see *.rs");
+        assert_eq!(projected("file:///w/repo/a.json", &["/w/repo"]), "a.json");
+        assert_eq!(projected("//w/repo/a.json", &["/w/repo"]), "a.json");
+        assert_eq!(
+            projected(
+                &format!("\\\\?\\{up}:\\w\\repo\\a.json"),
+                &[format!("\\\\?\\{up}:\\w\\repo").as_str()]
+            ),
+            "a.json"
+        );
+        assert_eq!(
+            projected(
+                &format!("{up}:\\w\\repo\\a.json"),
+                &[format!("\\\\?\\{up}:\\w\\repo").as_str()]
+            ),
+            "a.json"
+        );
+        assert_eq!(
+            projected(
+                &format!("{lo}:/w/repo/a.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
+            "a.json"
+        );
+        assert_eq!(projected("/a/repo.bak/x", &["/a/repo"]), "/a/repo.bak/x");
+        assert_eq!(projected("/a/repo-old/x", &["/a/repo"]), "/a/repo-old/x");
+        assert_eq!(
+            projected("/w/rép\u{00f8}/a.json", &["/w/rép\u{00f8}"]),
+            "a.json"
+        );
+        assert_eq!(
+            projected("/w/rép\u{00f8}s/a.json", &["/w/rép\u{00f8}"]),
+            "/w/rép\u{00f8}s/a.json"
+        );
+    }
+
+    #[test]
+    fn root_projection_rewrites_prose_and_backslash_spellings() {
+        let up = 'C';
+        assert_eq!(
+            projected("failed at /w/repo: bad; see /w/repo/t.rs.", &["/w/repo"]),
+            "failed at .: bad; see t.rs."
+        );
+        assert_eq!(projected("open /w/repo.", &["/w/repo"]), "open ..");
+        assert_eq!(
+            projected(
+                &format!("{up}:\\w\\repo\\a\\b.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
+            "a\\b.json"
+        );
+        assert_eq!(
+            projected(
+                &format!("{up}:/w/repo/a/b.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
+            "a/b.json"
+        );
+    }
     use super::super::workspace::{CODE_ITEM_NOT_FOUND, CODE_STALE_SNAPSHOT};
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
@@ -1406,7 +1992,7 @@ pub(super) mod tests {
     #[test]
     fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
         let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
-            let next = refusal_next(reason, class, "gap:x", None, None);
+            let next = refusal_next(reason, class, "gap:x", None, None, None);
             if next["kind"] != kind
                 || next["reason"] != reason
                 || next["after_editing_tests"].is_null() == verify
@@ -1452,7 +2038,14 @@ pub(super) mod tests {
             "await_producer_fact",
             false,
         )?;
-        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None);
+        let by_hand = refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            None,
+            None,
+            None,
+        );
         if by_hand["mcp"]["arguments"]["canonical_id"] != "gap:x"
             || by_hand["after_editing_tests"]["mcp"]["arguments"]["source"] != "worktree"
         {
@@ -1470,7 +2063,7 @@ pub(super) mod tests {
     fn refusal_next_carries_the_stub_route_only_for_unbound_seams() -> Result<(), String> {
         let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
         for reason in ["seam_not_found", "seam_ambiguous"] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None, None);
             if next["stub_route"]["command"]
                 != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
                 || next["kind"] != "write_test_by_hand"
@@ -1484,14 +2077,21 @@ pub(super) mod tests {
             "seam_inventory_truncated",
             "something_new",
         ] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None, None);
             if next.get("stub_route").is_some() {
                 return Err(format!("{reason} must not name a stub route: {next}"));
             }
         }
-        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None)
-            .get("stub_route")
-            .is_some()
+        if refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            None,
+            None,
+            None,
+        )
+        .get("stub_route")
+        .is_some()
         {
             return Err("no resolver route means no stub_route".into());
         }
@@ -1502,11 +2102,59 @@ pub(super) mod tests {
             "gap:x",
             Some(&spaced),
             None,
+            None,
         )
         .get("stub_route")
         .is_some()
         {
             return Err("a path needing quoting must not name a command".into());
+        }
+        Ok(())
+    }
+
+    /// An ambiguous `--at` line names the changed seam's own id, the same
+    /// selector `ripr repair` prints; a missing id keeps the location form.
+    #[test]
+    fn refusal_next_names_the_seam_id_when_the_line_is_ambiguous() -> Result<(), String> {
+        let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
+        let named = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            Some("seam:src/pricing.rs:88:retries"),
+            None,
+        );
+        if named["stub_route"]["command"]
+            != "ripr agent stub --seam-id seam:src/pricing.rs:88:retries"
+        {
+            return Err(format!("seam id not named: {named}"));
+        }
+        let located = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            None,
+            None,
+        );
+        if located["stub_route"]["command"]
+            != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
+        {
+            return Err(format!("location form lost: {located}"));
+        }
+        // An id that needs quoting names no command, never the ambiguous
+        // `--at` form it replaced.
+        let unsafe_id = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            Some("seam id; rm"),
+            None,
+        );
+        if unsafe_id.get("stub_route").is_some() {
+            return Err(format!("unquotable id must drop the route: {unsafe_id}"));
         }
         Ok(())
     }
@@ -1523,6 +2171,7 @@ pub(super) mod tests {
             "infection_unknown",
             "gap:x",
             Some(&route),
+            None,
             Some(&limit),
         );
         if terminal["kind"] != "terminal_static_limit"
@@ -1540,18 +2189,39 @@ pub(super) mod tests {
             ("seam_inventory_truncated", "change_policy"),
             ("worktree_source_not_committed", "commit_then_refresh"),
         ] {
-            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            let next = refusal_next(
+                reason,
+                "infection_unknown",
+                "gap:x",
+                None,
+                None,
+                Some(&limit),
+            );
             if next["kind"] != kind || next.get("static_limit").is_some() {
                 return Err(format!("{reason} must keep its own route: {next}"));
             }
         }
         for reason in ["seam_gate_refused", "seam_ambiguous", "static_limitation"] {
-            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            let next = refusal_next(
+                reason,
+                "infection_unknown",
+                "gap:x",
+                None,
+                None,
+                Some(&limit),
+            );
             if next["kind"] != "terminal_static_limit" {
                 return Err(format!("{reason} must carry the marker: {next}"));
             }
         }
-        let ordinary = refusal_next("seam_not_found", "infection_unknown", "gap:x", None, None);
+        let ordinary = refusal_next(
+            "seam_not_found",
+            "infection_unknown",
+            "gap:x",
+            None,
+            None,
+            None,
+        );
         if ordinary["kind"] != "write_test_by_hand" || ordinary.get("static_limit").is_some() {
             return Err(format!("no limit must keep the ordinary route: {ordinary}"));
         }
@@ -2747,7 +3417,95 @@ pub(super) mod tests {
             .receipt_status_document(retained.repair_attempt_id.as_str(), Some(root), None)
             .map_err(|failure| format!("receipt fixture projection: {}", failure.detail))?;
         assert_eq!(document["receipt"]["status"], "issued", "{}", case.label);
-        assert_eq!(document["receipt"]["document"], receipt, "{}", case.label);
+        // The on-disk receipt keeps host-absolute paths; the MCP projection
+        // returns neither the given nor the canonical root spelling.
+        let root_text = root.display().to_string();
+        let canonical_text = std::fs::canonicalize(root)
+            .map_err(|error| error.to_string())?
+            .display()
+            .to_string();
+        assert!(
+            receipt.to_string().contains(&root_text),
+            "{} positive control: the on-disk receipt spells the root",
+            case.label,
+        );
+        assert_eq!(
+            document["receipt"]["document"]["provenance"]["repo_root"], ".",
+            "{} embedded repo_root is projected",
+            case.label,
+        );
+        assert!(
+            !document.to_string().contains(&canonical_text),
+            "{} MCP receipt status leaked the canonical root",
+            case.label,
+        );
+        assert!(
+            !document.to_string().contains(&root_text),
+            "{} MCP receipt status leaked the host-local root: {document}",
+            case.label,
+        );
+        assert!(
+            document.to_string().contains("target/ripr/"),
+            "{} root-relative artifact paths remain",
+            case.label,
+        );
+        // Non-path fields survive the projection: the MCP document equals the
+        // on-disk receipt after an independent naive rewrite that only
+        // replaces the exact root prefix in strings and keys (`<root>/` with
+        // nothing, then a remaining bare `<root>` with `.`).
+        let mut fixture_roots = vec![root_text.clone(), canonical_text.clone()];
+        fixture_roots.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
+        fixture_roots.dedup();
+        let naive = |text: &str| -> String {
+            let mut text = text.to_string();
+            for spelling in &fixture_roots {
+                text = text.replace(&format!("{spelling}/"), "");
+                text = text.replace(spelling.as_str(), ".");
+            }
+            text
+        };
+        fn naive_walk(value: &Value, naive: &dyn Fn(&str) -> String) -> Value {
+            match value {
+                Value::String(text) => Value::String(naive(text)),
+                Value::Array(items) => {
+                    Value::Array(items.iter().map(|item| naive_walk(item, naive)).collect())
+                }
+                Value::Object(map) => Value::Object(
+                    map.iter()
+                        .map(|(key, item)| (naive(key), naive_walk(item, naive)))
+                        .collect(),
+                ),
+                other => other.clone(),
+            }
+        }
+        assert_eq!(
+            document["receipt"]["document"],
+            naive_walk(&receipt, &naive),
+            "{} MCP receipt document preserves every non-root field",
+            case.label,
+        );
+        // Discriminating spot checks on fields the root never touches.
+        for pointer in [
+            "/status",
+            "/seam/seam_id",
+            "/seam/grip_class",
+            "/seam/change",
+            "/seam/evidence_delta",
+            "/provenance/ripr_version",
+            "/provenance/movement",
+            "/provenance/before_artifact/sha256",
+            "/verification",
+        ] {
+            let on_disk = receipt
+                .pointer(pointer)
+                .ok_or_else(|| format!("{} fixture receipt omits {pointer}", case.label))?;
+            assert_eq!(
+                document["receipt"]["document"].pointer(pointer),
+                Some(on_disk),
+                "{} non-path field {pointer} is preserved",
+                case.label,
+            );
+        }
         assert_eq!(
             document["receipt"]["binding"]["sha256"], artifact.sha256,
             "{}",

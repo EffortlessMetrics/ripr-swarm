@@ -15,7 +15,7 @@ pub(in crate::analysis) use calls::path_value_map::{
 pub(crate) use calls::{
     MAX_CALL_FACTS_PER_LINE, attribute_ranges, call_name_bounds_before_paren, extract_call_facts,
     has_saturated_line, line_at_call_budget, local_fn_pointer_call,
-    offsets_inside_macro_invocation_delimiters, runs_its_arguments,
+    offsets_inside_macro_invocation_delimiters, runs_its_arguments, turbofish_len,
 };
 pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
@@ -26,10 +26,10 @@ pub(crate) use mask::{
     mask_with_string_delimiter_quotes, rust_identity_spans, string_literal_spans,
 };
 pub(crate) use oracles::{
-    LazyDecls, OracleTextShape, assertion_compares_only_literals, assertion_oracle_text,
-    assertion_reads_placeholder, classify_assertion, classify_assertion_with,
-    equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
-    extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
+    LazyDecls, OracleTextShape, PlaceholderScope, assertion_compares_only_literals,
+    assertion_oracle_text, assertion_reads_placeholder, classify_assertion,
+    classify_assertion_with, equality_assertion_arguments, err_return_guard_oracles,
+    err_return_guard_twin, extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
     is_exact_membership_any_assertion, is_inequality_assertion,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,

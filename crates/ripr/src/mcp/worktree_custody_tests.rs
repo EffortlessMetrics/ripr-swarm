@@ -876,6 +876,7 @@ fn withheld_verdict_keeps_an_earlier_finding_level_reason() {
         fix_site: None,
         ineligibility: Some("missing_discriminator"),
         seam_detail: None,
+        held_file: None,
         proposed_new_test: None,
     }
     .with_seam_verdict(Some(&withheld));

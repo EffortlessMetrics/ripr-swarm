@@ -249,7 +249,9 @@ fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(),
     let root = TempRoot::new("suppression-refusals")?;
     for format in [
         "sarif",
+        "sarif-compact",
         "agent",
+        "json-terse",
         "badge-json",
         "repo-exposure-json",
         "repo-badge-json",
@@ -260,7 +262,9 @@ fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(),
         )?;
         if !(error.starts_with(
             "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt)",
-        ) && error.ends_with("it is not yet supported for SARIF, badge, or repo formats"))
+        ) && error.ends_with(&format!(
+            "--format {format} does not apply it. Drop the flag, or pick one of those formats"
+        )))
         {
             return Err(format!(
                 "{format}: refusal must name the limitation, got {error}"
