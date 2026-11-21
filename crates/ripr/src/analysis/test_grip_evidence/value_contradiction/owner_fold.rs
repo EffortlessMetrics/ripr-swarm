@@ -34,10 +34,20 @@ pub(super) enum Folded {
     Tuple(Vec<Value>),
 }
 
-/// The parameter a receiver field becomes in the free form. The fold reads
-/// names from an environment, so the prefix only has to miss real parameters.
+/// What every generated field parameter starts with. An owner that already
+/// spells it is not read: its own name could take a field's place.
+const FIELD_PARAMETER_PREFIX: &str = "ripr_receiver_field_";
+
+/// The parameter a receiver field becomes in the free form.
 fn field_parameter(field: &str) -> String {
-    format!("ripr_receiver_field_{field}")
+    format!("{FIELD_PARAMETER_PREFIX}{field}")
+}
+
+/// A field name as the receiver map keys it: without a raw `r#` prefix, so
+/// `self.r#type` and `Acc { r#type: 0 }` name one field and the generated
+/// parameter is a plain identifier.
+fn field_key(name: &str) -> &str {
+    name.strip_prefix("r#").unwrap_or(name)
 }
 
 /// One owner version in free-function form.
@@ -78,7 +88,12 @@ impl OwnerFold {
         };
         // `&mut self` and `mut self` may write a field before reading it, and
         // a typed receiver (`self: Box<Self>`) reads through another type.
-        if receiver.mut_token().is_some() || receiver.ty().is_some() {
+        // A name of the owner's own that looks generated could shadow a
+        // field's parameter.
+        if receiver.mut_token().is_some()
+            || receiver.ty().is_some()
+            || body.contains(FIELD_PARAMETER_PREFIX)
+        {
             return None;
         }
         let mut fields = BTreeSet::new();
@@ -105,7 +120,7 @@ impl OwnerFold {
             if name.syntax().text().to_string().parse::<u64>().is_ok() {
                 return None;
             }
-            let name = name.syntax().text().to_string();
+            let name = field_key(&name.syntax().text().to_string()).to_string();
             edits.push((field.syntax().text_range(), field_parameter(&name)));
             fields.insert(name);
         }
@@ -280,7 +295,7 @@ pub(super) fn literal_receiver_call(
     let environment = BTreeMap::new();
     let mut fields = BTreeMap::new();
     for field in list.fields() {
-        let name = field.name_ref()?.syntax().text().to_string();
+        let name = field_key(&field.name_ref()?.syntax().text().to_string()).to_string();
         // Shorthand (`Acc { base }`) reads a binding, not a literal.
         let value = fold_expression(&field.expr()?.syntax().text().to_string(), &environment)?;
         if fields.insert(name, value).is_some() {
@@ -326,6 +341,20 @@ mod tests {
     }
 
     #[test]
+    fn a_raw_field_name_is_one_field_under_either_spelling() -> Result<(), String> {
+        let fold =
+            OwnerFold::read("fn double(&self) -> u64 { self.r#type * 3 }").ok_or("method reads")?;
+        assert_eq!(fold.receiver_fields(), ["type"]);
+        let (fields, _) = literal_receiver_call("Acc { r#type: 4 }.double()", "Acc", "double")
+            .ok_or("literal reads")?;
+        assert_eq!(
+            fold.at(Some(&fields), &[]),
+            Some(Folded::Scalar(Value::Int(12)))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_method_that_reads_no_field_drops_the_receiver() -> Result<(), String> {
         for text in [
             "fn twice(&self, x: u32) -> u32 { x * 2 }",
@@ -364,6 +393,9 @@ mod tests {
             "fn first(&self) -> u64 { self.0 * 3 }",
             "fn via(&self) -> u64 { self.base() * 3 }",
             "fn logged(&self) -> u64 { trace!(self.base); self.base * 3 }",
+            // A parameter spelled like a generated one would take the
+            // field's place in the fold's environment.
+            "fn scale(&self, ripr_receiver_field_base: u64) -> u64 { self.base * 3 + ripr_receiver_field_base }",
         ] {
             assert!(OwnerFold::read(text).is_none(), "{text}");
         }

@@ -16,6 +16,7 @@ tests = [
   "crates/ripr/tests/invisible_change.rs::a_tuple_the_versions_build_differently_keeps_the_credit",
   "crates/ripr/tests/invisible_change.rs::an_equivalent_boundary_rewrite_is_not_sent_after_a_missing_input",
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_method_folds_through_the_receiver_fields_it_reads",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_raw_field_name_is_one_field_under_either_spelling",
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_method_that_reads_no_field_drops_the_receiver",
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_free_function_takes_no_receiver",
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_receiver_used_as_more_than_a_field_base_is_not_read",
