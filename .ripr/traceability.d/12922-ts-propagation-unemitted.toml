@@ -1,0 +1,9 @@
+# #12922: TypeScript never emits propagation_unknown; these tests pin the
+# non-emission (inputs built to reach the stage read static_unknown, never
+# exposed), with an exposed control so the sweep can tell the classes apart.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/unemitted_stage_unknown_tests.rs::unknown_stage_inputs_read_static_unknown_never_exposed_or_propagation_unknown",
+  "crates/ripr/src/analysis/language/typescript/tests/unemitted_stage_unknown_tests.rs::the_awaited_control_is_exposed_so_the_sweep_can_tell_the_classes_apart",
+]

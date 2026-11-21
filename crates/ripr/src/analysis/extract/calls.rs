@@ -372,6 +372,32 @@ pub(crate) fn call_name_bounds_before_paren(
     (start < end).then_some((start, end))
 }
 
+/// The byte length of a turbofish (`::<u8, Vec<T>>`) opening `text`, or 0
+/// when `text` does not open with one, its brackets do not close, or it holds
+/// a parenthesis, brace or `;` (fn-pointer or `Fn()` arguments, const
+/// blocks, array lengths), which this reading refuses.
+pub(crate) fn turbofish_len(text: &str) -> usize {
+    let Some(rest) = text.strip_prefix("::<") else {
+        return 0;
+    };
+    let bytes = rest.as_bytes();
+    let mut depth = 1usize;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return "::<".len() + at + 1;
+                }
+            }
+            b'(' | b')' | b';' | b'{' | b'}' => return 0,
+            _ => {}
+        }
+    }
+    0
+}
+
 fn turbofish_start(line: &str, end: usize) -> Option<usize> {
     let bytes = line.as_bytes();
     let mut depth = 0usize;

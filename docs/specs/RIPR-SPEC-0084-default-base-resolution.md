@@ -187,12 +187,26 @@ When the missing ref already exists locally as a remote-tracking ref, the
 repair names that ref instead of re-prescribing the fetch that created it
 (#8652). Every configured remote is probed locally (no network) as the full
 `refs/remotes/<remote>/<ref>` ref — never the short `<remote>/<ref>`
-spelling, which a tag or local branch of that name can shadow — and the
-full ref is the suggested `--base`/`--head` value. Exactly one candidate
+spelling, which a tag or local branch of that name can shadow. The
+suggested `--base`/`--head` value is the short `<remote>/<ref>` when Git
+resolves that short name to exactly the probed ref, and the full ref when a
+tag or local branch shadows it (#15484). Exactly one candidate
 is named as the followable advice; several candidates are all named
 without picking one. A nested branch name (`feature/topic`) probes the
 same tracking forms before its first segment is treated as a remote
 qualifier; explicit `refs/...` paths and rev expressions never probe.
+
+A missing ref spelled as 7 to 64 hex digits, or as `v` followed by a digit,
+is answered before the shallow and branch arms, because no branch fetch brings
+in a bare commit or a tag (#15484). A full-length commit id names
+`git fetch <remote> <id>`; an abbreviated one names the full-id form, since
+Git fetches commits only by full id; in a shallow clone both also name
+`git fetch --unshallow <remote>`. A version tag names `git fetch --tags
+<remote>`. The remote is the only plain configured remote, else `origin` when
+configured, else a `<remote>` placeholder; a repository with no remote is told
+that no fetch can supply the ref. A name of either shape that already exists
+as a fetched remote-tracking ref (a branch called `v2`) keeps the
+remote-tracking advice below. Other names keep the branch advice.
 
 In a repository with no commits and no refs at all, no revision can resolve, so
 the repair says the repository has no commits yet and to commit once instead

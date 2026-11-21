@@ -223,6 +223,22 @@ pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {
     &report.status
 }
 
+/// Optional inputs the caller named that could not be read, so the CLI can say
+/// so on stderr rather than only inside the decision JSON. Each warning is
+/// listed once even when two readers recorded it (`--mutation-calibration`).
+pub(crate) fn gate_decision_unavailable_inputs(report: &GateDecisionReport) -> Vec<&str> {
+    let mut inputs: Vec<&str> = Vec::new();
+    for warning in &report.warnings {
+        if warning.starts_with("optional ")
+            && warning.contains(" is unavailable: ")
+            && !inputs.contains(&warning.as_str())
+        {
+            inputs.push(warning.as_str());
+        }
+    }
+    inputs
+}
+
 /// Extract the first actionable detail from a failing gate report so the
 /// CLI can surface it inline instead of only pointing at the JSON artifact
 /// (#2599).

@@ -23,6 +23,8 @@ mod agent_policy_guidance;
 #[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
 #[path = "cli_smoke/agent_seam_preview_route.rs"]
 mod agent_seam_preview_route;
+#[path = "cli_smoke/argument_value_validation.rs"]
+mod argument_value_validation;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
@@ -72,6 +74,8 @@ mod discarded_matches;
 mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/explicit_input_refusals.rs"]
+mod explicit_input_refusals;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(unix)]
@@ -102,6 +106,8 @@ mod leftover_status;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/legend_first_run.rs"]
 mod legend_first_run;
+#[path = "cli_smoke/missing_root_refusal.rs"]
+mod missing_root_refusal;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
@@ -19400,7 +19406,8 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
         "--out-md",
         &missing_md.display().to_string(),
     ]);
-    assert_success(&missing);
+    // An unreadable required input writes the report, then refuses (#15254).
+    assert_eq!(missing.status.code(), Some(2));
     let missing_json =
         std::fs::read_to_string(&missing_out).map_err(|e| format!("read missing delta: {e}"))?;
     assert!(missing_json.contains("\"missing_current_input\": 1"));
@@ -25898,7 +25905,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         assert_success(&check);
         let artifact_text = std::fs::read_to_string(&artifact)
             .map_err(|err| format!("artifact was not written: {err}"))?;
-        assert!(artifact_text.contains("\"ripr-check-artifact-v1\""));
+        assert!(artifact_text.contains("\"ripr-check-artifact-v2\""));
         assert!(artifact_text.contains("\"identity\""));
         assert!(artifact_text.contains("\"diff_bytes_hash\""));
         assert_sample_diff_artifact(&artifact_text, &fixture.0, "draft")?;
@@ -26133,7 +26140,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult
         );
 
         // Unsupported schema version.
-        let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
+        let stale = original.replace("ripr-check-artifact-v2", "ripr-check-artifact-v1");
         assert_ne!(stale, original, "schema mutation must change the artifact");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
@@ -31725,7 +31732,8 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
 
 /// #11598: `RIPR_QUIET` reaches the direct `ripr agent repair` phases: the
 /// narration and `wrote` lines drop, while the result (the attempt command)
-/// still prints. The control run without it narrates.
+/// and the output-location warning still print. The control run without it
+/// narrates.
 #[test]
 fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -31769,6 +31777,13 @@ fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
     assert!(
         quiet.contains("ripr: attempt next command: "),
         "the result must survive quiet: {quiet}"
+    );
+    // #15282 item 8: the output-location warning is not narration. A
+    // redirect into the worktree fails the attempt, and quiet runs are the
+    // agent runs that redirect, so it stays (the help says so).
+    assert!(
+        quiet.contains("ripr: write this command's output outside the repo"),
+        "the output-location warning must survive quiet: {quiet}"
     );
     Ok(())
 }
@@ -37052,9 +37067,10 @@ fn pr_comments_raw_stdin_from_endless_stream_is_refused_at_input_limit()
     Ok(())
 }
 
-/// These two flags fold an unreadable artifact into their established
-/// "missing" state rather than reporting the read error, so the limit never
-/// reaches stderr. What the bounded reader changes for them is that the
+/// These two flags fold an unreadable artifact into a "missing" state rather
+/// than reporting the read error, so the limit never reaches stderr; both now
+/// refuse with exit 2 (`pr-summary --baseline` since #15254, as an explicitly
+/// named unusable input). What the bounded reader changes for them is that the
 /// command finishes with its ordinary exit code instead of being ended for lack of
 /// memory (no exit code) or outliving the deadline.
 #[cfg(unix)]
@@ -37064,7 +37080,7 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
     let cwd = unique_temp_workspace("endless-artifact-degrade");
     std::fs::create_dir_all(&cwd)?;
     let cases: [(&[&str], i32); 2] = [
-        (&["pr-summary", "--baseline", "/dev/zero"], 0),
+        (&["pr-summary", "--baseline", "/dev/zero"], 2),
         (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
     ];
     let result = (|| {
@@ -38110,8 +38126,9 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
 }
 
 /// #8652: through the public `check` path, an unqualified base that only
-/// exists as a remote-tracking ref names that full ref, and the suggested
-/// ref then loads instead of failing again.
+/// exists as a remote-tracking ref names that ref (#15484: as `origin/topic`,
+/// since that short name resolves to it), and the suggested ref then loads
+/// instead of failing again.
 #[test]
 fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -38148,7 +38165,8 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--base refs/remotes/origin/topic"),
+        stderr.contains("The fetched branch is `origin/topic`")
+            && stderr.contains("--base origin/topic`"),
         "the public failure must name the resolvable tracking ref: {stderr}"
     );
     let suggested = run_ripr(&[
@@ -38156,7 +38174,7 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
         "--root",
         &root.display().to_string(),
         "--base",
-        "refs/remotes/origin/topic",
+        "origin/topic",
     ]);
     assert!(
         suggested.status.success(),
@@ -38212,7 +38230,7 @@ fn check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch()
                 && stderr.contains(&format!("Pass the range's start: `--base {start}`")),
             "{range}: the refusal must name the range and the base to pass: {stderr}"
         );
-        for wrong in ["git fetch", "Check the spelling", "the fetched branch"] {
+        for wrong in ["git fetch", "Check the spelling", "fetched branch"] {
             assert!(
                 !stderr.contains(wrong),
                 "{range}: a range must get no `{wrong}` advice: {stderr}"

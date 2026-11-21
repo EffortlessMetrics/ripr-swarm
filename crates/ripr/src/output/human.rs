@@ -852,6 +852,7 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             ));
         }
     }
+    let mut named_not_analyzed_printed = false;
     for limitation in &outcome.limitations {
         // Plain words lead; on the full surface the schema tokens follow in
         // parentheses so the line still greps against JSON and docs (#4323).
@@ -877,9 +878,25 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
                 None => "changed files".to_string(),
             };
             if note_follows {
-                out.push_str(&format!(
-                    "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
-                ));
+                // #15288: one line naming every language that is off, not one
+                // identical anonymous line per language. Only the
+                // advisory-derived limitations (they carry a file count) fold
+                // into it; an enabled adapter whose run was unavailable or
+                // invalid (no count) keeps its own line.
+                match (
+                    not_analyzed_languages_line(output),
+                    limitation.affected_items,
+                ) {
+                    (Some(line), Some(_)) => {
+                        if !named_not_analyzed_printed {
+                            named_not_analyzed_printed = true;
+                            out.push_str(&line);
+                        }
+                    }
+                    _ => out.push_str(&format!(
+                        "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
+                    )),
+                }
             } else {
                 out.push_str(&format!(
                     "  Not analyzed: {subject} in a language ripr is not set up to analyze.\n  Fix: {}\n",
@@ -1212,10 +1229,15 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
     // RIPR-PROP-0019 decision 6: raising the explicit overrides is the only
     // continuation route; the budget has no off switch (zero is rejected).
     // The widen wording is shared with JSON, LSP and the analysis outcome.
+    // #15484: when no raise can select the whole diff, the raise alone adds
+    // one file per run; name the route that completes.
+    let narrow = scope
+        .narrow_diff_route()
+        .map_or(String::new(), |route| format!(" {route}."));
     out.push_str(&format!(
-        "  To widen the analyzed partition, {}. Overrides above the analysis-cost limit are \
-         clamped, the budget cannot be switched off, and named partition continuation is not \
-         available.\n  partition_identity: {}\n\n",
+        "  To widen the analyzed partition, {}.{narrow} Overrides above the analysis-cost limit \
+         are clamped, the budget cannot be switched off, and named partition continuation is \
+         not available.\n  partition_identity: {}\n\n",
         scope.widen_instruction(),
         scope.partition_identity,
     ));
@@ -1468,6 +1490,9 @@ pub(super) fn wrap_human_prose(
 ///   be read as clean. A copy-paste-ready TOML block is appended so enabling
 ///   the adapter is a single edit.
 fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
+    // One combined snippet per run (#15288): applying a per-language snippet
+    // one at a time would switch the other languages back off.
+    let snippet_count = enable_snippet_advisories(output).count();
     for advisory in &output.preview_language_advisories {
         let (language, file_language) = advisory_language_names(advisory);
         let file_label = if advisory.file_count == 1 {
@@ -1495,11 +1520,13 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 advisory.file_count, file_label, language,
             ));
         } else if !advisory.enabled {
-            let enabled_line = preview_enablement_toml(&output.root, &advisory.language);
             out.push_str(&format!(
-                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n",
+                "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n",
                 advisory.file_count, file_label, language,
             ));
+            if snippet_count == 1 {
+                out.push_str(&enable_snippet_block(output));
+            }
             if let Some(hint) = nested_python_root_hint(advisory, &output.root) {
                 out.push_str(&hint);
             }
@@ -1527,6 +1554,63 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
             ));
         }
     }
+    if snippet_count > 1 {
+        out.push_str(&enable_snippet_block(output));
+    }
+}
+
+/// The default-view "Not analyzed" line that points at the preview notes,
+/// naming each language that is off (`1 changed Python file and 1 changed
+/// TypeScript file`). `None` when no advisory names a language that is off,
+/// so the caller keeps the limitation's own count line.
+fn not_analyzed_languages_line(output: &CheckOutput) -> Option<String> {
+    let parts: Vec<String> = output
+        .preview_language_advisories
+        .iter()
+        .filter(|advisory| {
+            !advisory.analyzed(&output.language_runs)
+                && (!advisory.enabled || advisory.unavailable_adapter_recovery().is_some())
+        })
+        .map(|advisory| {
+            let (_, file_language) = advisory_language_names(advisory);
+            let noun = if advisory.file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            format!("{} changed {file_language} {noun}", advisory.file_count)
+        })
+        .collect();
+    match parts.as_slice() {
+        [] => None,
+        [one] => Some(format!(
+            "  Not analyzed: {one}, a language ripr is not set up to analyze (see the note below).\n"
+        )),
+        many => Some(format!(
+            "  Not analyzed: {}, languages ripr is not set up to analyze (see the notes below).\n",
+            many.join(" and ")
+        )),
+    }
+}
+
+/// Advisories whose adapter is compiled in but not enabled: the ones one
+/// `[languages]` edit can turn on.
+fn enable_snippet_advisories(
+    output: &CheckOutput,
+) -> impl Iterator<Item = &crate::analysis::PreviewLanguageAdvisory> {
+    output
+        .preview_language_advisories
+        .iter()
+        .filter(|advisory| {
+            !advisory.analyzed(&output.language_runs)
+                && advisory.unavailable_adapter_recovery().is_none()
+                && !advisory.enabled
+        })
+}
+
+fn enable_snippet_block(output: &CheckOutput) -> String {
+    let enabled_line = preview_enablement_toml(output);
+    format!("\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n")
 }
 
 /// The `--root` hint for a not-enabled Python advisory at a monorepo root
@@ -1574,30 +1658,49 @@ fn nested_python_root_hint(
 
 /// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
 /// Names Rust only when the analyzed root actually has Rust markers (#7648).
-fn preview_enablement_toml(root: &Path, language: &str) -> String {
-    let rust_detected = crate::domain::rust_markers_at(root);
-    let to_add = match crate::domain::LanguageId::from_wire(language) {
-        Some(crate::domain::LanguageId::JavaScript) => crate::domain::LanguageId::TypeScript,
-        Some(id) => id,
-        None => {
-            let mut names = Vec::new();
-            if rust_detected {
-                names.push("rust");
-            }
-            names.push(language);
-            return crate::domain::format_languages_enabled_toml(&names);
+fn preview_enablement_toml(output: &CheckOutput) -> String {
+    let rust_detected = crate::domain::rust_markers_at(&output.root);
+    // Keep the preview languages this diff shows are already on (their
+    // advisories say so), then add every language still off, so one edit
+    // enables them all (#15288). A preview language enabled in ripr.toml but
+    // absent from this diff has no advisory and is not listed.
+    let wire_id = |wire: &str| match crate::domain::LanguageId::from_wire(wire) {
+        Some(crate::domain::LanguageId::JavaScript) => Some(crate::domain::LanguageId::TypeScript),
+        other => other,
+    };
+    let mut enabled: Vec<crate::domain::LanguageId> = Vec::new();
+    if rust_detected {
+        enabled.push(crate::domain::LanguageId::Rust);
+    }
+    for advisory in output
+        .preview_language_advisories
+        .iter()
+        .filter(|a| a.enabled)
+    {
+        if let Some(id) = wire_id(&advisory.language)
+            && !enabled.contains(&id)
+        {
+            enabled.push(id);
         }
-    };
-    let enabled: &[crate::domain::LanguageId] = if rust_detected {
-        &[crate::domain::LanguageId::Rust]
-    } else {
-        &[]
-    };
-    let suggestion = crate::domain::enablement_tip_languages(enabled, rust_detected, [to_add]);
-    let names: Vec<&str> = suggestion
+    }
+    let mut to_add = Vec::new();
+    let mut unknown: Vec<&str> = Vec::new();
+    for advisory in enable_snippet_advisories(output) {
+        match wire_id(&advisory.language) {
+            Some(id) => to_add.push(id),
+            None => unknown.push(&advisory.language),
+        }
+    }
+    let suggestion = crate::domain::enablement_tip_languages(&enabled, rust_detected, to_add);
+    let mut names: Vec<&str> = suggestion
         .iter()
         .map(crate::domain::LanguageId::as_str)
         .collect();
+    for wire in unknown {
+        if !names.contains(&wire) {
+            names.push(wire);
+        }
+    }
     crate::domain::format_languages_enabled_toml(&names)
 }
 
@@ -2890,6 +2993,64 @@ mod tests {
         Ok(())
     }
 
+    /// #15288: an off language's limitation folds into the named line, but a
+    /// limitation from an enabled adapter whose run was unavailable or
+    /// invalid (no file count) keeps its own pointer line.
+    #[test]
+    fn a_failed_enabled_adapter_keeps_its_own_line_beside_the_named_one() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let limitation = || -> Result<AnalysisLimitation, String> {
+            Ok(AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageAdapterUnavailable,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::EnableLanguage,
+                    "Inspect the adapter result and re-run the analysis.",
+                )?,
+            ))
+        };
+        let mut off = limitation()?;
+        off.affected_items = Some(1);
+        let failed_run = limitation()?;
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![off, failed_run],
+        )?;
+        let mut output = partial_outcome_output(Vec::new())?;
+        output.analysis_outcome = Some(outcome);
+        output.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "python".to_string(),
+            file_count: 1,
+            sample_paths: vec!["over.py".to_string()],
+            javascript_file_count: 0,
+            enabled: false,
+            nested_packages: Vec::new(),
+        }];
+
+        let rendered = render(&output);
+        assert_eq!(
+            rendered
+                .matches("  Not analyzed: 1 changed Python file, a language ripr is not set up to analyze (see the note below).\n")
+                .count(),
+            1,
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "  Not analyzed: changed files in a language ripr is not set up to analyze (see the note below).\n"
+            ),
+            "the failed run's limitation must keep its own line:\n{rendered}"
+        );
+        assert_eq!(rendered.matches("Not analyzed:").count(), 2, "{rendered}");
+        Ok(())
+    }
+
     /// #10691: a changed language with no analyzer renders one plain
     /// `Not analyzed:` line on the bounded surface, without the kind/stage
     /// tokens; the full surface keeps the glossed kind/stage/recovery tokens.
@@ -4073,7 +4234,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
+                "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 2 partly noticed. Rerun with --format human-full for the evidence on each removed line\n"
             ),
             "{rendered}"
         );

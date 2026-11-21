@@ -31,6 +31,7 @@ use ra_ap_syntax::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod dependent_test_hosts;
 mod dispatch_target;
 mod drop_dispatch;
 mod equality_dispatch;
@@ -73,6 +74,8 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// admit needs; every other admit keeps the whole-workspace
     /// precondition.
     pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
+    /// Packages hosting indexed tests, populated on the first unresolved finding.
+    pub(in crate::analysis) test_host_manifests: std::sync::OnceLock<BTreeSet<String>>,
     /// The scan root, for reading a manifest's package and library name.
     pub(in crate::analysis) root: &'a std::path::Path,
 }
@@ -1418,6 +1421,19 @@ fn find_related_tests_with_candidates<'a>(
                     )
                 })
             });
+        // A doctest compiles as a separate crate. Its file and the spelling
+        // of a free call cannot establish that it calls the library owner.
+        if calls_owner_by_name
+            && index.doctest_source(test).is_some()
+            && owner_fn.is_none_or(|owner| {
+                owner.item.container != crate::analysis::facts::FunctionContainer::Free
+                    || !super::call_identity::doctest_calls_free_owner(
+                        index, owner, test, pin_syntax,
+                    )
+            })
+        {
+            continue;
+        }
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
@@ -6261,6 +6277,32 @@ fn call_site_resolves_to_type(
     }
 }
 
+/// #15277: whether the test calls `<impl_type as impl_trait>::method(..)`,
+/// which names one trait impl outright. It is read for an owner without
+/// `self` (`fn make(n: u32) -> Self`), whose trait-qualified call
+/// `Make::make(..)` has no receiver to type, so only this spelling settles
+/// which impl runs. Comments and strings are masked.
+fn fully_qualified_call_names_impl(
+    test: &TestSummary,
+    method: &str,
+    impl_type: &str,
+    impl_trait: &str,
+) -> bool {
+    if method.is_empty() || impl_type.is_empty() {
+        return false;
+    }
+    let masked = mask_comments_and_strings(&test.body);
+    let bytes = masked.as_bytes();
+    masked.match_indices(method).any(|(at, _)| {
+        at >= 2
+            && bytes[at - 2] == b':'
+            && bytes[at - 1] == b':'
+            && ident_boundary(&masked, at, at + method.len())
+            && skip_ws_if_paren(&masked, at + method.len())
+            && qualified_self_type_matches(&masked, at - 2, impl_type, Some(impl_trait))
+    })
+}
+
 /// `<f64 as Render>::m(..)`: the qualified path ending at `colons` names
 /// `impl_type` as its self type and the owner's trait as its trait. Without a
 /// known trait (an inherent owner) the form cannot name this impl.
@@ -8779,7 +8821,12 @@ fn owner_call_relation_reason_gated(
         return RelationReason::WeakTokenSubstring;
     }
     let impl_trait = owner_dispatch_trait(owner);
-    if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref()) {
+    if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref())
+        || (!owner.item.has_self_param
+            && impl_trait_name(&owner.id.0).is_some_and(|impl_trait| {
+                fully_qualified_call_names_impl(test, owner_name, &impl_type, &impl_trait)
+            }))
+    {
         RelationReason::DirectOwnerCall
     } else {
         RelationReason::WeakTokenSubstring
@@ -10842,6 +10889,53 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #15277: `<f64 as FromF64>::from_f64(..)` names one impl of a function
+    /// without `self` outright, so it reaches that impl and no other.
+    #[test]
+    fn given_fully_qualified_call_to_a_function_without_self_then_only_the_named_impl_is_direct() {
+        let mut float = impl_function("src/lib.rs", "from_f64", "impl FromF64 for f64");
+        float.item.has_self_param = false;
+        let mut byte = impl_function("src/lib.rs", "from_f64", "impl FromF64 for u8");
+        byte.item.has_self_param = false;
+        let mut other_trait = impl_function("src/lib.rs", "from_f64", "impl Parse for f64");
+        other_trait.item.has_self_param = false;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![float.clone(), byte.clone(), other_trait.clone()],
+            tests: vec![test_with_call(
+                "tests/convert.rs",
+                "t",
+                "let x = <f64 as FromF64>::from_f64(2.5f64); assert_eq!(x, 2.5);",
+                "from_f64",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "n");
+        let reason = |owner: &FunctionSummary| {
+            let related = find_related_tests(&probe, Some(owner), &index, true, None, None);
+            assert_eq!(related.len(), 1, "{}", owner.id.0);
+            related[0].1
+        };
+
+        assert_eq!(reason(&float), RelationReason::DirectOwnerCall);
+        assert_eq!(reason(&byte), RelationReason::WeakTokenSubstring);
+        assert_eq!(reason(&other_trait), RelationReason::WeakTokenSubstring);
+
+        // A trait-path call names no impl, so it settles none of them.
+        let trait_path = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![float.clone(), byte.clone(), other_trait.clone()],
+            tests: vec![test_with_call(
+                "tests/convert.rs",
+                "t",
+                "let x = FromF64::from_f64(2.5f64); assert_eq!(x, 2.5);",
+                "from_f64",
+            )],
+            ..Default::default()
+        });
+        let related = find_related_tests(&probe, Some(&float), &trait_path, true, None, None);
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
@@ -13212,6 +13306,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
     ) -> DependencyEdgeContext<'a> {
         static NONE_UNINDEXED: BTreeSet<String> = BTreeSet::new();
         DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency,
             manifest_dir_prefixes,
             index,
@@ -15490,6 +15585,7 @@ fn crate_c_score_test() {
             2
         );
         let context = DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &adjacency,
             manifest_dir_prefixes: &prefixes,
             index: &index,
@@ -16359,6 +16455,7 @@ fn crate_c_score_test() {
             .map(|manifest| (*manifest).to_string())
             .collect();
         let context = DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &adjacency,
             manifest_dir_prefixes: &prefixes,
             index: &index,

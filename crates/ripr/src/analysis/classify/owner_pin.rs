@@ -43,6 +43,7 @@
 
 mod call_term_fold;
 pub(super) mod closure_adaptor;
+mod exit_record_types;
 mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
@@ -3574,18 +3575,22 @@ fn fragment_binds_no_assertion_macro(index: &RustIndex, source: &str) -> bool {
     sites.is_empty()
 }
 
-/// Whether `root` is an integration test, bench or example crate root: a
+/// Whether `root` is an integration test, bench or example crate root
+/// (`tests/NAME.rs`, or the multi-file `tests/NAME/main.rs`, #15327): a
 /// crate no other crate can depend on, so nothing it defines is importable.
 /// A manifest may move a library there (`[lib] path = "tests/lib.rs"`); that
 /// root is importable and answers no.
 fn root_is_unimportable_target(index: &RustIndex, root: &Path) -> bool {
-    !index.member_crates.is_custom_lib_path_root(root)
-        && root
-            .parent()
+    let target_directory = |directory: Option<&Path>| {
+        directory
             .and_then(Path::file_name)
-            .is_some_and(|directory| {
-                directory == "tests" || directory == "benches" || directory == "examples"
-            })
+            .is_some_and(|name| name == "tests" || name == "benches" || name == "examples")
+    };
+    let parent = root.parent();
+    !index.member_crates.is_custom_lib_path_root(root)
+        && (target_directory(parent)
+            || (root.file_name().is_some_and(|name| name == "main.rs")
+                && target_directory(parent.and_then(Path::parent))))
 }
 
 /// Whether source text may hold an out-of-line `mod name;`, read lexically
@@ -3767,10 +3772,11 @@ impl TargetRoots {
 }
 
 /// The crate root file `file` composes under: a recognized Cargo target root
-/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
-/// example or build script), a root the package manifest names (`[lib] path`,
-/// or an explicit `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
-/// `path`), or `None` when composition is unresolved, goes through
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`,
+/// an integration test, bench or example (`tests/NAME.rs` or
+/// `tests/NAME/main.rs` and kin) or build script), a root the package
+/// manifest names (`[lib] path`, or an explicit `[[bin]]`, `[[example]]`,
+/// `[[test]]` or `[[bench]]` `path`), or `None` when composition is unresolved, goes through
 /// `include!`, or ends at a file no target is known to root.
 pub(super) fn target_root(
     file: &Path,
@@ -3821,6 +3827,10 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
         | [.., "src", "bin", _]
         | [.., "src", "bin", _, "main.rs"] => true,
         [package @ .., "tests" | "benches" | "examples", _] => package_has_src(package),
+        // Cargo autodiscovers a multi-file integration test, bench or
+        // example as `tests/NAME/main.rs` (and kin), with its modules beside
+        // it (#15327).
+        [package @ .., "tests" | "benches" | "examples", _, "main.rs"] => package_has_src(package),
         [package @ .., "build.rs"] => package_has_src(package),
         _ => false,
     };
@@ -4396,6 +4406,9 @@ impl AssertionRefusal {
                         MacroBindingKind::MacroBody(macro_name) => format!(
                             "the body of `{macro_name}!` at {place} defines or imports `{name}`, so its expansion may rebind it"
                         ),
+                        MacroBindingKind::WrapperRedefinition(wrapper) => format!(
+                            "{place} defines its own `{wrapper}!`, which may replace the audited one for calls in its scope and paste their arguments where they can bring in a different `{name}!`"
+                        ),
                         MacroBindingKind::BodyBindsAny {
                             macro_name,
                             binding,
@@ -4544,6 +4557,7 @@ fn field_site_blocks(site: &MacroBindingSite) -> bool {
                 | MacroBindingKind::MacroArgument(_)
                 | MacroBindingKind::MacroBody(_)
                 | MacroBindingKind::BodyBindsAny { .. }
+                | MacroBindingKind::WrapperRedefinition(_)
                 | MacroBindingKind::ArgumentAttribute { .. }
         )
 }
@@ -5928,27 +5942,15 @@ impl OwnerReturnPin {
         owner: &FunctionSummary,
         index: &RustIndex,
     ) -> bool {
-        let source = owner.body.as_str();
-        let Some(parse) = parse_clean_source_file(source) else {
-            return false;
-        };
-        let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
-            return false;
-        };
-        let Some(body) = function.body() else {
-            return false;
-        };
-        exit_position_records(&body).iter().all(|record| {
-            record
-                .path()
-                .and_then(|path| path.segment())
-                .is_some_and(|segment| {
-                    super::element_field_pin::drop_is_plain(
-                        index,
-                        &segment.syntax().text().to_string(),
-                    )
+        exit_record_types::exit_record_types(owner.body.as_str())
+            .as_ref()
+            .as_deref()
+            .is_some_and(|types| {
+                types.iter().all(|name| {
+                    name.as_deref()
+                        .is_some_and(|name| super::element_field_pin::drop_is_plain(index, name))
                 })
-        })
+            })
     }
 
     /// #6692: the owner-side gates for a `field_construction` probe in a
@@ -9006,6 +9008,13 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
     )
 }
 
+/// Whether `operand` is exactly a bare (unqualified) call of `name`, plain or
+/// through a turbofish (`name::<u8>(..)`, #15277). A module-path call
+/// (`m::name(..)`) is excluded: a local binding cannot capture it.
+pub(super) fn is_bare_owner_call(operand: &str, name: &str) -> bool {
+    matches!(owner_call_shape(operand, name), Some(CallShape::Bare))
+}
+
 /// #12796: the tuple struct `T` when the changed tail is exactly `T(e)` or
 /// `Self(e)`, the owner declares that type (or `Self`) as its return, and the
 /// constructor takes one argument. A tuple constructor's arity is its field
@@ -9125,12 +9134,20 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         };
         (dot + 1, constructed)
     };
-    let after_name = &operand[call_start + name.len()..];
-    if !after_name.starts_with('(') {
+    // #15277: a turbofish (`name::<u8>(..)`, `recv.name::<u8>(..)`) names
+    // the same function; it only fixes the generic arguments.
+    let turbofish = crate::analysis::extract::turbofish_len(&operand[call_start + name.len()..]);
+    let opening = call_start + name.len() + turbofish;
+    if !operand[opening..].starts_with('(') {
         return None;
     }
     let masked = mask_comments_and_strings(operand);
-    let opening = call_start + name.len();
+    // Argument readers find the call by its literal `name(`, so a turbofish
+    // call whose arguments mention the name again (`f::<u8>(f(15))`) would
+    // lend them the inner call's arguments: refuse it.
+    if turbofish > 0 && whole_word_count(&masked, name) != 1 {
+        return None;
+    }
     let closing = matching_close(&masked, opening, b'(', b')')?;
     if !operand[closing + 1..].trim().is_empty() {
         return None;
@@ -9420,7 +9437,7 @@ fn unwrapped_err_call(operand: &str) -> Option<&str> {
 /// #6974: whether `test`'s crate (or the workspace) may bind `root` before
 /// the extern prelude does: a rename to it, a raw twin, or a `mod`, `use`,
 /// type or glob in the test's crate. An unplaced test crate binds.
-fn test_crate_binds_root(
+pub(super) fn test_crate_binds_root(
     test: &TestSummary,
     root: &str,
     index: &RustIndex,
@@ -11377,7 +11394,7 @@ fn derived_equality<'a>(
 /// - every one of them is a declared variant of `qualifier`, not an
 ///   associated constant or function that may build any variant;
 /// - its `==` is the derived one over fields that each compare by value
-///   ([`error_enum_compares_payload`]).
+///   ([`derived_fields_compare_by_value`]).
 fn error_enum_admits_variant_pin(
     qualifier: &str,
     variant: &str,
@@ -11391,7 +11408,7 @@ fn error_enum_admits_variant_pin(
                 .chain(siblings.iter().map(String::as_str))
                 .all(|name| facts.variants.iter().any(|declared| declared == name))
         })
-        && error_enum_compares_payload(qualifier, index)
+        && derived_fields_compare_by_value(qualifier, index)
 }
 
 /// #7063: whether the owner's file names the one workspace declaration of
@@ -11442,10 +11459,12 @@ fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustI
     })
 }
 
-/// #7063: whether `qualifier` names one workspace type whose `==` is the
-/// derived one over fields that each compare by value, so an equality
-/// against one constructed variant compares that variant's payload.
-pub(super) fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
+/// Whether the unique workspace type uses derived equality over fields that
+/// compare by value. A handwritten comparison can execute arbitrary code.
+pub(in crate::analysis) fn derived_fields_compare_by_value(
+    qualifier: &str,
+    index: &RustIndex,
+) -> bool {
     derived_equality(qualifier, index).is_some_and(|(facts, declaring)| {
         facts.fields.iter().all(|field| {
             !field.has_attributes && type_compares_by_value(&field.ty, declaring, index, 0)
@@ -18879,6 +18898,43 @@ fn matches_panic_diagnostic(test: &TestSummary, assertion: &OracleFact) -> Optio
         }
     }
     Some(())
+}
+
+/// A success-only pattern over a direct owner call. Limit the arguments to
+/// simple inputs: an expression in the scrutinee could inspect another call.
+pub(in crate::analysis) fn matches_owner_ok(oracle: &str, owner: &str) -> bool {
+    let Some(condition) = outer_assertion_condition(oracle) else {
+        return false;
+    };
+    let Some(operands) = condition
+        .trim()
+        .strip_prefix("matches!")
+        .and_then(|rest| group_inner(rest.trim(), '(', ')'))
+        .and_then(split_top_level_arguments)
+    else {
+        return false;
+    };
+    let [subject, pattern] = operands.as_slice() else {
+        return false;
+    };
+    if pattern.trim() != "Ok(_)" || direct_call_name(subject) != Some(owner) {
+        return false;
+    }
+    let args = subject
+        .trim()
+        .strip_prefix(owner)
+        .and_then(|rest| group_inner(rest.trim(), '(', ')'))
+        .map(str::trim);
+    args.is_some_and(|args| {
+        args.is_empty()
+            || split_top_level_arguments(args).is_some_and(|args| {
+                args.iter().all(|arg| {
+                    is_plain_identifier(arg)
+                        || is_string_literal(arg)
+                        || (!arg.is_empty() && arg.bytes().all(|byte| byte.is_ascii_digit()))
+                })
+            })
+    })
 }
 
 /// The `matches!(scrutinee, pattern)` condition a literal `matches!` pin reads

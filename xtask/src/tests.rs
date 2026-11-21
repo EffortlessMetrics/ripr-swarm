@@ -90,12 +90,11 @@ use super::{
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
     EvidenceQualityTrendReport, FixKind, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
-    GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
-    Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
-    PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
+    Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
+    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, MarkdownLink,
+    PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
@@ -6695,6 +6694,34 @@ fn non_rust_programming_policy_requires_retention_rule() {
     );
     assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
     assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+    assert!(
+        non_rust_programming_retention_reason(
+            "benchmarks/mutation_spot_check/run_python_calibration.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("benchmarks/mutation_spot_check/other.py").is_none()
+    );
+}
+
+#[test]
+fn installed_wheel_identity_retention_is_exact() -> Result<(), String> {
+    for (file, retained) in [
+        ("verify_installed_wheel.py", true),
+        ("test_verify.py", true),
+        ("other.py", false),
+        ("nested/test_verify.py", false),
+    ] {
+        let path = format!("tools/python/installed-wheel-identity/{file}");
+        let observed = non_rust_programming_retention_reason(&path);
+        if observed.is_some() != retained {
+            return Err(format!(
+                "unexpected installed wheel retention for {path}: {observed:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -7750,6 +7777,66 @@ fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() ->
             );
         }
         Ok(())
+    })
+}
+
+#[test]
+fn unguarded_allow_requires_its_own_reason() {
+    let source = r####"
+        #![allow(clippy::never_loop)]
+        // #[allow(comment_only)]
+        const SAMPLE: &str = "#[allow(string_only)]";
+        #[cfg_attr(unix, cfg_attr(test, allow(clippy::never_loop)), allow(other, reason = "conditional"))]
+        #[allow(clippy::documented, reason /* explanation */ = r#"conditional"#)]
+        #[allow(clippy::mixed, GUARDED)]
+        #[r#cfg_attr(test, cfg_attr(windows, r#allow(clippy::raw_missing)))]
+        #[r#allow(clippy::raw_documented, r#reason = "documented")]
+        #[expect(clippy::outside_budget)]
+        fn example() {}
+    "####;
+    let findings = super::unguarded_allows_without_reason(
+        &source.replace("GUARDED", "dead_code"),
+        &guarded_allow_attribute_lints(),
+    );
+    assert_eq!(
+        findings,
+        vec![
+            (2, "clippy::never_loop".to_owned()),
+            (5, "clippy::never_loop".to_owned()),
+            (7, "clippy::mixed".to_owned()),
+            (8, "clippy::raw_missing".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attributes_gate_requires_a_reason_outside_the_budget() -> Result<(), String> {
+    with_temp_cwd("allow-attributes-unguarded", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        let source = "#[cfg_attr(windows, allow(clippy::never_loop))]\nfn example() {}";
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            source,
+        );
+        write(&root.join("fixtures/demo/src/lib.rs"), source);
+        badge_fixture_git(&["add", "."])?;
+        assert!(super::check_allow_attributes_impl().is_err());
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            report.contains("xtask/src/reports/fixtures/preparation.rs:1 allow(clippy::never_loop) needs a written reason"),
+            "{report}"
+        );
+        assert!(!report.contains("fixtures/demo"), "{report}");
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            &source.replace(
+                "never_loop)",
+                "never_loop, reason = \"platform-specific loop\")",
+            ),
+        );
+        super::check_allow_attributes_impl()
     })
 }
 
@@ -19811,6 +19898,15 @@ jobs:
           path: |
             target/ripr/reports
 ";
+    let first_pr_line = concat!(
+        "- Safe next action: run `ripr first-pr --root . --base origin/main --head HEAD",
+        " --gap-ledger target/ripr/reports/gap-decision-ledger.json",
+        " --first-action target/ripr/reports/first-useful-action.json",
+        " --review-comments target/ripr/review/comments.json",
+        " --agent-packet target/ripr/workflow/agent-packet.json",
+        " --gate-decision target/ripr/reports/gate-decision.json",
+        " --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`.",
+    );
     let summary = format!(
         "\
 ## RIPR advisory summary
@@ -19820,7 +19916,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 ### Start here
 - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
-- {GENERATED_CI_FIRST_PR_REPAIR}
+{first_pr_line}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
 - {GENERATED_CI_PACKET_INDEX_REPAIR}
 
@@ -19845,6 +19941,31 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
     assert!(run.default_advisory);
     assert!(run.artifact_upload);
     assert_eq!(run.language_grouping_status, "checked");
+
+    for (name, changed_summary) in [
+        (
+            "wrong-first-pr-output-dir",
+            summary.replace(
+                "--output-dir target/ripr/reports`",
+                "--output-dir target/ripr/reports-wrong`",
+            ),
+        ),
+        ("missing-first-pr", summary.replace(first_pr_line, "")),
+    ] {
+        let changed = dogfood_generated_ci_cockpit_run_from_surfaces(
+            name,
+            command,
+            10,
+            workflow,
+            &changed_summary,
+        );
+        assert_eq!(changed.repair_commands, 3, "{name}");
+        assert_eq!(
+            changed.errors,
+            ["expected 4 cockpit regeneration commands, got 3"],
+            "{name}"
+        );
+    }
 
     let missing =
         dogfood_generated_ci_cockpit_run_from_surfaces("missing", command, 10, "name: RIPR", "");
@@ -19968,10 +20089,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 
     // Generated CI names the PR range since #4260; the unscoped form it
     // replaced must not satisfy the first-pr repair command.
-    let unscoped = summary.replace(
-        GENERATED_CI_FIRST_PR_REPAIR,
-        "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
-    );
+    let unscoped = summary.replace(" --base origin/main --head HEAD", "");
     let stale = dogfood_generated_ci_cockpit_run_from_surfaces(
         "unscoped-first-pr",
         command,
@@ -20699,6 +20817,7 @@ fn dogfood_pr_review_front_panel_scenarios_have_checked_receipts() -> Result<(),
             ("baseline_resolved", "already_improved"),
             ("blocked", "actionable"),
             ("missing_proof", "missing_required_input"),
+            ("absent_optional_guidance", "missing_required_input"),
             ("advisory_only", "no_actionable_seam"),
             ("coverage_flat_grip_improved", "already_improved"),
         ] {
@@ -54466,6 +54585,37 @@ fn check_nextest_hang_window_budget(config: &str, shard_workflow: &str) -> Resul
                     "{name}: ci hang window {window}s + measured {phase} {measured}s = {bound}s is not below the shard test step cap {cap}s; reduce terminate-after so a late hang is terminated and named instead of ending at the step cap"
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+/// The analytics timeout covers the entire partition job. Both measured
+/// phases consume its budget before a late hang can be named (#14946).
+#[test]
+fn nextest_hang_window_fits_the_analytics_job_budget() -> Result<(), String> {
+    let workflow = include_str!("../../.github/workflows/test-analytics.yml");
+    let (_, job) = workflow
+        .split_once("\n  rust-tests:\n")
+        .ok_or("missing analytics rust-tests job")?;
+    let minutes: u32 = job
+        .lines()
+        .take_while(|line| {
+            line.trim().is_empty() || line.starts_with("    ") || line.trim_start().starts_with('#')
+        })
+        .find_map(|line| line.strip_prefix("    timeout-minutes: "))
+        .ok_or("missing analytics rust-tests job timeout")?
+        .trim()
+        .parse()
+        .map_err(|err| format!("invalid analytics job timeout: {err}"))?;
+    let cap = u64::from(minutes) * 60;
+    let (default, overrides) = nextest_ci_hang_windows(include_str!("../../.config/nextest.toml"))?;
+    for (name, window) in std::iter::once(("ci profile".to_owned(), default)).chain(overrides) {
+        let elapsed = NEXTEST_CI_MEASURED_BUILD_SECONDS + NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS;
+        if window >= cap.saturating_sub(elapsed) {
+            return Err(format!(
+                "{name}: {elapsed}s of measured build and test time plus a {window}s hang window reaches the analytics job cap of {cap}s"
+            ));
         }
     }
     Ok(())

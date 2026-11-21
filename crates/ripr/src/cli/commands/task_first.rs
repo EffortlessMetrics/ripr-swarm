@@ -44,9 +44,10 @@ Options:
                    unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
-                   lines from stderr. Refusal prose, the attempt id and the
-                   next command stay. `RIPR_QUIET` (any value except empty,
-                   `0` or `false`) does the same.
+                   lines from stderr. Refusal prose, the attempt id, the
+                   next command and the warning to write output outside the
+                   repo stay. `RIPR_QUIET` (any value except empty, `0` or
+                   `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded
@@ -822,9 +823,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                     .map_err(CommandError::Failure)?;
                 print!("{rendered}");
             } else {
+                // A short summary, not the whole status page (#15282 item 7):
+                // `ripr status --attempt` keeps the full page.
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
                 print!(
                     "{}",
-                    crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+                    crate::app::agent_status::complete_summary::render_already_complete_summary(
+                        &report, &root
+                    )
                 );
             }
             eprintln!(

@@ -42,7 +42,9 @@
 //! while `cargo test` skips a target whose required features are not in
 //! the analyzed set. That set is cargo's package defaults — the same
 //! `cargo metadata --no-deps --offline` probe does not thread
-//! `--features` / `--all-features` (#7266). An unavailable probe — no
+//! `--features` / `--all-features` (#7266) — unified across the workspace:
+//! ripr reads a workspace-wide `cargo test`, so a member also gets the
+//! features other members' path dependencies on it request (#15079). An unavailable probe — no
 //! cargo binary, a workspace cargo rejects, or an unreadable probe
 //! output — fails closed to `manifest_unavailable`: a registration
 //! grants nothing, never over-credits.
@@ -405,7 +407,7 @@ impl ManifestInventory {
         workspace_root: &Path,
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
-        let (anchored, lookup) = self.lookup_test_owners(workspace_root, registration_target);
+        let (explicit_path, lookup) = self.lookup_test_owners(workspace_root, registration_target);
         let owners = match lookup {
             InventoryLookup::Unavailable => {
                 return CargoHarnessVerdict::ManifestUnavailable;
@@ -442,7 +444,7 @@ impl ManifestInventory {
                         // another entry owns.
                         let matched = match &target.name {
                             Some(name) => name == &owner.name,
-                            None => target.path == anchored,
+                            None => explicit_path.as_ref() == Some(&target.path),
                         };
                         if matched {
                             flags.push(target.harness);
@@ -637,7 +639,7 @@ impl ManifestInventory {
         &mut self,
         workspace_root: &Path,
         registration_target: &Path,
-    ) -> (PathBuf, InventoryLookup<MetadataTestOwner>) {
+    ) -> (Option<PathBuf>, InventoryLookup<MetadataTestOwner>) {
         self.lookup_in(workspace_root, registration_target, |inventory| {
             &inventory.tests
         })
@@ -648,40 +650,38 @@ impl ManifestInventory {
         workspace_root: &Path,
         registration_target: &Path,
         select: fn(&MetadataInventory) -> &BTreeMap<PathBuf, Vec<T>>,
-    ) -> (PathBuf, InventoryLookup<T>) {
+    ) -> (Option<PathBuf>, InventoryLookup<T>) {
+        self.ensure_workspace_metadata(workspace_root);
+        let MetadataState::Loaded(inventory) = &self.metadata else {
+            return (None, InventoryLookup::Unavailable);
+        };
+        let key = |path: &Path| {
+            lexical(&normalize(&crate::analysis::plain_drive_verbatim_path(
+                path,
+                cfg!(windows),
+            )))
+        };
         let joined = workspace_root.join(registration_target);
         let absolute = std::path::absolute(&joined).unwrap_or(joined);
-        let anchored = lexical(&normalize(&crate::analysis::plain_drive_verbatim_path(
-            &absolute,
-            cfg!(windows),
-        )));
-        self.ensure_workspace_metadata(workspace_root);
-        let lookup = match &self.metadata {
-            MetadataState::Loaded(inventory) => {
-                let targets = select(inventory);
-                let owners = targets.get(&anchored).cloned().or_else(|| {
-                    // `fs::canonicalize` returns verbatim `\\?\`
-                    // paths on Windows; stripped to the plain drive
-                    // spelling, the real path compares in the same
-                    // family as the echoed keys (#7937).
-                    let real = std::fs::canonicalize(&absolute).ok()?;
-                    targets
-                        .get(&lexical(&normalize(
-                            &crate::analysis::plain_drive_verbatim_path(&real, cfg!(windows)),
-                        )))
-                        .cloned()
-                });
-                match owners {
-                    Some(owners) => InventoryLookup::Present(owners),
-                    None => InventoryLookup::Missing,
-                }
-            }
-            // No metadata premise is available (probe failed or was never
-            // loadable): the registration grants nothing. Fail closed —
-            // under-credit, never over-credit (#3634).
-            MetadataState::Unloaded | MetadataState::Failed => InventoryLookup::Unavailable,
+        let anchored = key(&absolute);
+        let targets = select(inventory);
+        if let Some(owners) = targets.get(&anchored) {
+            return (Some(anchored), InventoryLookup::Present(owners.clone()));
+        }
+        let Some((matched, owners)) = std::fs::canonicalize(&absolute)
+            .ok()
+            .and_then(|real| targets.get_key_value(&key(&real)))
+        else {
+            return (None, InventoryLookup::Missing);
         };
-        (anchored, lookup)
+        // Only Cargo's selected key may supply the explicit declaration.
+        // An alias in the workspace root preserves the configured target
+        // suffix. A symlink within that suffix does not.
+        let explicit_path = std::fs::canonicalize(workspace_root)
+            .ok()
+            .map(|root| key(&root.join(registration_target)))
+            .filter(|root_anchored| root_anchored == matched);
+        (explicit_path, InventoryLookup::Present(owners.clone()))
     }
 
     /// Initialize the metadata probe once per batch. A failed probe is
@@ -830,22 +830,23 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
     parsed
 }
 
-/// Package features enabled under cargo defaults, from the metadata
-/// `packages[].features` table. The metadata probe does not pass
-/// `--features` / `--all-features`, and `--no-deps` does not populate a
-/// usable resolve graph, so this expansion is the analyzed set (#7266).
-fn default_enabled_features(package: &serde_json::Value) -> BTreeSet<String> {
-    let Some(features) = package
-        .get("features")
-        .and_then(serde_json::Value::as_object)
-    else {
-        return BTreeSet::new();
+/// One package's metadata `features` table (name to enables), and whether
+/// any part of it could not be read: a present non-object table, a
+/// non-array entry, or a non-string item. Unreadable parts are left out.
+fn feature_table_with_doubt(package: &serde_json::Value) -> (BTreeMap<String, Vec<String>>, bool) {
+    let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let features = match package.get("features") {
+        None | Some(serde_json::Value::Null) => return (map, false),
+        Some(serde_json::Value::Object(features)) => features,
+        Some(_) => return (map, true),
     };
-    let mut map = BTreeMap::new();
+    let mut doubt = false;
     for (name, enables) in features {
         let Some(items) = enables.as_array() else {
+            doubt = true;
             continue;
         };
+        doubt |= items.iter().any(|item| !item.is_string());
         map.insert(
             name.clone(),
             items
@@ -855,50 +856,364 @@ fn default_enabled_features(package: &serde_json::Value) -> BTreeSet<String> {
                 .collect(),
         );
     }
-    expand_default_features(&map)
+    // Cargo activates a same-named local feature for a strong request on an
+    // optional dependency. A required dependency can share a feature's name
+    // without enabling it. Metadata uses the rename as the manifest key.
+    let optional_keys: BTreeSet<&str> = package["dependencies"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|dep| dep["optional"].as_bool() == Some(true))
+        .filter_map(|dep| dep["rename"].as_str().or_else(|| dep["name"].as_str()))
+        .filter(|key| map.contains_key(*key))
+        .collect();
+    for enables in map.values_mut() {
+        let implicit: Vec<String> = enables
+            .iter()
+            .filter_map(|item| item.split_once('/'))
+            .filter(|(key, _)| optional_keys.contains(key))
+            .map(|(key, _)| key.to_string())
+            .collect();
+        enables.extend(implicit);
+    }
+    (map, doubt)
+}
+
+/// The features a workspace member has under a workspace-wide `cargo test`,
+/// or doubt (#15079).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct MemberFeatures {
+    enabled: BTreeSet<String>,
+    /// A dependency entry that names this member could not be read, so
+    /// its requested features are unknown. A `required-features` check
+    /// then does not establish a skip.
+    doubt: bool,
+}
+
+/// One dependency edge from a workspace member to another member, by
+/// metadata `path` (#15079).
+struct MemberDependency {
+    /// The key the dependent's feature table uses for this edge: the
+    /// rename when present, otherwise the package name.
+    key: String,
+    target_dir: PathBuf,
+    features: Vec<String>,
+    uses_default_features: bool,
+    optional: bool,
+}
+
+/// Each workspace member's enabled features under one workspace-wide
+/// `cargo test`, keyed by lexically resolved manifest directory (#7266,
+/// #15079).
+///
+/// A workspace `cargo test` builds every member with its default features
+/// and unifies each package's features across the members it builds. So a
+/// member starts from its own `default` closure, then gains every feature
+/// that an active normal or dev dependency of another member (or of
+/// itself) on it requests: the listed `features`, `default` unless the
+/// edge sets `default-features = false`, and `key/feature` or
+/// `key?/feature` enables from the dependent's own enabled features. An
+/// optional edge is active only when the dependent enables it (`dep:key`,
+/// which metadata lists as the implicit `key = ["dep:key"]` feature when no
+/// `dep:` syntax hides it, or a `key/feature` enable). An explicit feature
+/// that merely shares the dependency's name does not activate it. Requests expand
+/// through the receiving member's feature table, and the pass repeats until
+/// no set grows, so chains through several members resolve.
+///
+/// An edge into a proc-macro member is left out: cargo builds a
+/// proc-macro for the host, so what another member requests on it (and
+/// what those features chain onward) does not reach the tested build. A
+/// proc-macro member's own default features still chain to its
+/// dependencies, since `cargo test` builds it as a tested root.
+///
+/// Build dependencies are left out: under resolver 2 a build dependency's
+/// features do not unify with the target build that runs the tests (a
+/// resolver 1 workspace keeps the under-credit #7266 already had). A
+/// platform-specific (`[target.'cfg(..)'.dependencies]`) edge is left out
+/// too, because ripr does not evaluate the cfg: a matching platform keeps
+/// the base under-credit, and a non-matching one is not re-admitted.
+///
+/// Doubt fails toward no skip. A dependency entry whose `path` names a
+/// member but whose other fields cannot be read, or an unreadable `features`
+/// table, marks that member as doubt; an unreadable `dependencies` list or
+/// a non-string `path` marks every member, since its target is unknown. The
+/// doubt carries over an edge whose request depends on the doubtful
+/// member's features (an optional edge, or one its feature table chains
+/// through).
+fn workspace_enabled_features(packages: &[serde_json::Value]) -> BTreeMap<PathBuf, MemberFeatures> {
+    let mut tables: BTreeMap<PathBuf, BTreeMap<String, Vec<String>>> = BTreeMap::new();
+    let mut members: BTreeMap<PathBuf, MemberFeatures> = BTreeMap::new();
+    let mut proc_macros: BTreeSet<PathBuf> = BTreeSet::new();
+    for package in packages {
+        if let Some(dir) = package_manifest_dir(package) {
+            if is_proc_macro_package(package) {
+                proc_macros.insert(lexical(&dir));
+            }
+            let (table, doubt) = feature_table_with_doubt(package);
+            let features = MemberFeatures {
+                enabled: expand_default_features(&table),
+                doubt,
+            };
+            members.insert(lexical(&dir), features);
+            tables.insert(lexical(&dir), table);
+        }
+    }
+    // Set when a dependency list or entry cannot say which member it names.
+    let mut unknown_targets = false;
+    let mut edges: Vec<(PathBuf, MemberDependency)> = Vec::new();
+    for package in packages {
+        let Some(dependent) = package_manifest_dir(package).map(|dir| lexical(&dir)) else {
+            continue;
+        };
+        let dependencies = match package.get("dependencies") {
+            None | Some(serde_json::Value::Null) => continue,
+            Some(serde_json::Value::Array(dependencies)) => dependencies,
+            // Any member could be on the other end of an unreadable list.
+            Some(_) => {
+                unknown_targets = true;
+                continue;
+            }
+        };
+        for dependency in dependencies {
+            let target_dir = match dependency.get("path") {
+                // A registry or git dependency: no member edge.
+                None | Some(serde_json::Value::Null) => continue,
+                Some(serde_json::Value::String(path)) => lexical(&normalize(Path::new(path))),
+                Some(_) => {
+                    unknown_targets = true;
+                    continue;
+                }
+            };
+            let Some(target) = members.get_mut(&target_dir) else {
+                continue;
+            };
+            match member_dependency(dependency, target_dir.clone()) {
+                // Another member's edge into a proc-macro builds it for the
+                // host, apart from the tested build (#15079 review).
+                Some(Some(edge)) if proc_macros.contains(&edge.target_dir) => {}
+                Some(Some(edge)) => edges.push((dependent.clone(), edge)),
+                Some(None) => {}
+                None => target.doubt = true,
+            }
+        }
+    }
+    if unknown_targets {
+        for features in members.values_mut() {
+            features.doubt = true;
+        }
+    }
+    loop {
+        let mut grew = false;
+        for (dependent, edge) in &edges {
+            // A dependent in doubt may enable any of its own features, so an
+            // edge whose request depends on them carries the doubt over.
+            let inherits_doubt = members
+                .get(dependent)
+                .is_some_and(|features| features.doubt)
+                && tables
+                    .get(dependent)
+                    .is_some_and(|table| edge.optional || mentions_edge(table, &edge.key));
+            if inherits_doubt && let Some(target) = members.get_mut(&edge.target_dir) {
+                grew |= !target.doubt;
+                target.doubt = true;
+            }
+            let Some(requests) = members
+                .get(dependent)
+                .and_then(|features| tables.get(dependent).map(|table| (features, table)))
+                .and_then(|(features, table)| edge_requests(edge, &features.enabled, table))
+            else {
+                continue;
+            };
+            let Some(table) = tables.get(&edge.target_dir) else {
+                continue;
+            };
+            let Some(target) = members.get_mut(&edge.target_dir) else {
+                continue;
+            };
+            let before = target.enabled.len();
+            expand_features_into(table, requests, &mut target.enabled);
+            grew |= target.enabled.len() != before;
+        }
+        if !grew {
+            break;
+        }
+    }
+    members
+}
+
+/// Whether metadata lists a `proc-macro` target for `package`.
+fn is_proc_macro_package(package: &serde_json::Value) -> bool {
+    package
+        .get("targets")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|targets| {
+            targets.iter().any(|target| {
+                target
+                    .get("kind")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind == "proc-macro"))
+            })
+        })
+}
+
+/// Whether any feature of `table` enables `key` (`dep:key`, `key/feature`
+/// or `key?/feature`).
+fn mentions_edge(table: &BTreeMap<String, Vec<String>>, key: &str) -> bool {
+    table.values().flatten().any(|item| {
+        let item = item.trim();
+        item.strip_prefix("dep:") == Some(key)
+            || item
+                .split_once('/')
+                .is_some_and(|(dep, _)| dep.trim_end_matches('?') == key)
+    })
+}
+
+fn package_manifest_dir(package: &serde_json::Value) -> Option<PathBuf> {
+    package
+        .get("manifest_path")
+        .and_then(serde_json::Value::as_str)
+        .map(|manifest_path| normalize(Path::new(manifest_path)))
+        .and_then(|manifest_path| manifest_path.parent().map(Path::to_path_buf))
+}
+
+/// Parse one metadata dependency entry whose `path` is a member. `None` is
+/// an unreadable entry (doubt); `Some(None)` is a build dependency, which
+/// does not unify into the tested build, or a platform-specific edge.
+fn member_dependency(
+    dependency: &serde_json::Value,
+    target_dir: PathBuf,
+) -> Option<Option<MemberDependency>> {
+    match dependency.get("kind") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(kind)) if kind == "dev" => {}
+        Some(serde_json::Value::String(kind)) if kind == "build" => return Some(None),
+        Some(_) => return None,
+    }
+    // A platform-specific edge applies only where its cfg holds, which ripr
+    // does not evaluate: it requests nothing (the base reading).
+    match dependency.get("target") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(_) => return Some(None),
+    }
+    let name = dependency.get("name")?.as_str()?;
+    let key = match dependency.get("rename") {
+        None | Some(serde_json::Value::Null) => name,
+        Some(rename) => rename.as_str()?,
+    };
+    let features = dependency
+        .get("features")?
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
+    Some(Some(MemberDependency {
+        key: key.to_string(),
+        target_dir,
+        features,
+        uses_default_features: dependency.get("uses_default_features")?.as_bool()?,
+        optional: dependency.get("optional")?.as_bool()?,
+    }))
+}
+
+/// The features `edge` requests on its member under the dependent's
+/// `enabled` set, or `None` when the optional edge is not active.
+fn edge_requests(
+    edge: &MemberDependency,
+    enabled: &BTreeSet<String>,
+    table: &BTreeMap<String, Vec<String>>,
+) -> Option<Vec<String>> {
+    let items: Vec<&str> = enabled
+        .iter()
+        .filter_map(|name| table.get(name))
+        .flatten()
+        .map(|item| item.trim())
+        .collect();
+    let mut chained = Vec::new();
+    let mut strong_chain = false;
+    for item in &items {
+        let Some((dep, feature)) = item.split_once('/') else {
+            continue;
+        };
+        if let Some(weak) = dep.strip_suffix('?') {
+            if weak == edge.key {
+                chained.push(feature.to_string());
+            }
+        } else if dep == edge.key {
+            chained.push(feature.to_string());
+            strong_chain = true;
+        }
+    }
+    let active = !edge.optional
+        || strong_chain
+        || items
+            .iter()
+            .any(|item| item.strip_prefix("dep:") == Some(edge.key.as_str()));
+    if !active {
+        return None;
+    }
+    let mut requests = edge.features.clone();
+    if edge.uses_default_features {
+        requests.push("default".to_string());
+    }
+    requests.extend(chained);
+    Some(requests)
+}
+
+/// Insert `requests` and the local features they transitively enable.
+fn expand_features_into(
+    table: &BTreeMap<String, Vec<String>>,
+    requests: Vec<String>,
+    enabled: &mut BTreeSet<String>,
+) {
+    let mut stack: Vec<String> = requests
+        .iter()
+        .filter_map(|request| local_feature_enable(request))
+        .filter(|request| request != "default" || table.contains_key("default"))
+        .collect();
+    while let Some(name) = stack.pop() {
+        if !enabled.insert(name.clone()) {
+            continue;
+        }
+        if let Some(enables) = table.get(&name) {
+            stack.extend(enables.iter().filter_map(|item| local_feature_enable(item)));
+        }
+    }
 }
 
 /// Transitively enable `default` and the local features it names.
 /// `dep:` and `dep/feature` enables are not local feature names.
 fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
     let mut enabled = BTreeSet::new();
-    if !features.contains_key("default") {
-        return enabled;
-    }
-    let mut stack = vec!["default".to_string()];
-    while let Some(name) = stack.pop() {
-        if !enabled.insert(name.clone()) {
-            continue;
-        }
-        if let Some(enables) = features.get(&name) {
-            for item in enables {
-                if let Some(local) = local_feature_enable(item) {
-                    stack.push(local);
-                }
-            }
-        }
-    }
+    expand_features_into(features, vec!["default".into()], &mut enabled);
     enabled
 }
 
+/// A plain local feature name in the expanded metadata table.
 fn local_feature_enable(item: &str) -> Option<String> {
     let item = item.trim();
-    if item.is_empty() || item.starts_with("dep:") || item.contains('/') {
-        return None;
-    }
-    Some(item.to_string())
+    (!item.is_empty() && !item.starts_with("dep:") && !item.contains('/')).then(|| item.to_string())
 }
 
-/// Whether every `required-features` name is in the analyzed default set.
-/// A missing field is no requirement. A malformed field fails closed.
-fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<String>) -> bool {
-    match target.get("required-features") {
-        None => true,
-        Some(serde_json::Value::Array(items)) => items
-            .iter()
-            .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
-        Some(_) => false,
-    }
+/// Whether every `required-features` name is in the member's analyzed
+/// set: its own defaults plus what other members request (#7266, #15079).
+/// A missing field is no requirement, and a member in doubt establishes no
+/// skip. A malformed field fails closed.
+fn required_features_satisfied(target: &serde_json::Value, features: &MemberFeatures) -> bool {
+    let names: Vec<&str> = match target.get("required-features") {
+        None => return true,
+        Some(serde_json::Value::Array(items)) => {
+            let Some(names) = items
+                .iter()
+                .map(serde_json::Value::as_str)
+                .collect::<Option<Vec<_>>>()
+            else {
+                return false;
+            };
+            names
+        }
+        Some(_) => return false,
+    };
+    features.doubt || names.iter().all(|name| features.enabled.contains(*name))
 }
 
 /// The workspace test-target inventory from parsed `cargo metadata`
@@ -913,7 +1228,9 @@ fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<St
 /// dropped from its inventory cannot contribute its flag to a live
 /// target (#3637 review). `required-features` is compared against the
 /// package's default-enabled features from the same metadata document
-/// (#7266): the probe does not pass `--features` / `--all-features`.
+/// (#7266), unified with what other members request
+/// ([`workspace_enabled_features`], #15079): the probe does not pass
+/// `--features` / `--all-features`.
 /// Every target, of any kind, also records its crate-root unit-test run
 /// state under the same key form (#14962).
 fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
@@ -923,20 +1240,19 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
     let Some(packages) = value.get("packages").and_then(serde_json::Value::as_array) else {
         return MetadataInventory::default();
     };
+    let member_features = workspace_enabled_features(packages);
     for package in packages {
-        let manifest_dir = package
-            .get("manifest_path")
-            .and_then(serde_json::Value::as_str)
-            .map(|manifest_path| normalize(Path::new(manifest_path)))
-            .and_then(|manifest_path| manifest_path.parent().map(Path::to_path_buf));
-        let Some(manifest_dir) = manifest_dir else {
+        let Some(manifest_dir) = package_manifest_dir(package) else {
             continue;
         };
         package_dirs.insert(lexical(&manifest_dir));
         let Some(targets) = package.get("targets").and_then(serde_json::Value::as_array) else {
             continue;
         };
-        let enabled_features = default_enabled_features(package);
+        let features = member_features
+            .get(&lexical(&manifest_dir))
+            .cloned()
+            .unwrap_or_default();
         for target in targets {
             let kinds: Vec<&str> = target
                 .get("kind")
@@ -950,8 +1266,7 @@ fn workspace_target_inventory(value: &serde_json::Value) -> MetadataInventory {
                 .get("test")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(true);
-            let test_enabled =
-                metadata_test && required_features_satisfied(target, &enabled_features);
+            let test_enabled = metadata_test && required_features_satisfied(target, &features);
             let key = lexical(&normalize(Path::new(src_path)));
             crate_roots
                 .entry(key.clone())
@@ -2235,6 +2550,116 @@ test = true
         );
     }
 
+    /// #15079: member requests unify into the receiving member's set, and
+    /// an unreadable entry that names a member is doubt, not a skip.
+    #[test]
+    fn workspace_features_unify_member_requests_and_record_doubt() {
+        let package = |dir: &str, features: serde_json::Value, deps: serde_json::Value| {
+            serde_json::json!({
+                "manifest_path": format!("/ws/{dir}/Cargo.toml"),
+                "features": features,
+                "dependencies": deps,
+            })
+        };
+        let edge = |path: &str, features: serde_json::Value, kind: serde_json::Value| {
+            serde_json::json!({
+                "name": "a", "rename": null, "path": path, "kind": kind,
+                "features": features, "uses_default_features": true, "optional": false,
+            })
+        };
+        let a = package(
+            "a",
+            serde_json::json!({"special": ["mid"], "mid": [], "other": []}),
+            serde_json::json!([]),
+        );
+        let requests = |deps: serde_json::Value| {
+            let b = package("b", serde_json::json!({}), deps);
+            let members = workspace_enabled_features(&[a.clone(), b]);
+            members.get(Path::new("/ws/a")).cloned().unwrap_or_default()
+        };
+        let unified = requests(serde_json::json!([edge(
+            "/ws/a",
+            serde_json::json!(["special"]),
+            serde_json::json!("dev")
+        )]));
+        assert!(unified.enabled.contains("special") && unified.enabled.contains("mid"));
+        assert!(!unified.enabled.contains("other") && !unified.doubt);
+        let build = requests(serde_json::json!([edge(
+            "/ws/a",
+            serde_json::json!(["special"]),
+            serde_json::json!("build")
+        )]));
+        assert_eq!(build, MemberFeatures::default());
+        let elsewhere = requests(serde_json::json!([edge(
+            "/elsewhere/a",
+            serde_json::json!(["special"]),
+            serde_json::Value::Null
+        )]));
+        assert_eq!(elsewhere, MemberFeatures::default());
+        let unreadable = requests(serde_json::json!([edge(
+            "/ws/a",
+            serde_json::json!("special"),
+            serde_json::Value::Null
+        )]));
+        assert!(unreadable.doubt && unreadable.enabled.is_empty());
+        let target = serde_json::json!({"required-features": ["special"]});
+        assert!(required_features_satisfied(&target, &unreadable));
+        assert!(required_features_satisfied(&target, &unified));
+        assert!(!required_features_satisfied(&target, &build));
+        // `c`'s unreadable entry on `b` puts `b` in doubt, and `b` chains
+        // `a/special` through a feature, so `a` inherits the doubt.
+        let b = package(
+            "b",
+            serde_json::json!({"x": ["a/special"]}),
+            serde_json::json!([edge(
+                "/ws/a",
+                serde_json::json!([]),
+                serde_json::Value::Null
+            )]),
+        );
+        let c = package(
+            "c",
+            serde_json::json!({}),
+            serde_json::json!([{"name": "b", "path": "/ws/b", "kind": null, "features": 7}]),
+        );
+        let members = workspace_enabled_features(&[a.clone(), b.clone(), c]);
+        assert!(members.get(Path::new("/ws/b")).is_some_and(|b| b.doubt));
+        assert!(members.get(Path::new("/ws/a")).is_some_and(|a| a.doubt));
+        let members = workspace_enabled_features(&[a.clone(), b]);
+        assert!(members.get(Path::new("/ws/a")).is_some_and(|a| !a.doubt));
+        // A platform-specific edge requests nothing (the cfg is not
+        // evaluated).
+        let mut platform = edge(
+            "/ws/a",
+            serde_json::json!(["special"]),
+            serde_json::Value::Null,
+        );
+        platform["target"] = serde_json::json!("cfg(windows)");
+        assert_eq!(
+            requests(serde_json::json!([platform])),
+            MemberFeatures::default()
+        );
+        // An entry or list that cannot name its member puts every member in
+        // doubt; an unreadable feature table puts its own member in doubt.
+        let unnamed = requests(serde_json::json!([{"name": "a", "path": 7}]));
+        assert!(unnamed.doubt);
+        assert!(requests(serde_json::json!({"a": 1})).doubt);
+        assert!(!requests(serde_json::json!([{"name": "serde", "path": null}])).doubt);
+        let malformed = package(
+            "a",
+            serde_json::json!({"special": 3}),
+            serde_json::json!([]),
+        );
+        let members = workspace_enabled_features(&[malformed]);
+        assert!(members.get(Path::new("/ws/a")).is_some_and(|a| a.doubt));
+        // A malformed `required-features` value stays fail-closed even when
+        // the member is in doubt.
+        for value in [serde_json::json!("special"), serde_json::json!([1])] {
+            let target = serde_json::json!({ "required-features": value });
+            assert!(!required_features_satisfied(&target, &unnamed));
+        }
+    }
+
     /// #3608: a virtual workspace manifest (no `[package]` table) declares no
     /// autodiscovered targets; cargo metadata succeeds on the empty member
     /// set and the inventory is empty.
@@ -2913,6 +3338,95 @@ harness=false
             "a relative root resolves the same workspace premise as an absolute one"
         );
         let _ = std::fs::remove_dir_all(&relative_root);
+        Ok(())
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn explicit_harness_preserves_the_registered_path_under_an_aliased_ancestor()
+    -> Result<(), String> {
+        let dir = unique_workspace("explicit-harness-ancestor");
+        let container = dir.join("actual");
+        let real = container.join("workspace");
+        let link = dir.join("link");
+        let manifest = "[package]\nname='fixture'\nversion='0.1.0'\nedition='2024'\n\
+            [workspace]\n\
+            [[test]]\nname='registered'\npath='src/registered.rs'\nharness=false\n\
+            [[test]]\nname='enabled'\npath='src/enabled.rs'\nharness=true\n\
+            [[test]]\nname='skipped_alias'\npath='alias/enabled.rs'\ntest=false\nharness=false\n";
+        write_member_package(&real, "", manifest)?;
+        for path in ["src/registered.rs", "src/enabled.rs", "src/undeclared.rs"] {
+            write_file(&real, path, "")?;
+        }
+        create_filesystem_alias(&container, &link).map_err(|error| error.to_string())?;
+        create_filesystem_alias(&real.join("src"), &real.join("alias"))
+            .map_err(|error| error.to_string())?;
+        let results = [real, link.join("workspace")].map(|root| {
+            let mut inventory = ManifestInventory::default();
+            [
+                "src/registered.rs",
+                "src/enabled.rs",
+                "src/undeclared.rs",
+                "alias/registered.rs",
+                "alias/enabled.rs",
+            ]
+            .map(|path| inventory.verdict(&root, Path::new(path)))
+        });
+        std::fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        for verdicts in results {
+            use CargoHarnessVerdict::{HarnessDisabled, HarnessEnabled, NotDeclared};
+            if !matches!(
+                verdicts,
+                [
+                    HarnessDisabled,
+                    HarnessEnabled,
+                    NotDeclared,
+                    HarnessEnabled | NotDeclared,
+                    HarnessEnabled | NotDeclared
+                ]
+            ) {
+                return Err(format!(
+                    "unexpected explicit-harness classifications: {verdicts:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn explicit_harness_uses_only_the_selected_metadata_key() -> Result<(), String> {
+        let dir = unique_workspace("explicit-harness-selected-key");
+        let real = dir.join("actual");
+        let link = dir.join("link");
+        make_dir(&real, "src")?;
+        create_filesystem_alias(&real, &link).map_err(|error| error.to_string())?;
+        let as_toml_path = |root: &Path| {
+            toml::Value::String(root.join("src/runner.rs").to_string_lossy().into_owned())
+        };
+        let manifest = format!(
+            "[package]\nname='fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n\
+             [[test]]\nname='live'\npath={}\nharness=false\n\
+             [[test]]\nname='skipped'\npath={}\ntest=false\nharness=true\n",
+            as_toml_path(&link),
+            as_toml_path(&real)
+        );
+        write_member_package(&real, "", &manifest)?;
+        write_file(&real, "src/runner.rs", "")?;
+        let target = Path::new("src/runner.rs");
+        let live = cargo_test_target_harness_verdict(&link, target);
+        let skipped = cargo_test_target_harness_verdict(&real, target);
+        std::fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        if (live, skipped)
+            != (
+                CargoHarnessVerdict::HarnessDisabled,
+                CargoHarnessVerdict::NotDeclared,
+            )
+        {
+            return Err(format!(
+                "expected only the live key to supply a disabled harness; got {live:?}, {skipped:?}"
+            ));
+        }
         Ok(())
     }
 

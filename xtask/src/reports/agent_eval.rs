@@ -11,9 +11,10 @@
 //! 2. **Usefulness of the loop.** Does `check --format agent` report exactly
 //!    the keyed gaps (no misses, no extra gaps), stay silent on a control
 //!    change the tests already pin, keep flagging after a weak test, and
-//!    finish with `verify=complete` after the reference test? With cargo
-//!    available the eval also confirms each key: the reference test passes at
-//!    head and fails at base, the weak test passes at both.
+//!    finish with `verify=complete` after the reference test? Unless
+//!    `--skip-cargo` is given, the eval also confirms each key with the
+//!    scenario's own runner (cargo, pytest or `node --test`): the reference
+//!    test passes at head and fails at base, the weak test passes at both.
 //!
 //! Definitions (do not change silently; they are what the baseline means):
 //! - `bytes`: exact stdout plus stderr bytes of a CLI step (what a shell tool
@@ -34,7 +35,7 @@ mod trial;
 
 use crate::normalize_path;
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
-use scenarios::{GapKey, SCENARIOS, Scenario};
+use scenarios::{GapKey, Language, SCENARIOS, Scenario};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -107,7 +108,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         return Err("--write-baseline records every scenario; drop --scenario".to_string());
     }
     if options.write_baseline && options.skip_cargo {
-        // A baseline without the cargo key checks would leave them unguarded.
+        // A baseline without the key checks would leave them unguarded.
         return Err("--write-baseline needs the cargo key checks; drop --skip-cargo".to_string());
     }
     if options.write_baseline && options.compare.is_some() {
@@ -280,21 +281,22 @@ fn materialize(scratch: &Path, scenario: &Scenario, label: &str) -> Result<Works
     let root = scratch.join(format!("{}-{label}", scenario.id));
     fs::create_dir_all(&root)
         .map_err(|err| format!("failed to create {}: {err}", root.display()))?;
+    let (manifest, manifest_text) = scenario.language.manifest(scenario.crate_name);
+    write_file(&root.join(manifest), &manifest_text)?;
+    write_file(&root.join(".gitignore"), scenario.language.gitignore())?;
+    for (path, text) in scenario.support_files {
+        write_file(&root.join(path), text)?;
+    }
+    write_file(&root.join(scenario.source_path), scenario.base_lib)?;
     write_file(
-        &root.join("Cargo.toml"),
-        &format!(
-            "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
-            scenario.crate_name
-        ),
+        &root.join(scenario.language.test_path("existing")),
+        scenario.existing_tests,
     )?;
-    write_file(&root.join(".gitignore"), "/target/\n")?;
-    write_file(&root.join("src/lib.rs"), scenario.base_lib)?;
-    write_file(&root.join("tests/existing.rs"), scenario.existing_tests)?;
     git(&root, &["init", "-q", "-b", "main"])?;
     git(&root, &["add", "-A"])?;
     git(&root, &["commit", "-q", "-m", "base"])?;
     git(&root, &["checkout", "-q", "-b", "change"])?;
-    write_file(&root.join("src/lib.rs"), scenario.head_lib)?;
+    write_file(&root.join(scenario.source_path), scenario.head_lib)?;
     git(&root, &["commit", "-q", "-am", "change"])?;
     let mut spellings = vec![root.display().to_string(), normalize_path(&root)];
     if let Ok(canonical) = fs::canonicalize(&root) {
@@ -732,26 +734,34 @@ fn run_route(ripr: &Path, workspace: &Workspace, route: &str) -> Result<Vec<Step
 }
 
 /// True when `text` holds `prefix` immediately followed by `number` and then
-/// a non-digit, so `lib.rs:5` does not match `lib.rs:50`.
+/// a non-digit, so `lib.rs:5` does not match `lib.rs:50`. The prefix must
+/// start a name, so `format.ts:` does not match `reformat.ts:`.
 fn has_number_after(text: &str, prefix: &str, number: u32) -> bool {
     let needle = format!("{prefix}{number}");
     text.match_indices(&needle).any(|(index, _)| {
-        !text[index + needle.len()..]
+        let starts_name = !text[..index]
             .chars()
-            .next()
-            .is_some_and(|next| next.is_ascii_digit())
+            .next_back()
+            .is_some_and(|before| before.is_ascii_alphanumeric() || "_-.".contains(before));
+        starts_name
+            && !text[index + needle.len()..]
+                .chars()
+                .next()
+                .is_some_and(|next| next.is_ascii_digit())
     })
 }
 
-fn has_line(text: &str, line: u32) -> bool {
-    ["lib.rs:", "\"line\":", "\"line\": "]
+/// `file` is the changed file's name (`lib.rs`, `backoff.py`): a row names
+/// the line as `path/to/file:N`, JSON as `"line": N`.
+fn has_line(text: &str, file: &str, line: u32) -> bool {
+    [format!("{file}:").as_str(), "\"line\":", "\"line\": "]
         .iter()
         .any(|prefix| has_number_after(text, prefix, line))
 }
 
-fn gap_visible(text: &str, gap: &GapKey) -> bool {
+fn gap_visible(text: &str, file: &str, gap: &GapKey) -> bool {
     text.contains(gap.owner)
-        && has_line(text, gap.line)
+        && has_line(text, file, gap.line)
         && gap
             .facts
             .iter()
@@ -764,7 +774,7 @@ fn gap_visible(text: &str, gap: &GapKey) -> bool {
 const DISCOVERY_STEPS: [&str; 4] = ["find", "check", "brief", "ripr_list_gaps"];
 
 /// Cumulative tokens at the first step after which the answer is visible.
-fn tokens_to_answer(steps: &[Step], gaps: &[GapKey]) -> Option<u64> {
+fn tokens_to_answer(steps: &[Step], file: &str, gaps: &[GapKey]) -> Option<u64> {
     let mut seen = String::new();
     let mut tokens = 0;
     for step in steps {
@@ -780,7 +790,7 @@ fn tokens_to_answer(steps: &[Step], gaps: &[GapKey]) -> Option<u64> {
         seen.push_str(&step.text);
         seen.push('\n');
         tokens += step.tokens;
-        if gaps.iter().all(|gap| gap_visible(&seen, gap)) {
+        if gaps.iter().all(|gap| gap_visible(&seen, file, gap)) {
             return Some(tokens);
         }
     }
@@ -852,55 +862,169 @@ pub(super) enum Suite {
     InstrumentError(String),
 }
 
-/// Classify a finished `cargo test` run. Only a run that compiled and
-/// reported a failing test counts as a failure; a revert that stops the
-/// crate compiling must not credit the agent's tests.
-pub(super) fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
-    let compile_error = output.contains("could not compile") || output.contains("error[E");
-    match exit {
-        Some(0) if !compile_error => Suite::Pass,
-        Some(101) if !compile_error && output.contains("test result: FAILED") => Suite::TestFailed,
-        None => Suite::InstrumentError("cargo test ended without an exit code".to_string()),
-        Some(code) => {
-            Suite::NotEstablished(format!("cargo test exit {code} without a test result"))
+/// Classify a finished test run. Only a run that loaded the tests and
+/// reported a failing one counts as a failure; a revert that stops the code
+/// compiling or importing must not credit the agent's tests.
+pub(super) fn classify_suite(language: Language, exit: Option<i32>, output: &str) -> Suite {
+    let Some(code) = exit else {
+        return Suite::InstrumentError(format!(
+            "{} ended without an exit code",
+            runner_name(language)
+        ));
+    };
+    let unrecognized = || {
+        Suite::NotEstablished(format!(
+            "{} exit {code} without a test result",
+            runner_name(language)
+        ))
+    };
+    match language {
+        Language::Rust => {
+            let compile_error = output.contains("could not compile") || output.contains("error[E");
+            match code {
+                0 if !compile_error => Suite::Pass,
+                101 if !compile_error && output.contains("test result: FAILED") => {
+                    Suite::TestFailed
+                }
+                _ => unrecognized(),
+            }
+        }
+        // pytest: 0 all passed, 1 some failed; 2 (collection or import
+        // error), 4 (usage) and 5 (nothing collected) say nothing.
+        Language::Python => match code {
+            0 if output.contains(" passed") => Suite::Pass,
+            1 if output.contains(" failed") => Suite::TestFailed,
+            _ => unrecognized(),
+        },
+        Language::TypeScript => {
+            let failed = tap_count(output, "# fail ");
+            let ran = tap_count(output, "# tests ").is_some_and(|tests| tests > 0);
+            match code {
+                0 if ran && failed == Some(0) => Suite::Pass,
+                1 if ran && failed.is_some_and(|failed| failed > 0) && !tap_file_failed(output) => {
+                    Suite::TestFailed
+                }
+                _ => unrecognized(),
+            }
         }
     }
 }
 
-/// Run one test target. A run that did not compile or report a test result
+fn runner_name(language: Language) -> &'static str {
+    match language {
+        Language::Rust => "cargo test",
+        Language::Python => "pytest",
+        Language::TypeScript => "node --test",
+    }
+}
+
+/// The number on a TAP summary line such as `# fail 2`.
+fn tap_count(output: &str, prefix: &str) -> Option<u64> {
+    output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(prefix)?.trim().parse().ok())
+}
+
+/// Node reports a test file that failed to load (an import or syntax error)
+/// as a top-level `not ok` row for the file's own subprocess. Only that row's
+/// YAML block carries the subprocess `exitCode:`; a failed test's row never
+/// does, whatever its title says.
+fn tap_file_failed(output: &str) -> bool {
+    let mut in_failed_row = false;
+    for line in output.lines() {
+        if line.starts_with("not ok ") {
+            in_failed_row = true;
+        } else if line.starts_with("ok ") || line.starts_with("# Subtest:") || line == "  ..." {
+            in_failed_row = false;
+        } else if in_failed_row && line.trim_start().starts_with("exitCode:") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Run the scenario's tests: one test file (`existing`, `eval_weak`,
+/// `eval_reference`), or the whole suite when `test` is `None`. Nothing is
+/// fetched: cargo runs offline, and pytest and Node use only their standard
+/// library. The runs leave no cache or bytecode in the checkout.
+fn run_tests(
+    language: Language,
+    root: &Path,
+    target_dir: &Path,
+    test: Option<&str>,
+) -> Result<Captured, String> {
+    let target = target_dir.display().to_string();
+    match language {
+        Language::Rust => {
+            let mut args = strings(&["test", "--offline", "-q"]);
+            if let Some(stem) = test {
+                args.extend(strings(&["--test", stem]));
+            }
+            capture(
+                Path::new("cargo"),
+                &args,
+                root,
+                None,
+                &[("CARGO_TARGET_DIR", target.as_str())],
+            )
+        }
+        Language::Python => {
+            let mut args = strings(&["-m", "pytest", "-q", "-p", "no:cacheprovider"]);
+            args.extend(test.map(|stem| language.test_path(stem)));
+            capture(
+                Path::new("python3"),
+                &args,
+                root,
+                None,
+                &[("PYTHONDONTWRITEBYTECODE", "1")],
+            )
+        }
+        Language::TypeScript => {
+            let mut args = strings(&[
+                "--experimental-strip-types",
+                "--no-warnings",
+                "--test",
+                "--test-reporter=tap",
+            ]);
+            args.extend(test.map(|stem| language.test_path(stem)));
+            capture(Path::new("node"), &args, root, None, &[])
+        }
+    }
+}
+
+/// Run one test file. A run that did not load the tests or report a result
 /// is an instrument failure and comes back as `Err`, so it is never read as
 /// the key holding or failing.
-fn cargo_test(root: &Path, target_dir: &Path, test: &str) -> Result<bool, String> {
-    let target = target_dir.display().to_string();
-    let output = capture(
-        Path::new("cargo"),
-        &strings(&["test", "--offline", "-q", "--test", test]),
-        root,
-        None,
-        &[("CARGO_TARGET_DIR", target.as_str())],
-    )?;
+fn key_test(
+    scenario: &Scenario,
+    root: &Path,
+    target_dir: &Path,
+    test: &str,
+) -> Result<bool, String> {
+    let output = run_tests(scenario.language, root, target_dir, Some(test))?;
     let text = format!("{}\n{}", output.stdout, output.stderr);
-    match classify_suite(output.exit, &text) {
+    match classify_suite(scenario.language, output.exit, &text) {
         Suite::Pass => Ok(true),
         Suite::TestFailed => Ok(false),
         Suite::NotEstablished(reason) | Suite::InstrumentError(reason) => {
-            Err(format!("cargo test --test {test}: {reason}"))
+            Err(format!("{test}: {reason}"))
         }
     }
 }
 
-/// A cargo key check: pass at head, then at base (with `src/lib.rs` put back
+/// A key check: pass at head, then at base (with the source file put back
 /// to head afterwards whatever happened).
-fn cargo_key(
+fn test_key(
     root: &Path,
     target_dir: &Path,
     scenario: &Scenario,
     test: &str,
 ) -> Result<(bool, bool), String> {
-    let at_head = cargo_test(root, target_dir, test);
-    write_file(&root.join("src/lib.rs"), scenario.base_lib)?;
-    let at_base = cargo_test(root, target_dir, test);
-    write_file(&root.join("src/lib.rs"), scenario.head_lib)?;
+    let source = root.join(scenario.source_path);
+    let at_head = key_test(scenario, root, target_dir, test);
+    write_file(&source, scenario.base_lib)?;
+    let at_base = key_test(scenario, root, target_dir, test);
+    write_file(&source, scenario.head_lib)?;
     Ok((at_head?, at_base?))
 }
 
@@ -961,9 +1085,11 @@ fn usefulness(
         "weak_key_valid": Value::Null,
     });
     let target_dir = scratch.join("cargo-target");
+    let language = scenario.language;
     if let Some(weak) = scenario.weak_test {
-        write_file(&workspace.root.join("tests/eval_weak.rs"), weak)?;
-        add_intent(&workspace.root, "tests/eval_weak.rs")?;
+        let path = language.test_path("eval_weak");
+        write_file(&workspace.root.join(&path), weak)?;
+        add_intent(&workspace.root, &path)?;
         let after = capture(ripr, &find_args(), &workspace.root, None, &[])?;
         let still = reported_gap_lines(&after.stdout);
         result["weak_test_still_flagged"] = json!(
@@ -972,21 +1098,19 @@ fn usefulness(
                 && !verify_complete(&after.stdout)
         );
         if !skip_cargo {
-            let outcome = cargo_key(&workspace.root, &target_dir, scenario, "eval_weak");
+            let outcome = test_key(&workspace.root, &target_dir, scenario, "eval_weak");
             record_key(&mut result, "weak_key_valid", outcome, |head, base| {
                 head && base
             });
         }
-        git(
-            &workspace.root,
-            &["rm", "-q", "--cached", "tests/eval_weak.rs"],
-        )?;
-        fs::remove_file(workspace.root.join("tests/eval_weak.rs"))
+        git(&workspace.root, &["rm", "-q", "--cached", path.as_str()])?;
+        fs::remove_file(workspace.root.join(&path))
             .map_err(|err| format!("failed to remove weak test: {err}"))?;
     }
     if let Some(reference) = scenario.reference_test {
-        write_file(&workspace.root.join("tests/eval_reference.rs"), reference)?;
-        add_intent(&workspace.root, "tests/eval_reference.rs")?;
+        let path = language.test_path("eval_reference");
+        write_file(&workspace.root.join(&path), reference)?;
+        add_intent(&workspace.root, &path)?;
         let after = capture(ripr, &find_args(), &workspace.root, None, &[])?;
         let still = reported_gap_lines(&after.stdout);
         result["reference_test_closes_loop"] = json!(
@@ -995,7 +1119,7 @@ fn usefulness(
                 && expected.iter().all(|line| !still.contains(line))
         );
         if !skip_cargo {
-            let outcome = cargo_key(&workspace.root, &target_dir, scenario, "eval_reference");
+            let outcome = test_key(&workspace.root, &target_dir, scenario, "eval_reference");
             record_key(&mut result, "reference_key_valid", outcome, |head, base| {
                 head && !base
             });
@@ -1004,8 +1128,17 @@ fn usefulness(
     Ok(result)
 }
 
+/// The changed file's name, as rows spell it before `:line`.
+fn source_file_name(scenario: &Scenario) -> &'static str {
+    scenario
+        .source_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(scenario.source_path)
+}
+
 fn route_json(route: &str, steps: &[Step], scenario: &Scenario) -> Value {
-    let to_answer = tokens_to_answer(steps, scenario.gaps);
+    let to_answer = tokens_to_answer(steps, source_file_name(scenario), scenario.gaps);
     json!({
         "route": route,
         "steps": steps.iter().map(Step::to_json).collect::<Vec<_>>(),
@@ -1041,6 +1174,7 @@ fn build_report(options: &Options, ripr: &Path) -> Result<Value, String> {
         scenario_rows.push(json!({
             "id": scenario.id,
             "summary": scenario.summary,
+            "language": scenario.language.name(),
             "keyed_gaps": scenario.gaps.len(),
             "routes": routes,
             "loop": loop_checks,
@@ -1654,26 +1788,31 @@ verify=refused|outcome=complete_with_findings\n";
         };
         let one = std::slice::from_ref(&gap);
         let partial = [step("shipping_cents src/lib.rs:5 5000")];
-        assert_eq!(tokens_to_answer(&partial, one), None);
+        assert_eq!(tokens_to_answer(&partial, "lib.rs", one), None);
         let later = [step("shipping_cents src/lib.rs:5 5000"), step("equal")];
-        assert_eq!(tokens_to_answer(&later, one), Some(20));
+        assert_eq!(tokens_to_answer(&later, "lib.rs", one), Some(20));
         let json_line = [step(
             "{\"owner\":\"shipping_cents\",\"line\": 5,\"x\":\"FREE equal\"}",
         )];
-        assert_eq!(tokens_to_answer(&json_line, one), Some(10));
+        assert_eq!(tokens_to_answer(&json_line, "lib.rs", one), Some(10));
         // `lib.rs:5` must not match `lib.rs:50` or `"line":50`.
         let wrong_line = [step("shipping_cents src/lib.rs:50 \"line\":50 5000 equal")];
-        assert_eq!(tokens_to_answer(&wrong_line, one), None);
+        assert_eq!(tokens_to_answer(&wrong_line, "lib.rs", one), None);
+        // `format.ts:5` must not match a longer name that ends the same way.
+        let other_file = [step("shipping_cents src/reformat.ts:5 5000 equal")];
+        assert_eq!(tokens_to_answer(&other_file, "format.ts", one), None);
+        let this_file = [step("shipping_cents src/format.ts:5 5000 equal")];
+        assert_eq!(tokens_to_answer(&this_file, "format.ts", one), Some(10));
         // A control answer is known once the discovery step is read, and
         // only when that step succeeded with output.
         let mut mcp = [step("init"), step("[]")];
         mcp[1].label = "ripr_list_gaps".to_string();
-        assert_eq!(tokens_to_answer(&mcp, &[]), Some(20));
+        assert_eq!(tokens_to_answer(&mcp, "lib.rs", &[]), Some(20));
         mcp[1].exit = Some(1);
-        assert_eq!(tokens_to_answer(&mcp, &[]), None);
+        assert_eq!(tokens_to_answer(&mcp, "lib.rs", &[]), None);
         mcp[1].exit = Some(0);
         mcp[1].text = String::new();
-        assert_eq!(tokens_to_answer(&mcp, &[]), None);
+        assert_eq!(tokens_to_answer(&mcp, "lib.rs", &[]), None);
     }
 
     fn report(tokens: u64, reached: bool, closes: bool) -> Value {
@@ -1777,6 +1916,53 @@ verify=refused|outcome=complete_with_findings\n";
     }
 
     #[test]
+    fn python_and_node_runs_count_only_a_loaded_failing_test() {
+        let py = Language::Python;
+        assert_eq!(
+            classify_suite(py, Some(0), "2 passed in 0.01s"),
+            Suite::Pass
+        );
+        assert_eq!(
+            classify_suite(py, Some(1), "1 failed, 1 passed in 0.02s"),
+            Suite::TestFailed
+        );
+        // Collection (import) errors exit 2; nothing collected exits 5.
+        for (code, text) in [(2, "1 error in 0.05s"), (5, "no tests ran"), (1, "")] {
+            assert!(
+                matches!(
+                    classify_suite(py, Some(code), text),
+                    Suite::NotEstablished(_)
+                ),
+                "pytest exit {code}"
+            );
+        }
+        let ts = Language::TypeScript;
+        let summary = |tests: u32, fail: u32| {
+            format!("# tests {tests}\n# pass {}\n# fail {fail}\n", tests - fail)
+        };
+        assert_eq!(classify_suite(ts, Some(0), &summary(2, 0)), Suite::Pass);
+        let failed = format!("ok 1 - hours\nnot ok 2 - one hour\n{}", summary(2, 1));
+        assert_eq!(classify_suite(ts, Some(1), &failed), Suite::TestFailed);
+        // A test file that failed to load is a file-named row, not a catch.
+        let unloaded = format!(
+            "not ok 1 - test/eval_reference.test.ts\n  ---\n  location: 'test/eval_reference.test.ts:1:1'\n  failureType: 'testCodeFailure'\n  exitCode: 1\n  error: 'test failed'\n  ...\n{}",
+            summary(1, 1)
+        );
+        assert!(matches!(
+            classify_suite(ts, Some(1), &unloaded),
+            Suite::NotEstablished(_)
+        ));
+        assert!(matches!(
+            classify_suite(ts, Some(0), &summary(0, 0)),
+            Suite::NotEstablished(_)
+        ));
+        assert!(matches!(
+            classify_suite(ts, None, ""),
+            Suite::InstrumentError(_)
+        ));
+    }
+
+    #[test]
     fn scenario_keys_name_lines_that_changed_and_owners_present_at_head() {
         for scenario in SCENARIOS {
             let base: Vec<&str> = scenario.base_lib.lines().collect();
@@ -1790,7 +1976,9 @@ verify=refused|outcome=complete_with_findings\n";
                     gap.line
                 );
                 assert!(
-                    scenario.head_lib.contains(&format!("fn {}(", gap.owner)),
+                    scenario
+                        .head_lib
+                        .contains(&scenario.language.defines(gap.owner)),
                     "{}: owner {}",
                     scenario.id,
                     gap.owner
@@ -1947,23 +2135,30 @@ verify=refused|outcome=complete_with_findings\n";
 
     #[test]
     fn only_a_compiled_failing_run_counts_as_a_failure() {
-        assert_eq!(classify_suite(Some(0), "test result: ok."), Suite::Pass);
         assert_eq!(
-            classify_suite(Some(101), "test result: FAILED. 0 passed; 1 failed"),
+            classify_suite(Language::Rust, Some(0), "test result: ok."),
+            Suite::Pass
+        );
+        assert_eq!(
+            classify_suite(
+                Language::Rust,
+                Some(101),
+                "test result: FAILED. 0 passed; 1 failed"
+            ),
             Suite::TestFailed
         );
         // A revert that breaks compilation exits 101 too; it is no catch.
         let compile = "error[E0308]: mismatched types\nerror: could not compile `shop`";
         assert!(matches!(
-            classify_suite(Some(101), compile),
+            classify_suite(Language::Rust, Some(101), compile),
             Suite::NotEstablished(_)
         ));
         assert!(matches!(
-            classify_suite(None, ""),
+            classify_suite(Language::Rust, None, ""),
             Suite::InstrumentError(_)
         ));
         assert!(matches!(
-            classify_suite(Some(101), ""),
+            classify_suite(Language::Rust, Some(101), ""),
             Suite::NotEstablished(_)
         ));
     }

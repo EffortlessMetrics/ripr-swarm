@@ -4069,8 +4069,8 @@ fn collect_workspace_state_from_files(
         files: sorted_files,
         files_content_hash: builder.finish(),
         config_text: Some(classified_config_identity(config)),
-        test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
-        suppressions_text: read_optional(&root.join(config.suppressions().path())),
+        test_intent_text: read_optional(root, &Path::new(".ripr").join("test_intent.toml")),
+        suppressions_text: read_optional(root, config.suppressions().path()),
     })
 }
 
@@ -4090,8 +4090,8 @@ fn workspace_state_from_paths(
         files: sorted_files,
         files_content_hash: String::new(),
         config_text: Some(classified_config_identity(config)),
-        test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
-        suppressions_text: read_optional(&root.join(config.suppressions().path())),
+        test_intent_text: read_optional(root, &Path::new(".ripr").join("test_intent.toml")),
+        suppressions_text: read_optional(root, config.suppressions().path()),
     }
 }
 
@@ -4155,8 +4155,8 @@ fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs 
     WorkspaceKeyInputs {
         cfg_features: std::env::var("RIPR_CFG_FEATURES").ok(),
         config_text: Some(classified_config_identity(config)),
-        test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
-        suppressions_text: read_optional(&root.join(config.suppressions().path())),
+        test_intent_text: read_optional(root, &Path::new(".ripr").join("test_intent.toml")),
+        suppressions_text: read_optional(root, config.suppressions().path()),
     }
 }
 
@@ -4255,8 +4255,15 @@ fn store_corpus_fingerprint_mapping(
     }
 }
 
-fn read_optional(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+/// Identity input only (hashed, never echoed). Read through the same
+/// root-contained, regular-file, size-capped reader as the suppressions
+/// loader, so a checkout's link out of the repository, FIFO or `/dev/zero`
+/// at a config path neither feeds outside bytes into the identity nor blocks
+/// or exhausts the workspace scan (#15546).
+fn read_optional(root: &Path, relative_path: &Path) -> Option<String> {
+    crate::bounded_input::read_root_metadata_toml(root, relative_path, "workspace config")
+        .ok()
+        .flatten()
 }
 
 /// Whether the aggregate key's `\` to `/` fold is lossless for `text` when the
@@ -7432,6 +7439,34 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
         Ok(dir)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn identity_read_ignores_a_config_link_that_leaves_the_root() -> Result<(), String> {
+        let base = make_tempdir("identity-link-escape")?;
+        let root = base.join("repo");
+        let ripr = root.join(".ripr");
+        std::fs::create_dir_all(&ripr).map_err(|err| err.to_string())?;
+        let outside = base.join("outside.toml");
+        std::fs::write(&outside, "outside_key = 1\n").map_err(|err| err.to_string())?;
+        std::fs::write(ripr.join("inside.toml"), "inside_key = 1\n")
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&outside, ripr.join("suppressions.toml"))
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(ripr.join("inside.toml"), ripr.join("test_intent.toml"))
+            .map_err(|err| err.to_string())?;
+        let escaped = super::read_optional(&root, Path::new(".ripr/suppressions.toml"));
+        let contained = super::read_optional(&root, Path::new(".ripr/test_intent.toml"));
+        let missing = super::read_optional(&root, Path::new(".ripr/absent.toml"));
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(
+            escaped, None,
+            "outside bytes must not feed the workspace identity"
+        );
+        assert_eq!(contained.as_deref(), Some("inside_key = 1\n"));
+        assert_eq!(missing, None);
+        Ok(())
     }
 
     fn write_file(path: &Path, content: &str) -> Result<(), String> {

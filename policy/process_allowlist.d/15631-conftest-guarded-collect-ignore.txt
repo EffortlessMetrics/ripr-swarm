@@ -1,0 +1,2 @@
+crates/ripr/tests/python_conftest_guarded_collect_ignore.rs|Command::new|1|cli-tests|#15631: runs the built ripr binary (`check --diff`) against an isolated temp workspace to prove a version-guarded conftest collect_ignore withholds only the file it could ignore. No shell, network, or user-repository mutation.
+crates/ripr/tests/python_conftest_guarded_collect_ignore.rs|use std::process::Command|1|cli-tests|Import for the exact-binary spawn site described above.

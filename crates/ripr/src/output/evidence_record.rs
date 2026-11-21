@@ -1015,7 +1015,8 @@ fn alignment_confidence_for(
 /// test reaches the seam. Eligibility and the limitation projection share
 /// this one decision.
 fn activation_follows_absent_reach(entry: &ClassifiedSeam) -> bool {
-    matches!(entry.evidence.reach.state, StageState::No)
+    entry.evidence.activate.static_limit_kind.is_none()
+        && matches!(entry.evidence.reach.state, StageState::No)
         && matches!(entry.evidence.activate.state, StageState::Unknown)
         && (entry
             .evidence
@@ -1296,7 +1297,8 @@ pub(crate) fn static_limitations_for(
     if matches!(entry.class, SeamGripClass::Opaque) {
         let reason =
             "seam is classified opaque; inspect static evidence before writing a focused test";
-        let category = static_limitation_category("classification", "opaque", reason).as_str();
+        let category =
+            legacy_static_limitation_category("classification", "opaque", reason).as_str();
         limitations.push(EvidenceRecordStaticLimitation {
             stage: "classification".to_string(),
             state: "opaque".to_string(),
@@ -1415,14 +1417,16 @@ fn push_stage_limitation(
         // "macro" mention as `macro_generated_value` and would otherwise
         // steal this row. Honor the producer token only on the reach stage so
         // examples 21/22 (snapshot/mock/generated name inference) stay out.
-        let category = if panic_unresolved {
+        let category = if let Some(kind) = evidence.static_limit_kind {
+            StageLimitationCategory::from_kind(stage, kind)
+        } else if panic_unresolved {
             StageLimitationCategory::Typed(StaticLimitKind::RustPanicOutcomeUnresolved)
         } else if framework_unresolved {
             StageLimitationCategory::Typed(StaticLimitKind::RustFrameworkOracleUnresolved)
         } else if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary) {
             StageLimitationCategory::Untyped(UntypedStageLimitation::OpaqueStaticEvidence)
         } else {
-            let base_category = static_limitation_category(stage, state, &evidence.summary);
+            let base_category = legacy_static_limitation_category(stage, state, &evidence.summary);
             static_limitation_category_for_entry(base_category, entry)
         }
         .as_str();
@@ -1458,6 +1462,23 @@ enum StageLimitationCategory {
 }
 
 impl StageLimitationCategory {
+    /// The stage record predates several finding tokens and retains its wire vocabulary.
+    fn from_kind(stage: &str, kind: StaticLimitKind) -> Self {
+        use UntypedStageLimitation as U;
+        match kind {
+            StaticLimitKind::MockedModule => Self::Untyped(U::UnsupportedMockShape),
+            StaticLimitKind::Metaprogramming => Self::Untyped(U::MacroGeneratedValue),
+            StaticLimitKind::OpaqueCustomAssertionHelper => Self::Untyped(U::OpaqueHelperCall),
+            StaticLimitKind::RustMacroReachUnresolved
+            | StaticLimitKind::RustMacroWrappedTestCallUnresolved
+                if stage == "reach" =>
+            {
+                Self::Untyped(U::OpaqueStaticEvidence)
+            }
+            _ => Self::Typed(kind),
+        }
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Self::Typed(kind) => kind.as_str(),
@@ -1520,7 +1541,11 @@ untyped_stage_limitations! {
     Unclassified => "static_limitation_unclassified",
 }
 
-fn static_limitation_category(stage: &str, state: &str, reason: &str) -> StageLimitationCategory {
+fn legacy_static_limitation_category(
+    stage: &str,
+    state: &str,
+    reason: &str,
+) -> StageLimitationCategory {
     use UntypedStageLimitation as U;
     let reason = reason.to_ascii_lowercase();
     let untyped = if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
@@ -2145,6 +2170,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "below_threshold_has_no_discount".to_string(),
                     file: PathBuf::from("tests/pricing_tests.rs"),
                     line: 12,
@@ -2268,6 +2294,7 @@ mod tests {
 
     fn external_language_related_test(file: &str, evidence_summary: &str) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "blob copies shared buffers".to_string(),
             file: PathBuf::from(file),
             line: 41,
@@ -2297,6 +2324,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "target_token_affinity_is_not_owner_call".to_string(),
                     file: PathBuf::from("tests/target_affinity.rs"),
                     line: 9,
@@ -3565,6 +3593,91 @@ mod tests {
     }
 
     #[test]
+    fn typed_activation_survives_absent_reach_even_with_legacy_absence_wording() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.reach.state = StageState::No;
+        entry.evidence.activate.summary =
+            "No concrete activation values observed for seam `x`".into();
+        for (kind, expected) in [
+            (None, None),
+            (
+                Some(StaticLimitKind::ActivationBoundaryInputUnresolved),
+                Some("activation_boundary_input_unresolved"),
+            ),
+        ] {
+            entry.evidence.activate.static_limit_kind = kind;
+            let rows = static_limitations_for(&entry);
+            let categories: Vec<_> = rows
+                .iter()
+                .filter(|row| row.stage == "activate")
+                .map(|row| row.category.as_str())
+                .collect();
+            assert_eq!(categories, expected.into_iter().collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn typed_stage_aliases_keep_the_stage_wire_values() {
+        use StaticLimitKind as K;
+        for (stage, kind, expected) in [
+            (
+                "reach",
+                K::RustMacroReachUnresolved,
+                "opaque_static_evidence",
+            ),
+            (
+                "reach",
+                K::RustMacroWrappedTestCallUnresolved,
+                "opaque_static_evidence",
+            ),
+            ("activate", K::MockedModule, "unsupported_mock_shape"),
+            ("activate", K::Metaprogramming, "macro_generated_value"),
+            (
+                "discriminate",
+                K::OpaqueCustomAssertionHelper,
+                "opaque_helper_call",
+            ),
+            ("reach", K::DynamicDispatch, "dynamic_dispatch"),
+        ] {
+            assert_eq!(
+                StageLimitationCategory::from_kind(stage, kind).as_str(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn typed_stage_category_survives_summary_changes_and_legacy_stages_keep_their_category() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        for (kind, summary, expected) in [
+            (
+                Some(StaticLimitKind::RustCallFactBudget),
+                "unresolved",
+                "rust_call_fact_budget",
+            ),
+            (
+                Some(StaticLimitKind::RustCallFactBudget),
+                "mock snapshot",
+                "rust_call_fact_budget",
+            ),
+            (
+                Some(StaticLimitKind::ActivationBoundaryInputUnresolved),
+                "mock snapshot",
+                "activation_boundary_input_unresolved",
+            ),
+            (None, "mock snapshot", "unsupported_mock_shape"),
+        ] {
+            entry.evidence.activate.static_limit_kind = kind;
+            entry.evidence.activate.summary = summary.to_string();
+            let mut rows = Vec::new();
+            push_stage_limitation(&mut rows, "activate", &entry.evidence.activate, &entry);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].category, expected);
+            assert_eq!(rows[0].reason, summary);
+        }
+    }
+
+    #[test]
     fn evidence_record_names_static_limitations_from_unknown_stages() {
         let record = evidence_record_for(
             &sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown),
@@ -3987,6 +4100,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "pricing_module_smoke".to_string(),
                 file: PathBuf::from("tests/pricing/integration.rs"),
                 line: 44,
@@ -4433,7 +4547,11 @@ mod tests {
         // Negative control: the typed arm the classifier takes for dispatch
         // prose renders the enum's own token.
         assert_eq!(
-            static_limitation_category("reach", "unknown", "dynamic dispatch hides the callee"),
+            legacy_static_limitation_category(
+                "reach",
+                "unknown",
+                "dynamic dispatch hides the callee"
+            ),
             StageLimitationCategory::Typed(StaticLimitKind::DynamicDispatch)
         );
         assert!(typed.contains("dynamic_dispatch"));
@@ -4601,7 +4719,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                static_limitation_category(stage, state, reason).as_str(),
+                legacy_static_limitation_category(stage, state, reason).as_str(),
                 expected,
                 "unexpected category for {stage}/{state}: {reason}"
             );

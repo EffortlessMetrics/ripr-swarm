@@ -66,8 +66,10 @@ pub(super) fn recorded_version(report: &Value) -> Option<&str> {
 /// holds an older capture at its recorded generation, so judging it would test
 /// a claim the pin does not make and leave the pin's own reason unverified
 /// (#14555).
-pub(super) fn judges_evidence_path(report: &Value, current: &str) -> bool {
-    recorded_version(report) == Some(current)
+pub(super) fn judges_evidence_path(report: &Value, current: &str) -> Result<bool, &'static str> {
+    recorded_version(report)
+        .map(|recorded| recorded == current)
+        .ok_or("regenerable capture requires `source_subject.corpus.cache_schema_version` to check currentness")
 }
 
 /// The pins as `report path -> (version, reason)`. A pin without a version or

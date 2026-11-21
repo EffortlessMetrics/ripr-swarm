@@ -14,7 +14,7 @@ fn stage_axes_match_pinned_classes_and_partial_runtime_truth() -> Result<(), Str
             "infection_unknown",
             "propagation_unknown",
         ] {
-            let waived = language == "python" || class == "propagation_unknown";
+            let waived = class == "propagation_unknown";
             let tagged: Vec<_> = corpus
                 .cases
                 .iter()

@@ -122,6 +122,7 @@ const BINARY_TAX: &str = "diff --git a/src/tax.rs b/src/tax.rs\nindex 4444444..5
 const BINARY_ARTIFACT: &str = "diff --git a/target/ripr/cache/x.rs b/target/ripr/cache/x.rs\nindex 8888888..9999999 100644\nBinary files a/target/ripr/cache/x.rs and b/target/ripr/cache/x.rs differ\n";
 const BINARY_QUOTED: &str = "diff --git \"a/src/caf\\303\\251.rs\" \"b/src/caf\\303\\251.rs\"\nindex 4444444..5555555 100644\nBinary files \"a/src/caf\\303\\251.rs\" and \"b/src/caf\\303\\251.rs\" differ\n";
 const BINARY_COPY: &str = "diff --git a/src/lib.rs b/src/fee.rs\nsimilarity index 80%\ncopy from src/lib.rs\ncopy to src/fee.rs\nindex 4444444..5555555 100644\nBinary files a/src/lib.rs and b/src/fee.rs differ\n";
+const BINARY_NOPREFIX: &str = "diff --git src/tax.rs src/tax.rs\nindex 4444444..5555555 100644\nBinary files src/tax.rs and src/tax.rs differ\n";
 const BINARY_LOGO: &str = "diff --git a/logo.png b/logo.png\nindex 6666666..7777777 100644\nBinary files a/logo.png and b/logo.png differ\n";
 
 /// #15324: a deleted source file beside another changed file is named on
@@ -187,6 +188,9 @@ fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult
         if name.ends_with("quoted-exclude-control") {
             args.extend(["--exclude", "src/café.rs"]);
         }
+        if name.ends_with("noprefix-exclude-control") {
+            args.extend(["--exclude", "src/tax.rs"]);
+        }
         let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)?;
         let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
         // Pin the stimulus: the text hunk on lib.rs parsed.
@@ -234,6 +238,20 @@ fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult
         "{quoted}"
     );
 
+    // #15665: a `--no-prefix` binary section is named by its whole path.
+    let noprefix = limitation_for(
+        "diff-binary-noprefix-source",
+        &[LIB_COMMENT, BINARY_NOPREFIX],
+    )?;
+    assert_eq!(
+        noprefix["analysis_outcome"]["analysis_complete"], false,
+        "{noprefix}"
+    );
+    assert!(
+        noprefix.to_string().contains("not analyzed: src/tax.rs"),
+        "{noprefix}"
+    );
+
     for (name, sections) in [
         ("diff-binary-asset-control", &[LIB_COMMENT, BINARY_LOGO][..]),
         ("diff-text-only-control", &[LIB_COMMENT][..]),
@@ -248,6 +266,10 @@ fn a_source_file_rendered_as_binary_makes_the_outcome_incomplete() -> TestResult
         (
             "diff-binary-quoted-exclude-control",
             &[LIB_COMMENT, BINARY_QUOTED][..],
+        ),
+        (
+            "diff-binary-noprefix-exclude-control",
+            &[LIB_COMMENT, BINARY_NOPREFIX][..],
         ),
     ] {
         let json = limitation_for(name, sections)?;
