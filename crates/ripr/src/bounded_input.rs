@@ -185,6 +185,63 @@ pub(crate) fn read_repository_artifact_with_limit(
     read_to_string_with_limit(path, limit)
 }
 
+/// Decode bytes that open with a UTF-16 byte-order mark. The outer `None`
+/// means there is no such mark; the inner `None` means the mark is there but
+/// the rest is not complete UTF-16 (an odd byte count or an unpaired
+/// surrogate). The decode is exact and the mark is dropped.
+///
+/// Windows PowerShell 5.1 writes every `>` redirect as UTF-16LE with a mark
+/// (#15907, #15936), so a user-made diff or JSON artifact arrives this way.
+pub(crate) fn decode_utf16_with_bom(bytes: &[u8]) -> Option<Option<String>> {
+    let (payload, little_endian) = match bytes {
+        [0xFF, 0xFE, payload @ ..] => (payload, true),
+        [0xFE, 0xFF, payload @ ..] => (payload, false),
+        _ => return None,
+    };
+    let (pairs, trailing) = payload.as_chunks::<2>();
+    let units = pairs.iter().map(|pair| {
+        if little_endian {
+            u16::from_le_bytes(*pair)
+        } else {
+            u16::from_be_bytes(*pair)
+        }
+    });
+    let decoded = char::decode_utf16(units).collect::<Result<String, _>>();
+    Some(decoded.ok().filter(|_| trailing.is_empty()))
+}
+
+/// Bounded read of a user-named JSON artifact that a shell redirect may have
+/// written (`ripr check --format json > check.json`, a gate decision).
+///
+/// Windows PowerShell 5.1 writes such a file as UTF-16 with a byte-order
+/// mark, and its `-Encoding utf8` writes a UTF-8 mark that the JSON parser
+/// refuses at column 1 (#15936). Both decode to the same text as the plain
+/// UTF-8 file. UTF-16 that cannot be decoded exactly is refused by name.
+/// Not for source files: there a mark is content and byte offsets matter.
+pub(crate) fn read_artifact_text(path: impl AsRef<Path>) -> std::io::Result<String> {
+    let bytes = read(path)?;
+    if let Some(decoded) = decode_utf16_with_bom(&bytes) {
+        return decoded.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "the file starts with a UTF-16 byte-order mark but is not complete UTF-16 \
+                 text; write it as UTF-8 (in Windows PowerShell 5.1 a `>` redirect writes \
+                 UTF-16)",
+            )
+        });
+    }
+    let text = String::from_utf8(bytes).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("stream did not contain valid UTF-8 ({err})"),
+        )
+    })?;
+    Ok(match text.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_owned(),
+        None => text,
+    })
+}
+
 /// Bounded replacement for `std::fs::read` on a user-named input.
 pub(crate) fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     read_with_limit(path, MAX_CLI_INPUT_BYTES)
@@ -294,7 +351,7 @@ pub(crate) fn read_required_input(
     path: &Path,
     recovery: Option<&str>,
 ) -> Result<String, String> {
-    read_to_string(path).map_err(|err| {
+    read_artifact_text(path).map_err(|err| {
         let mut message = format!(
             "{attempted} {} failed: {}",
             crate::output::path::display_path(path),

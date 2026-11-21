@@ -41,6 +41,10 @@ shell family of the host that printed them. On Windows:
   PowerShell 5.1 re-encodes git's output on the way, so non-ASCII text inside
   changed lines may already be altered in that file;
   `git diff --output=change.diff` writes git's own bytes.
+- A check output or gate decision file saved with `>` in Windows PowerShell
+  5.1 (UTF-16 with a byte-order mark), or with `-Encoding utf8` (UTF-8 with a
+  byte-order mark), is read by `baseline`, `review-comments --check-output`,
+  `first-pr --check-output` and `gate`.
 
 ## Line endings
 

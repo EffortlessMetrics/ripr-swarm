@@ -1671,7 +1671,7 @@ fn read_json_value_and_bytes_with_display(
 
 fn read_json_value_with_display(path: &Path, display: &Path) -> Result<Value, String> {
     let display = display_path(display);
-    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {

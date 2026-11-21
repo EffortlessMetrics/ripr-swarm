@@ -782,7 +782,7 @@ fn materialize_check_output_gap_ledger(
         return Ok(());
     };
     let check_output_path = resolve_path(root, check_output);
-    let contents = crate::bounded_input::read_to_string(&check_output_path).map_err(|err| {
+    let contents = crate::bounded_input::read_artifact_text(&check_output_path).map_err(|err| {
         format!(
             "first-pr --check-output {} is invalid: read failed: {err}",
             check_output_path.display()

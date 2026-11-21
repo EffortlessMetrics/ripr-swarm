@@ -265,7 +265,7 @@ fn record_review_comments_timeout(
 /// `None` and keeps the loader's own validation and error ordering.
 fn early_producer_refusal_error(path: Option<&Path>) -> Option<String> {
     let path = path?;
-    let text = crate::bounded_input::read_to_string(path).ok()?;
+    let text = crate::bounded_input::read_artifact_text(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
     if value.get("analysis_outcome").is_some()
         || crate::output::gate::discloses_limited_findings_bound(&value)
@@ -308,7 +308,7 @@ fn load_review_comments_analysis_outcome(
     let Some(path) = path else {
         return Ok(None);
     };
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -467,7 +467,7 @@ fn load_review_comments_analysis_outcome(
 fn load_check_output_suppressed_findings(
     path: &Path,
 ) -> Result<Vec<output::review_comments::CheckOutputSuppressedFinding>, String> {
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
