@@ -180,7 +180,7 @@ mod reports;
 pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
-pub(super) use first_pr::first_pr;
+pub(super) use first_pr::{first_pr, start_here};
 #[cfg(test)]
 pub(super) use reports::reports;
 pub(super) use reports::reports_command;
@@ -278,14 +278,10 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_evidence_health_options(args)?;
-    if !options.root.is_dir() {
-        return Err(format!(
-            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
-            options.root.display()
-        ));
-    }
-    // Analysis below writes the seam cache under `target/ripr/cache`.
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    // #15249: the shared root refusal (with its imperative next step); it also
+    // checks the output containment the analysis below needs, because it
+    // writes the seam cache under `target/ripr/cache`.
+    crate::cli::commands_context::ensure_command_root(&options.root, "evidence-health")?;
 
     let config = load_for_root(&options.root)?;
     // #13055: the whole-workspace walk can run for minutes on a very large
@@ -698,6 +694,12 @@ fn pr_comments_plan(args: &[String]) -> Result<(), String> {
 
 fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     let options = parse_pr_review_front_panel_options(args)?;
+    // #15249: the shared root refusal, before any artifact is read or a report
+    // is written. `--root` is the report's label; its outputs follow `--out`.
+    crate::cli::commands_context::ensure_command_root_dir(
+        Path::new(&options.root),
+        "pr-review front-panel",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -2295,6 +2297,22 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
             &typed_root,
             options.base.as_deref(),
             crate::core_error::CoreError::from(error),
+        ));
+    }
+    // #15249: a missing or non-directory `--root` is the shared root refusal
+    // before config loading or default-base resolution, so it is not reported
+    // as an unresolvable base (which would misdirect the caller to `--base`).
+    if let Err(error) = crate::cli::commands_context::ensure_command_root(&options.root, "diff") {
+        if !json {
+            return Err(error);
+        }
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            crate::core_error::CoreError::repository_root_unusable(error),
         ));
     }
     // #7331: every post-argv-parse failure of a JSON diff run writes the

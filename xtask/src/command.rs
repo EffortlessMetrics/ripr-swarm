@@ -594,6 +594,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "gh-pr-status --pr <number>",
         "ci-budget [--workflow <name>] [--limit <n>] [--input <path>]",
         "merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]",
+        "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
         "module-health [--threshold <n>]",
         "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
         "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
@@ -972,6 +973,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Reads the current ripr-swarm merge/protection surface through GET-only GitHub endpoints or a sanitized --input snapshot and writes one MQ0 current-state packet; desired settings, live observation, apply-route capability, and rollback capture stay separate facts. It never mutates settings, rulesets, workflows, branches, PRs, or secrets, and it does not evaluate a future queue desired state.",
+        ),
+        command_entry(
+            "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
+            "external_state_read",
+            "<new-output-directory>/{queue-pages.json,queue-conflicts.json}",
+            false,
+            false,
+            "Compares frozen PR heads to pinned main using a disposable bare Git store, without changing GitHub or scheduling CI.",
         ),
         command_entry(
             "module-health [--threshold <n>]",
@@ -2555,7 +2564,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "CHANGELOG.md and changelog.d/*.md (only with --write; fragments are deleted unless --keep-fragments)",
             true,
             false,
-            "Folds changelog.d fragments into the first matching `### <Section>` under `## Unreleased` in CHANGELOG.md, in file-name order, preserving continuation lines, and deletes each folded fragment (README.md stays). Default is a dry run that prints the plan and writes nothing; --write applies it. --limit takes the first N fragments for a batch (the release checklist allows at most 150 files per PR). Refuses an unknown section, a missing section marker or any malformed fragment by file name, and an entry already present in Unreleased. --release-cut is the cut-day mode: it folds every fragment (conflicts with --limit and --keep-fragments), warns when the PR would exceed the 160-file admission cap, and after --write requires check-changelog-fragments --release-cut to pass. Release-cut tooling, not part of precommit; see changelog.d/README.md.",
+            "Folds changelog.d fragments into the first matching `### <Section>` under `## Unreleased` in CHANGELOG.md, in file-name order, preserving continuation lines, and deletes each folded fragment (README.md stays). Default is a dry run that prints the plan and writes nothing; --write applies it. --limit takes the first N fragments for a fold-and-delete batch (use at most 149 fragments when CHANGELOG.md is the only other path to stay within 150 changed files per PR). --keep-fragments leaves fragment files on disk for local inspection only: check-changelog-fragments rejects PRs that keep fragments duplicating Unreleased entries. Refuses an unknown section, a missing section marker or any malformed fragment by file name, and an entry already present in Unreleased. --release-cut is the cut-day mode: it folds every fragment (conflicts with --limit and --keep-fragments), prints an advisory warning (not a write guard) when the PR would exceed the 160-file admission cap, and after --write requires check-changelog-fragments --release-cut to pass (dry run does not run final validation, and on --write both the size warning and final validation run after writing). Release-cut tooling, not part of precommit; see changelog.d/README.md.",
         ),
         command_entry(
             "install-receipt [--check] | (--cells <dir> --run-id <id>)... [--write]",
@@ -2867,7 +2876,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "cargo publish dry-run staging output",
             false,
             true,
-            "Rehearses the ripr/ripr-contract lockstep publish (contract dry-run, vendored packaging, packaged check) without publishing.",
+            "Rehearses the ripr/ripr-contract lockstep publish (contract dry-run, multi-package packaging from the publish stage, packaged check) without publishing.",
         ),
         command_entry(
             "publish-precheck",

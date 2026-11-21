@@ -3108,10 +3108,13 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
+    // `gap.file` is stable path text (`%` escaped as `%25`); the seam
+    // classifier opens the file, so it needs the native name.
+    let gap_file = crate::analysis::decode_stable_path_text(&gap.file);
     let Ok(classified) = crate::analysis::classify_seams_in_file_with_shared_index(
         root,
         &config,
-        Path::new(&gap.file),
+        &gap_file,
         &evidence_files,
         seam_index,
     ) else {
@@ -5364,6 +5367,7 @@ pub(crate) mod tests {
 
     pub(crate) fn weak_related_test() -> crate::analysis::test_grip_evidence::RelatedTestGrip {
         crate::analysis::test_grip_evidence::RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "at_threshold_runs".to_string(),
             file: std::path::PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -6760,6 +6764,7 @@ pub(crate) mod tests {
         let root = Path::new("/repo");
 
         let targeted = crate::analysis::test_grip_evidence::RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "it_works".to_string(),
             file: std::path::PathBuf::from("src/lib.rs"),
             line: 14,

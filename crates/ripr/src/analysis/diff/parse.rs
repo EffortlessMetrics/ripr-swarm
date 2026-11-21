@@ -405,6 +405,17 @@ mod parser_state {
             })
     }
 
+    /// The header line `git log` writes before each commit's patch:
+    /// `commit <object id>`, optionally followed by ` (decorations)` or the
+    /// parent ids `--parents` adds, or the tab-separated ref `--source` adds.
+    fn is_log_commit_header(raw: &str) -> bool {
+        raw.strip_prefix("commit ").is_some_and(|rest| {
+            let object_id = rest.split_whitespace().next().unwrap_or_default();
+            matches!(object_id.len(), 40 | 64)
+                && object_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    }
+
     #[derive(Default)]
     pub(super) struct ParserState {
         /// Ordinary added/removed `ChangedLine` payloads recorded so far
@@ -482,6 +493,25 @@ mod parser_state {
         /// unprefixed malformed line is not body evidence (#4375).
         current_section_has_body: bool,
         malformed_hunks: BTreeMap<Option<PathBuf>, u64>,
+        /// #15268: paths whose hunks arrive from file sections on both sides
+        /// of a commit boundary (a `git format-patch` series or `git log -p`
+        /// output that edits the file in two commits). Each side's
+        /// coordinates belong to a different version of the file, so no line
+        /// of the path can be placed in the result; its lines are dropped and
+        /// disclosed. Sections of one two-way diff that repeat a path (one
+        /// section per hunk, as hand-assembled diffs often do) share one
+        /// coordinate space and stay readable.
+        repeated_section_paths: std::collections::BTreeSet<PathBuf>,
+        /// Paths with hunk lines recorded before the latest commit boundary
+        /// (an mbox `From <object id>` line or a `git log` `commit <object id>`
+        /// header).
+        edited_before_commit_boundary: std::collections::BTreeSet<PathBuf>,
+        /// The old blob id from the current section's `index <old>..<new>`
+        /// line, and the first one seen for each path. `git log -p --oneline`
+        /// and custom formats write no `commit` header, but a later commit's
+        /// section of a file starts from a different old blob.
+        section_index_old_blob: Option<String>,
+        first_index_old_blob: BTreeMap<PathBuf, String>,
         /// #4959: paths whose raw line-1 diff text carried a UTF-8 BOM on
         /// either side; see `ParsedDiff::raw_line1_bom_paths`.
         raw_line1_bom_paths: Vec<PathBuf>,
@@ -656,9 +686,29 @@ mod parser_state {
                 )
             });
 
+            let repeated_paths: Vec<Option<PathBuf>> = self
+                .repeated_section_paths
+                .iter()
+                .cloned()
+                .map(Some)
+                .collect();
+            let repeated = repeated_paths.iter().map(|path| {
+                // A per-file scope limitation, not `MalformedDiff`: the
+                // pipeline keeps it only for an analyzed language, so a
+                // README edited in two commits of a series stays harmless.
+                (
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisRecoveryKind::UseTwoWayDiff,
+                    "This patch changes the file in more than one section (a `git format-patch` series or `git log -p` output), so its line numbers describe different versions of the file and none of its lines are read. Analyze one diff of the whole change instead: `git diff <base>...HEAD`, or `ripr check --base <base>`.",
+                    path,
+                    1_u64,
+                )
+            });
+
             combined
                 .chain(conflicts)
                 .chain(malformed)
+                .chain(repeated)
                 .filter_map(|(kind, recovery_kind, detail, path, count)| {
                     let Ok(recovery) = AnalysisRecovery::new(recovery_kind, detail) else {
                         return None;
@@ -720,6 +770,10 @@ mod parser_state {
                     .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
                 if self.rename_section && valid_rename_pair {
                     self.section_old_path = self.rename_from_path.clone();
+                    if let Some(old) = self.rename_from_path.clone() {
+                        self.note_repeated_section(&old);
+                    }
+                    self.note_repeated_section(&path);
                 }
                 if self.rename_section && !self.rename_counted && valid_rename_pair {
                     self.renamed_file_count = self.renamed_file_count.saturating_add(1);
@@ -767,6 +821,7 @@ mod parser_state {
                     .zip(self.copy_from_path.as_deref())
                     .is_some_and(|(header, old)| git_header_matches_rename(header, old, &path));
             if valid_copy_pair {
+                self.note_repeated_section(&path);
                 if !self.copy_destination_paths.contains(&path) {
                     self.copy_destination_paths.push(path.clone());
                 }
@@ -862,6 +917,15 @@ mod parser_state {
             if self.in_hunk {
                 return false;
             }
+            if let Some((old, _)) = raw
+                .strip_prefix("index ")
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|range| range.split_once(".."))
+                && !old.is_empty()
+                && old.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                self.section_index_old_blob = Some(old.to_ascii_lowercase());
+            }
             let mut fields = raw.split_whitespace();
             let is_gitlink = fields.next() == Some("index")
                 && fields.next().is_some_and(|range| range.contains(".."))
@@ -942,6 +1006,53 @@ mod parser_state {
             *count = count.saturating_add(1);
         }
 
+        /// #15268: a section that opens on a path whose hunk lines were
+        /// recorded before a commit boundary describes a different version of
+        /// that file.
+        fn note_repeated_section(&mut self, path: &Path) {
+            if self.edited_before_commit_boundary.contains(path) {
+                self.repeated_section_paths.insert(path.to_path_buf());
+            }
+            // A creation section (old blob all zeros) after a deletion of the
+            // same path is one diff's type change (file <-> symlink), not a
+            // later commit.
+            let Some(blob) = self
+                .section_index_old_blob
+                .clone()
+                .filter(|blob| !blob.bytes().all(|byte| byte == b'0'))
+            else {
+                return;
+            };
+            match self.first_index_old_blob.get(path) {
+                // Abbreviations of one id may differ in length.
+                Some(first) if !first.starts_with(&blob) && !blob.starts_with(first.as_str()) => {
+                    self.repeated_section_paths.insert(path.to_path_buf());
+                }
+                Some(_) => {}
+                None => {
+                    self.first_index_old_blob.insert(path.to_path_buf(), blob);
+                }
+            }
+        }
+
+        /// A commit boundary: every path edited so far belongs to an earlier
+        /// version of the tree than any section that follows.
+        fn note_commit_boundary(&mut self, files: &BTreeMap<PathBuf, ChangedFile>) {
+            self.edited_before_commit_boundary.extend(
+                files
+                    .iter()
+                    .filter(|(_, file)| {
+                        !file.added_lines.is_empty() || !file.removed_lines.is_empty()
+                    })
+                    .map(|(path, _)| path.clone()),
+            );
+        }
+
+        /// Paths whose lines came from more than one file section (#15268).
+        pub(super) fn repeated_section_paths(&self) -> &std::collections::BTreeSet<PathBuf> {
+            &self.repeated_section_paths
+        }
+
         fn account_hunk_line(&mut self, raw: &str) {
             let Some((old, new)) = self.remaining_hunk_lines else {
                 return;
@@ -984,6 +1095,10 @@ mod parser_state {
             if raw.starts_with("deleted file mode ") {
                 self.deletion_section = true;
                 self.record_deleted_file_if_ready();
+                // #15268: an emptied file deletes with no `---`/`+++` pair.
+                if let Some(old) = self.section_old_path.clone() {
+                    self.note_repeated_section(&old);
+                }
                 return true;
             }
 
@@ -1024,6 +1139,9 @@ mod parser_state {
                     }
                     self.deletion_section = true;
                     self.record_deleted_file_if_ready();
+                    if let Some(old) = self.section_old_path.clone() {
+                        self.note_repeated_section(&old);
+                    }
                 }
                 // A syntactically valid `+++` marker whose path was rejected
                 // by confinement (or `/dev/null`): consume the marker and
@@ -1054,6 +1172,7 @@ mod parser_state {
                 self.submodule_counted = true;
             }
             if self.current_path.is_none() || self.saw_old_path_marker {
+                self.note_repeated_section(&path);
                 self.current_path = Some(path.clone());
                 // #4375: this is the one registration site that proves a
                 // textual file section opened and a hunk body was expected
@@ -1111,6 +1230,7 @@ mod parser_state {
                 .map_or(raw, MnemonicSides::canonical_header);
             self.section_old_path = parse_git_old_path(header);
             self.section_git_header = header.starts_with("diff --git ").then(|| header.to_owned());
+            self.section_index_old_blob = None;
             self.deletion_section = false;
             self.deletion_counted = false;
             self.submodule_section = false;
@@ -1227,6 +1347,9 @@ mod parser_state {
             files: &mut BTreeMap<PathBuf, ChangedFile>,
         ) {
             if !self.in_hunk {
+                if is_mail_patch_boundary(raw) || is_log_commit_header(raw) {
+                    self.note_commit_boundary(files);
+                }
                 self.saw_old_path_marker = false;
                 return;
             }
@@ -1242,8 +1365,11 @@ mod parser_state {
                 if raw.is_empty() {
                     return;
                 }
-                if is_mail_patch_boundary(raw) {
+                // `git log -p` opens each commit with a `commit <id>` header;
+                // like the mbox line it ends the previous commit's patch.
+                if is_mail_patch_boundary(raw) || is_log_commit_header(raw) {
                     self.close_hunk();
+                    self.note_commit_boundary(files);
                     return;
                 }
             }

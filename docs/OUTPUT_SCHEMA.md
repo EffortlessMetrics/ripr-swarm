@@ -212,7 +212,14 @@ alternative (it may overlap an existing one), or more `allOf` conjuncts; and any
 Widening edits pass, as does a new property on an object with
 `additionalProperties: false`, `const` widening to an `enum` that contains it,
 a dropped `pattern`, and annotation-only edits (`description`, `title`,
-`examples`, ...) at any depth. Changing the version pin accepts a breaking edit
+`examples`, ...) at any depth. A new root `anyOf` also passes when one properties-only alternative
+repeats earlier same-field scalar guards (`type`, `minLength`) and every
+other alternative either repeats those guards or supplies only a valid
+nonempty list of distinct required names. The compatibility tests
+`added_any_of_preserves_a_repeated_scalar_guard_only` and
+`published_check_root_widening_does_not_admit_overlapping_cache_receipts`
+cover this implication and an enclosing exclusive alternative.
+Changing the version pin accepts a breaking edit
 explicitly; deleting the pin does not. A schema with no pin (the Shields badge
 schema) cannot take a breaking edit at all. With no merge base the gate prints
 `schema compatibility not established`; it passes locally but fails when `CI`
@@ -5349,9 +5356,15 @@ one. It is emitted between `tool` and `source_currentness`.
 ## Check Findings Artifact
 
 `ripr check --format check-findings-json` emits the complete diff-scoped
-`check --format json` document (the Output section above, never
+generic check JSON document (the Output section above, never
 findings-bounded) with one additive top-level member, `artifact`, as its
-first member (ADR 0020 amendment, #9103). The envelope is the same shared
+first member (ADR 0020 amendment, #9103). Because it is rendered by the
+generic renderer rather than the navigation-aware `--format json` adapter, it
+carries neither `finding_routes` nor `canonical_next_action`; every other
+member of the check document is present under the same conditions as in
+`--format json`. `schemas/ripr/check.schema.json` admits `artifact` as an
+optional member (the `check_findings_artifact` definition), so both documents validate
+against it. The envelope is the same shared
 projection `repo-exposure-json` carries with these token differences: `kind`
 is `"check_findings"` and `analysis.format` / `analysis.command` name
 `check-findings-json` / `ripr check --format check-findings-json`. The
@@ -21717,7 +21730,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.63",
+    "schema_version": "1.64",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,

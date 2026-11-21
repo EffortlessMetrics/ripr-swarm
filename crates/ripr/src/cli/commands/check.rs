@@ -2590,7 +2590,12 @@ fn zero_findings_diff_hedge(
             causes.join("; ")
         ));
     }
-    if outcome.counts.changed_file_count > 0 {
+    if outcome.counts.changed_file_count > 0
+        || outcome
+            .limitations
+            .iter()
+            .any(crate::analysis::names_parsed_file_limitation)
+    {
         return None;
     }
     Some(generic.to_string())
@@ -3114,6 +3119,46 @@ mod tests {
             .analysis_outcome
             .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
         assert_eq!(zero_findings_diff_hedge(Some(&outcome), false), None);
+        Ok(())
+    }
+
+    #[test]
+    fn zero_findings_hedge_is_silent_when_a_located_parse_limitation_explains() -> Result<(), String>
+    {
+        // #15268: a series that edits one file in two sections parses as a
+        // diff and names the refused file; "not a valid unified diff" would
+        // contradict that. Garbage input keeps the generic hint.
+        let series = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-old\n+new\ncommit 0123456789abcdef0123456789abcdef01234567\n\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+pub const A: u8 = 1;\n";
+        for (name, text, expect_hedge) in [
+            ("hedge-repeated-section", series, false),
+            ("hedge-garbage", "not a diff at all\n", true),
+        ] {
+            let root = copy_sample_workspace_to_temp(name)?;
+            std::fs::write(root.join("example.diff"), text).map_err(|err| err.to_string())?;
+            let input = CheckInput {
+                root: root.clone(),
+                diff_file: Some(root.join("example.diff")),
+                ..CheckInput::default()
+            };
+            let result = app::check_workspace_with_config(input, &RiprConfig::default());
+            if let Ok(()) = std::fs::remove_dir_all(&root) {}
+            let outcome = result?
+                .analysis_outcome
+                .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
+            assert_eq!(
+                outcome
+                    .limitations
+                    .iter()
+                    .any(crate::analysis::names_parsed_file_limitation),
+                !expect_hedge,
+                "{name}: {outcome:?}"
+            );
+            assert_eq!(
+                zero_findings_diff_hedge(Some(&outcome), false).is_some(),
+                expect_hedge,
+                "{name}"
+            );
+        }
         Ok(())
     }
 

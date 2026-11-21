@@ -111,7 +111,7 @@
       "serialize-javascript": "^7.0.5"
     },
     "vscode-languageclient": {
-      "minimatch": "^11.0.3"
+      "minimatch": "6.2.3"
     }
   },
   "capabilities": {

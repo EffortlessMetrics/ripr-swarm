@@ -207,6 +207,23 @@
   ],
   "cases": [
     {
+      "id": "rust_review_card_unrelated_oracle",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-review-card-unrelated-oracle.json",
+      "vector": "unrelated_same_file_assertion_cannot_lend_an_oracle_or_test_to_a_changed_predicate",
+      "assertions": [
+        {
+          "type": "unobserved_review_card",
+          "seam_id": "e49f8011f2288c94"
+        },
+        {
+          "type": "unobserved_review_card",
+          "seam_id": "1077a643e5ccaff8"
+        }
+      ]
+    },
+    {
       "id": "python_route_response_json_patch",
       "language": "python",
       "tier": "pure",
@@ -2729,6 +2746,129 @@
         },
         {
           "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "python_patched_callee_reachable_unrevealed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_patched_callee_reachable_unrevealed",
+      "vector": "change_inside_patched_callee_every_related_test_replaces_it_reached_but_unrevealed",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:src/subject.py::rate_for"
+        }
+      ]
+    },
+    {
+      "id": "python_reload_rebind_propagation_static_unknown",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_dynamic_namespace_reload",
+      "vector": "reload_rebind_built_to_reach_propagation_python_never_emits_propagation_unknown_so_static_unknown_is_the_honest_ceiling",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/route.py::checkout"
+        }
+      ]
+    },
+    {
+      "id": "typescript_untaken_arm_reachable_unrevealed",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_untaken_arm_reachable_unrevealed",
+      "vector": "arm_no_test_input_enters_reached_but_unrevealed_never_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/price.ts::price"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        }
+      ]
+    },
+    {
+      "id": "typescript_floating_promise_propagation_static_unknown",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_floating_promise_static_unknown",
+      "vector": "floating_promise_assertion_built_to_reach_propagation_typescript_never_emits_propagation_unknown_so_static_unknown_is_the_honest_ceiling",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/settings.ts::f"
         }
       ]
     },

@@ -2051,6 +2051,138 @@ fn framed_lsp_refresh_resolves_git_inputs_once_and_projects_the_record() -> Resu
     })
 }
 
+/// No `workspace/codeLens/refresh` is attempted while `initialize` is still
+/// being handled (RIPR-SPEC-0138). The initialize-time root transition
+/// clears the lens view, but tower-lsp-server refuses server->client
+/// requests while `initialize` is handled (-32002) and the client requests
+/// lenses itself once the session starts, so an attempt only produced a "code lens refresh request failed"
+/// warning on every session start.
+#[test]
+fn framed_code_lens_refresh_is_not_attempted_before_initialized() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-code-lens-refresh-before-initialized")?;
+        write_lsp_scope_fixture(&root.path)?;
+        let root_uri = file_uri_for_path(root.path())?;
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let mut client_read = client_read;
+
+        let lens_refresh_traffic = |messages: &[serde_json::Value]| -> Vec<String> {
+            let mut seen: Vec<String> = log_notification_messages(messages)
+                .into_iter()
+                .filter(|text| text.contains("code lens refresh"))
+                .collect();
+            seen.extend(
+                messages
+                    .iter()
+                    .filter(|message| {
+                        message.get("method").and_then(serde_json::Value::as_str)
+                            == Some("workspace/codeLens/refresh")
+                    })
+                    .map(ToString::to_string),
+            );
+            seen
+        };
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "capabilities": {
+                        "workspace": {
+                            "codeLens": { "refreshSupport": true }
+                        }
+                    }
+                }
+            }),
+        )
+        .await?;
+        let (initialize, before_response) =
+            read_lsp_response_with_notifications(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        let early = lens_refresh_traffic(&before_response);
+        if !early.is_empty() {
+            return Err(format!(
+                "no code lens refresh may be attempted while initialize is handled: {early:?}"
+            ));
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {}
+            }),
+        )
+        .await?;
+        let after_initialized =
+            read_lsp_messages_for(&mut client_read, Duration::from_millis(500)).await?;
+        let late = lens_refresh_traffic(&after_initialized);
+        if !late.is_empty() {
+            return Err(format!(
+                "the skipped initialize-time refresh must not surface after initialized: {late:?}"
+            ));
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "shutdown",
+                "params": null
+            }),
+        )
+        .await?;
+        let shutdown = read_lsp_response(&mut client_read, 2).await?;
+        assert!(shutdown.get("error").is_none());
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "exit",
+                "params": null
+            }),
+        )
+        .await?;
+        client_write
+            .shutdown()
+            .await
+            .map_err(|err| format!("failed to close test client: {err}"))?;
+        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -5728,6 +5860,7 @@ fn seam_repair_card_binds_only_through_the_complete_raw_candidates() -> Result<(
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -6432,6 +6565,7 @@ fn route_ready_seam_with_external_language_related_test() -> crate::analysis::Cl
     seam.evidence
         .related_tests
         .push(std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "discounted total at threshold".to_string(),
             file: PathBuf::from("tests/pricing.test.ts"),
             line: 4,
@@ -9233,6 +9367,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "nearby_smoke_reaches_owner".to_string(),
             file: PathBuf::from("tests/smoke.rs"),
             line: 7,
@@ -9244,6 +9379,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
             relation_confidence: RelationConfidence::High,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -9297,6 +9433,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "opaque_fixture_hint".to_string(),
             file: PathBuf::from("tests/opaque.rs"),
             line: 3,
@@ -9308,6 +9445,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Opaque,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "low_confidence_smoke".to_string(),
             file: PathBuf::from("tests/low.rs"),
             line: 5,
@@ -9319,6 +9457,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Low,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "medium_confidence_property".to_string(),
             file: PathBuf::from("tests/medium.rs"),
             line: 9,
@@ -9330,6 +9469,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Medium,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "high_confidence_weak_assertion".to_string(),
             file: PathBuf::from("tests/high.rs"),
             line: 11,
@@ -9383,6 +9523,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     };
 
     let same_file_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "same_file_strong_neighbour".to_string(),
         file: PathBuf::from("tests/neighbour.rs"),
         line: 4,
@@ -9394,6 +9535,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let token_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "token_substring_strong".to_string(),
         file: PathBuf::from("tests/token.rs"),
         line: 6,
@@ -9405,6 +9547,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let calling_weak = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "calls_owner_weakly".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -9457,6 +9600,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     // A strong test that only carries the owner's name ranks after the weak
     // test that calls the owner.
     let name_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "owner_named_strong".to_string(),
         file: PathBuf::from("tests/named.rs"),
         line: 2,
@@ -9468,6 +9612,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let calling = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "calls_owner_weakly".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -9676,6 +9821,7 @@ fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result
 
     let mut seam = sample_side_effect_seam_without_related_tests();
     seam.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "publish_event_emits_bus_message".to_string(),
         file: PathBuf::from("tests/service.rs"),
         line: 21,
@@ -17638,6 +17784,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id,
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,

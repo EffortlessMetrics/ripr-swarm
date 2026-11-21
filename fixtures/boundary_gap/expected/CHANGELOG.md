@@ -10,6 +10,12 @@ commitments and receipt byte hashes. Weak grip, unchanged movement, historical
 currentness, incomplete receipt status and fail-closed first-action routing
 remain unchanged. No other fixture output is regenerated.
 
+## Pending — explicit Cargo harness path identity (#15846)
+
+Classified cache generation 1.185 binds a harness flag to the selected Cargo
+target. The portable unchanged-attempt pair and its verification and receipt
+commitments were refreshed. The pair retains its original seam classifications.
+
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 
 A macro-generated test that sits beside a rebound std macro name takes no

@@ -284,6 +284,9 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         detail: ExpectedRepairPacketDetail,
     },
     MustNotHaveContradictoryPacketMessaging,
+    UnobservedReviewCard {
+        seam_id: String,
+    },
     ExpectedOracle {
         kind: String,
         strength: String,
@@ -802,6 +805,11 @@ fn evidence_promotion_parse_assertion(
             kind: evidence_promotion_required_assertion_string(case_id, index, assertion, "kind")?,
             strength: evidence_promotion_required_assertion_string(
                 case_id, index, assertion, "strength",
+            )?,
+        }),
+        "unobserved_review_card" => Ok(EvidencePromotionSemanticAssertion::UnobservedReviewCard {
+            seam_id: evidence_promotion_required_assertion_string(
+                case_id, index, assertion, "seam_id",
             )?,
         }),
         "expected_related_test" => {
@@ -1694,6 +1702,22 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                             "{case_label}: finding `{finding_id}` promoted to exposed (classification `exposed`) but `must_not_promote` is asserted"
                         ));
                     }
+                }
+            }
+            EvidencePromotionSemanticAssertion::UnobservedReviewCard { seam_id } => {
+                let mut cards = ["comments", "summary_only"]
+                    .into_iter()
+                    .filter_map(|lane| check_json.get(lane).and_then(Value::as_array))
+                    .flatten()
+                    .filter(|card| card.get("seam_id").and_then(Value::as_str) == Some(seam_id));
+                let honest = cards.next().is_some_and(|card| {
+                    card.get("oracle_kind").and_then(Value::as_str) == Some("unknown")
+                        && card.get("oracle_strength").and_then(Value::as_str) == Some("none")
+                        && card.pointer("/suggested_test/near_test") == Some(&Value::Null)
+                        && card.pointer("/suggested_test/related_test") == Some(&Value::Null)
+                });
+                if !honest || cards.next().is_some() {
+                    violations.push(format!("{case_label}: expected exactly one unobserved review card for {seam_id} with unknown/none and null test suggestions"));
                 }
             }
             EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {

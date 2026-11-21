@@ -1207,7 +1207,7 @@ cargo xtask release-readiness --version "$release_version"
 `cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
 `ripr-contract`, packages `ripr` from the publish stage (a copy of the
 workspace whose `ripr` source has no inline `#[cfg(test)]` modules, #14198)
-against a vendored source tree, fails when a packaged crate is over the
+together with `ripr-contract` in one multi-package `cargo package`, fails when a packaged crate is over the
 crates.io default upload limit, then builds
 the packaged crate the way `cargo install ripr` without `--locked` does: it
 unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
@@ -1308,6 +1308,16 @@ target/sample build residue and shares the same badge endpoint boundary.
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
 for reviewers. Required Rust CI runs `cargo xtask goldens check-with-fixtures`.
+For a PR running without an explicit subject SHA, the gate checks for an advanced base.
+A clean merge against that base runs in a temporary worktree under the resolved
+job scratch directory (`TMPDIR`, falling back to `RUNNER_TEMP` on hosted jobs).
+An unchanged base or an unavailable base fetch leaves goldens on the admitted
+checkout. A confirmed merge conflict fails preparation. Exact-subject runs use
+their admitted checkout directly. For a fresh merge, Cargo gives its workspace packages a distinct artifact identity, reuses
+registry dependencies, and writes the fresh executables under that worktree.
+The original admitted checkout and its binaries remain available for capability,
+verdict and PR evidence checks. The gate writes its golden reports and wildcard
+calibration outputs to the usual upload paths.
 It evaluates each selected fixture once and writes both `fixtures.md` and the existing golden
 reports from that in-memory result. It retains preparation, assistant-loop corpus,
 expected-class ratchet, drift, line-ending and provenance checks. The fixture
@@ -1560,6 +1570,48 @@ not qualified, as are PRs without the `merge-ready` label (no request was made);
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
+
+#### Inspect queued heads against main
+
+See the [operator observation contract](MERGE_WATCH_POLICY.md#operator-queue-conflict-observation-contract)
+for partial fetches, pathless conflicts and private output-directory permissions.
+
+Run `cargo xtask merge-queue conflicts <new-output-directory>` to inspect the
+current private swarm queue on demand. It requires Git with `--attr-source`
+and `merge-tree --write-tree`, authenticated read
+access through `gh api --paginate --slurp` (GitHub CLI 2.48 or newer), and Git read access to the swarm through SSH. Saved-page replay skips `gh` and requires Git read access for nonempty snapshots. The output
+directory's parent must exist. The initial fetch can use the operator's configured
+transport and credential helpers. It disables hooks and fetches complete
+objects. The later Git comparisons disable lazy fetching, ignore system and
+global Git configuration such as custom merge drivers, use each compared
+base commit as the source for repository attributes (including built-in merge
+rules), ignore the user attributes file, and do not check out
+the candidate trees. An unsupported `--attr-source` is detected once and leaves every head
+unexamined with a Git upgrade hint. The command records the paginated queue response
+as `queue-pages.json`, fetches the observed commits into a fresh bare
+`objects.git`, and writes `queue-conflicts.json`. To repeat the comparison on
+exactly the same input, pass `--input <saved-queue-pages.json>` with a new
+output directory. Normal completion and handled failures remove the private
+object store. A killed process may leave `<new-output-directory>/objects.git`;
+remove that directory after confirming its command has exited.
+
+Each entry compares the PR's observed head to the same main commit. GitHub's
+queue order and speculative merge-group results are separate evidence.
+Pagination refuses differing main commits, inconsistent counts or positions,
+and repeated PRs. The pages describe the observed membership during the
+read; GitHub can change membership afterward.
+
+A conflict lists Git's paths. Where the same path stays conflicted up to a
+verified first-parent edge, the report identifies the commit at which its
+latest continuous conflicting interval began. The command walks back at most
+64 first-parent edges per conflicted head after finishing the base comparisons.
+A null boundary carries the reason history could not establish the transition.
+The whole command gives its child operations a shared 480-second budget.
+Missing objects, timeouts and other failed comparisons produce an explicit
+`unexamined` row and a nonzero exit once the report has been written. A failed
+census cannot produce a complete report. The operator can inspect the evidence
+and coordinate with the PR owner. The command has no GitHub write operation
+and the scheduled watchdog does not invoke it (#14705).
 
 ### Issue Staleness Watchdog
 
@@ -1952,17 +2004,23 @@ published) or a commit SHA of `EffortlessMetrics/ripr`, not a branch. The defaul
 `pull_request` event the Action fetches the base branch and deepens a shallow
 checkout in doubling steps (50, 100, ... 1,600 commits, then the rest) until
 HEAD meets the base, so the diff has a merge base (#14800). A full checkout is
-not touched. On other events, or with an explicit `base`, use
-`fetch-depth: 0`. If history is still missing, `ripr check` names the repair.
+not touched. An explicit branch `base` (`origin/main` or `main`) or full
+commit SHA is fetched and deepened the same way; a `base` starting with `-` is
+refused with exit 2 (#15399). On a `push` event to the default branch the base
+is the commit before the push, so the pushed commits are what ripr checks; on
+a push to any other branch it is the default branch. Elsewhere, or with a base
+such as a tag or `origin/main~1`, use `fetch-depth: 0`. If history is still
+missing, `ripr check` names the repair.
 
 Inputs: `install-only` (`true` installs ripr onto PATH and skips `ripr check`
 and the cache step; the generated workflow uses this), `version` (default: the release pinned in the Action at that tag; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
-exists), `mode` (`draft`, `deep`, `ready`), `format` (any `ripr check` format,
+exists), `mode` (`instant`, `draft`, `fast`, `deep`, `ready`), `format` (any `ripr check` format,
 for example `human`, `json`, `sarif` or `github` for file annotations), `base`
 and `cache`. An empty `base` uses the pull request base branch on
-`pull_request` events and ripr's own default-branch detection elsewhere.
+`pull_request` events, the push bases above on `push` events, and ripr's own
+default-branch detection elsewhere.
 `cache` (default `true`) restores and saves ripr's analysis cache under the
 runner's temp directory with `actions/cache` pinned to a commit SHA, so later
 pushes re-analyze only changed files. ripr checks each entry against file
@@ -1974,7 +2032,9 @@ to the job summary (cut at 60 KB). Step outputs are `exit-code` and `report`
 are advisory: a completed check exits 0 whatever it found. A check that could
 not complete (exit 2, or 3 when ripr declines) fails the step. It also emits one
 error annotation and a job-summary line that give the exit meaning and ripr's
-own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report and stderr
+own reason (up to eight lines, so a configuration error keeps its fix hint;
+the Action sets `RIPR_QUIET` so progress lines stay out of it) ([exit
+codes](EXIT_CODES.md)). Replayed report and stderr
 text cannot issue workflow commands, except the report of `format: github`,
 whose annotations are the point. To block on new gaps,
 use the generated workflow's gate modes ([adopting in CI](ADOPTING_IN_CI.md)).
@@ -3207,11 +3267,16 @@ PRs skip those test builds.
 ## Changelog Fold
 
 `cargo xtask fold-changelog [--dry-run | --write] [--limit <N>]
-[--keep-fragments]` (#5114) folds `changelog.d/` fragments into the first
-matching `### <Section>` under `## Unreleased` at the release cut, in file-name
-order, and deletes them with `--write`. The default is a dry run. It reuses the
-`check-changelog-fragments` validator, refuses malformed fragments by file name
-and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
+[--keep-fragments] [--release-cut]` (#5114) folds `changelog.d/` fragments into
+the first matching `### <Section>` under `## Unreleased` at the release cut, in
+file-name order, and deletes them with `--write`. The default is a dry run.
+Advance folds use fold-and-delete batches (`--write --limit 149` so each batch
+PR touches at most 150 changed files including `CHANGELOG.md`);
+`--keep-fragments` is for local inspection only because
+`check-changelog-fragments` rejects fragments duplicating `Unreleased` entries.
+It reuses the `check-changelog-fragments` validator, refuses malformed
+fragments by file name and is not part of `precommit`. `changelog.d/README.md`
+has the batch procedure.
 
 ## Install Receipt
 
