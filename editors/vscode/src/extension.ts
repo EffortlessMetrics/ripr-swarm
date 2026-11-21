@@ -132,7 +132,7 @@ export async function handleWorkspaceFoldersChanged(
 }
 
 const NO_ANALYZABLE_PROJECT_LOG =
-  'ripr: no analyzable project marker in the workspace (Cargo.toml, ripr.toml, a Python project file, or tsconfig.json/jsconfig.json); staying idle.';
+  'ripr: no analyzable project marker in the workspace (Cargo.toml, ripr.toml, a Python project file, tsconfig.json, jsconfig.json, deno.json, or deno.jsonc); staying idle.';
 
 /** Activation-only gate (#5315): skip server download/start when nothing is analyzable. */
 export async function startServerOnActivationIfAnalyzable(
