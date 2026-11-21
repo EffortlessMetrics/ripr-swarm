@@ -12299,6 +12299,235 @@ fn ts_fieldconstruction_sibling_field_read_downgrades() -> Result<(), String> {
     Ok(())
 }
 
+/// #14856: the alias form of #14814. `const cfg = buildConfig()` puts the
+/// owner call in a local, so the assertion `cfg.verbose` never names the
+/// owner call; a read of the sibling field through that alias still cannot
+/// witness the `retries` change and must downgrade to `weakly_exposed`.
+#[test]
+fn ts_fieldconstruction_alias_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg.verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "an alias sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    // The downgrade must be affirmative, like the direct form: the row
+    // asserts, but not on the changed value, not merely unconfirmed.
+    assert_eq!(
+        finding.related_tests.first().map(|row| row.miss),
+        Some(Some(crate::domain::RelatedTestMiss::AssertionNotObserving)),
+        "an alias sibling-field read must be affirmatively not observing, rows: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
+
+/// #14856 control: the changed field through the same alias stays
+/// `exposed`. A fix that downgrades both is over-broad.
+#[test]
+fn ts_fieldconstruction_alias_changed_field_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"retries\", () => { const cfg = buildConfig(); expect(cfg.retries).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "the changed field read through an alias must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14856: the bracket and optional-chain forms of the alias sibling read
+/// downgrade affirmatively too, like the dotted form.
+#[test]
+fn ts_fieldconstruction_alias_bracket_and_optional_sibling_reads_downgrade() -> Result<(), String> {
+    for test_src in [
+        "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg[\"verbose\"]).toBe(false); });\n",
+        "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg?.verbose).toBe(false); });\n",
+    ] {
+        let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: false };",
+            Some("  return { retries: 3, verbose: false };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        assert!(
+            matches!(finding.class, ExposureClass::WeaklyExposed),
+            "an alias bracket/optional sibling read must not read as exposed, got {:?} for {test_src:?}",
+            finding.class
+        );
+        assert_eq!(
+            finding.related_tests.first().map(|row| row.miss),
+            Some(Some(crate::domain::RelatedTestMiss::AssertionNotObserving)),
+            "an alias bracket/optional sibling read must be affirmatively not observing for {test_src:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14856 should-stay controls: a whole-object assertion on the alias pins
+/// every field and stays `exposed`; a sibling read on a FOREIGN local stays
+/// unexposed without the alias guard needing to claim it.
+#[test]
+fn ts_fieldconstruction_alias_whole_object_and_foreign_local_stay() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let whole_src = "import { buildConfig } from \"./owner\";\ntest(\"whole\", () => { const cfg = buildConfig(); expect(cfg).toEqual({ retries: 5, verbose: false }); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), whole_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion on the alias must stay exposed, got {:?}",
+        finding.class
+    );
+
+    let foreign_src = "import { buildConfig } from \"./owner\";\ntest(\"foreign\", () => { buildConfig(); const other = { retries: 3, verbose: false }; expect(other.verbose).toBe(false); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), foreign_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "a foreign local read must not read as exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15875 review: a local bound to a PROJECTION of the owner result
+/// (`const retries = buildConfig(5).retries`) holds the changed field
+/// itself, not the whole result. A read inside it (`retries.limit`)
+/// observes the change and must stay `exposed`; the sibling guard must
+/// not treat the projected alias as a whole-result alias.
+#[test]
+fn ts_fieldconstruction_projected_alias_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(limit: number) {\n  return { retries: { limit: 3 }, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"retries limit\", () => { const retries = buildConfig(5).retries; expect(retries.limit).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { retries: { limit: limit }, verbose: false };",
+        Some("  return { retries: { limit: 3 }, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a read inside a projected alias of the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15875 review: the changed field can select the asserted value from
+/// inside a computed index (`cfg.items[cfg.selectedIndex]`). The alias
+/// member check must see `selectedIndex` inside the brackets; the
+/// sibling guard must not downgrade the assertion.
+#[test]
+fn ts_fieldconstruction_alias_index_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(selectedIndex: number) {\n  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"selected label\", () => { const cfg = buildConfig(1); expect(cfg.items[cfg.selectedIndex].label).toBe(\"second\"); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { selectedIndex: selectedIndex, items: [{ label: \"first\" }, { label: \"second\" }] };",
+        Some("  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a changed field read inside a computed index must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// #14857: a change that moves TWO values of the returned literal cannot be
 /// reduced to one changed field, so #14814's single-field guard is skipped.
 /// A test that reads a THIRD, untouched field still cannot witness the

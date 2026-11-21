@@ -1791,7 +1791,13 @@ unconfirmed, not `exposed`. A read that names either changed field
 (`f().retries`, `f().verbose`), a path that reads through a changed field
 (`f().retries.n`) and a whole-result assertion (`expect(f()).toEqual(...)`)
 keep the existing credit. This is the two-value shape; the single-field
-sibling rule (#14814) covers exactly one changed value. A compound assertion
+sibling rule (#14814) covers exactly one changed value. Both rules read the
+field off the owner's result directly (`f().timeout`) or through a one-hop
+local alias of the owner call (`const cfg = f(); cfg.timeout`, #14856): the
+alias form is affirmatively not observing, not merely unconfirmed. A
+whole-result assertion on the alias and the changed field through the alias
+(`cfg.retries`) keep their credit; a foreign or mutated local is not the
+owner's result. A compound assertion
 subject is not a field projection of the owner's result: in
 `expect(f() ?? defaults.config)` the trailing `config` belongs to the
 fallback while the assertion receives the whole object `f()` returns, so it
