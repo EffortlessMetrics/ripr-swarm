@@ -110,6 +110,10 @@ on:
         required: false
         default: ''
         type: string
+      group-members:
+        description: Ordered constituents verified by native merge-group admission, for the hosted observation.
+        type: string
+        default: ''
       admission-head:
         description: The exact PR head the admission bound.
         required: false
@@ -126,6 +130,9 @@ on:
         default: ''
         type: string
     outputs:
+      group_digest:
+        description: Hosted gates checkout and admission observation for this attempt.
+        value: ${{ jobs.rust-gates.outputs.group_digest }}
       scratch_status:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
       scratch_message:
@@ -143,6 +150,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner-config) }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
     outputs:
+      group_digest: ${{ steps.group_receipt.outputs.digest }}
       scratch_status: ${{ steps.scratch.outputs.status }}
       scratch_message: ${{ steps.scratch.outputs.message }}
       pr_evidence: ${{ steps.pr_evidence.outputs.evidence }}
@@ -931,3 +939,30 @@ jobs:
         uses: ./.github/actions/ci-scratch-lease
         with:
           mode: release
+
+      # An advisory record, only after hosted gates completed. The terminal Result
+      # still requires the separate shards, verifier, review and eligibility.
+      - name: Record hosted group checkout
+        id: group_receipt
+        if: success() && github.event_name == 'merge_group' && inputs.group-members != ''
+        continue-on-error: true
+        shell: bash
+        env:
+          MEMBERS: ${{ inputs.group-members }}
+          BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP: ${{ github.event.merge_group.head_sha }}
+          CHECK_ID: ${{ job.check_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" = "$GROUP" && "$(git rev-parse HEAD)" = "$GROUP" ]]
+          [[ "$CHECK_ID" =~ ^[1-9][0-9]*$ ]]
+          git diff --no-ext-diff --quiet HEAD --
+          tree=$(git rev-parse 'HEAD^{tree}')
+          # Sorted compact UTF-8 JSON including its terminating newline.
+          digest=$(jq -ceS --arg base "$BASE" --arg group "$GROUP" --arg tree "$tree" \
+            --arg repository "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg check "$CHECK_ID" \
+            'select(type == "array" and length > 0) | {schema:"hosted-group-v1",
+             $repository,$base,$group,$tree,$run,$attempt,$check,
+             members:map({pr,head,queue_entry})}' <<<"$MEMBERS" | sha256sum)
+          echo "digest=${digest%% *}" >> "$GITHUB_OUTPUT"

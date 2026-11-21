@@ -7,6 +7,7 @@ the current hosted two-shard/docs layouts; they are not another proof planner.
 """
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -125,18 +126,28 @@ def run_identity(run, sha):
             branch, run.get("status"), run.get("conclusion"))
 
 
+def check_id(job):
+    prefix = f"https://api.github.com/repos/{REPOSITORY}/check-runs/"
+    url = job.get("check_run_url")
+    require(type(url) is str and url.startswith(prefix)
+            and re.fullmatch(r"[1-9][0-9]{0,19}", url[len(prefix):]), "invalid_native_check_url")
+    return int(url[len(prefix):])
+
+
 def job_inventory(api, run, sha):
     run_id, attempt = run["id"], run["run_attempt"]
     rows = collection(api.get(
         f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page=1"), "jobs")
-    jobs, ids = {}, set()
+    jobs, ids, checks = {}, set(), set()
     for row in rows:
         job_id, name = row.get("id"), row.get("name")
         require(positive(job_id) and type(name) is str and name
                 and job_id not in ids and name not in jobs, "ambiguous_job_inventory")
+        linked = check_id(row)
+        require(linked not in checks, "duplicate_native_check")
+        checks.add(linked)
         require(row.get("run_id") == run_id and row.get("run_attempt") == attempt
                 and row.get("head_sha") == sha and row.get("head_branch") == run["head_branch"]
-                and row.get("check_run_url") == f"https://api.github.com/repos/{REPOSITORY}/check-runs/{job_id}"
                 and row.get("html_url") == f"https://github.com/{REPOSITORY}/actions/runs/{run_id}/job/{job_id}",
                 "wrong_job_subject_or_attempt")
         ids.add(job_id)
@@ -149,17 +160,18 @@ def native_result(api, run, jobs, sha):
     result = jobs[RESULT]
     rows = collection(api.get(
         f"commits/{sha}/check-runs?check_name=Ripr%20Rust%20Small%20Result&filter=all&per_page=100&page=1"), "check_runs")
-    matches = [row for row in rows if row.get("id") == result["id"]]
+    matches = [row for row in rows if row.get("id") == check_id(result)]
     require(len(matches) == 1, "missing_or_ambiguous_result_check")
-    check = matches[0]
-    require(check.get("name") == RESULT and check.get("head_sha") == sha
-            and check.get("check_suite", {}).get("id") == run["check_suite_id"]
-            and check.get("app", {}).get("id") == APP_ID
-            and check.get("app", {}).get("slug") == "github-actions"
-            and check.get("details_url") == result["html_url"]
-            and check.get("status") == result.get("status")
-            and check.get("conclusion") == result.get("conclusion"), "wrong_result_provenance")
+    verify_check(matches[0], result, run, sha)
     return result
+
+
+def verify_check(check, job, run, sha):
+    require(check.get("id") == check_id(job) and check.get("name") == job["name"]
+            and check.get("head_sha") == sha and check.get("check_suite", {}).get("id") == run["check_suite_id"]
+            and check.get("app", {}).get("id") == APP_ID and check.get("app", {}).get("slug") == "github-actions"
+            and check.get("details_url") == job["html_url"] and check.get("status") == job.get("status")
+            and check.get("conclusion") == job.get("conclusion"), "wrong_check_provenance")
 
 
 def judge(run, jobs, result):
@@ -199,7 +211,75 @@ def judge(run, jobs, result):
     return "green", "exact_landed_native_qualification_observed"
 
 
-def observe(repository, sha, api):
+def hosted_stack(api, run, jobs, sha, freeze):
+    """Compare with the operator's independently sealed roster. Freeze trunk and
+    ordered PR heads before enrollment, then bind their native entry IDs.
+
+    The terminal checkout observation is scoped to the hosted gates job. Native
+    Result still owns the required jobs. This grants no qualification authority.
+    """
+    def oid(value):
+        return type(value) is str and re.fullmatch(r"[0-9a-f]{40}", value)
+
+    require(type(freeze) is dict and set(freeze) == {"trunk", "members", "workflow_blobs"}
+            and oid(freeze["trunk"]) and freeze["trunk"] != sha, "invalid_frozen_trunk")
+    members = freeze["members"]
+    require(type(members) is list and 1 < len(members) <= 100, "invalid_frozen_stack_size")
+    for row in members:
+        require(type(row) is dict and set(row) == {"pr", "head", "queue_entry"}
+                and positive(row["pr"]) and oid(row["head"]) and type(row["queue_entry"]) is str
+                and re.fullmatch(r"[!-~]{1,255}", row["queue_entry"]), "invalid_frozen_member")
+    for key in ("pr", "head", "queue_entry"):
+        require(len({row[key] for row in members}) == len(members), "ambiguous_frozen_stack")
+    tip = members[-1]
+    require(run["head_branch"] in {f"gh-readonly-queue/main/pr-{tip['pr']}-{suffix}"
+                                   for suffix in (tip["head"], freeze["trunk"])}, "wrong_frozen_tip")
+    require(run["run_attempt"] == 1 and GATES in jobs, "unsupported_stack_attempt_or_route")
+    # Pin the emitter and its caller to reviewed blob IDs supplied independently of G.
+    pins = freeze["workflow_blobs"]
+    require(type(pins) is dict and set(pins) == {WORKFLOW_PATH, ".github/workflows/rust-gates.yml"},
+            "missing_reviewed_workflows")
+    for path, expected in pins.items():
+        require(oid(expected), "invalid_reviewed_workflow")
+        file = api.get(f"contents/{path}?ref={sha}")
+        require(file.get("type") == "file" and file.get("path") == path and file.get("sha") == expected,
+                "changed_workflow_source")
+    # GitHub may send a speculative predecessor as event base. A suffix cannot
+    # speak for earlier members: walk every immutable single-parent squash to B.
+    cursor = sha
+    for member in reversed(members):
+        commit = api.get(f"git/commits/{cursor}")
+        parents = commit.get("parents")
+        message = commit.get("message")
+        require(commit.get("sha") == cursor and oid(commit.get("tree", {}).get("sha"))
+                and type(parents) is list and len(parents) == 1 and oid(parents[0].get("sha"))
+                and type(message) is str and message.partition("\n")[0].endswith(f"(#{member['pr']})"),
+                "wrong_frozen_squash_chain")
+        if cursor == sha:
+            tree = commit["tree"]["sha"]
+        cursor = parents[0]["sha"]
+    require(cursor == freeze["trunk"], "wrong_frozen_squash_base")
+    gates = jobs[GATES]
+    linked = check_id(gates)
+    verify_check(api.get(f"check-runs/{linked}"), gates, run, sha)
+    steps = gates.get("steps")
+    require(type(steps) is list, "missing_hosted_receipt_step")
+    emitters = [step for step in steps if step.get("name") == "Record hosted group checkout"]
+    require(len(emitters) == 1 and emitters[0].get("status") == "completed"
+            and emitters[0].get("conclusion") == "success", "missing_hosted_receipt_step")
+    payload = dict(schema="hosted-group-v1", repository=REPOSITORY, base=freeze["trunk"], group=sha,
+                   tree=tree, run=str(run["id"]), attempt=str(run["run_attempt"]),
+                   check=str(linked), members=members)
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    digest = hashlib.sha256(encoded.encode()).hexdigest()
+    prefix = "Hosted group receipt "
+    markers = [step for step in jobs[RESULT]["steps"] if step["name"].startswith(prefix)]
+    require(len(markers) == 1 and markers[0]["name"] == prefix + digest and markers[0].get("status") == "completed"
+            and markers[0].get("conclusion") == "success", "missing_or_mismatched_hosted_group_receipt")
+    return digest
+
+
+def observe(repository, sha, api, freeze=None):
     observation = {"verdict": "unknown", "reason": "observation_unavailable", "sha": sha,
                    "run_id": None, "run_attempt": None, "run_url": None}
     try:
@@ -215,12 +295,17 @@ def observe(repository, sha, api):
         jobs = job_inventory(api, run, sha)
         result = native_result(api, run, jobs, sha)
         verdict, reason = judge(run, jobs, result)
+        digest = None
+        if freeze is not None and verdict == "green":
+            digest = hosted_stack(api, run, jobs, sha, freeze)
         # Fence this read-only observation against main movement, another run,
         # or a new attempt. No receipt grants admission or mutation authority.
         require(run_identity(api.get(f"actions/runs/{run['id']}"), sha) == identity
                 and run_identity(inventory(api, sha), sha) == identity, "run_superseded_during_observation")
         current_main(api, sha)
         observation.update(verdict=verdict, reason=reason)
+        if digest is not None:
+            observation["hosted_group_digest"] = digest
     except (Unknown, KeyError, TypeError, AttributeError) as error:
         observation["reason"] = str(error) if isinstance(error, Unknown) else "malformed_native_evidence"
     return observation
@@ -231,8 +316,24 @@ def main():
     parser.add_argument("--repository", required=True)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--frozen-stack", type=Path, help="Independently frozen trunk, ordered members and reviewed workflow blobs")
     args = parser.parse_args()
-    observation = observe(args.repository, args.sha, GitHub())
+    freeze = None
+    if args.frozen_stack is not None:
+        try:
+            with args.frozen_stack.open("rb") as source:
+                raw = source.read(65537)
+            def unique_keys(pairs):
+                result = dict(pairs)
+                if len(result) != len(pairs):
+                    raise ValueError("ambiguous freeze")
+                return result
+            freeze = json.loads(raw, object_pairs_hook=unique_keys) if len(raw) <= 65536 else False
+            if freeze is None:
+                freeze = False
+        except (OSError, ValueError, RecursionError):
+            freeze = False
+    observation = observe(args.repository, args.sha, GitHub(), freeze)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(observation, sort_keys=True) + "\n")
     summary = ("### Landed native qualification\n\n"

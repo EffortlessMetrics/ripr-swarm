@@ -1655,6 +1655,59 @@ atomic write fence or a detection-latency promise.
 `main_health_sentinel_contract.rs` runs the real reader and tracker against API
 fixtures, including late competing runs, attempt changes and main movement.
 
+#### Observe a frozen native stack
+
+For a frozen-stack observation, record the trunk commit and the ordered PR numbers and head commits
+before enrollment. Once GitHub creates the queue entries, record their native
+IDs against those same PRs and heads. Seal this file independently of the
+workflow that will produce the observation. An arrival after the freeze belongs
+to a subsequent cohort. Obtain the two workflow blob IDs from independently
+reviewed source.
+
+The JSON file has three required fields. The placeholders below show where to
+put full 40-character lowercase hexadecimal Git object IDs and native queue-entry IDs.
+
+```json
+{
+  "trunk": "<trunk-commit>",
+  "members": [
+    {"pr": 105, "head": "<first-pr-head>", "queue_entry": "<first-entry-id>"},
+    {"pr": 108, "head": "<second-pr-head>", "queue_entry": "<second-entry-id>"}
+  ],
+  "workflow_blobs": {
+    ".github/workflows/routed-rust.yml": "<reviewed-caller-blob>",
+    ".github/workflows/rust-gates.yml": "<reviewed-producer-blob>"
+  }
+}
+```
+
+Include every member in order (2–100). Each PR number, head and queue entry
+must be distinct. While the landed group commit is still the tip of main, run
+
+```bash
+python3 -I tools/ci/main-qualification.py \
+  --repository EffortlessMetrics/ripr-swarm --sha "$LANDED_GROUP_SHA" \
+  --frozen-stack freeze.json --out observed.json
+```
+
+A green verdict with `hosted_group_digest` records a match to the first-attempt
+hosted Rust gates job's terminal checkout and clean tracked tree. The existing
+Result owns qualification. A stale attempt, suffix-only event, changed source,
+or missing receipt yields unknown for a previously green qualification. The
+reader preserves an authenticated red Result. The digest grants no authority
+to merge and makes no claim about individual shard binaries.
+
+The #14500 contract maps to `HostedStackTests` in
+`tools/ci/test_main_qualification.py`.
+`test_actual_admission_drives_hosted_producer_for_three_independent_heads`
+runs the admission and receipt scripts.
+`test_membership_recomposition_and_tampering` and
+`test_wrong_source_tree_issuer_attempt_and_marker` exercise refusals in
+`hosted_stack` in `tools/ci/main-qualification.py`. The workflow steps are
+`Record hosted group checkout` in `rust-gates.yml` and
+`Hosted group receipt …` in `routed-rust.yml`. The API fixture supplies the
+resolved step name. Confirming its actual rendering requires a native receipt.
+
 ### Golden Re-bless
 
 Re-blessing renderer-prose golden drift used to be a per-agent ritual: run the
