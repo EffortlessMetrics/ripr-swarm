@@ -1589,7 +1589,7 @@ impl OwnerReach<'_, '_> {
                 .and_then(|segment| segment.name_ref())
                 .is_some_and(|name| {
                     let name = name.text();
-                    super::owner_pin::error_enum_compares_payload(name, self.index)
+                    super::owner_pin::derived_fields_compare_by_value(name, self.index)
                         && super::element_field_pin::drop_is_plain_in_closed_sources(
                             self.index, name,
                         )

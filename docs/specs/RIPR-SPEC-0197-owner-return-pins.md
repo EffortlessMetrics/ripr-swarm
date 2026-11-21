@@ -972,6 +972,13 @@ general combinator, callback or mutation adequacy.
    and refuses the pin. Only bare standard names qualify, plus a
    `std`/`core`-rooted `assert_eq!` whose root rule 1 proves unrebound;
    other qualified paths stay unknown because their roots can be rebound.
+   `env!` and `option_env!` are in the set (#14116): each expands to a
+   literal read from the build environment, so neither can leave the test.
+   `use std::env;` (or `core::env`) binds that standard macro too, so it is
+   not a rebinding while the standard root is unbound. A plain import that
+   binds the root name itself (`use other::std;`) takes the root over, so
+   `use std::env;` then refuses; any other import, definition or
+   macro-argument mention of the name still refuses.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
    unqualified nested `matches!`, `format!` or `vec!` expands to one call
@@ -2881,7 +2888,9 @@ branch holding a statement, or code after the chain is outside the subset.
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it. The one
+  together with the module whose tests then compile against it. An audited
+  pass-through wrapper (`proptest!`, `serde_json::json!`) keeps the site but
+  confines it to the call's own text (RIPR-SPEC-0369, #14116). The other
   exception is a call to a wrapper that cannot bind a name at all (#6648):
   an unqualified call to a `macro_rules!` this file defines exactly once,
   without an attribute and never names in a `use`. The definition sits at
@@ -2960,7 +2969,8 @@ branch holding a statement, or code after the chain is outside the subset.
   through resolved module edges, recognized only when that root is a Cargo
   autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
   `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
-  `build.rs` beside an indexed `src/`) or a root the nearest package
+  their multi-file `tests/NAME/main.rs` forms (#15327) and `build.rs`
+  beside an indexed `src/`) or a root the nearest package
   manifest names: a `[lib] path`, or an explicit `[[test]]`, `[[bin]]`,
   `[[example]]` or `[[bench]]` `path` (#7128). So a test in
   `[[test]] path = "it/pin.rs"` is its own crate root and its exact
@@ -2978,7 +2988,7 @@ branch holding a statement, or code after the chain is outside the subset.
   root is not recognized stay workspace-wide. So does any file another
   crate can also compile: an `include!` fragment or a module below one (a
   recorded include target, include edge, or include target as a module
-  parent), a non-root file under a `tests/*.rs` root (a shared
+  parent), a non-root file under a flat `tests/*.rs` root (a shared
   `tests/common/mod.rs` composes under its first owner only), and, while any
   `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
   capped, dynamic or unindexed), every file: an unresolved fragment and its
@@ -3840,7 +3850,10 @@ Implementation: `substitute_owner_call`.
   including `path = "tests/../tests/gate.rs"`, is not `HarnessEnabled`;
   `cargo_test_collection_skipped` is the producer skip query. Unavailable
   metadata is not a skip. ripr does not thread `--features` /
-  `--all-features` into the metadata probe.
+  `--all-features` into the metadata probe. Since #15079 the analyzed set
+  also holds the features other workspace members' path dependencies
+  request, as a workspace-wide `cargo test` unifies them (RIPR-SPEC-0356
+  owns that rule).
 - `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
   crediting. Rule 7 (#7125) also credits a unique top-level `Production`
   helper in a crate-root integration-test target (`tests/<name>.rs` or

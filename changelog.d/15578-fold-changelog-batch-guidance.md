@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask fold-changelog` oversize warning, command-catalog help, `changelog.d/README.md`, and `docs/CI.md` now direct advance folds to fold-and-delete `--write --limit 149` batches (150 changed files including `CHANGELOG.md`) instead of the rejected `--keep-fragments` snapshot route, note that `--keep-fragments` is for local inspection only, and document that `--release-cut` dry runs skip final validation while `--write` warns and validates after writing (#15576, #15578).

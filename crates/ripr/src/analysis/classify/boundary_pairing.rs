@@ -328,7 +328,7 @@ fn assertion_names_one_entry_call(
                     })
         })
         && owner_call_count(&assertion.text, entry) == 1
-        && owner_call_count(&assertion.text, &owner.name) == 0
+        && !mentions_owner_call(&assertion.text, &owner.name)
 }
 
 /// `Some(prefix)` when `subject` is one whole call `a::b::name(..)` through a
@@ -359,6 +359,14 @@ fn owner_call_count(text: &str, name: &str) -> usize {
     owner_call_argument_lists(text, name).len()
 }
 
+/// Whether `text` may hold any call of `name`: a plain call, or a turbofish
+/// or macro spelling the plain argument reader cannot see (#15277 review).
+/// It can only overcount, so the "no direct owner call" refusals read it.
+fn mentions_owner_call(text: &str, name: &str) -> bool {
+    owner_call_count(text, name) > 0
+        || super::owner_pin::closure_adaptor::call_count(text, name) > 0
+}
+
 /// Activation already recorded a boundary `==` row bound down the chain
 /// from this assertion's line (the transferred row carries the entry call's
 /// text). Callers check `assertion_names_one_entry_call` first, before
@@ -380,7 +388,7 @@ fn assertion_observes_boundary_entry_call(
             && fact.value.contains(" == ")
             && call_line.contains(&assertion.text)
             && owner_call_count(call_line, entry) == 1
-            && owner_call_count(call_line, &owner.name) == 0
+            && !mentions_owner_call(call_line, &owner.name)
     })
 }
 
@@ -4616,6 +4624,52 @@ mod tests {
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn mentions_owner_call_sees_a_turbofish_owner_call() {
+        // #15277 review: the #6780 "assertion holds no direct owner call"
+        // refusal must see `owner::<u8>(3)`, while the exact `!= 1` helper
+        // counts keep reading plain calls only.
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner::<u8>(3));",
+            "owner"
+        ));
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner(3));",
+            "owner"
+        ));
+        assert!(!mentions_owner_call("assert_eq!(wrapper(10), 3);", "owner"));
+        assert_eq!(owner_call_count("owner::<u8>(2)", "owner"), 0);
+    }
+
+    #[test]
+    fn a_turbofish_block_tail_meets_the_local_binding_refusal() {
+        // #15277: `gate::<u8>(5)` is the same bare call as `gate(5)`, so a
+        // test-local `gate` that could capture it refuses the block tail. A
+        // module-path call cannot be captured by a local binding.
+        let mut owner = gate_owner();
+        owner.item.container = crate::analysis::facts::FunctionContainer::Free;
+        let shadowed = "fn t() { let gate = |x: u32| x > 3; let n = { gate::<u8>(5) }; }";
+        let clean = "fn t() { let n = { gate::<u8>(5) }; }";
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, shadowed).is_none(),
+            "a turbofish block tail beside a local `gate` must not bind the owner result"
+        );
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, clean)
+                .is_some_and(|result| result.block_tail && result.text == "gate::<u8>(5)"),
+            "a turbofish block tail with no local `gate` binds the owner result"
+        );
+        assert!(
+            bound_result::boundary_call(
+                "let n = { m::gate(5) }",
+                &owner,
+                "fn t() { let gate = |x: u32| x > 3; let n = { m::gate(5) }; }",
+            )
+            .is_some_and(|result| result.block_tail),
+            "a module-path block tail is not captured by a local `gate`"
+        );
     }
 
     fn call(name: &str, text: &str) -> CallFact {

@@ -5664,7 +5664,11 @@ mod tests {
         // which a logging-only edit passes over, so the
         // `python_caplog_alias_in_literal` card moves from no-strong-oracle to
         // the never-delegated family-selection bucket.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 36, 49, 2) {
+        // #15287: `python_boundary_float_coercion` reads the off-boundary
+        // literal through a leading `float` coercion; its weak card names the
+        // `value == 0` discriminator, one more direct-aligned card. The
+        // star-args and named-row controls are weak without a card.
+        if (direct, no_strong, orthogonal, family_selection) != (24, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

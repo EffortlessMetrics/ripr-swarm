@@ -79,7 +79,11 @@ diverging statement: a removed single-line `None => return R,` arm and the
 added `return R;` seed no probe on either side when the `match` scrutinee and
 the `let ... else` scrutinee are the same text, the added statement is the
 first added line after its opener, and each text occurs exactly once in the
-window (#14428). A changed scrutinee, a changed return value, a multi-line
+window (#14428). The added pattern must use the unqualified spelling
+`Some(...)`, with no space before the opening parenthesis. An added
+`let None = option else {` diverges on the opposite variant. The pairing
+also leaves `Option::Some(x)` and `Some (x)` unpaired. All three forms keep
+both probes (#14498). A changed scrutinee, a changed return value, a multi-line
 `None => { .. }` arm, or a repeated statement keeps both probes. A pattern
 that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
 { .. }`) is not split from its scrutinee, so it fails closed and both probes
@@ -1087,6 +1091,7 @@ Fixture coverage:
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `a_manual_let_else_rewrite_pairs_its_diverging_statement`
 - `manual_let_else_pairing_is_fail_closed`
+- `manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern`
 - `a_reversed_let_else_pattern_never_pairs`
 - `a_neighbouring_functions_arm_never_pairs`
 - `a_scrutinee_with_an_equals_sign_still_pairs`

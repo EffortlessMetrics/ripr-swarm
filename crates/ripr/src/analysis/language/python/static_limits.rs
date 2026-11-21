@@ -9,6 +9,7 @@ use super::assertion_selection::{
 use super::callee_patch::callee_only_patch;
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
+use super::collection_config::{COLLECT_IGNORE, UNEVALUATED_CONFTEST};
 use super::effect_alignment::ChangedEffect;
 use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
@@ -188,10 +189,24 @@ pub(super) fn static_limit_for_focused_change(
                 .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
         })
         .map(CliSubcommand::decorator);
+    // A plain builtin `@property` stops being an indirection only once a
+    // related test's row-selected strong assertion compares a direct read of
+    // it with a literal (`property_read.rs`, #15490); a bare truthiness read,
+    // any other shape or any doubt about the builtin keeps the limit.
+    let read_property = owner.decorators.iter().any(|name| name == "property")
+        && super::property_read::property_read_credit(
+            owner,
+            owner_source,
+            line_text,
+            focus,
+            related_candidates,
+        )
+        .is_some();
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
             && !is_forwarding_decorator(decorator, owner, owner_source)
             && reached_subcommand_decorator.as_ref() != Some(*decorator)
+            && (!read_property || decorator.as_str() != "property")
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -270,10 +285,22 @@ pub(super) fn static_limit_for_focused_change(
                 "static_limit decorator_indirection: test activation for `{}` is controlled by `{decorator}`",
                 test.qualified_name
             ),
-            missing: format!(
-                "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
-                test.qualified_name
-            ),
+            missing: if decorator == UNEVALUATED_CONFTEST {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` above related test `{}` sets `collect_ignore`, `collect_ignore_glob` or a collection hook in a form the Python preview adapter does not evaluate, so static evidence does not establish that pytest collects the test. Inspect that conftest, or give the ignore list as plain string literals.",
+                    test.qualified_name
+                )
+            } else if decorator == COLLECT_IGNORE {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` `collect_ignore` / `collect_ignore_glob` entry (possibly behind a conditional) may exclude related test `{}`, so static evidence does not establish that pytest collects it. Add an independent collected test or inspect the conftest.",
+                    test.qualified_name
+                )
+            } else {
+                format!(
+                    "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
+                    test.qualified_name
+                )
+            },
         });
     }
     // A mocked test keeps the limit unless its substitutions are literal
@@ -330,7 +357,7 @@ pub(super) fn static_limit_for_focused_change(
             evidence:
                 "static_limit unresolved_pytest_fixture: related test uses fixture-sourced values"
                     .to_string(),
-            missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
+            missing: "Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture, and static analysis cannot tell whether it supplies an input that exercises the change or the value the test expects.".to_string(),
         });
     }
     if trimmed.chars().any(|ch| ch.is_ascii_digit())
@@ -399,7 +426,13 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports) {
+    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports)
+        && !super::exception_variant::imported_raised_class_swap(
+            trimmed,
+            old_line_text.map(str::trim),
+            &owner.imports,
+        )
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
@@ -1961,8 +1994,9 @@ pub(super) fn cross_module_reach_limit(
         });
     }
     // Helpers are only gathered when no test relates to the owner directly,
-    // so equal lengths mean every related candidate is a helper candidate;
-    // the check keeps the limit off if candidates are ever appended later.
+    // so equal lengths mean every related candidate is a helper candidate. A
+    // same-file value-helper row (#15350) can sit beside them; it reaches the
+    // owner from its own file, so the unequal lengths keep the limit off.
     if helper_callers.is_empty()
         || related_candidates.len() != helper_callers.len()
         || !helper_callers.iter().all(|helper| helper.cross_module)

@@ -14,7 +14,9 @@
 //! - **orphans**: the owning package's walk is complete and does not reach
 //!   the file, so no target compiles it. It seeds no probes.
 //! - **external module sources**: a package whose `[lib]`/`[[bin]]` root sits
-//!   outside its own directory reaches the file from that root. It seeds.
+//!   outside its own directory reaches the file from that root, or the
+//!   owning package's production root reaches it through `#[path]` from
+//!   outside `src/` (#15264). It seeds.
 //! - **unresolved routes**: no resolved edge reaches the file, but a `mod`
 //!   the owning package's walk meets has an unresolved `#[path]` that spells
 //!   it (`#[cfg_attr(unix, path = "unix.rs")] mod sys;`), directly or through
@@ -275,6 +277,13 @@ where
             }
         }
         if owner_reaches_production {
+            // #15264: the owning package's own root reaches a file outside
+            // its layout directories (`#[path = "../impl/price.rs"]` from
+            // `src/lib.rs`). The layout rule reads such a file as evidence,
+            // so record the reach or a real production change seeds nothing
+            // and the run reads "no changed behavior". A file under `src/`
+            // already seeds; recording it changes nothing.
+            context.declared_production_sources.insert(relative);
             continue;
         }
         // Only a package walk can prove a file unreached.

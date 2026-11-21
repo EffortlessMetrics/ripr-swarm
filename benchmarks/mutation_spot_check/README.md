@@ -110,6 +110,19 @@ other keys are unaffected):
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
   and no-containing-seam counts, and their shares of all recorded mutants.
 
+- Genre cross-tabs (also additive, no schema bump): each receipt carries
+  `outcomes_by_disposition_and_genre` and `outcomes_by_grip_class_and_genre`
+  at the top level, on each repo, and in the synthetic-diff section, plus
+  `genre_outcomes_by_language` merging the per-repo tables per language so
+  each language keeps its own genre vocabulary. The per-record JSONL
+  (`mutation-spot-check-records.jsonl`) carries the same `genre` per record.
+  A genre is the producing tool's own operator name (a cargo-mutants genre,
+  a Stryker mutator name, a cosmic-ray operator name); a producer that names
+  no operator, such as mutmut, records `unknown_genre` rather than a site
+  label. A receipt written before genre retention carries none of these
+  keys, and re-deriving summaries from it invents none: absence means the
+  run recorded no genre, not a zero count.
+
 - `replacement_criterion`: the stated "replaces cargo-mutants" criterion, one
   row per criterion with `threshold`, `observed`, `status` (`met`, `not_met`,
   `not_established`, or `informational` for the unthresholded strict recall)

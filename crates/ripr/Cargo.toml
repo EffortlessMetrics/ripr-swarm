@@ -106,6 +106,7 @@ oxc_ast = { version = "0.130", optional = true }
 oxc_ast_visit = { version = "=0.130.0", optional = true }
 oxc_parser = { version = "0.130", optional = true }
 oxc_span = { version = "0.130", optional = true }
+oxc_syntax = { version = "0.130", optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = "1"
 rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-async-rw"] }
@@ -196,7 +197,7 @@ win32job = "2.0.3"
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]
 lang-rust = ["dep:ra_ap_syntax", "dep:unicode-properties", "ripr-contract/lang-rust"]
-lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "ripr-contract/lang-typescript"]
+lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "dep:oxc_syntax", "ripr-contract/lang-typescript"]
 lang-python = ["dep:rustpython-parser", "ripr-contract/lang-python"]
 lang-perl = ["ripr-contract/lang-perl"]
 

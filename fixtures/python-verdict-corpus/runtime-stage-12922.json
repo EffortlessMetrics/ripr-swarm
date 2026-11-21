@@ -1,6 +1,6 @@
 {
   "issue": 12922,
-  "basis": "7c1087709bdecb88f1fd25b0e813e86ffc2213dc",
+  "basis": "31f7c2c3d258b2384eb64d6f25856de34449ae6b",
   "scope": "Authored source, original/edited baselines and independent mutants; assertion failures only. TypeScript alternates are supplementary, not corpus truth for behavior_change cases. No population or static adequacy claim.",
   "inputs": {
     "py-partial-arithmetic": {
@@ -184,6 +184,110 @@
           "sha256": "2537fe74a9bbca0514b82bb99a64537454358dc84523a3ad5565fcb9b5fa9fa5"
         }
       ]
+    },
+    "py-stage-fee": {
+      "case_sha256": "c68f0304abcbb101ab7486517f16a77dc7fe5994232f9165fc6b2c99142a8719",
+      "diff_sha256": "7e9112786bfd0cdec47ea41ccd40eb0a0c3cc478115260152581ff7a84fd4bc2",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "d546e0fbc2c85ec49ae71c46a1bdafe2f91bee6c8bd58b1d8249c74ce4bc6134"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "431a86aa7da32ac628ee159494c6d1e1d5d46c21245c55c323540337ba4131bf"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "b86f6cce3b60b995823b95b3d8104b816454e072c76dd944abe89d5491a9fcbb"
+        }
+      ]
+    },
+    "py-stage-largest": {
+      "case_sha256": "e7368b37cf3e1f63fc7207c796cacff7032d21dd5080612de229b03435dc5a1a",
+      "diff_sha256": "f97cbd8cc28d988d3489e70edcc7c38df25d488cdbca86ecfdea70b9464d0a82",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "291e7b75c7d909eed01ad196fb5f7d9ea69a9bbb4e1c3ce94485299906d100c2"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "6fc49e1d9e1338278bbb83b54272190c2cfaef7ace2b4dcbc1d032e4072e8f58"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "a5e870de9645a3f9a4b8f07696628f61f2fb026687f3e3e6f31b3843791d3051"
+        }
+      ]
+    },
+    "py-stage-peak": {
+      "case_sha256": "e322dc9b819d40b0c9eb74532e3884bb06c44079e1acbc28cf7cba44787c1146",
+      "diff_sha256": "ae6e4ef48254ec2df7328f197804397d35b9f67e2e7362c8964ba9e1b9b9f592",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "5d382f6d6d9680f27aee4b9b0c83b268ebe9a73f1ae0864e0bf0b01224b5a348"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "97d3c3deb5cd0c050e676d0b540bf323f6c3a4e89894a3dd22697690444173ab"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "45743bf2394294bd1a2d4e41d1668bc394f416a737e705dcdc7799ccd1a85d2d"
+        }
+      ]
+    },
+    "py-stage-rate": {
+      "case_sha256": "447323b55b3cee4b05a79104e74a9962a87578d4728f10bc95dd597908814ef6",
+      "diff_sha256": "bc908e008afe3180ea052a8985aa2fb390a1834e83af361b66b27f8ef592876a",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "220bcdb7af205cefe333396be788df81176843462eb33d0bad898c14753ddc34"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "44ca1f0b7aadb505fa75da61f25e9be362338c12df8744549a604b7a526accd4"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "c8a31bd29e5fb34c452cf6ed9db9b50f075947def6fcbecfac6cf4c52dd437db"
+        }
+      ]
     }
   },
   "runs": [
@@ -354,6 +458,54 @@
       "variant": "original",
       "exit": 0,
       "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-stage-rate",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.49s\n"
+    },
+    {
+      "case": "py-stage-rate",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.38s\n"
+    },
+    {
+      "case": "py-stage-fee",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.42s\n"
+    },
+    {
+      "case": "py-stage-fee",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.37s\n"
+    },
+    {
+      "case": "py-stage-largest",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.37s\n"
+    },
+    {
+      "case": "py-stage-largest",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.38s\n"
+    },
+    {
+      "case": "py-stage-peak",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.36s\n"
+    },
+    {
+      "case": "py-stage-peak",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.44s\n"
     }
   ]
 }
