@@ -25235,6 +25235,54 @@ fn related_tests_name_the_owner_caller_test_before_name_order_neighbours() -> Re
     Ok(())
 }
 
+/// #11726 item 2: a field write in a method has no returned struct, so its
+/// upgrade suggestion names where the written field is read, by receiver
+/// mode. A struct-literal field keeps the returned-struct wording.
+#[test]
+fn a_field_write_upgrade_suggestion_names_where_the_field_is_read() -> Result<(), String> {
+    let upgrade_for = |signature: &str, body: &str, pick: &dyn Fn(&RepoSeam) -> bool| {
+        let prod = PathBuf::from("src/upgrade_wording.rs");
+        let prod_src = format!(
+            "pub struct Counter {{\n    pub count: u32,\n    pub other: u32,\n}}\n\nimpl Counter {{\n    {signature} {{\n        {body}\n    }}\n}}\n"
+        );
+        let index = index_from_files(&[(prod, prod_src.as_str())])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/upgrade_wording.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::FieldConstruction && pick(seam))
+            .ok_or_else(|| format!("expected a field seam for `{signature}`: {seams:?}"))?;
+        Ok::<_, String>(
+            oracle_semantics_for_seam(&OracleKind::Unknown, &OracleStrength::None, seam)
+                .upgrade_suggestion,
+        )
+    };
+    let writes_count = |seam: &RepoSeam| seam.expression().contains("self.count");
+    let receiver = upgrade_for("pub fn bump(&mut self)", "self.count = 2;", &writes_count)?;
+    assert_eq!(
+        receiver.as_deref(),
+        Some("assert the changed field on the value the method was called on")
+    );
+    let by_value = upgrade_for(
+        "pub fn with_count(mut self) -> Self",
+        "self.count = 2;\n        self",
+        &writes_count,
+    )?;
+    assert_eq!(
+        by_value.as_deref(),
+        Some("assert the changed field on the value the method call returns")
+    );
+    let literal = upgrade_for(
+        "pub fn make() -> Counter",
+        "Counter { count: 2, other: 0 }",
+        &|seam: &RepoSeam| !seam.expression().contains("self."),
+    )?;
+    assert_eq!(
+        literal.as_deref(),
+        Some("assert the specific output field that carries the changed behavior")
+    );
+    Ok(())
+}
+
 /// The discriminate state of the `discounted_total` seam whose expression is
 /// `seam_expression`, with `prod_body` as the owner's body and `test_body` as
 /// the single test's body (#14569).
