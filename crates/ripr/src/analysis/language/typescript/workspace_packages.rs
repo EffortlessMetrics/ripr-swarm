@@ -124,7 +124,7 @@ impl WorkspacePackages {
             if let Some(source) = &entry.source {
                 wanted.insert(source.clone());
                 wanted.insert(normalize(&dir.join("package.json")));
-                wanted.extend(package_indexes(dir).map(|index| normalize(&index)));
+                wanted.extend(competing_package_modules(dir).map(|path| normalize(&path)));
             }
         }
         if !wanted.is_empty() {
@@ -136,12 +136,9 @@ impl WorkspacePackages {
                     && !tracked.as_ref().is_some_and(|files| {
                         files.contains(&normalize(&dir.join("package.json")))
                             && files.contains(source)
-                            && !package_indexes(dir).any(|index| {
-                                // A directory can load its index when its main is
-                                // missing. Check the Git index as well as disk so
-                                // deleted, ignored, and symlinked alternatives count.
-                                files.contains(&normalize(&index))
-                                    || !matches!(std::fs::symlink_metadata(root.join(index)),
+                            && !competing_package_modules(dir).any(|path| {
+                                files.contains(&normalize(&path))
+                                    || !matches!(std::fs::symlink_metadata(root.join(path)),
                                         Err(error) if error.kind() == std::io::ErrorKind::NotFound)
                             })
                     })
@@ -317,11 +314,20 @@ impl WorkspacePackages {
 /// Build-output directory names a mirrored target drops before `src/`.
 const BUILD_DIRS: [&str; 8] = ["dist", "esm", "cjs", "lib", "build", "out", "es", "module"];
 
-fn package_indexes(dir: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+/// A runner may prefer a sibling file or fall back to the directory index.
+/// Include TypeScript loader extensions as well as Node's JSON and native
+/// alternatives. At the workspace root we can inspect only its index.
+fn competing_package_modules(dir: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    let module = normalize(dir);
     SOURCE_EXTENSIONS
         .into_iter()
         .chain([".json", ".node"])
-        .map(|extension| dir.join(format!("index{extension}")))
+        .flat_map(move |extension| {
+            let index = dir.join(format!("index{extension}"));
+            let sibling =
+                (!module.is_empty()).then(|| PathBuf::from(format!("{module}{extension}")));
+            std::iter::once(index).chain(sibling)
+        })
 }
 
 /// Only ordinary package-local build paths have a source counterpart.

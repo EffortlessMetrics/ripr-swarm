@@ -489,3 +489,69 @@ fn competing_package_index_withholds_build_source() -> Result<(), String> {
     }
     crate::testing::fixture_git::remove_fixture_tree(&root)
 }
+
+#[test]
+fn sibling_module_withholds_package_source_and_uncredited_call_names_the_entry()
+-> Result<(), String> {
+    use crate::testing::fixture_git::fixture_git_ok;
+
+    let root = with_tree(
+        "package-sibling-or-uncredited-call",
+        &[
+            (
+                "packages/p/package.json",
+                r#"{"name":"p","main":"dist/emitter.js","source":"src/index.ts"}"#,
+            ),
+            (
+                "packages/p/src/index.ts",
+                "export function emitter() {\n  return 42;\n}\n",
+            ),
+            ("packages/p/test/public.test.js", ""),
+        ],
+    )?;
+    fixture_git_ok(&root, &["init", "-q"])?;
+    fixture_git_ok(&root, &["add", "."])?;
+    for (binding, sibling, credited, known_source_gap) in [
+        ("{ emitter }", Some("p.json"), false, false),
+        ("{ emitter }", Some("p.node"), false, false),
+        ("{ emitter }", None, true, false),
+        ("emitter", None, false, true),
+    ] {
+        let sibling = sibling.map(|name| root.join("packages").join(name));
+        if let Some(path) = &sibling {
+            ts_write_file(path, "")?;
+        }
+        ts_write_file(
+            &root.join("packages/p/test/public.test.js"),
+            &format!(
+                "const {binding} = require('../../p');\nit('calls the export', () => {{ emitter(); }});\n"
+            ),
+        )?;
+        let findings = TypeScriptAdapter
+            .analyze_diff(
+                &ts_analysis_options(root.clone()),
+                &OraclePolicy::default(),
+                &[changed_with_lines(
+                    "packages/p/src/index.ts",
+                    &[(2, "  return 42;")],
+                )],
+            )?
+            .findings;
+        let finding = findings.first().ok_or("missing source finding")?;
+        assert_eq!(!finding.related_tests.is_empty(), credited, "{finding:?}");
+        assert_eq!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("dist/emitter.js")
+                    && line.contains("packages/p/src/index.ts")
+                    && line.contains("could not attribute this test")),
+            known_source_gap,
+            "{finding:?}",
+        );
+        if let Some(path) = sibling {
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+    }
+    crate::testing::fixture_git::remove_fixture_tree(&root)
+}
