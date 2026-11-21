@@ -22,8 +22,7 @@
       "const": "ripr"
     },
     "root": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "base": {
       "description": "The base as the caller passed it with `--base`; omitted for every other working-set selector.",
