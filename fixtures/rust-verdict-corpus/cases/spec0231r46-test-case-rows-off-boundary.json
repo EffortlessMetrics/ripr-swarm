@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0231r46-test-case-rows-off-boundary",
+  "subject_id": "authored-spec0231-46",
+  "diff": "cases/spec0231r46-test-case-rows-off-boundary.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "boundary_predicate",
+  "test_shape": "test_case_rows_off_boundary",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if q > 10 { q * 9 } else { q * 10 }",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: price(10) is 100 instead of 90, and no test that runs reaches q = 10"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only rows are `3` and `20`, both on one side of the boundary at 10, so moving `>=` to `>` changes no row and every test passes. Spec cells: RIPR-SPEC-0231 example 46.",
+  "labeling_observation": {
+    "ripr_commit": "783bcd6c22",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#46"
+  ]
+}

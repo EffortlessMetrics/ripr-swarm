@@ -892,7 +892,7 @@ rejected alternative. Any can be reversed later without touching the rest.
   API. Every negative control is the credited twin with exactly one thing
   changed. The verdict-corpus row `lib-test-case-arrow-expected-value`
   credits, and the whole Rust corpus keeps zero false verdicts.
-- Rule 11: acceptance examples 45 to 48 read as stated, through the public
+- Rule 11: acceptance examples 49 to 52 read as stated, through the public
   API. Every negative control is the credited twin with exactly one thing
   changed. The golden fixture `rust_stub_todo_expected_value` pins the
   finding verdict (`weakly_exposed`; the test's oracle grade is `unknown`
@@ -1117,16 +1117,16 @@ rejected alternative. Any can be reversed later without touching the rest.
     a body that rebinds `q`: nothing is bound and the finding does not read
     `exposed`.
 
-45. `let expected: i32 = todo!("ripr: write the value"); assert_eq!(price(100,
+49. `let expected: i32 = todo!("ripr: write the value"); assert_eq!(price(100,
     100), expected);` beside a `>` -> `>=` predicate change: `unknown` /
     unknown (rule 11; `exact_value` / strong before #14810), so the finding
     keeps its named gap instead of reading `exposed`.
-46. The same test with `let expected: i32 = 9_990;` or
+50. The same test with `let expected: i32 = 9_990;` or
     `let expected: i32 = price(100, 100);`: `exact_value` / strong, and the
     finding reads `exposed`.
-47. The same test with `unimplemented!()`, `unreachable!()` or `panic!(..)`
-    as the initializer: `unknown` / unknown, as example 45.
-48. The same test with `assert_eq!(price(100, 100), 9_990);` beside the
+51. The same test with `unimplemented!()`, `unreachable!()` or `panic!(..)`
+    as the initializer: `unknown` / unknown, as example 49.
+52. The same test with `assert_eq!(price(100, 100), 9_990);` beside the
     unfilled `let expected` (the assertion never names it), or with a second
     `let expected: i32 = 9_990;` in the same body: `exact_value` / strong.
 

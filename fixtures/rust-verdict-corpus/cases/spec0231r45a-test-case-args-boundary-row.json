@@ -1,0 +1,48 @@
+{
+  "case_id": "spec0231r45a-test-case-args-boundary-row",
+  "subject_id": "authored-spec0231-45a",
+  "diff": "cases/spec0231r45a-test-case-args-boundary-row.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "boundary_predicate",
+  "test_shape": "test_case_args_row",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if q > 10 { q * 9 } else { q * 10 }",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::prices::test_case_1_10_90_expects",
+        "equivalence_review": "not equivalent: price(10) is 100 instead of 90"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The `#[test_case(10, 90)]` row feeds `price(10)` through `assert_eq!(price(q), expected)`, so moving the `>=` boundary to `>` makes the row return 100 and fail. Spec cells: RIPR-SPEC-0231 example 45.",
+  "labeling_observation": {
+    "ripr_commit": "783bcd6c22",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#45"
+  ]
+}

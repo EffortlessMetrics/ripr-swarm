@@ -519,6 +519,18 @@ scope = "in"
 id = "RIPR-SPEC-0231"
 scope = "in"
 
+[[spec.waived]]
+example = 49
+reason = "the placeholder test (`let expected: i32 = todo!(..)`) panics when it runs, so the unedited suite fails and `verdict-corpus relabel` refuses every mutant outcome; no runtime truth exists for it. The reading is pinned by the `rust_stub_todo_expected_value` golden and the `unfilled_expected_tests` unit tests"
+
+[[spec.waived]]
+example = 51
+reason = "`unimplemented!()`, `unreachable!()` and `panic!(..)` initializers panic when the test runs, so the unedited suite fails and `verdict-corpus relabel` can establish no runtime truth, as example 49"
+
+[[spec.waived]]
+example = 52
+reason = "both shapes execute a diverging initializer: the unfilled `let expected` still runs and panics before or after the assertion that never names it, and the second-binding variant keeps the first `todo!()` binding executed; the unedited suite fails, so `verdict-corpus relabel` can establish no runtime truth"
+
 # Statically contradicted exact-value oracles
 [[spec]]
 id = "RIPR-SPEC-0233"
