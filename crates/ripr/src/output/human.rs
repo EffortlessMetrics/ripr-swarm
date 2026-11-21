@@ -715,9 +715,39 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                 .infection_unknown
                 .saturating_add(s.propagation_unknown)
                 .saturating_add(s.static_unknown);
+            // #15295: both of these bucket names claim a test gets to the
+            // change. Say how many findings in each rest on a link ripr could
+            // not confirm, so the line agrees with the reason under them.
+            let unconfirmed = |class: crate::domain::ExposureClass, bucket: usize| {
+                let count = output
+                    .findings
+                    .iter()
+                    .filter(|finding| {
+                        finding.class == class
+                            && sections::reach_claim_is_unsupported(&finding.class, &finding.ripr)
+                    })
+                    .count()
+                    .min(bucket);
+                if count == 0 {
+                    String::new()
+                } else {
+                    format!(" ({count} through a test link ripr could not confirm)")
+                }
+            };
             let mut classes = format!(
-                "{} appear noticed by tests, {} partly noticed, {} reached but not noticed, {} no test path",
-                s.exposed, s.weakly_exposed, s.reachable_unrevealed, s.no_static_path,
+                "{} appear noticed by tests, {} partly noticed{}, {} reached but not noticed{}, {} no test path",
+                s.exposed,
+                s.weakly_exposed,
+                unconfirmed(
+                    crate::domain::ExposureClass::WeaklyExposed,
+                    s.weakly_exposed
+                ),
+                s.reachable_unrevealed,
+                unconfirmed(
+                    crate::domain::ExposureClass::ReachableUnrevealed,
+                    s.reachable_unrevealed
+                ),
+                s.no_static_path,
             );
             if unknown > 0 {
                 classes.push_str(&format!(", {unknown} unclear"));

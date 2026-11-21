@@ -297,3 +297,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_trait_parent_shadow (24)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless rust_trait_parent_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

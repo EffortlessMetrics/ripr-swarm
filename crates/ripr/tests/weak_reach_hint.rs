@@ -73,6 +73,23 @@ fn producer_evidence_and_public_renderers_agree_about_reach() -> Result<(), Stri
         let compact = render_check(&output, &OutputFormat::Human)?;
         let full = render_check(&output, &OutputFormat::HumanFull)?;
         assert!(compact.contains(hint), "{name}: {compact}");
+        // #15295: the Summary bucket carries the same reach judgement as the
+        // reason line, in the bucket this finding is counted under.
+        let summary = compact
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .ok_or_else(|| format!("{name}: no Summary line: {compact}"))?;
+        let note = " (1 through a test link ripr could not confirm)";
+        let bucket = match class {
+            "weakly_exposed" => format!("1 partly noticed{note}, 0 reached but not noticed, "),
+            _ => format!("0 partly noticed, 1 reached but not noticed{note}, "),
+        };
+        if reach == "yes" {
+            assert!(!summary.contains("could not confirm"), "{name}: {summary}");
+            assert!(summary.contains("1 partly noticed, "), "{name}: {summary}");
+        } else {
+            assert!(summary.contains(&bucket), "{name}: {summary}");
+        }
         assert!(full.contains(&format!("reach {reach}:")), "{name}: {full}");
     }
     Ok(())
@@ -102,6 +119,10 @@ fn unestablished_reach_never_takes_the_weak_discriminator_shortcut() -> Result<(
         let human = render_check(&output, &OutputFormat::Human)?;
         assert!(
             human.contains("Why weak: test reach to this change is not established"),
+            "{state:?}: {human}"
+        );
+        assert!(
+            human.contains("1 partly noticed (1 through a test link ripr could not confirm)"),
             "{state:?}: {human}"
         );
     }

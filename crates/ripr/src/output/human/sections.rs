@@ -1688,6 +1688,20 @@ fn unresolved_fixture_hint(finding: &Finding) -> Option<String> {
     ))
 }
 
+/// Whether a finding sits in a class whose plain name claims a reaching test
+/// ("partly noticed", "reached but not noticed") while its reach stage does
+/// not establish one. The per-finding hint and the Summary line both ask
+/// this, so they cannot disagree (#15295).
+pub(in crate::output::human) fn reach_claim_is_unsupported(
+    class: &ExposureClass,
+    ripr: &RiprEvidence,
+) -> bool {
+    matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) && (ripr.reach.state != StageState::Yes || is_callee_only_reach(&ripr.reach))
+}
+
 fn classification_hint(
     class: &ExposureClass,
     ripr: &RiprEvidence,
@@ -1699,11 +1713,7 @@ fn classification_hint(
     // weak-discriminator shortcut (#7330). Callee-only evidence explicitly
     // disclaims owner invocation even if its state were inconsistent (#7003).
     let callee_only = is_callee_only_reach(&ripr.reach);
-    if matches!(
-        class,
-        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
-    ) && (ripr.reach.state != StageState::Yes || callee_only)
-    {
+    if reach_claim_is_unsupported(class, ripr) {
         return Some(
             if callee_only {
                 NO_CALLING_TEST_HINT

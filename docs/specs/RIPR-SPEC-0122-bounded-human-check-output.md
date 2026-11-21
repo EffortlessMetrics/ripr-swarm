@@ -119,7 +119,14 @@ bullets' plain class words, and a summary that names classes in plain words
 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your
 settings`; with zero changed behaviors, `Summary: 0 changed behaviors checked`, never
 "nothing to check", because a skipped language makes the run incomplete). The three unknown classes share the one plain word `unclear` and sum
-into a single bucket named only when non-zero. Limitation lines on this
+into a single bucket named only when non-zero. "Partly noticed" and "reached
+but not noticed" both say a test gets to the change, so when a finding in
+either bucket has a reach stage that is not `yes` (or callee-only reach), the
+bucket says how many: `2 partly noticed (1 through a test link ripr could not
+confirm)`. The count uses the same rule as the per-finding reason `test reach
+to this change is not established`, so the Summary and the finding under it
+cannot disagree (#15295); a bucket with no such finding is unchanged.
+Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
 to the preview-language note, which carries the `ripr.toml` recovery block
