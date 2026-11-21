@@ -1485,10 +1485,11 @@ fn comparison_operand_after(expression: &str, operator_end: usize) -> Option<Str
 }
 
 fn is_simple_typescript_discriminator_operand(value: &str) -> bool {
-    !value.is_empty()
-        && value.chars().all(|ch| {
-            ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '"' || ch == '\''
-        })
+    oxc_syntax::identifier::is_identifier_name(value)
+        || (!value.is_empty()
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '"' | '\'')))
 }
 
 fn is_simple_typescript_object_key(value: &str) -> bool {
@@ -1696,10 +1697,31 @@ pub(crate) fn ts_changed_object_field(
     }
 }
 
-/// `(key, value)` per field of the object literal a `return` line returns,
-/// split at top-level commas; `None` when the line is not exactly one
-/// literal of simple `key: value` fields.
-fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
+/// The unchanged shorthand in an ordinary two-member return. A numeric literal
+/// cannot mutate the binding read by the shorthand as the object is built.
+pub(crate) fn ts_unchanged_shorthand_sibling<'a>(
+    old_line: Option<&str>,
+    new_line: &'a str,
+) -> Option<&'a str> {
+    fn pair(line: &str) -> Option<(&str, &str, &str)> {
+        let (field, sibling) = returned_object_body(line)?.split_once(',')?;
+        let (key, value) = field.split_once(':')?;
+        let (key, value, sibling) = (key.trim(), value.trim(), sibling.trim());
+        (value_hiding_guard::is_plain_identifier(key)
+            && key != "__proto__"
+            && value_hiding_guard::is_plain_identifier(sibling)
+            && key != sibling
+            && !value.is_empty()
+            && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some((key, value, sibling))
+    }
+
+    let (old_key, old_value, old_sibling) = pair(old_line?)?;
+    let (key, value, sibling) = pair(new_line)?;
+    (key == old_key && sibling == old_sibling && value != old_value).then_some(sibling)
+}
+
+fn returned_object_body(line: &str) -> Option<&str> {
     let text = line.trim().trim_end_matches(';').trim();
     let expression = text.strip_prefix("return ")?.trim();
     let expression = expression
@@ -1707,7 +1729,14 @@ fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
         .and_then(|inner| inner.strip_suffix(')'))
         .unwrap_or(expression)
         .trim();
-    let body = expression.strip_prefix('{')?.strip_suffix('}')?;
+    expression.strip_prefix('{')?.strip_suffix('}')
+}
+
+/// `(key, value)` per field of the object literal a `return` line returns,
+/// split at top-level commas; `None` when the line is not exactly one
+/// literal of simple `key: value` fields.
+fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
+    let body = returned_object_body(line)?;
     let mut fields = Vec::new();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;

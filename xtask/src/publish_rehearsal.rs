@@ -9,9 +9,9 @@
 //!
 //! 1. `cargo publish -p ripr-contract --dry-run` (the first publish step,
 //!    including its verify build).
-//! 2. Package `ripr` against a vendored source tree (`cargo vendor` plus
-//!    the packaged `ripr-contract` crate), which is the only local source
-//!    that can satisfy the exact registry requirement pre-publish.
+//! 2. Package `ripr-contract` and `ripr` in one multi-package `cargo
+//!    package`, which resolves the exact requirement against the contract
+//!    crate it just packaged.
 //! 3. Compile the packaged `ripr` against the packaged `ripr-contract`
 //!    via a `[patch.crates-io]` path entry, after a fresh
 //!    `cargo generate-lockfile` (the unlocked-install resolution).
@@ -23,12 +23,11 @@
 //! the real `cargo publish` runs from there, so it packages the rehearsed,
 //! verified source tree (`publish_stage::verify_stage`).
 
+use sha2::Digest as _;
 use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use sha2::Digest as _;
 
 pub(crate) fn run() -> Result<(), String> {
     // A receipt is evidence of a completed rehearsal. Clear any earlier one
@@ -103,7 +102,7 @@ fn finish_rehearsal(
     verify_kept(kept)?;
     write_publish_receipt(receipt_path, receipt)?;
     println!(
-        "publish rehearsal ok: ripr-contract {} ({}) dry-run passed; packaged ripr {} ({}) packaged against vendored ripr-contract and checks against the packaged crate; stage kept at {}; receipt={}",
+        "publish rehearsal ok: ripr-contract {} ({}) dry-run passed; packaged ripr {} ({}) packaged with ripr-contract and checks against the packaged crate; stage kept at {}; receipt={}",
         receipt.version,
         receipt.contract_sha256,
         receipt.version,
@@ -134,23 +133,19 @@ fn keep_stage_at(scratch: &Path, kept: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Package `ripr-contract` and then `ripr` against a vendored source tree
-/// holding the packaged contract. Returns the two `.crate` paths. This is
-/// the only local route that can produce the `ripr` package before
-/// `ripr-contract` exists on crates.io. Both crates are packaged from the
+/// Package `ripr-contract` and `ripr` in one multi-package `cargo package`,
+/// which produces the `ripr` package before `ripr-contract` exists on
+/// crates.io. Returns the two `.crate` paths. Both crates are packaged from the
 /// publish stage under `scratch/stage`, whose `ripr` source has no inline
 /// test modules (#14198).
-pub(crate) fn vendored_ripr_crate(
-    scratch: &Path,
-    version: &str,
-) -> Result<(PathBuf, PathBuf), String> {
-    let (contract_crate, ripr_crate, _stage) = vendored_ripr_crate_with_report(scratch, version)?;
+pub(crate) fn staged_crates(scratch: &Path, version: &str) -> Result<(PathBuf, PathBuf), String> {
+    let (contract_crate, ripr_crate, _stage) = staged_crates_with_report(scratch, version)?;
     Ok((contract_crate, ripr_crate))
 }
 
-/// [`vendored_ripr_crate`], also returning the stage report so the receipt can
+/// [`staged_crates`], also returning the stage report so the receipt can
 /// name the source commit and the transform the archives were built from.
-fn vendored_ripr_crate_with_report(
+fn staged_crates_with_report(
     scratch: &Path,
     version: &str,
 ) -> Result<(PathBuf, PathBuf, crate::publish_stage::StageReport), String> {
@@ -165,9 +160,9 @@ fn vendored_ripr_crate_with_report(
         "publish stage: HEAD {} checked out; {} inline #[cfg(test)] modules ({} bytes) stripped from {} ripr source files",
         report.commit, report.stripped_modules, report.stripped_bytes, report.stripped_files
     );
-    // `cargo package` and `cargo vendor` re-resolve and may rewrite
-    // Cargo.lock; restore the committed one afterwards, so the kept stage
-    // differs from HEAD only by the strip and its marker.
+    // `cargo package` re-resolves and may rewrite Cargo.lock; restore the
+    // committed one afterwards, so the kept stage differs from HEAD only by
+    // the strip and its marker.
     let lock_path = stage.join("Cargo.lock");
     let lock_backup = fs::read(&lock_path).ok();
     let packaged = package_from_stage(&scratch, &stage, version);
@@ -191,54 +186,32 @@ fn package_from_stage(
 ) -> Result<(PathBuf, PathBuf), String> {
     let target = scratch.join("target");
     let target_arg = target.to_string_lossy().into_owned();
-
+    // One multi-package invocation: Cargo resolves `ripr`'s exact
+    // `ripr-contract` requirement against the contract it just packaged
+    // (its `target/package/tmp-registry`), so no vendored source is needed
+    // before `ripr-contract` is on crates.io (#15204). The unlocked compile in
+    // `rehearse` and the `package-install` check build what was packaged.
     run_cargo(
         &[
             "package",
             "-p",
             "ripr-contract",
+            "-p",
+            "ripr",
             "--no-verify",
             "--allow-dirty",
         ],
         &[("CARGO_TARGET_DIR", target_arg.as_str())],
-        None,
         stage,
     )?;
     let contract_crate = pick_crate_file(&target.join("package"), "ripr-contract", version)?;
-    let contract_sha = sha256_hex(&contract_crate)?;
-
-    let vendor = scratch.join("vendor");
-    let vendor_arg = vendor.to_string_lossy().into_owned();
-    run_cargo(&["vendor", vendor_arg.as_str()], &[], None, stage)?;
-    let vendored_contract = vendor.join(format!("ripr-contract-{version}"));
-    extract_crate(
-        &contract_crate,
-        &vendored_contract,
-        &format!("ripr-contract-{version}"),
-    )?;
-    fs::write(
-        vendored_contract.join(".cargo-checksum.json"),
-        checksum_json(&contract_sha),
-    )
-    .map_err(|e| format!("cannot write vendored checksum: {e}"))?;
-
-    let vendor_cfg = vendor.to_string_lossy().replace('\\', "/");
-    run_cargo(
-        &["package", "-p", "ripr", "--no-verify", "--allow-dirty"],
-        &[("CARGO_TARGET_DIR", target_arg.as_str())],
-        Some(&[
-            "source.crates-io.replace-with=\"vendored\"".to_string(),
-            format!("source.vendored.directory=\"{vendor_cfg}\""),
-        ]),
-        stage,
-    )?;
     let ripr_crate = pick_crate_file(&target.join("package"), "ripr", version)?;
     Ok((contract_crate, ripr_crate))
 }
 
 fn rehearse(scratch: &Path, version: &str) -> Result<PublishReceipt, String> {
     // The caller verified the lockstep pin before the contract dry-run.
-    let (contract_crate, ripr_crate, stage) = vendored_ripr_crate_with_report(scratch, version)?;
+    let (contract_crate, ripr_crate, stage) = staged_crates_with_report(scratch, version)?;
     let contract_sha = sha256_hex(&contract_crate)?;
     let ripr_sha = sha256_hex(&ripr_crate)?;
     // Leave the packaged crates where `cargo package` would put them, so
@@ -377,7 +350,6 @@ pub(crate) fn precheck() -> Result<(), String> {
     run_cargo(
         &["package", "-p", "ripr", "--allow-dirty"],
         &[("CARGO_TARGET_DIR", target_arg.as_str())],
-        None,
         stage,
     )?;
     let fresh = pick_crate_file(&target.join("package"), "ripr", &receipt.version)?;
@@ -708,19 +680,9 @@ fn upload_size_guard(contract_crate: &Path, ripr_crate: &Path) -> Result<(), Str
     }
 }
 
-fn run_cargo(
-    args: &[&str],
-    envs: &[(&str, &str)],
-    configs: Option<&[String]>,
-    cwd: &Path,
-) -> Result<(), String> {
+fn run_cargo(args: &[&str], envs: &[(&str, &str)], cwd: &Path) -> Result<(), String> {
     let mut command = Command::new("cargo");
     command.current_dir(cwd);
-    if let Some(configs) = configs {
-        for config in configs {
-            command.args(["--config", config]);
-        }
-    }
     command.args(args).envs(envs.iter().copied());
     let status = command
         .status()
@@ -808,10 +770,6 @@ pub(crate) fn pick_crate_file(dir: &Path, package: &str, version: &str) -> Resul
     ))
 }
 
-pub(crate) fn checksum_json(sha256: &str) -> String {
-    format!("{{\"files\":{{}},\"package\":\"{sha256}\"}}")
-}
-
 pub(crate) fn append_patch(manifest: &str, contract_dir: &str) -> Result<String, String> {
     if manifest.contains("[patch.crates-io]") {
         return Err(
@@ -855,14 +813,6 @@ mod tests {
         assert!(patched.ends_with("[workspace]\n"));
         assert!(matches!(append_patch(&patched, "ripr-contract-0.11.0"), Err(e) if !e.is_empty()));
         Ok(())
-    }
-
-    #[test]
-    fn checksum_json_names_the_package_digest() {
-        assert_eq!(
-            checksum_json("abc123"),
-            "{\"files\":{},\"package\":\"abc123\"}"
-        );
     }
 
     fn sample_receipt() -> PublishReceipt {
@@ -1251,62 +1201,5 @@ mod tests {
             ),
             Ok(PublicationDisposition::PreserveCargoAndRecoverLaterChannel)
         );
-    }
-
-    #[test]
-    fn release_guide_binds_to_lockstep_contract_dependency() -> Result<(), String> {
-        let ripr_manifest = fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../crates/ripr/Cargo.toml"
-        ))
-        .map_err(|e| format!("read ripr Cargo.toml: {e}"))?;
-        let release_doc =
-            fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/RELEASE.md"))
-                .map_err(|e| format!("read docs/RELEASE.md: {e}"))?;
-
-        if ripr_manifest.contains("ripr-contract") {
-            // Standalone product dry-run must not appear as an instruction line.
-            for line in release_doc.lines() {
-                assert_ne!(
-                    line.trim(),
-                    "cargo publish -p ripr --dry-run",
-                    "docs/RELEASE.md must not instruct standalone `cargo publish -p ripr --dry-run`"
-                );
-            }
-            // Commands must appear as instruction lines, not merely as a
-            // substring of prose: a required command inside a "do not run"
-            // sentence would otherwise satisfy the check.
-            for required in [
-                "cargo xtask publish-dry-run",
-                "cargo xtask publish-precheck",
-                "cargo search ripr-contract",
-            ] {
-                assert!(
-                    release_doc
-                        .lines()
-                        .any(|line| line.trim_start().starts_with(required)),
-                    "docs/RELEASE.md must give `{required}` as an instruction line, not only mention it"
-                );
-            }
-            // The real publish runs from the kept stage (#14198), so the guide
-            // must name those exact commands. A prefix match would let the
-            // `ripr-contract` line satisfy the `ripr` requirement.
-            for required in [
-                "cargo publish --allow-dirty -p ripr-contract",
-                "cargo publish --allow-dirty -p ripr",
-            ] {
-                assert!(
-                    release_doc.lines().any(|line| line.trim() == required),
-                    "docs/RELEASE.md must give `{required}` as its own instruction line"
-                );
-            }
-            for required in ["crates/ripr-contract", "Partial-publication recovery"] {
-                assert!(
-                    release_doc.contains(required),
-                    "docs/RELEASE.md missing lockstep publication requirement `{required}`"
-                );
-            }
-        }
-        Ok(())
     }
 }

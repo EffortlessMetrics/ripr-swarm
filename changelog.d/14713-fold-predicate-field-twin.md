@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check --format agent` prints one row for a changed struct-literal field initializer such as `verbose: a || b,`, instead of a `field_construction` row and a `predicate` row that repeats it. The predicate folds only when it carries no advice the field row lacks. It folds into the field row and counts in `folded_gaps=`, and `next=` names the printed row. On the agent-eval `struct_field` scenario, `find` reports gap line 10 once (#14713).

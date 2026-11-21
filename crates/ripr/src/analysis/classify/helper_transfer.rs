@@ -33,6 +33,7 @@
 
 mod cross_crate_hop;
 mod cross_crate_path;
+pub(super) use cross_crate_path::public_path;
 mod macro_argument;
 mod own_crate_test_hop;
 mod qualified_hop;
@@ -50,6 +51,7 @@ mod multi_site_tests;
 #[cfg(test)]
 mod receiver_shape_tests;
 mod receiver_value;
+pub(in crate::analysis) use receiver_value::single_tuple_field_type;
 pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
 };

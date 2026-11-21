@@ -1105,7 +1105,7 @@ impl OwnerCallIdentity {
                             Some((_, module)) if !module.is_empty() => {
                                 // An import does not rebind its own path prefix:
                                 // `use thr::thr` imports a value from crate `thr`.
-                                let mut import_scope = scope.clone();
+                                let mut import_scope = NameScope::clone(scope);
                                 import_scope.imports.retain(|import| {
                                     !matches!(&import.binding, UseBinding::Path(bound) if bound == path)
                                 });
@@ -3505,6 +3505,37 @@ pub(super) fn boundary_owner_calls_resolve(
                             || identity.resolve_call(test, index, &segments) == CallTarget::Owner
                     })
                 })
+        })
+}
+
+/// Resolve a free call in rustdoc's separate example crate, including a
+/// library-qualified call into an out-of-line module.
+pub(super) fn doctest_calls_free_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    syntax: &super::owner_pin::OwnerPinSyntax,
+) -> bool {
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    let Some(path) = super::helper_transfer::public_path(index, owner) else {
+        return false;
+    };
+    !qualifiers.is_empty()
+        && qualifiers.into_iter().all(|qualifier| match qualifier {
+            None => false,
+            Some(segments) => match segments.split_first() {
+                None => super::owner_pin::targeted_free_call_reaches_owner(
+                    test, owner, None, index, syntax,
+                ),
+                Some((root, module)) => {
+                    path.modules == module
+                        && index
+                            .member_crates
+                            .import_names(&test.file, &path.root)
+                            .contains(root)
+                        && !super::owner_pin::test_crate_binds_root(test, root, index, syntax)
+                }
+            },
         })
 }
 

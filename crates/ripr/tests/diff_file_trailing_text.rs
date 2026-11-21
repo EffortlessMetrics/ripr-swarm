@@ -5,6 +5,8 @@
 //! `git format-patch` output it also reported findings at lines taken from
 //! the mail signature and the next message's headers. Each variant here must
 //! produce the same typed outcome and the same findings as the bare patch.
+//! A series whose later message edits the same file again is refused instead
+//! (#15268): its sections describe different versions of that file.
 
 #![cfg(feature = "lang-rust")]
 
@@ -94,6 +96,8 @@ mod tests {
 ",
     )
     .map_err(|error| format!("write source: {error}"))?;
+    fs::write(root.join("README.md"), "demo\nthe boundary is inclusive\n")
+        .map_err(|error| format!("write readme: {error}"))?;
     Ok(root)
 }
 
@@ -166,14 +170,14 @@ fn text_after_the_last_complete_hunk_does_not_change_the_result() -> Result<(), 
         return Err(format!("bare control is not the expected run: {bare:?}"));
     }
 
-    // The series' second message adds the comment that closes the fixture.
+    // The series' second message adds a line to the README.
     let series_tail = "\
-diff --git a/src/lib.rs b/src/lib.rs
+diff --git a/README.md b/README.md
 index 1111111..2222222 100644
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -16,0 +17 @@
-+// the boundary is inclusive
+--- a/README.md
++++ b/README.md
+@@ -1,0 +2 @@
++the boundary is inclusive
 ";
     let variants = [
         ("blank.diff", format!("{PATCH}\n")),
@@ -201,6 +205,30 @@ index 1111111..2222222 100644
         return Err(format!(
             "text after a complete hunk changed the result (control {bare:?}):\n{}",
             failures.join("\n")
+        ));
+    }
+
+    // A second message that edits `src/lib.rs` again is refused with a
+    // located limitation rather than read at stale coordinates (#15268).
+    let same_file_tail = "\
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -16,0 +17 @@
++// the boundary is inclusive
+";
+    let repeated = check_diff(
+        &root,
+        "series-same-file.diff",
+        &format!("{MAIL_HEAD}{PATCH}{MAIL_SIGNATURE}{MAIL_HEAD}{same_file_tail}{MAIL_SIGNATURE}"),
+    )?;
+    if repeated.0 != "partial_with_limitations"
+        || repeated.1 != ["language_scope_unsupported"]
+        || !repeated.2.is_empty()
+    {
+        return Err(format!(
+            "a file edited in two messages was read: {repeated:?}"
         ));
     }
 
