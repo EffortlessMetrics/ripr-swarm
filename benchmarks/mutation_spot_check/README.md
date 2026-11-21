@@ -386,6 +386,34 @@ disposition, verdict, outcome, file and line, so a located miss can be traced
 without re-running the join. A mutmut record with no diff has no location or
 JSONL row; its status is counted in `records_without_diff`.
 
+## TypeScript: bounded in-repo real-mutant calibration
+
+`typescript-calibration.json` plus `run_typescript_calibration.py` is a bounded
+in-repo slice, distinct from the hosted Stryker lane above: 19
+real mutant edits (comparison, arithmetic and constant operators) on three
+authored TypeScript verdict-corpus subjects (`authored-ts-nodetest-pricing`,
+`authored-ts-grid-arithmetic`, `authored-ts-grid-boundary`). Each mutant is
+applied to a scratch copy of its subject, executed against the subject's own
+node:test suite (runtime outcome `caught`/`missed` only), and scored against
+`ripr check --diff` on a synthetic one-hunk diff of the same edit, using the
+same grip-class map as the synthetic-diff join. Weak, unknown, ambiguous,
+incomplete and absent verdicts are `unscored` — never counted as successes, and
+a static classification is never rewritten as a runtime outcome. The grid
+subjects' loop-registered tests make their ripr analyses incomplete, so their
+10 mutants are runtime-executed but unscored; every denominator is disclosed
+in the receipt.
+
+```bash
+cargo build -p ripr
+python benchmarks/mutation_spot_check/run_typescript_calibration.py \
+  --ripr target/debug/ripr --node node
+cargo test -p xtask typescript_calibration
+```
+
+The committed receipt is `typescript-calibration-receipt.{json,md}`; the xtask
+tests re-derive its precision/recall from the per-mutant rows. It is an
+authored-subject calibration, not a population estimate or suite adequacy.
+
 ## Pilot top recommendations
 
 The receipt also runs `ripr pilot --max-seams 10` on each checkout and judges

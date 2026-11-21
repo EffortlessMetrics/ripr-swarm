@@ -22839,6 +22839,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
             "The advisory sentinel reads landed GitHub qualification with runner-provided stdlib Python and gh, without building Rust or executing product code; its API and tracker-shell controls run on Linux through the Rust-owned main_health_sentinel_contract target (#14500).",
         );
     }
+    if path == "benchmarks/mutation_spot_check/test_run_typescript_calibration.py" {
+        return Some(
+            "Unit tests for the TypeScript calibration runner must import the stdlib runner it pins; they cover timeout, encoding, verdict and path helpers without launching node or ripr (#12901).",
+        );
+    }
+    if path == "benchmarks/mutation_spot_check/run_typescript_calibration.py" {
+        return Some(
+            "Bounded TypeScript real-mutant calibration must run the authored subjects' own node:test suites with the subject runtime and drive ripr check --diff per mutant; it is stdlib-only, never on the default CI path, and its receipt is re-derived by the Rust-owned typescript_calibration tests (#12901).",
+        );
+    }
     if matches!(
         path,
         "tools/ci/shard-verifier-artifact.py" | "tools/ci/test_shard_verifier_artifact.py"
