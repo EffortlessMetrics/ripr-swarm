@@ -2173,22 +2173,22 @@ fn audited_pass_through_call(
             let qualifier = pass_through_call_qualifier(before);
             let name = name.text().trim_start_matches("r#");
             let audited = PASS_THROUGH_WRAPPERS.contains(&name);
-            let wrapper = match qualifier.as_deref() {
-                Some("") => {
+            let wrapper = match qualifier.as_str() {
+                "" => {
                     nested.bare_wrapper |= audited;
                     audited
                 }
-                Some("proptest") if audited => {
+                "proptest" if audited => {
                     nested.qualified_relative = true;
                     true
                 }
-                Some("::proptest") if audited => {
+                "::proptest" if audited => {
                     nested.qualified_external = true;
                     true
                 }
                 _ => false,
             };
-            qualifier.as_deref() == Some("") && known.contains(&name)
+            qualifier.is_empty() && known.contains(&name)
                 || wrapper
                 || !group
                     .syntax()
@@ -2200,12 +2200,14 @@ fn audited_pass_through_call(
 }
 
 /// The path written before a nested call's name, read backwards from the
-/// token before the name: `Some("")` for a bare name, `Some("proptest")` or
-/// `Some("::proptest")` for a one-segment qualifier, and the joined text for
-/// any other path. `None` when the tokens are not a plain path.
+/// token before the name: `""` for a bare name, `"proptest"` or
+/// `"::proptest"` for a one-segment qualifier, and the joined text for any
+/// other path. A lone `:` is no path separator: it ends the path, so the call
+/// a struct field's colon precedes (`Check { result: proptest::prop_assert!(..) }`)
+/// reads as it is spelled.
 fn pass_through_call_qualifier(
     mut before: impl Iterator<Item = ra_ap_syntax::SyntaxToken>,
-) -> Option<String> {
+) -> String {
     use ra_ap_syntax::SyntaxKind;
     let mut segments = Vec::new();
     let mut absolute = false;
@@ -2213,12 +2215,14 @@ fn pass_through_call_qualifier(
         match before.next() {
             Some(token) if token.kind() == SyntaxKind::COLON2 => {}
             Some(token) if token.kind() == SyntaxKind::COLON => {
-                // Token trees may keep `::` as two `:` tokens.
-                if before
-                    .next()
-                    .is_none_or(|second| second.kind() != SyntaxKind::COLON)
-                {
-                    return None;
+                // Token trees may keep `::` as two adjoining `:` tokens.
+                // `before` skips trivia, so adjacency is read from the text.
+                let joint = before.next().is_some_and(|second| {
+                    second.kind() == SyntaxKind::COLON
+                        && second.text_range().end() == token.text_range().start()
+                });
+                if !joint {
+                    break;
                 }
             }
             _ => break,
@@ -2251,11 +2255,11 @@ fn pass_through_call_qualifier(
     }
     segments.reverse();
     let joined = segments.join("::");
-    Some(if absolute {
+    if absolute {
         format!("::{joined}")
     } else {
         joined
-    })
+    }
 }
 
 /// Whether every `use` item among the arguments is a plain, non-renaming,
