@@ -1458,7 +1458,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
 /// `1.63`: a unit owner's tail block of `;`-terminated statements is not
 /// probed as `return_value` (#15459); `1.62` facts still carry that shape.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.63";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.65";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5561,7 +5561,7 @@ mod tests {
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
         // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.63");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.65");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
