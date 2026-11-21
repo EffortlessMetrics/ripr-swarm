@@ -90,6 +90,8 @@ type LocalRivalKey = (String, std::path::PathBuf, String, usize, u64);
 /// owner's id, the test's file, start line and name, and a hash of the body.
 pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u64);
 
+mod rename_spellings;
+
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
 /// Every producer that classifies probes rebuilds its [`RustIndex`] per
@@ -100,6 +102,7 @@ pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u6
 /// layout scan and each probe re-parsed every candidate test: measured
 /// ~28 ms of related-test work per probe pair on a 20-package corpus where
 /// the work is identical across probes.
+
 #[derive(Default)]
 pub(crate) struct CallIdentityMemos {
     /// One workspace shape pass per index, shared by every
@@ -213,9 +216,22 @@ pub(crate) struct CallIdentityMemos {
     /// macros, built on first use by a gap that needs it.
     assertion_wrapper_visibility:
         std::sync::OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
+    /// #11738: per test file, the text prefilters of the bare-call binding
+    /// checks, read once per file source instead of once per (owner, test).
+    file_spellings: rename_spellings::FileSpellingsMemo,
 }
 
 impl CallIdentityMemos {
+    /// The memoized bare-call prefilter spellings of `file`, read from its
+    /// indexed `source`.
+    fn file_spellings(
+        &self,
+        file: &std::path::Path,
+        source: &std::sync::Arc<str>,
+    ) -> std::sync::Arc<rename_spellings::FileSpellings> {
+        rename_spellings::file_spellings(&self.file_spellings, file, source)
+    }
+
     /// The memoized item bindings for `key`, computed by `compute` on first
     /// use (recomputed, not cached, if the lock is poisoned).
     pub(super) fn item_bindings(
@@ -3260,10 +3276,12 @@ pub(super) fn bare_name_renames_another_function(
     // The relation asks this for every candidate test of every probe; a
     // renaming import must spell `as <name>` somewhere in the test's file,
     // so a file without that spelling is answered without reading scopes.
-    let spells_rename = index
-        .files()
-        .get(&test.file)
-        .is_some_and(|facts| source_spells_rename_to(&facts.source, name));
+    let spells_rename = index.files().get(&test.file).is_some_and(|facts| {
+        index
+            .call_identity_memos
+            .file_spellings(&test.file, &facts.source)
+            .spells_rename_to(&facts.source, name)
+    });
     if !spells_rename {
         return false;
     }
@@ -3361,13 +3379,13 @@ pub(super) fn bare_name_bound_only_by_std_globs(
     if owner.item.container != FunctionContainer::Free {
         return false;
     }
+    // `use std::cmp::{*};` spells the glob without `::*`, so the prefilter
+    // reads a `*` and a standard root anywhere in the file.
     let spells_std_glob = index.files().get(&test.file).is_some_and(|facts| {
-        let source: &str = &facts.source;
-        // `use std::cmp::{*};` spells the glob without `::*`.
-        source.contains('*')
-            && STD_ROOTS
-                .iter()
-                .any(|root| source.contains(&format!("{root}::")))
+        index
+            .call_identity_memos
+            .file_spellings(&test.file, &facts.source)
+            .spells_std_glob()
     });
     if !spells_std_glob {
         return false;
