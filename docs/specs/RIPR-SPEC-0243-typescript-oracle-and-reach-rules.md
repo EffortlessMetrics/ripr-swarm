@@ -745,7 +745,9 @@ the `rejects` exact-error override, so neither re-raises it. Owner:
   strong, or `relational_check` / weak under `not`; `throw`, `throws` and
   `Throw` are `broad_error` / weak, except as rule 10 states; `include`,
   `match`, `above`, `below`, `least`, `most`, `lengthOf` and the like are
-  `relational_check` / weak; the property terminals `true`, `false`, `ok`,
+  `relational_check` / weak. The `empty` property also reads as relational:
+  it observes emptiness of the receiver, leaving its element values and order
+  open (#15342). The property terminals `true`, `false`, `ok`,
   `null`, `undefined` and `exist` are `smoke_only` / smoke. Any other
   chain word or terminal yields no assertion.
 
