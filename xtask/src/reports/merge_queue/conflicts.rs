@@ -469,7 +469,7 @@ fn write_report(
 ) -> Result<(), String> {
     let sweep = Sweep {
         objects,
-        deadline: start + Duration::from_secs(480),
+        deadline: start + Duration::from_mins(8),
     };
     let query = format!("query={QUERY}");
     let snapshot = match input {

@@ -97,7 +97,7 @@ fn first_parent_transition_tracks_reintroduced_conflict_and_never_credits_a_pref
     let dir = crate::tests::temp_dir("queue-conflicts");
     let s = Sweep {
         objects: &dir,
-        deadline: Instant::now() + Duration::from_secs(60),
+        deadline: Instant::now() + Duration::from_mins(1),
     };
     s.checked("git", &["init", "--bare", "--template=", "."], None)?;
     let original = commit(&s, "original", None)?;
@@ -215,7 +215,7 @@ fn directory_conflicts_preserve_status_and_true_history() -> Result<(), String> 
     let dir = crate::tests::temp_dir("queue-dir-conflicts");
     let sweep = Sweep {
         objects: &dir,
-        deadline: Instant::now() + Duration::from_secs(60),
+        deadline: Instant::now() + Duration::from_mins(1),
     };
     sweep.checked("git", &["init", "--bare", "--template=", "."], None)?;
     sweep.checked(
