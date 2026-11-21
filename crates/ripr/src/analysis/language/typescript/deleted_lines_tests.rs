@@ -225,10 +225,25 @@ fn statement_replaced_by_an_empty_statement_is_base_side_evidence() -> Result<()
     Ok(())
 }
 
-/// A replacement that still runs behavior keeps the pairing, and a removed
-/// comment replaced by `;` was never behavior: neither leaves a record.
+/// A replacement that still runs behavior keeps the pairing, a reflowed
+/// call whose last argument line becomes a bare `);` keeps it too, and a
+/// removed comment replaced by `;` was never behavior: none leaves a record.
 #[test]
 fn empty_statement_counterpart_needs_a_removed_behavior_line() -> Result<(), String> {
+    let reflowed = analyze(
+        "reflowed-call",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total,",
+            "-    100);",
+            "+  total = Math.min(total, 100",
+            "+  );",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&reflowed), Vec::new(), "{reflowed:?}");
     let behavior = analyze(
         "behavior-replacement",
         &[

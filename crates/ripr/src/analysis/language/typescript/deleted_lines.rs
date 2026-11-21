@@ -37,16 +37,17 @@ pub(super) fn deleted_line_findings(
         .iter()
         .map(|added| (added.line, added.text.as_str()))
         .collect();
-    // A removed line is read through its counterpart only when that added
-    // line carries behavior. A statement replaced by an empty statement
-    // (`queue.clear();` -> `;`), a blank line or a bare bracket is removed
-    // all the same, so it stays a base-side record (#15335).
+    // A statement replaced by an empty statement (`queue.clear();` -> `;`)
+    // or a blank line is removed all the same, so that counterpart does not
+    // stand in for it and the line stays a base-side record (#15335). A
+    // bracket-only counterpart (`b);` -> `);`) still pairs: that is a
+    // reflowed call, not a removal.
     let paired: BTreeSet<usize> = counterparts
         .iter()
         .filter(|(added_line, _)| {
             added_text
                 .get(added_line)
-                .is_some_and(|text| !should_ignore_typescript_changed_line(text))
+                .is_some_and(|text| !is_empty_statement(text))
         })
         .map(|(_, removed)| removed.line)
         .collect();
@@ -128,6 +129,13 @@ pub(super) fn deleted_line_findings(
         out.push(finding);
     }
     out
+}
+
+/// An added line that runs nothing: blank, or only empty statements.
+fn is_empty_statement(text: &str) -> bool {
+    text.trim()
+        .chars()
+        .all(|ch| ch == ';' || ch.is_whitespace())
 }
 
 /// A removed line's code: the line with comments and string contents
