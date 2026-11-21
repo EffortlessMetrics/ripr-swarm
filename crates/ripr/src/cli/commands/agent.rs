@@ -825,11 +825,15 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
     root: &Path,
     seam_id: &str,
 ) -> Result<String, crate::cli::CommandError> {
+    // A stale id is the same typed unknown-seam refusal (exit 3) that a plain
+    // unknown seam id, `agent card`, `agent stub`, `agent start` and
+    // `agent packet` give (docs/EXIT_CODES.md); only an operational failure
+    // of the resolver exits 2.
     translate_seam_id_for(SeamIdSurface::Repair, root, seam_id).map_err(|error| match error {
-        SeamIdTranslateError::Refused(message) => crate::cli::CommandError::Decision(message),
-        SeamIdTranslateError::Stale(message) | SeamIdTranslateError::Operational(message) => {
-            crate::cli::CommandError::Failure(message)
+        SeamIdTranslateError::Refused(message) | SeamIdTranslateError::Stale(message) => {
+            crate::cli::CommandError::Decision(message)
         }
+        SeamIdTranslateError::Operational(message) => crate::cli::CommandError::Failure(message),
     })
 }
 
