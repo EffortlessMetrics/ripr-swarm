@@ -1734,7 +1734,10 @@ fn a_config_without_the_generated_rows_still_loads_the_checked_in_receipt() -> R
         .metric
         .retain(|metric| !GENERATED_RECALL_ROWS.contains(&metric.id.as_str()));
     let samples = parse_ingest(&receipt, &config)?;
-    let ids: Vec<&str> = samples.iter().map(|sample| sample.metric.as_str()).collect();
+    let ids: Vec<&str> = samples
+        .iter()
+        .map(|sample| sample.metric.as_str())
+        .collect();
     for id in GENERATED_RECALL_ROWS {
         assert!(
             !ids.contains(&id),

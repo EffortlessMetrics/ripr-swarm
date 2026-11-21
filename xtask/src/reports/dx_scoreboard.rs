@@ -2142,8 +2142,7 @@ fn project_declared_optional_rows(mut input: Value, config: &Config) -> Value {
         let Some(id) = row["id"].as_str() else {
             return true;
         };
-        !GENERATED_RECALL_ROWS.contains(&id)
-            || config.metric.iter().any(|metric| metric.id == id)
+        !GENERATED_RECALL_ROWS.contains(&id) || config.metric.iter().any(|metric| metric.id == id)
     });
     input
 }
