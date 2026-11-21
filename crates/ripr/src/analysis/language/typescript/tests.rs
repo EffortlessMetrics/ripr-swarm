@@ -21837,6 +21837,7 @@ mod class_entry_tests;
 mod class_receiver_overclaim_tests;
 mod close_to_pin_tests;
 mod committed_snapshot_tests;
+mod commonjs_barrel_tests;
 mod commonjs_class_receiver_tests;
 mod commonjs_default_class_tests;
 mod commonjs_default_function_tests;

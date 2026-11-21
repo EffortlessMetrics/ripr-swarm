@@ -13,6 +13,7 @@ use super::{
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasModuleItem, HasName};
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 const MAX_MACRO_BYTES: usize = 64 * 1024;
 const MAX_PROPERTIES: usize = 32;
@@ -423,12 +424,13 @@ fn expand_functions(
         // from the original file root, including module/type/const shadows
         // of an owner-looking crate path. A short synthetic file alone would
         // erase those bindings and could lend inputs to the wrong owner.
-        *root_scope = generated_scope.clone();
+        let mut receipt_root = generated_scope.clone();
         // Only the audited prelude is present, and the empty-string profile
         // requires explicit, unrenamed owner imports. Those imports take
         // precedence over the glob; this receipt-local scope is not a global
         // foreign-glob exemption.
-        root_scope.globs.clear();
+        receipt_root.globs.clear();
+        *root_scope = Arc::new(receipt_root);
         result.push(ProptestExpansion {
             macro_line: 0,
             macro_name: String::new(),

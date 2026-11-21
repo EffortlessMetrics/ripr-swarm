@@ -812,7 +812,8 @@ diagnostic witness; `ripr check --format json` never serializes
 
 Repository text (assertion source, test names, observed values, paths) reaches
 the human reports verbatim. Every human report printed to a terminal (`check`
-default and `--format human-full`, `explain`) passes through one final escape:
+default and `--format human-full`, `explain`, the human `ripr diff` report and
+the `ripr pilot` terminal summary) passes through one final escape:
 control characters other than newline and tab, and the bidi
 formatting characters (U+061C, U+200E/F, U+202A-E, U+2066-9), print as `\u{XX}`.
 A repository therefore cannot clear the screen, retitle the window, overwrite a
@@ -1163,8 +1164,11 @@ already be tested, so reading it as a gap would be a wrong actionable signal.
 
 `ripr explain <finding> --format agent` prints the selected finding in the
 `check --format agent` line style: one record, its strongest related test, at
-most one `limit=` line, exactly one terminal line, and a scope-bound
-`next=ripr context ...` command. The terminal states are:
+most one `limit=` line, `owner=` and `before=` lines when the producer recorded
+them (plus a `seen=` line of observed test inputs when `next=` is omitted), exactly one terminal line, and a scope-bound `next=ripr context ...`
+command. `next=` is omitted only for an `open=` test-side gap that names no
+concrete missing discriminator and has at most one related test, because the
+packet then restates the record (#14298). The terminal states are:
 
 - `open=` only for a candidate-current, unsuppressed test-side gap (or a
   reach-only limit that still carries a weak related test), using the same
@@ -1221,6 +1225,10 @@ report with zero records still carries its route.
 - `crates/ripr/tests/weak_reach_hint.rs::guard_refusal_does_not_override_unestablished_reach` — guard refusal positive and unestablished-reach controls (#7330).
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_keeps_context_pointer_when_the_packet_holds_more`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_prints_observed_inputs_only_when_it_drops_the_context_pointer`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_before_line_is_omitted_when_it_repeats_the_expression`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value`

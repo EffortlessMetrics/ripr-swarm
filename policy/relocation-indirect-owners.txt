@@ -52,6 +52,7 @@ crates/ripr/src/cli/commands/ci_packet.rs
 crates/ripr/src/cli/commands/ci_summary.rs
 crates/ripr/src/cli/commands/completions.rs
 crates/ripr/src/cli/commands/config.rs
+crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs
 crates/ripr/src/cli/commands/context.rs
 crates/ripr/src/cli/commands/doctor.rs
 crates/ripr/src/cli/commands/feedback.rs

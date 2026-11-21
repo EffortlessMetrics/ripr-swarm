@@ -350,7 +350,7 @@ that needs the tuning.
 | `RIPR_MODULE_TREE_SCAN_CACHE_BYTES` | `33554432` (32 MiB) | Load ceiling for the single module-tree scan bundle (`scans.json`). A bundle above the ceiling is never allocated whole; the load degrades to a cold rebuild, so analysis output stays correct and only the warm-run benefit is lost. Raise this only for workspaces whose legitimate bundle exceeds 32 MiB. Must be a positive integer; an invalid value falls back to the default ceiling rather than failing the load. This is a load-path bound, not a process RSS guarantee. |
 | `RIPR_QUIET` | unset | Silences the stderr `ripr progress:` stream exactly like `--quiet` for `ripr check`, `explain`, `context` and `pilot` (#11580), and the progress narration and `wrote <path>` lines of `ripr repair`, `ripr continue` and `ripr agent repair` (#11598). Unset, empty, `0` and `false` (any case) keep progress; any other value silences it. Stdout, exit codes, result lines and refusal/error prose are unchanged. Intended for agent harnesses that merge stderr into the model's view. |
 | `RIPR_VERBOSE` | unset | Turns on the stderr diagnostics of the global `-v`/`--verbose` flag for every command, for harnesses that cannot edit argv (editor server, MCP host, Git hook, CI): analyzed languages, mode and diff scope, per-phase timings (`ripr: timing [worktree] analyzing took 412 ms`), and one `ripr: verdict` line per reported finding (at most 50) naming its class, stage states and the first stage that is not `yes` with its recorded reason. Unset, empty, `0` and `false` (any case) leave it off; any other value turns it on. It prints no notice of its own and is ignored on `ripr help --json` and on any `--version` query. Unlike the `-v` flag, which also widens `ripr doctor`, `ripr agent card`, `ripr agent status` and the file-cache fields of `ripr check --format json` and writes the `ripr pilot` timings file, the variable never changes stdout, JSON or exit codes. See [Troubleshooting](TROUBLESHOOTING.md#attach-a-verbose-log) for attaching the log to a bug report. |
-| `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal and the human formats always keep progress. |
+| `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal keeps progress. A human format on a non-terminal stderr holds it for the first 2s (a run that finishes sooner prints nothing); `RIPR_PROGRESS=1` makes those lines immediate. |
 | `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. `ripr mcp` refreshes read it from the server's environment with the same default and parser; there an invalid value fails the refresh with `config_invalid`. |
 | `RIPR_CHECK_TIMEOUT` | `600` | Wall-clock budget in seconds for one `ripr check` diff or worktree analysis (#5369). Past the budget the run is stopped and refuses with `analysis_timeout` (exit non-zero, no findings, never a clean pass). `0` disables the budget. Must be a non-negative integer; an invalid value fails closed with an error naming the variable. An explicit `ripr check --timeout SECS` overrides the environment value. |
 | `RIPR_ALLOW_REPO_PERL_EXECUTABLE` | unset | Only the exact value `1` lets `[perl].executable` from `ripr.toml` run as the Perl facts exporter. Otherwise ripr ignores the key, says so, and runs the exporter from `PATH`, so a cloned repository cannot choose a program for ripr to run. |
@@ -630,6 +630,16 @@ configuration. When those detection rules would refuse the root (for
 example, Python project markers in a binary built without the `lang-python`
 feature), validate still succeeds and carries the detection note in its
 output, because there is no user-written file to fail.
+
+`config validate` also checks the suppressions manifest that the config
+selects, resolved against `--root` as `ripr check` resolves it. A configured
+`[suppressions] path` that does not exist fails, naming the path, and so does
+a manifest path, default or configured, that is a dangling link; an absent
+default `.ripr/suppressions.toml` stays silent. A present manifest, default or
+configured, is parsed with the same parser as `check`, its line-numbered
+violations fail the command, and a valid one adds
+`✓ suppressions valid (<path>, N entries)` (#15308). The Python-marker
+advisory case above loads no config, so it does not check the manifest.
 
 ### `ripr lsp`
 
@@ -1177,8 +1187,9 @@ and differs from the loaded config, naming the skipped directory entry and
 normal and preserves current built-in defaults. Unknown keys are errors so
 policy typos do not silently change analysis intent.
 
-Enumerated values (`mode`, the oracle strengths, the severities and
-`[languages] enabled`) are lowercase and case-sensitive: `mode = "Draft"` is
+Enumerated values (`mode`, the oracle strengths, the severities,
+`[languages] enabled`, `[lsp] diagnostic_profile` and `[perl] producer`) are
+lowercase and case-sensitive: `mode = "Draft"` is
 an error, not `draft`. When a rejected value is an accepted one in another
 case, padded with spaces, or a small typo, the error ends with
 `(did you mean ...?)` naming the accepted spelling.

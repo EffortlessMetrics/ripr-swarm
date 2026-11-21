@@ -22,6 +22,13 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::committed_boundary_gap_fixture_stays_strongly_gripped",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_rebound_let_resolves_to_the_binding_the_assertion_reads",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_single_let_bound_reaching_call_keeps_its_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_let_in_a_closed_test_block_does_not_bind_the_asserted_value",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_brace_in_a_char_literal_or_comment_does_not_reopen_a_closed_block",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_let_in_a_comment_or_string_is_not_the_binding_read",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_closed_block_does_not_keep_an_unreached_seams_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_block_holding_the_seam_keeps_its_grip",
   "crates/ripr/tests/computed_return_tail_13037.rs::an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed",
   "crates/ripr/tests/computed_return_tail_13037.rs::a_pin_from_the_other_branch_only_is_not_credited",
   "crates/ripr/tests/computed_return_tail_13037.rs::an_inequality_pins_no_value",
@@ -37,6 +44,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/branch-local-else-only",
+  "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/branch-local-rebound-let",
   "fixtures/rust_computed_return_tail_reached",
   "fixtures/rust_computed_return_tail_other_branch",
   "fixtures/rust_computed_return_tail_wrapping_local",
