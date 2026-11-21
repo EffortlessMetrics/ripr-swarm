@@ -148,8 +148,10 @@ reached the caller.
   json`, a value flag missing its value or given an empty one (#11979,
   #14859), a required flag left out (#14877), two flags that cannot be used
   together (#14925), a malformed number caught by the CLI's shared numeric readers
-  (#11979), and a `context` selector
-  miss or ambiguity. The document carries
+  (#11979), a `context` selector
+  miss or ambiguity, an argv-named input that cannot be used (`receipt check`
+  receipt or `--ledger`, `cache status --root`: code `input_unusable`), and a
+  malformed `agent status --attempt` ID (`invalid_value`, #15260). The document carries
   `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are
   unchanged, and without a JSON request stdout stays empty. Other argv
@@ -190,12 +192,32 @@ reached the caller.
   `config_error` readiness report is still written first, so it replaces an
   earlier report at `--out` instead of leaving a stale one for a later step
   to read (#14311).
+  The same holds for any input file named explicitly on `reports
+  ts-limitations|ts-false-actionable`, `coverage-grip frontier`, `policy
+  operations|promote|preview-promote|waiver-aging|suppression-health`,
+  `annotations --comments`, `pr-summary --baseline`, `baseline diff`,
+  `zero status --baseline|--delta`, `first-action --pr-guidance` and
+  `assistant-loop proof --pr-guidance|--agent-packet|--before` that is
+  missing, unreadable or (for the baseline and zero-status JSON inputs and an
+  explicit `--manifest` with suppression-health `config_error` findings) not
+  usable: stderr names the flag, the path and what to pass, and the command
+  exits `2`. Where a usable report can still be produced it is written
+  first; a missing or unreadable `reports ts-*` input refuses before any
+  write. Other optional inputs of `zero status` and `first-action` stay
+  tolerant. An absent default path stays a quiet skip, and `gate
+  evaluate|check` echoes unavailable optional inputs on stderr without
+  changing its exit code (#15254).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
   output was cut short; it never turns a would-be `3` into a pass. Output
   small enough to be written in full before the reader closes never meets
   the closed pipe, so that run keeps its own exit code.
+- **Failed stdout write**: stdout failed for another reason (a full disk
+  behind a redirect, `ripr --version > /dev/full`). ripr prints
+  `ripr: write to stdout failed: <cause>` with a next step, no backtrace and
+  no internal-error wording, and exits `2` because the output is incomplete
+  (#15369).
 
 ## When you see exit code 3
 

@@ -28,6 +28,9 @@ pub(super) enum CliCommand {
     CoverageGrip(Vec<String>),
     AssistantLoop(Vec<String>),
     FirstPr(Vec<String>),
+    /// The `start-here` alias of `first-pr`: same behavior, but refusals name
+    /// the command the caller actually ran (#15249).
+    StartHere(Vec<String>),
     FirstAction(Vec<String>),
     Reports(Vec<String>),
     Calibrate(Vec<String>),
@@ -134,7 +137,12 @@ impl CliCommand {
             Some(command) => match crate::cli::command_catalog::resolve_top_level(command) {
                 Some(entry) => {
                     reject_unsupported_extended_help(entry.dispatch, command, &command_args)?;
-                    Ok(cli_command_from_dispatch(entry.dispatch, command_args))
+                    Ok(match cli_command_from_dispatch(entry.dispatch, command_args) {
+                        CliCommand::FirstPr(args) if command == "start-here" => {
+                            CliCommand::StartHere(args)
+                        }
+                        other => other,
+                    })
                 }
                 None => Err(unknown_command_error(command)),
             },
@@ -631,7 +639,7 @@ mod tests {
                 CliCommand::AssistantLoop(Vec::new()),
             ),
             (Some("first-pr"), CliCommand::FirstPr(Vec::new())),
-            (Some("start-here"), CliCommand::FirstPr(Vec::new())),
+            (Some("start-here"), CliCommand::StartHere(Vec::new())),
             (Some("first-action"), CliCommand::FirstAction(Vec::new())),
             (Some("reports"), CliCommand::Reports(Vec::new())),
             (Some("calibrate"), CliCommand::Calibrate(Vec::new())),
@@ -842,7 +850,7 @@ mod tests {
         // start-here alias should also work via help.
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["start-here"])),
-            Ok(CliCommand::FirstPr(args(&["--help"])))
+            Ok(CliCommand::StartHere(args(&["--help"])))
         );
     }
 

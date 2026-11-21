@@ -23,8 +23,15 @@ static ACTIVE_STDERR_SINK: Mutex<Option<Weak<SinkInner>>> = Mutex::new(None);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ProgressPolicy {
     /// Interactive terminals hold the first update until this duration so a
-    /// sub-threshold run does not flash. Non-TTY / CI emits immediately.
+    /// sub-threshold run does not flash.
     pub min_visible: Duration,
+    /// Non-TTY / CI streams (an agent's shell tool, a CI log) hold stage
+    /// lines, and the success terminal, until the run has been active this
+    /// long, so a run that finishes sooner prints nothing. A failed or
+    /// cancelled terminal still projects, preceded by the held stage line.
+    /// `RIPR_PROGRESS` zeroes it (immediate lines); long runs keep their
+    /// liveness lines (#4957).
+    pub non_tty_hold: Duration,
     /// First heartbeat is eligible only after the current stage has been
     /// active this long.
     pub first_heartbeat: Duration,
@@ -43,6 +50,7 @@ pub(crate) struct ProgressPolicy {
 impl ProgressPolicy {
     pub(crate) const STANDARD: Self = Self {
         min_visible: Duration::from_millis(250),
+        non_tty_hold: Duration::from_secs(2),
         first_heartbeat: Duration::from_secs(2),
         heartbeat_every: Duration::from_secs(8),
         max_heartbeats: u32::MAX,
@@ -131,6 +139,19 @@ pub(crate) fn progress_silenced(quiet_flag: bool, machine_format: bool) -> bool 
         machine_format,
         io::stderr().is_terminal(),
     )
+}
+
+/// `RIPR_PROGRESS` forces the stream, so on a non-terminal stderr it also
+/// removes the quiet window and lines appear immediately. Pure for tests.
+fn policy_with_progress_env(
+    mut policy: ProgressPolicy,
+    tty: bool,
+    progress_env: Option<&str>,
+) -> ProgressPolicy {
+    if !tty && env_switch_on(progress_env) {
+        policy.non_tty_hold = Duration::ZERO;
+    }
+    policy
 }
 
 /// Wake interval of the heartbeat thread between throttled ticks.
@@ -298,6 +319,8 @@ struct Projection {
     policy: ProgressPolicy,
     current_stage: Option<AnalysisProgressStage>,
     current_scope: Option<AnalysisProgressScope>,
+    /// Last non-terminal stage seen, kept for a held failure's context line.
+    last_active_stage: Option<AnalysisProgressStage>,
     terminal: bool,
     visible: bool,
     started: Instant,
@@ -306,6 +329,9 @@ struct Projection {
     heartbeat_count: u32,
     in_place: bool,
     tty_width: usize,
+    /// Quiet window before the first line: `min_visible` on a terminal,
+    /// `non_tty_hold` otherwise. Zero means lines are visible at once.
+    hold: Duration,
     hold_success: bool,
     user_fixable_failure: bool,
     pending_success: Option<AnalysisProgressEvent>,
@@ -373,6 +399,8 @@ impl Write for CaptureAwareStderr {
 
 impl CliProgressSink {
     pub(crate) fn for_stderr(tty: bool, policy: ProgressPolicy) -> Self {
+        let policy =
+            policy_with_progress_env(policy, tty, std::env::var(PROGRESS_ENV).ok().as_deref());
         let sink = Self::with_writer(capture_aware_stderr_writer(), tty, policy);
         sink.hold_success_terminal();
         sink.install_as_stderr_notice_owner();
@@ -437,6 +465,11 @@ impl CliProgressSink {
         now: NowFn,
     ) -> Self {
         let started = now();
+        let hold = if tty {
+            policy.min_visible
+        } else {
+            policy.non_tty_hold
+        };
         Self {
             inner: Arc::new(SinkInner {
                 state: Mutex::new(Projection {
@@ -445,14 +478,16 @@ impl CliProgressSink {
                     policy,
                     current_stage: None,
                     current_scope: None,
+                    last_active_stage: None,
                     terminal: false,
-                    visible: !tty,
+                    visible: hold.is_zero(),
                     started,
                     stage_started: started,
                     last_heartbeat: None,
                     heartbeat_count: 0,
                     in_place: false,
                     tty_width: 0,
+                    hold,
                     hold_success: false,
                     user_fixable_failure: false,
                     pending_success: None,
@@ -540,6 +575,9 @@ impl CliProgressSink {
                     .unwrap_or(completed),
             );
         }
+        if !stage_is_terminal(event.stage) {
+            projection.last_active_stage = Some(event.stage);
+        }
         projection.current_stage = Some(event.stage);
         projection.current_scope = Some(event.scope);
 
@@ -559,8 +597,7 @@ impl CliProgressSink {
             return;
         }
 
-        if projection.tty && now.duration_since(projection.started) < projection.policy.min_visible
-        {
+        if !projection.visible && now.duration_since(projection.started) < projection.hold {
             return;
         }
         projection.visible = true;
@@ -575,13 +612,27 @@ impl CliProgressSink {
 
     fn project_terminal(projection: &mut Projection, event: AnalysisProgressEvent) {
         projection.terminal = true;
-        let too_short = projection.tty
+        let too_short = !projection.visible
             && stage_is_success_terminal(event.stage)
-            && (projection.now)().duration_since(projection.started)
-                < projection.policy.min_visible;
+            && (projection.now)().duration_since(projection.started) < projection.hold;
         if too_short {
             Self::finish_in_place(projection);
             return;
+        }
+        if !projection.visible
+            && !projection.tty
+            && !stage_is_success_terminal(event.stage)
+            && let Some(stage) = projection.last_active_stage
+        {
+            // A held failure/cancel keeps its context: the stage in flight
+            // precedes the terminal line.
+            let line = format_stage_line_with_units(
+                stage,
+                event.scope,
+                projection.completed_units,
+                projection.total_units,
+            );
+            Self::write_line(projection, &line);
         }
         projection.visible = true;
         let line = format_stage_line(event.stage, event.scope);
@@ -629,7 +680,7 @@ impl CliProgressSink {
         }
         let now = (projection.now)();
         if !projection.visible {
-            if now.duration_since(projection.started) < projection.policy.min_visible {
+            if now.duration_since(projection.started) < projection.hold {
                 return;
             }
             let Some(scope) = projection.current_scope else {
@@ -643,6 +694,12 @@ impl CliProgressSink {
                 projection.total_units,
             );
             Self::write_line(&mut projection, &line);
+            if !projection.tty {
+                // The stage line just disclosed the run; the first
+                // heartbeat waits a full interval instead of doubling it.
+                projection.last_heartbeat = Some(now);
+                return;
+            }
         }
         let stage_age = now.duration_since(projection.stage_started);
         if stage_age < projection.policy.first_heartbeat {
@@ -1084,6 +1141,7 @@ mod tests {
     fn non_tty_policy() -> ProgressPolicy {
         ProgressPolicy {
             min_visible: Duration::ZERO,
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(2),
             heartbeat_every: Duration::from_millis(50),
             max_heartbeats: 4,
@@ -1259,6 +1317,7 @@ mod tests {
         let buffer = Buffer::new();
         let policy = ProgressPolicy {
             min_visible: Duration::from_secs(30),
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(30),
             heartbeat_every: Duration::from_secs(30),
             max_heartbeats: 1,
@@ -1280,6 +1339,7 @@ mod tests {
         let ci_buf = Buffer::new();
         let policy = ProgressPolicy {
             min_visible: Duration::ZERO,
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(30),
             heartbeat_every: Duration::from_secs(30),
             max_heartbeats: 1,
@@ -1419,6 +1479,7 @@ mod tests {
         let buffer = Buffer::new();
         let policy = ProgressPolicy {
             min_visible: Duration::from_millis(40),
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(2),
             heartbeat_every: Duration::from_millis(40),
             max_heartbeats: 2,
@@ -1456,6 +1517,7 @@ mod tests {
         let buffer = Buffer::new();
         let policy = ProgressPolicy {
             min_visible: Duration::ZERO,
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(30),
             heartbeat_every: Duration::from_secs(30),
             max_heartbeats: 1,
@@ -1596,6 +1658,120 @@ mod tests {
         assert_eq!(width, long.chars().count());
     }
 
+    /// Drive one non-TTY run on a fake clock under STANDARD (2s hold).
+    fn held_run(run_ms: u64, terminal: AnalysisProgressStage) -> String {
+        let buffer = Buffer::new();
+        let (clock, now) = FakeClock::start();
+        let sink = CliProgressSink::with_writer_and_clock(
+            Box::new(buffer.clone()),
+            false,
+            ProgressPolicy::STANDARD,
+            now,
+        );
+        sink.hold_success_terminal();
+        sink.stop_heartbeat();
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        clock.advance_millis(run_ms);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        sink.emit(event(terminal));
+        sink.commit_success();
+        drop(sink);
+        buffer.text()
+    }
+
+    #[test]
+    fn non_tty_fast_run_prints_no_progress_including_completed() {
+        let text = held_run(300, AnalysisProgressStage::Completed);
+        assert_eq!(text, "", "a sub-threshold non-TTY run must be silent");
+    }
+
+    #[test]
+    fn non_tty_run_past_the_hold_still_prints_stage_and_completed() {
+        let text = held_run(2_100, AnalysisProgressStage::Completed);
+        assert_eq!(
+            text, "ripr progress: analyzing [diff]\nripr progress: completed [diff]\n",
+            "the current stage appears once the hold elapses, no doubled heartbeat"
+        );
+    }
+
+    #[test]
+    fn non_tty_held_stream_heartbeats_one_interval_after_disclosure() {
+        // STANDARD on a non-TTY stream: the stage line discloses the run at
+        // 2s, and the first heartbeat waits a full `heartbeat_every` (8s)
+        // after it, then repeats on that cadence.
+        let buffer = Buffer::new();
+        let (clock, now) = FakeClock::start();
+        let sink = CliProgressSink::with_writer_and_clock(
+            Box::new(buffer.clone()),
+            false,
+            ProgressPolicy::STANDARD,
+            now,
+        );
+        sink.stop_heartbeat();
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        clock.advance_millis(1_900);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(buffer.text(), "", "held before 2s");
+        clock.advance_millis(200);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        let disclosed = "ripr progress: analyzing [diff]\n";
+        assert_eq!(buffer.text(), disclosed, "stage line only at disclosure");
+        clock.advance_millis(7_900);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(buffer.text(), disclosed, "no heartbeat inside the interval");
+        clock.advance_millis(200);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        let first = format!("{disclosed}ripr progress: analyzing still active after 10s\n");
+        assert_eq!(buffer.text(), first, "first heartbeat one interval later");
+        clock.advance_millis(7_900);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(buffer.text(), first, "throttled to heartbeat_every");
+        clock.advance_millis(200);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        assert_eq!(
+            buffer.text(),
+            format!("{first}ripr progress: analyzing still active after 10s\n"),
+            "heartbeats keep the 8s cadence"
+        );
+    }
+
+    #[test]
+    fn non_tty_fast_failure_keeps_stage_context_before_failed() {
+        let text = held_run(300, AnalysisProgressStage::Failed);
+        assert_eq!(
+            text,
+            "ripr progress: analyzing [diff]\nripr progress: failed [diff]\n"
+        );
+    }
+
+    #[test]
+    fn progress_env_zeroes_the_non_tty_hold_and_only_there() {
+        let std = ProgressPolicy::STANDARD;
+        assert_eq!(
+            policy_with_progress_env(std, false, Some("1")).non_tty_hold,
+            Duration::ZERO
+        );
+        for env in [None, Some(""), Some("0"), Some("false")] {
+            assert_eq!(
+                policy_with_progress_env(std, false, env).non_tty_hold,
+                std.non_tty_hold
+            );
+        }
+        assert_eq!(policy_with_progress_env(std, true, Some("1")), std);
+        // Forced stream: a fast run prints immediately.
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(
+            Box::new(buffer.clone()),
+            false,
+            policy_with_progress_env(std, false, Some("1")),
+        );
+        sink.stop_heartbeat();
+        sink.emit(event(AnalysisProgressStage::LoadingInput));
+        assert_eq!(buffer.text(), "ripr progress: loading_input [diff]\n");
+    }
+
     #[test]
     fn rendering_failure_is_isolated() {
         let sink = CliProgressSink::with_writer(Box::new(BrokenWriter), false, non_tty_policy());
@@ -1638,7 +1814,12 @@ mod tests {
         let sink = CliProgressSink::with_writer_and_clock(
             Box::new(buffer.clone()),
             false,
-            ProgressPolicy::STANDARD,
+            ProgressPolicy {
+                // Heartbeat cadence only: the quiet window is pinned by the
+                // `non_tty_*` tests above.
+                non_tty_hold: Duration::ZERO,
+                ..ProgressPolicy::STANDARD
+            },
             now,
         );
         sink.emit(AnalysisProgressEvent {
@@ -1786,6 +1967,7 @@ mod tests {
         let buffer = Buffer::new();
         let policy = ProgressPolicy {
             min_visible: Duration::from_secs(30),
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(30),
             heartbeat_every: Duration::from_secs(30),
             max_heartbeats: 1,
@@ -1814,6 +1996,7 @@ mod tests {
     fn tty_immediate_policy() -> ProgressPolicy {
         ProgressPolicy {
             min_visible: Duration::ZERO,
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(2),
             heartbeat_every: Duration::from_secs(8),
             max_heartbeats: u32::MAX,

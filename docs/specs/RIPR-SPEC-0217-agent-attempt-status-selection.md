@@ -165,6 +165,11 @@ receipt strength, and currentness as separate facts:
   blocked-outside and eligible-outside hints, which would argue with
   `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
   the change is counted as a different check, never cited as its verdict.
+  "Already gripped" comes from tests anywhere in the repository, but
+  `ripr check` judges the changed line, so a changed gripped spot that the
+  same default check reads as anything but exposed is reopened with check's
+  reading and a by-hand next step (#15278); when check cannot run, those
+  spots are opened with a reason that makes no claim about check.
   The closing next step follows the same scope (#11111 burn-down): when every
   changed spot is already checked it says there is nothing to do for the
   change; when the changed Rust lines touch no seam the refusal leads with

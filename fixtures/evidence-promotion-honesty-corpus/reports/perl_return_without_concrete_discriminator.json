@@ -1,0 +1,471 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": ".",
+  "base": "origin/main",
+  "summary": {"changed_rust_files":0,"probes":7,"findings":7,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":4,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"perl","files":1},{"language":"rust","files":0}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:3e7c3448b99608ed6e17cf6df860b63a7e43fb21ed6d90447d3762d0d92bb3f4","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":7,"probe_count":7,"finding_count":7},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:perl:3df3642e76640fd70568bb17559329de74abb97b6eb5350acefa70fc200d2ea7",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:perl:3df3642e76640fd70568bb17559329de74abb97b6eb5350acefa70fc200d2ea7",
+        "family": "return_value",
+        "delta": "value",
+        "file": "lib/My/App.pm",
+        "line": 8,
+        "expression": "return_value",
+        "owner": "perl:lib/My/App.pm::discount"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "observe": {"state":"yes","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Missing discriminator from packet"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Perl fact packet relation evidence", "infection unknown: Perl preview adapter does not model infection/propagation", "propagation unknown: Perl preview adapter does not model infection/propagation", "observation yes: Perl fact packet relation evidence", "discriminator weak: Missing discriminator from packet", "related test t/app.t:5 discount_smoke uses strong exact value oracle: is(My::App::discount(100), 10, 'discount threshold')"],
+      "flow_sinks": [
+      ],
+      "evidence": ["perl_repair_kind: add_exact_return_assertion", "perl_coordinate_line_basis: unspecified", "perl_change_provenance_refs: prov:diff:return", "perl_target_test_shape: exact_return_assertion", "perl_verify_command: prove t/app.t"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "discount_smoke",
+          "file": "t/app.t",
+          "line": 5,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "is(My::App::discount(100), 10, 'discount threshold')",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a focused Perl assertion that pins the changed behavior.",
+      "suggested_next_action": "Add a focused Perl assertion that pins the changed behavior.",
+      "language": "perl",
+      "language_status": "preview",
+      "changed_sink": "return_value",
+      "source_currentness": "unresolved_subject"
+    },
+    {
+      "id": "probe:perl:34d1d8c2cdd294799928f1e26ba873e32dbba1e671882ef1197b289b832a1f16",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:perl:34d1d8c2cdd294799928f1e26ba873e32dbba1e671882ef1197b289b832a1f16",
+        "family": "predicate",
+        "delta": "value",
+        "file": "lib/My/App.pm",
+        "line": 12,
+        "expression": "predicate_boundary",
+        "owner": "perl:lib/My/App.pm::eligible"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "observe": {"state":"yes","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Missing discriminator from packet"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Perl fact packet relation evidence", "infection unknown: Perl preview adapter does not model infection/propagation", "propagation unknown: Perl preview adapter does not model infection/propagation", "observation yes: Perl fact packet relation evidence", "discriminator weak: Missing discriminator from packet", "related test t/app_test2.t:5 discount_profile uses strong relational check oracle: is(My::App::eligible(100), T(), 'eligible at boundary')"],
+      "flow_sinks": [
+      ],
+      "evidence": ["perl_repair_kind: add_predicate_boundary_assertion", "perl_coordinate_line_basis: unspecified", "perl_change_provenance_refs: prov:diff:predicate", "perl_target_test_shape: predicate_boundary_assertion", "perl_verify_command: yath test t/app_test2.t"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "discount_profile",
+          "file": "t/app_test2.t",
+          "line": 5,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "is(My::App::eligible(100), T(), 'eligible at boundary')",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a focused Perl assertion that pins the changed behavior.",
+      "suggested_next_action": "Add a focused Perl assertion that pins the changed behavior.",
+      "language": "perl",
+      "language_status": "preview",
+      "changed_sink": "predicate_boundary",
+      "source_currentness": "unresolved_subject"
+    },
+    {
+      "id": "probe:perl:5e2dce97c03d5769d323e2c50bb82da30912c662367a11339e7394150b36d4b9",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:perl:5e2dce97c03d5769d323e2c50bb82da30912c662367a11339e7394150b36d4b9",
+        "family": "error_path",
+        "delta": "value",
+        "file": "lib/My/App.pm",
+        "line": 18,
+        "expression": "exception_path",
+        "owner": "perl:lib/My/App.pm::fail_fast"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "observe": {"state":"yes","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Missing discriminator from packet"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Perl fact packet relation evidence", "infection unknown: Perl preview adapter does not model infection/propagation", "propagation unknown: Perl preview adapter does not model infection/propagation", "observation yes: Perl fact packet relation evidence", "discriminator weak: Missing discriminator from packet", "related test t/app_fatal.t:5 fail_fast_exception_message uses strong unknown oracle: like(exception { My::App::fail_fast() }, qr/boom/, 'message')"],
+      "flow_sinks": [
+      ],
+      "evidence": ["perl_repair_kind: add_exception_observer", "perl_coordinate_line_basis: unspecified", "perl_change_provenance_refs: prov:diff:exception", "perl_target_test_shape: exception_observer", "perl_verify_command: dzil test --test t/app_fatal.t"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "fail_fast_exception_message",
+          "file": "t/app_fatal.t",
+          "line": 5,
+          "oracle_strength": "strong",
+          "oracle_kind": "unknown",
+          "oracle": "like(exception { My::App::fail_fast() }, qr/boom/, 'message')",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a focused Perl assertion that pins the changed behavior.",
+      "suggested_next_action": "Add a focused Perl assertion that pins the changed behavior.",
+      "language": "perl",
+      "language_status": "preview",
+      "changed_sink": "exception_observer",
+      "source_currentness": "unresolved_subject"
+    },
+    {
+      "id": "probe:perl:b362022971de4e818d66d5980c679d8d5bcf92e8e3d57197d3cef80e76d74b36",
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:perl:b362022971de4e818d66d5980c679d8d5bcf92e8e3d57197d3cef80e76d74b36",
+        "family": "static_unknown",
+        "delta": "value",
+        "file": "lib/My/App.pm",
+        "line": 23,
+        "expression": "hash_or_object_field",
+        "owner": "perl:lib/My/App.pm::profile"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "observe": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Missing discriminator from packet"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach no: Perl fact packet relation evidence", "infection unknown: Perl preview adapter does not model infection/propagation", "propagation unknown: Perl preview adapter does not model infection/propagation", "observation no: Perl fact packet relation evidence", "discriminator weak: Missing discriminator from packet"],
+      "flow_sinks": [
+      ],
+      "evidence": ["perl_repair_kind: add_hash_or_object_field_assertion", "perl_coordinate_line_basis: unspecified", "perl_change_provenance_refs: prov:diff:field", "perl_target_test_shape: hash_or_object_field_assertion"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Add a focused Perl assertion that pins the changed behavior.",
+      "suggested_next_action": "Add a focused Perl assertion that pins the changed behavior.",
+      "language": "perl",
+      "language_status": "preview",
+      "changed_sink": "hash_or_object_field",
+      "source_currentness": "unresolved_subject"
+    },
+    {
+      "id": "probe:perl:c9fe4f8f3fa6ef439408c0bc097930602bc3848ecdfa7bce21642170b003cd57",
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:perl:c9fe4f8f3fa6ef439408c0bc097930602bc3848ecdfa7bce21642170b003cd57",
+        "family": "static_unknown",
+        "delta": "value",
+        "file": "lib/My/App.pm",
+        "line": 29,
+        "expression": "output_observer",
+        "owner": "perl:lib/My/App.pm::emit_status"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "observe": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Missing discriminator from packet"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach no: Perl fact packet relation evidence", "infection unknown: Perl preview adapter does not model infection/propagation", "propagation unknown: Perl preview adapter does not model infection/propagation", "observation no: Perl fact packet relation evidence", "discriminator weak: Missing discriminator from packet"],
+      "flow_sinks": [
+      ],
+      "evidence": ["perl_repair_kind: add_output_observer", "perl_coordinate_line_basis: unspecified", "perl_change_provenance_refs: prov:diff:output", "perl_target_test_shape: output_observer"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Add a focused Perl assertion that pins the changed behavior.",
+      "suggested_next_action": "Add a focused Perl assertion that pins the changed behavior.",
+      "language": "perl",
+      "language_status": "preview",
+      "changed_sink": "output_observer",
+      "source_currentness": "unresolved_subject"
+    },
+    {
+      "id": "probe:perl:4c74eb5d0edaf20820773c521c398da98e31e9ae6dc7f1b5660b6cc352023fc6",
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:perl:4c74eb5d0edaf20820773c521c398da98e31e9ae6dc7f1b5660b6cc352023fc6",
+        "family": "static_unknown",
+        "delta": "value",
+        "file": "lib/My/App.pm",
+        "line": 34,
+        "expression": "warn_observer",
+        "owner": "perl:lib/My/App.pm::warn_status"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "observe": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Missing discriminator from packet"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach no: Perl fact packet relation evidence", "infection unknown: Perl preview adapter does not model infection/propagation", "propagation unknown: Perl preview adapter does not model infection/propagation", "observation no: Perl fact packet relation evidence", "discriminator weak: Missing discriminator from packet"],
+      "flow_sinks": [
+      ],
+      "evidence": ["perl_repair_kind: add_warn_observer", "perl_coordinate_line_basis: unspecified", "perl_change_provenance_refs: prov:diff:warn", "perl_target_test_shape: warn_observer"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Add a focused Perl assertion that pins the changed behavior.",
+      "suggested_next_action": "Add a focused Perl assertion that pins the changed behavior.",
+      "language": "perl",
+      "language_status": "preview",
+      "changed_sink": "warn_observer",
+      "source_currentness": "unresolved_subject"
+    },
+    {
+      "id": "probe:perl:7a64e375c2742c28115e3305756ea012b7ac79de74e260484743d2955a6e9d42",
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:perl:7a64e375c2742c28115e3305756ea012b7ac79de74e260484743d2955a6e9d42",
+        "family": "static_unknown",
+        "delta": "value",
+        "file": "lib/My/App.pm",
+        "line": 39,
+        "expression": "log_observer",
+        "owner": "perl:lib/My/App.pm::log_status"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Perl preview adapter does not model infection/propagation"},
+        "observe": {"state":"no","confidence":"medium","summary":"Perl fact packet relation evidence"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Missing discriminator from packet"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach no: Perl fact packet relation evidence", "infection unknown: Perl preview adapter does not model infection/propagation", "propagation unknown: Perl preview adapter does not model infection/propagation", "observation no: Perl fact packet relation evidence", "discriminator weak: Missing discriminator from packet"],
+      "flow_sinks": [
+      ],
+      "evidence": ["perl_repair_kind: add_log_observer", "perl_coordinate_line_basis: unspecified", "perl_change_provenance_refs: prov:diff:log", "perl_target_test_shape: log_observer"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Add a focused Perl assertion that pins the changed behavior.",
+      "suggested_next_action": "Add a focused Perl assertion that pins the changed behavior.",
+      "language": "perl",
+      "language_status": "preview",
+      "changed_sink": "log_observer",
+      "source_currentness": "unresolved_subject"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "perl",
+      "file_count": 1,
+      "sample_paths": ["lib/My/App.pm"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+,
+  "language_completeness": {"completeness":"complete","languages":[{"disclosure":"silent","findings":7,"language":"perl","limitations":[],"status":"complete"},{"disclosure":"silent","findings":0,"language":"rust","limitations":[],"status":"no_current_scope"}],"mode":"diff","schema_version":"language_completeness.v1","total_findings":7},
+  "finding_routes": [{"explain_command":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:3df3642e76640fd70568bb17559329de74abb97b6eb5350acefa70fc200d2ea7","finding_id":"probe:perl:3df3642e76640fd70568bb17559329de74abb97b6eb5350acefa70fc200d2ea7"},{"explain_command":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:34d1d8c2cdd294799928f1e26ba873e32dbba1e671882ef1197b289b832a1f16","finding_id":"probe:perl:34d1d8c2cdd294799928f1e26ba873e32dbba1e671882ef1197b289b832a1f16"},{"explain_command":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:5e2dce97c03d5769d323e2c50bb82da30912c662367a11339e7394150b36d4b9","finding_id":"probe:perl:5e2dce97c03d5769d323e2c50bb82da30912c662367a11339e7394150b36d4b9"},{"explain_command":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:b362022971de4e818d66d5980c679d8d5bcf92e8e3d57197d3cef80e76d74b36","finding_id":"probe:perl:b362022971de4e818d66d5980c679d8d5bcf92e8e3d57197d3cef80e76d74b36"},{"explain_command":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:c9fe4f8f3fa6ef439408c0bc097930602bc3848ecdfa7bce21642170b003cd57","finding_id":"probe:perl:c9fe4f8f3fa6ef439408c0bc097930602bc3848ecdfa7bce21642170b003cd57"},{"explain_command":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:4c74eb5d0edaf20820773c521c398da98e31e9ae6dc7f1b5660b6cc352023fc6","finding_id":"probe:perl:4c74eb5d0edaf20820773c521c398da98e31e9ae6dc7f1b5660b6cc352023fc6"},{"explain_command":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:7a64e375c2742c28115e3305756ea012b7ac79de74e260484743d2955a6e9d42","finding_id":"probe:perl:7a64e375c2742c28115e3305756ea012b7ac79de74e260484743d2955a6e9d42"}],
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":".","diff_source":{"committed":{"base":null,"head":null}},"item":"base:origin/main"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"unsupported_or_limited","stop":{"kind":"check_triage","case":"candidate_filter_hid_all","detail_route":""},"alternatives":[{"label":"considered finding probe:perl:3df3642e76640fd70568bb17559329de74abb97b6eb5350acefa70fc200d2ea7","route":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:3df3642e76640fd70568bb17559329de74abb97b6eb5350acefa70fc200d2ea7"},{"label":"considered finding probe:perl:34d1d8c2cdd294799928f1e26ba873e32dbba1e671882ef1197b289b832a1f16","route":"ripr explain --root . --diff fixtures/evidence-promotion-honesty-corpus/patches/14842-perl-return.diff --perl-facts fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json probe:perl:34d1d8c2cdd294799928f1e26ba873e32dbba1e671882ef1197b289b832a1f16"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

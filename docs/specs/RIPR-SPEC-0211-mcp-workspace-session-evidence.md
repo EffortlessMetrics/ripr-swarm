@@ -561,8 +561,9 @@ official SDK transport:
   root, so a file under the root never appears as an absolute host path
   and the snapshot identity stays portable across checkouts (#5254
   item 6). Finding locations (list summaries, gap locations) render
-  through the shared finding-location owner (#5996) with its `./`
-  prefix, matching the check, context, and LSP surfaces; related-test
+  through the shared finding-location owner (#5996). For a matched
+  path they use the bare workspace-relative spelling in the canonical
+  ID (#15645). Check, context and LSP keep their existing spelling. Related-test
   files and fix sites render through the repository-relative renderer,
   which additionally tolerates producer spelling drift (canonicalized
   `\\?\` prefixes, mixed separators, Windows case drift). A file the

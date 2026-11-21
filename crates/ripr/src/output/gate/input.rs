@@ -114,6 +114,7 @@ pub(super) fn read_gap_ledger_impl(
     consumed: &mut ConsumedInputHashes,
     coverage: &mut Option<Value>,
     refusal: &mut Vec<String>,
+    owner_opt_outs: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
     let path = input.gap_ledger.as_ref()?;
     let resolved = resolve_root_path(&input.root, path);
@@ -201,6 +202,10 @@ pub(super) fn read_gap_ledger_impl(
             // #9599: a producer coverage disclosure counts only while it still
             // describes exactly this record set.
             if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                // #14898: seams the source withheld by an owner opt-out are
+                // absent from the records; the disclosure travels with them
+                // so a baseline consumer never reads them as resolved.
+                *owner_opt_outs = value.get("owner_opt_outs").cloned();
                 match gap_decision_ledger::verified_analysis_coverage(&value, &records) {
                     Some(verified) => {
                         let mismatched = ledger_coverage_mismatches(&input.root, &verified);
