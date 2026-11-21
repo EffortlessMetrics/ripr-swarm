@@ -990,6 +990,25 @@ The wording reads existing evidence only. Readiness, `actionability_category`,
 `repair_packet_ready`, the shared validator and every eligibility guard are
 unchanged, and the lines claim no runtime outcome.
 
+### Removed-code-only runs (#15335)
+
+When no finding is selected and every omitted finding is a removed line
+(`source_currentness: base_deleted`), the `Safe next action` line says that
+the diff removes code, that removed code is never an edit target, and so
+nothing is selected for repair. It then gives the static evidence on the
+removed code as class counts in the Summary line's plain words and order
+(`appear noticed by tests`, `partly noticed`, `reached but not noticed`,
+`no test path`, `unclear`), leaving out zero counts, and points to
+`--format human-full` for the evidence on each removed line. That rerun
+expands the same evidence; it does not settle an unclear class. It
+does not say "before treating this run as actionable", which read as
+"nothing to look at" for a removal that tests reach.
+
+Any other no-selection mix (a moved or renamed line, unresolved currentness,
+or a mix of those) keeps the earlier wording. The State id
+(`no_actionable_gap`), the Hidden list, the counts, repair routing and every
+machine format are unchanged; the line claims no runtime outcome.
+
 ## Non-Claims
 
 - Bounded human output is not runtime mutation evidence.
@@ -1234,6 +1253,9 @@ report with zero records still carries its route.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human/triage/removal_action.rs::tests::removed_lines_name_their_static_evidence` — #15335 positive: removed lines name their class counts.
+- `crates/ripr/src/output/human/triage/removal_action.rs::tests::a_moved_line_keeps_the_earlier_wording` — #15335 negative: a moved line keeps the generic base-side line.
+- `crates/ripr/src/output/human/triage/removal_action.rs::tests::unresolved_or_empty_sets_keep_the_earlier_wording` — #15335 negative: unresolved currentness and empty sets.
 - `crates/ripr/src/output/human/agent_tests.rs::agent_explain_navigation_preserves_scope_format_and_policy_compatibility` — three branches, source scopes, quoting and explicit-policy fallback.
 - `crates/ripr/tests/agent_compact_navigation.rs::compact_check_explain_context_journey_preserves_the_selected_subject` — literal built-binary check, explain and context journeys.
 - `crates/ripr/src/output/human/agent_tests.rs::static_limited_run_stops_and_names_the_limit_instead_of_a_gap` — #13594 negative: no `missing=-` record, `limits=` and drill-in kept.

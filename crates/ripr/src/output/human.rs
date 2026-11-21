@@ -4078,7 +4078,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n"
+                "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 2 partly noticed. Rerun with --format human-full for the evidence on each removed line\n"
             ),
             "{rendered}"
         );

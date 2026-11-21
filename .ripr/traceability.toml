@@ -11557,6 +11557,9 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/output/human/triage/removal_action.rs::tests::removed_lines_name_their_static_evidence",
+  "crates/ripr/src/output/human/triage/removal_action.rs::tests::a_moved_line_keeps_the_earlier_wording",
+  "crates/ripr/src/output/human/triage/removal_action.rs::tests::unresolved_or_empty_sets_keep_the_earlier_wording",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_keeps_context_pointer_when_the_packet_holds_more",
@@ -11914,6 +11917,7 @@ code = [
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/human.rs",
   "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/output/human/triage/removal_action.rs",
   "crates/ripr/src/output/render.rs",
   "crates/ripr/src/analysis/test_stub.rs",
   "crates/ripr/src/analysis/test_stub/receiver.rs",
