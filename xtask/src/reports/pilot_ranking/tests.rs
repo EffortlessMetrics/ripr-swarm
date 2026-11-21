@@ -241,7 +241,9 @@ fn fetch_requires_explicit_network_opt_in() -> Result<(), String> {
 
 /// The labels must reach the shared judge in the shape it reads: a missed
 /// operator mutant on the line confirms, and with no line mutant the
-/// innermost function's whole-body mutant decides.
+/// innermost function's whole-body mutant decides — except it cannot
+/// refute a seam whose function also has that missed mutant, so seam 4
+/// (same function as the missed line-3 mutant) stays unscored.
 #[test]
 fn labels_feed_the_shared_judge_line_then_owner_tier() -> Result<(), String> {
     let mutants = json!([
@@ -270,7 +272,7 @@ fn labels_feed_the_shared_judge_line_then_owner_tier() -> Result<(), String> {
         verdicts,
         vec![
             (Some("confirmed"), Some("line")),
-            (Some("refuted"), Some("owner")),
+            (Some("unscored"), Some("none")),
             (Some("unscored"), Some("none")),
         ]
     );
