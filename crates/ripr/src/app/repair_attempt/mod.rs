@@ -3488,10 +3488,14 @@ fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String
     let decoded = crate::analysis::decode_stable_path_text(text);
     let decoded = decoded
         .to_str()
-        .ok_or_else(|| format!("repair packet path `{text}` does not name a UTF-8 path"))?;
+        .ok_or_else(|| {
+            format!(
+                "repair packet path `{text}` does not name a UTF-8 path; rename the file to a UTF-8 name, then regenerate the packet"
+            )
+        })?;
     if decoded.contains('\\') && !text.contains('\\') {
         return Err(format!(
-            "repair packet path `{text}` names a file with a backslash in its name, which the edit cage cannot confine"
+            "repair packet path `{text}` names a file with a backslash in its name, which the edit cage cannot confine; rename the file to remove the backslash, then regenerate the packet"
         ));
     }
     Ok(decoded.to_string())
@@ -6531,8 +6535,31 @@ mod tests {
         });
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         match edit_cage_policy_from_packet(&rendered, "seam:sample") {
-            Err(error) if error.contains("backslash") => {}
+            Err(error)
+                if error.contains("backslash")
+                    && error.contains(
+                        "rename the file to remove the backslash, then regenerate the packet",
+                    ) => {}
             other => return Err(format!("escaped backslash was not refused: {other:?}")),
+        }
+        // A name that is not UTF-8 (only Unix can spell one) refuses with the
+        // same recovery: rename, then regenerate the packet.
+        #[cfg(unix)]
+        {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["tests/a%FFb.rs"],
+                "forbidden_files": []
+            });
+            let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+            match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+                Err(error)
+                    if error.contains("does not name a UTF-8 path")
+                        && error.contains(
+                            "rename the file to a UTF-8 name, then regenerate the packet",
+                        ) => {}
+                other => return Err(format!("non-UTF-8 packet path was not refused: {other:?}")),
+            }
         }
         // A gap-ledger packet (TypeScript, Python) carries native spellings:
         // a literal `%25` in its test file name stays as written.
