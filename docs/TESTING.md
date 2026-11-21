@@ -533,6 +533,18 @@ When changing user-visible output, update or add golden coverage for:
 Golden updates must preserve the static language boundary: draft static output
 does not use mutation-runtime terms such as `killed` or `survived`.
 
+The fixture runner compares `expected/human.txt`, `human-full.txt`,
+`sarif.json` and `github.txt` only while the file exists, and the corpus gates
+iterate whatever `cases` a corpus still lists. Deleting a golden or dropping a
+case therefore removes the comparison with it.
+`policy/fixture-denominator-floor.txt` names each of those subjects, and
+`cargo xtask check-fixture-contracts` fails when a named one leaves the tree
+(#15925). To retire a golden or a case, remove its line in the same change and
+say why in the PR; never remove one to turn a gate green. New goldens and cases
+pass without an edit and are counted as above the floor until
+`target/ripr/reports/fixture-denominator-floor.txt` is copied over the policy
+file. The floor checks presence, not whether the subject still discriminates.
+
 CI-summary changed-source escaping has literal render pins in
 `output::ci_summary::tests::given_changed_behavior_*`, covering both first-run
 artifact routes and the `why` fallback. The companion
