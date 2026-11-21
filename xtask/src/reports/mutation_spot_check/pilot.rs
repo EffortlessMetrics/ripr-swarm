@@ -119,28 +119,42 @@ struct Outcome<'a> {
 }
 
 /// Whether a non-whole-body mutant on `file`:`line` timed out, so the
-/// line produced candidates but no viable verdict for them.
-fn timeout_on_line(mutants: &Value, outcomes: &Value, file: &str, line: u64) -> bool {
-    let results: BTreeMap<&str, &str> = outcomes
+/// line produced candidates but no viable verdict for them. When the
+/// seam expression is located (`columns`), only timeouts starting inside
+/// it count; otherwise the whole line counts.
+fn timeout_on_line(
+    mutants: &Value,
+    outcomes: &Value,
+    file: &str,
+    line: u64,
+    columns: Option<(u64, u64)>,
+) -> bool {
+    let timed_out: std::collections::BTreeSet<&str> = outcomes
         .get("outcomes")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|record| {
-            Some((
-                record.pointer("/scenario/Mutant/name")?.as_str()?,
-                record.get("summary")?.as_str()?,
-            ))
-        })
+        .filter(|record| record.get("summary").and_then(Value::as_str) == Some("Timeout"))
+        .filter_map(|record| record.pointer("/scenario/Mutant/name")?.as_str())
         .collect();
+    if timed_out.is_empty() {
+        return false;
+    }
     mutants.as_array().into_iter().flatten().any(|mutant| {
         mutant.get("genre").and_then(Value::as_str).unwrap_or("") != "FnValue"
             && mutant.get("file").and_then(Value::as_str) == Some(file)
             && mutant.pointer("/span/start/line").and_then(Value::as_u64) == Some(line)
+            && columns.is_none_or(|(start, end)| {
+                let column = mutant
+                    .pointer("/span/start/column")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                (start..end).contains(&column)
+            })
             && mutant
                 .get("name")
                 .and_then(Value::as_str)
-                .is_some_and(|name| results.get(name) == Some(&"Timeout"))
+                .is_some_and(|name| timed_out.contains(name))
     })
 }
 
@@ -259,11 +273,25 @@ pub(crate) fn judge_recommendations(
                     .filter(|((start, end), _)| (*start..=*end).contains(&line))
                     .collect::<Vec<_>>();
                 let innermost = containing.iter().map(|((start, _), _)| *start).max();
-                let owner = containing
+                let mut owner = containing
                     .into_iter()
                     .filter(|((start, _), _)| Some(*start) == innermost)
                     .map(|(_, outcome)| outcome)
                     .collect::<Vec<_>>();
+                // A seam inside a nested function is owned by that
+                // function, not by an enclosing whole-body mutant, when a
+                // viable mutant records the tighter function span.
+                let known_innermost = viable
+                    .iter()
+                    .filter(|o| o.file == file)
+                    .filter_map(|o| o.function_span)
+                    .filter(|(start, end)| (*start..=*end).contains(&line))
+                    .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
+                if let Some(known) = known_innermost
+                    && owner.first().and_then(|o| o.function_span) != Some(known)
+                {
+                    owner.clear();
+                }
                 ("owner", owner)
             };
             let missed = joined.iter().filter(|o| o.missed).count();
@@ -274,16 +302,16 @@ pub(crate) fn judge_recommendations(
             // innermost function also has a missed mutant.
             let owner_blocked = tier == "owner"
                 && !joined.is_empty()
-                && (timeout_on_line(mutants, outcomes, file, line)
+                && (timeout_on_line(mutants, outcomes, file, line, columns)
                     || (missed == 0
                         && (kind == "error_variant"
                             || joined.first().and_then(|o| o.function_span).is_some_and(
-                                |(start, end)| {
+                                |span| {
                                     viable.iter().any(|o| {
                                         !o.whole_body
                                             && o.missed
                                             && o.file == file
-                                            && (start..=end).contains(&o.line)
+                                            && o.function_span == Some(span)
                                     })
                                 },
                             ))));
@@ -655,10 +683,10 @@ mod tests {
     }
 
     #[test]
-    fn line_tier_uses_only_mutants_inside_located_expression() {
+    fn line_tier_uses_only_mutants_inside_located_expression() -> Result<(), String> {
         let text = "    let v = size.into() * KB;";
-        let star = text.find('*').unwrap() as u64 + 1;
-        let inside = text.find("size.into()").unwrap() as u64 + 2;
+        let star = text.find('*').ok_or("test line has no `*`")? as u64 + 1;
+        let inside = text.find("size.into()").ok_or("test line has no call")? as u64 + 2;
         let outside_name = format!("src/a.rs:3:{star}: replace * with + in size");
         let inside_name = format!("src/a.rs:3:{inside}: replace * with + in size");
         let source =
@@ -679,6 +707,74 @@ mod tests {
             );
             assert_eq!(verdict(&judged), expected, "mutant {name}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_outside_located_expression_does_not_block_owner() {
+        // The timeout starts after `size.into()` on the same line, so it
+        // belongs to another expression and cannot erase the owner verdict;
+        // a timeout inside the expression can.
+        let text = "    let v = size.into() * KB;";
+        let source =
+            |file: &str, line: u64| (file == "src/a.rs" && line == 3).then(|| text.to_string());
+        let expressions = BTreeMap::from([("s3", "size.into()")]);
+        for (column, expected) in [
+            (30_u64, (Some("refuted"), Some("owner"))),
+            (16, (Some("unscored"), Some("none"))),
+        ] {
+            let timeout_name = format!("src/a.rs:3:{column}: replace * with + in size");
+            let mutants = json!([
+                mutant(&timeout_name, 3, "BinaryOperator", (1, 9)),
+                mutant("body-caught", 2, "FnValue", (1, 9)),
+            ]);
+            let outcomes = json!({"outcomes": [
+                outcome(&timeout_name, "Timeout"),
+                outcome("body-caught", "CaughtMutant"),
+            ]});
+            let judged = judge_recommendations(
+                &[seam_kind(3, "call_presence")],
+                &mutants,
+                &outcomes,
+                &expressions,
+                &source,
+            );
+            assert_eq!(verdict(&judged), expected, "timeout at column {column}");
+        }
+    }
+
+    #[test]
+    fn nested_miss_does_not_block_outer_owner_and_nested_seam_skips_outer() {
+        // Outer function (1, 20) has a caught whole-body mutant; a nested
+        // function (8, 12) has a missed operator mutant on line 10.
+        let mutants = json!([
+            mutant("nested-missed", 10, "BinaryOperator", (8, 12)),
+            mutant("body-caught", 2, "FnValue", (1, 20)),
+        ]);
+        let outcomes = json!({"outcomes": [
+            outcome("nested-missed", "MissedMutant"),
+            outcome("body-caught", "CaughtMutant"),
+        ]});
+        // Seam in the outer function: the nested miss is not its function's
+        // miss, so the caught whole-body mutant still refutes it.
+        let outer = judge_recommendations(
+            &[seam_kind(4, "predicate_boundary")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&outer), (Some("refuted"), Some("owner")));
+        // Seam inside the nested function: its owner has no whole-body
+        // mutant, so the outer body mutant cannot judge it.
+        let nested = judge_recommendations(
+            &[seam_kind(9, "predicate_boundary")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&nested), (Some("unscored"), Some("none")));
     }
 
     #[test]

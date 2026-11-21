@@ -383,12 +383,15 @@ recommendation is the first error a developer meets. A recommendation is:
 | --- | --- |
 | confirmed | on a predicate or return seam whose expression occurs once on its line, a viable operator mutant starting inside that expression was missed (`seam` tier); with none, a viable non-`FnValue` mutant on the recommended line was missed (`line` tier, coarse: it can belong to another expression on that line); with none on the line, a whole-body (`FnValue`) mutant of the innermost function containing the line was missed (`owner` tier) |
 | refuted | every such mutant was caught |
-| unscored | no tier has a caught or missed mutant |
+| unscored | no tier has a caught or missed mutant, or the whole-body tier is blocked: the seam line only timed out, the pick is an `error_variant`, or a missed mutant sits in the same innermost function |
 
 `pilot_top_recommendations.precision` is confirmed over confirmed plus
 refuted, with counts split by tier (`seam`, `line`, `owner`) and grip class. The
 owner tier is coarser: a caught whole-body mutant shows the function's tests
 notice when the function does nothing, not that they discriminate the seam.
+For that reason the whole-body tier cannot refute a pick whose line only
+timed out, an `error_variant` pick, or a pick whose innermost function also
+has a missed mutant; those picks stay unscored.
 If `ripr pilot` fails, times out, or writes a summary whose status is not
 `complete` (pilot's own budget ran out) on a repository, that repository's entry
 carries `unavailable` with the reason and counts in `unavailable_repos`; its
