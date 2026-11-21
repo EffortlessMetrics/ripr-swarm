@@ -949,6 +949,43 @@ fn stub_body(
         (None, _) => None,
     };
 
+    // A `fmt` method of `Display`, `Debug` or another `std::fmt` trait takes
+    // a `&mut Formatter`, which a test cannot build on stable Rust and whose
+    // written text it cannot read back. The text leaves through formatting
+    // the value, so the stub formats `subject` and compares the string.
+    if let (Some(subject), Some(spec)) = (
+        receiver,
+        format_trait_spec(
+            signature,
+            owner_trait,
+            signature.return_type.as_deref().unwrap_or_default(),
+            source,
+        ),
+    ) {
+        // `std::format!` behind a block-scoped `extern crate std;` compiles
+        // in a `#![no_std]` crate's test too, and the format string reaches
+        // the trait impl even when an inherent `fn to_string(&self)` would
+        // shadow `ToString::to_string`.
+        let rendered = format!("std::format!(\"{{{subject}{spec}}}\")");
+        lines.insert(0, "extern crate std;".to_string());
+        let label = format!(
+            "ripr: write the exact text `{rendered}` should produce{}",
+            discriminator_hint(seam, &[subject.to_string()])
+        );
+        lines.push(format!(
+            "let expected: &str = todo!(\"{}\");",
+            escape(&label)
+        ));
+        lines.push(format!("assert_eq!({rendered}, expected);"));
+        fill_ins.push(label);
+        return Ok(StubBody {
+            lines,
+            fill_ins,
+            derived_inputs,
+            receiver_setup,
+        });
+    }
+
     let mut arguments = Vec::new();
     for (index, param) in signature.params.iter().enumerate() {
         let binding = param
@@ -992,6 +1029,26 @@ fn stub_body(
         }
         arguments.push(argument);
     }
+    // The inputs the test chooses, named in the fill-in guidance. A `&mut`
+    // parameter is an output the call writes into, not a chosen input; a
+    // `&mut self` receiver is still built by the test, so it stays.
+    let input_names: Vec<String> = receiver
+        .map(str::to_string)
+        .into_iter()
+        .chain(
+            signature
+                .params
+                .iter()
+                .enumerate()
+                .filter(|(_, param)| strip_mut_reference(&param.ty).is_none())
+                .map(|(index, param)| {
+                    param
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| format!("arg{}", index + 1))
+                }),
+        )
+        .collect();
 
     let call = match (&qualified_self, receiver, self_type) {
         (Some(qualified), receiver, _) => {
@@ -1066,7 +1123,7 @@ fn stub_body(
         // path: assert the whole value the developer writes.
         None => {
             let hint = if derived_inputs.is_empty() {
-                discriminator_hint(seam)
+                discriminator_hint(seam, &input_names)
             } else {
                 format!(" for {}", derived_inputs.join(", "))
             };
@@ -1125,7 +1182,7 @@ fn stub_body(
             targets.push((binding, ty));
         }
         let hint = if derived_inputs.is_empty() {
-            discriminator_hint(seam)
+            discriminator_hint(seam, &input_names)
         } else {
             format!(" for {}", derived_inputs.join(", "))
         };
@@ -1861,16 +1918,33 @@ fn relational_boundary(seam: &RepoSeam) -> Option<String> {
     })
 }
 
-fn discriminator_hint(seam: &RepoSeam) -> String {
+/// The tail of a "write the value `owner` should return" fill-in. A boundary
+/// names the condition that tells the change apart (`when total == 100`). A
+/// changed return value only names the changed code, so the tail names the
+/// inputs the test chooses and quotes the change after them: "should return
+/// when 43" or "should return when self.items.sum() >= self.limit" does not
+/// read as a sentence and suggests a condition the change does not state.
+fn discriminator_hint(seam: &RepoSeam, inputs: &[String]) -> String {
     match seam.required_discriminator() {
-        RequiredDiscriminator::BoundaryValue { description }
-        | RequiredDiscriminator::ReturnValue { description }
-            if !description.trim().is_empty() =>
-        {
+        RequiredDiscriminator::BoundaryValue { description } if !description.trim().is_empty() => {
             match relational_boundary(seam) {
                 Some(boundary) => format!(" when {boundary}"),
                 None => format!(" when {}", one_line(description)),
             }
+        }
+        RequiredDiscriminator::ReturnValue { description } if !description.trim().is_empty() => {
+            let inputs = match inputs {
+                [] => String::new(),
+                [only] => format!(" for `{only}`"),
+                [rest @ .., last] => format!(
+                    " for {} and `{last}`",
+                    rest.iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("{inputs} (the changed code is `{}`)", one_line(description))
         }
         RequiredDiscriminator::MatchArmTaken { arm } if !arm.trim().is_empty() => {
             format!(" when the `{}` arm runs", one_line(arm))
@@ -1880,6 +1954,170 @@ fn discriminator_hint(seam: &RepoSeam) -> String {
         }
         _ => format!(" for these inputs (`{}`)", one_line(seam.expression())),
     }
+}
+
+/// The format spec (`""` for `Display`, `":?"` for `Debug`, ...) when the
+/// owner is the `fmt` method of a `std::fmt` formatting trait: `&self`, one
+/// `&mut Formatter` parameter, returning `fmt::Result`. A bare trait name
+/// (`impl Display for T`) counts only when the file neither declares a trait
+/// of that name nor imports it from outside `std::fmt`/`core::fmt`.
+fn format_trait_spec(
+    signature: &OwnerSignature,
+    owner_trait: Option<&str>,
+    return_type: &str,
+    source: &str,
+) -> Option<&'static str> {
+    if signature.name != "fmt" || signature.receiver != Some(OwnerReceiver::Ref) {
+        return None;
+    }
+    let [param] = signature.params.as_slice() else {
+        return None;
+    };
+    let formatter = strip_generic_arguments(strip_mut_reference(&param.ty)?);
+    if !matches!(
+        formatter,
+        "Formatter" | "fmt::Formatter" | "std::fmt::Formatter" | "core::fmt::Formatter"
+    ) || !matches!(
+        return_type.trim(),
+        "Result" | "fmt::Result" | "std::fmt::Result" | "core::fmt::Result"
+    ) {
+        return None;
+    }
+    let trait_path = strip_generic_arguments(owner_trait?);
+    let trait_name = ["std::fmt::", "core::fmt::", "fmt::"]
+        .iter()
+        .find_map(|prefix| trait_path.strip_prefix(prefix))
+        .unwrap_or(trait_path);
+    let spec = match trait_name {
+        "Display" => "",
+        "Debug" => ":?",
+        "LowerHex" => ":x",
+        "UpperHex" => ":X",
+        "Octal" => ":o",
+        "Binary" => ":b",
+        "LowerExp" => ":e",
+        "UpperExp" => ":E",
+        "Pointer" => ":p",
+        _ => return None,
+    };
+    let names_std_trait = match trait_path.strip_prefix("fmt::") {
+        // `fmt::Display` is the std trait only when `fmt` is the std module.
+        Some(_) => fmt_module_is_std(source),
+        None if trait_name == trait_path => bare_name_is_std_fmt_trait(source, trait_name),
+        None => true,
+    };
+    names_std_trait.then_some(spec)
+}
+
+/// Whether a bare `name` in an impl header can be the `std::fmt` trait: the
+/// file declares no `trait name` and imports `name` (directly or renamed)
+/// only from `std::fmt`, `core::fmt`, `alloc::fmt` or a local `fmt` path.
+/// A file that does not parse cleanly fails closed.
+fn bare_name_is_std_fmt_trait(source: &str, name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let root = parse.tree();
+    let declares = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::Trait::cast)
+        .any(|declared| declared.name().is_some_and(|n| n.text() == name));
+    if declares || !fmt_module_is_std_in(&root) {
+        return false;
+    }
+    root.syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
+        .filter(|tree| {
+            let bound = match tree.rename().and_then(|rename| rename.name()) {
+                Some(alias) => alias.text().to_string(),
+                None => tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .map(|segment| segment.syntax().text().to_string())
+                    .unwrap_or_default(),
+            };
+            bound == name
+        })
+        .all(|tree| {
+            let full = full_use_path(&tree);
+            ["std::fmt::", "core::fmt::", "alloc::fmt::", "fmt::"]
+                .iter()
+                .any(|prefix| {
+                    full.strip_prefix(prefix)
+                        .is_some_and(|rest| !rest.contains("::"))
+                })
+        })
+}
+
+/// Whether a `fmt` path segment in this file can be the `std::fmt` module:
+/// the file declares no `mod fmt` or `extern crate .. as fmt`, and a `use`
+/// binds `fmt` (directly or renamed) only from `std::fmt`, `core::fmt` or
+/// `alloc::fmt`. A file that does not parse cleanly fails closed.
+fn fmt_module_is_std(source: &str) -> bool {
+    parse_clean_source_file(source).is_some_and(|parse| fmt_module_is_std_in(&parse.tree()))
+}
+
+fn fmt_module_is_std_in(root: &ast::SourceFile) -> bool {
+    let declares = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| module.name().is_some_and(|n| n.text() == "fmt"));
+    // `extern crate fmt;` or `extern crate other as fmt;` names a crate.
+    let extern_fmt = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::ExternCrate::cast)
+        .any(|krate| {
+            let bound = match krate.rename().and_then(|rename| rename.name()) {
+                Some(alias) => alias.text().to_string(),
+                None => krate
+                    .name_ref()
+                    .map(|name| name.text().to_string())
+                    .unwrap_or_default(),
+            };
+            bound == "fmt"
+        });
+    if declares || extern_fmt {
+        return false;
+    }
+    root.syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
+        .filter_map(|tree| {
+            // `use std::fmt::{self}` binds `fmt` through `self`.
+            let full = full_use_path(&tree);
+            let full = full.strip_suffix("::self").unwrap_or(&full).to_string();
+            let bound = match tree.rename().and_then(|rename| rename.name()) {
+                Some(alias) => alias.text().to_string(),
+                None => full.rsplit("::").next().unwrap_or_default().to_string(),
+            };
+            (bound == "fmt").then_some(full)
+        })
+        .all(|full| matches!(full.as_str(), "std::fmt" | "core::fmt" | "alloc::fmt"))
+}
+
+/// The full imported path of a leaf `use` tree, from the outermost tree
+/// inward, without whitespace or a leading `::`.
+fn full_use_path(tree: &ast::UseTree) -> String {
+    let mut segments: Vec<String> = tree
+        .syntax()
+        .ancestors()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|ancestor| ancestor.path())
+        .map(|path| path.syntax().text().to_string())
+        .collect();
+    segments.reverse();
+    let full: String = segments
+        .join("::")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    full.trim_start_matches("::").to_string()
 }
 
 fn name_suffix(kind: SeamKind) -> &'static str {
