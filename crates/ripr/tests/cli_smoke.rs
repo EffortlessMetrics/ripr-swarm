@@ -159,6 +159,9 @@ mod receipt_recovery_root;
 mod receipt_write_containment;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/related_test_headline.rs"]
+mod related_test_headline;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/repair_orderfile.rs"]
 mod repair_orderfile;
