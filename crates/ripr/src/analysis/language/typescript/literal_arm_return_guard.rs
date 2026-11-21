@@ -330,10 +330,7 @@ fn scalar_constant(text: &str) -> Option<ArmConstant> {
 /// top-level declaration binds the name `undefined`. `None` when the owner
 /// does not parse, is a generator or a concise arrow, or declares no
 /// function body this reader can locate.
-fn owner_returns(
-    file: &Path,
-    source: &str,
-) -> Option<(Vec<(usize, Option<ArmConstant>)>, bool)> {
+fn owner_returns(file: &Path, source: &str) -> Option<(Vec<(usize, Option<ArmConstant>)>, bool)> {
     for (prefix, suffix) in WRAPPERS {
         let wrapped = format!("{prefix}{source}{suffix}");
         let prefix_lines = prefix.matches('\n').count();
@@ -384,7 +381,7 @@ struct ReturnCollector<'t> {
     owners: usize,
     refused: bool,
     returns: Vec<(usize, Option<ArmConstant>)>,
-    /// A top-level declaration binds the name `undefined`, so a
+    /// A declaration or parameter in scope binds the name `undefined`, so a
     /// `return undefined` may read it rather than the global.
     binds_undefined: bool,
 }
@@ -395,18 +392,16 @@ impl ReturnCollector<'_> {
             .partition_point(|&newline| newline < offset as usize)
     }
 
-    /// Whether a top-level declaration binds the name `undefined`. The AST
-    /// sees through comments and formatting, so `const /* shadow */
+    /// Whether a declaration or parameter in scope binds the name `undefined`.
+    /// The AST sees through comments and formatting, so `const /* shadow */
     /// undefined` is caught where a source substring scan missed it.
-    fn note_top_level_binding(&mut self, kind: oxc_ast::ast_kind::AstKind<'_>) {
-        use oxc_ast::ast::{BindingPattern, ImportDeclarationSpecifier};
+    fn note_binding(&mut self, kind: oxc_ast::ast_kind::AstKind<'_>, owner_level: bool) {
+        use oxc_ast::ast::ImportDeclarationSpecifier;
         use oxc_ast::ast_kind::AstKind;
         match kind {
             AstKind::VariableDeclaration(declaration) => {
                 for declarator in &declaration.declarations {
-                    if let BindingPattern::BindingIdentifier(id) = &declarator.id
-                        && id.name.as_str() == "undefined"
-                    {
+                    if pattern_binds_undefined(&declarator.id) {
                         self.binds_undefined = true;
                     }
                 }
@@ -416,6 +411,27 @@ impl ReturnCollector<'_> {
                     .id
                     .as_ref()
                     .is_some_and(|id| id.name.as_str() == "undefined")
+                {
+                    self.binds_undefined = true;
+                }
+                // Only the owner's own parameters shadow a return at its level.
+                if owner_level
+                    && function
+                        .params
+                        .items
+                        .iter()
+                        .any(|param| pattern_binds_undefined(&param.pattern))
+                {
+                    self.binds_undefined = true;
+                }
+            }
+            AstKind::ArrowFunctionExpression(arrow) => {
+                if owner_level
+                    && arrow
+                        .params
+                        .items
+                        .iter()
+                        .any(|param| pattern_binds_undefined(&param.pattern))
                 {
                     self.binds_undefined = true;
                 }
@@ -450,11 +466,38 @@ impl ReturnCollector<'_> {
     }
 }
 
+/// Whether a binding pattern binds the name `undefined`, through a plain
+/// identifier, destructuring, a default or a rest element.
+fn pattern_binds_undefined(pattern: &oxc_ast::ast::BindingPattern<'_>) -> bool {
+    use oxc_ast::ast::BindingPattern;
+    match pattern {
+        BindingPattern::BindingIdentifier(id) => id.name.as_str() == "undefined",
+        BindingPattern::ObjectPattern(object) => {
+            object
+                .properties
+                .iter()
+                .any(|property| pattern_binds_undefined(&property.value))
+                || object
+                    .rest
+                    .as_ref()
+                    .is_some_and(|rest| pattern_binds_undefined(&rest.argument))
+        }
+        BindingPattern::ArrayPattern(array) => {
+            array.elements.iter().flatten().any(pattern_binds_undefined)
+                || array
+                    .rest
+                    .as_ref()
+                    .is_some_and(|rest| pattern_binds_undefined(&rest.argument))
+        }
+        BindingPattern::AssignmentPattern(assignment) => pattern_binds_undefined(&assignment.left),
+    }
+}
+
 impl<'a> oxc_ast_visit::Visit<'a> for ReturnCollector<'_> {
     fn enter_node(&mut self, kind: oxc_ast::ast_kind::AstKind<'a>) {
         use oxc_ast::ast_kind::AstKind;
-        if self.depth == 0 {
-            self.note_top_level_binding(kind);
+        if self.depth <= 1 {
+            self.note_binding(kind, self.depth == 0);
         }
         let refused = match kind {
             AstKind::Function(function) => function.generator || function.body.is_none(),

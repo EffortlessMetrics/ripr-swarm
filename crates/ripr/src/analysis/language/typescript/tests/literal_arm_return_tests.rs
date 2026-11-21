@@ -180,6 +180,19 @@ fn an_undefined_return_is_refused_only_with_a_proven_binding() {
     assert!(
         literal_arm_return(&owner(global), 12, "    return 7;", Some("    return 5;")).is_some()
     );
+    // A parameter named `undefined` shadows the global for a return at the
+    // owner's level, so the changed arm's literal is not provably the only
+    // source of its value.
+    let parameter = "export function dir(n: number, undefined: number): unknown {\n  if (n === 1) {\n    return 7;\n  }\n  return undefined;\n}\n";
+    assert_eq!(
+        literal_arm_return(
+            &owner(parameter),
+            12,
+            "    return 7;",
+            Some("    return 5;")
+        ),
+        None
+    );
     // Numeric control: the same shape with numbers still locates the arm.
     let numeric = "export function dir(n: number): number {\n  if (n === 1) {\n    return 7;\n  }\n  return 2;\n}\n";
     assert!(
