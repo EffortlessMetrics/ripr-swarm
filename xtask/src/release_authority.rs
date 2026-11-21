@@ -1,35 +1,28 @@
 //! Owner release authorization as a machine object (ripr#1650).
 //!
 //! An owner ruling written as issue prose and a tag-push event are different
-//! objects. This module owns the bridge's first half (ripr#1651): one
-//! canonical `ReleaseAuthorizationPacket`, the repository-owned authorizer
-//! policy, the durable comment record that carries a packet, and a read-only
-//! verifier that re-fetches that record and emits a deterministic receipt.
+//! objects. This module owns the first piece of the bridge (ripr#1651): one
+//! canonical `ReleaseAuthorizationPacket` and the comment body that carries
+//! it.
 //!
-//! Nothing here binds a packet to a Git event, creates or pushes a ref, posts
-//! a comment, requests an environment or credential, or publishes.
+//! Nothing here reads GitHub, binds a packet to a Git event, creates or pushes
+//! a ref, posts a comment, requests an environment or credential, or
+//! publishes.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::exact_schema_json::Value;
 
-mod authorizer_policy;
-mod github_reader;
 mod release_authorization_packet;
-mod release_authorization_record;
 
 pub(crate) const USAGE: &str = "\
-cargo xtask release-authority render-packet --input <packet-draft.json> [--out <dir>]
-cargo xtask release-authority render-revocation --input <revocation-draft.json> [--out <dir>]
-cargo xtask release-authority verify-record --repository <owner/name> --issue <number> --comment <id> --expected-body-sha256 <hex> --bindings <bindings.json> [--fixture <dir>] [--out <dir>]";
+cargo xtask release-authority render-packet --input <packet-draft.json> [--out <dir>]";
 
 const DEFAULT_OUT: &str = "target/ripr/reports/release-authority";
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     match args.split_first() {
         Some((sub, rest)) if sub == "render-packet" => render_packet(rest),
-        Some((sub, rest)) if sub == "render-revocation" => render_revocation(rest),
-        Some((sub, rest)) if sub == "verify-record" => verify_record(rest),
         Some((flag, [])) if flag == "--help" || flag == "-h" => {
             println!("{USAGE}");
             Ok(())
@@ -107,92 +100,6 @@ fn render_packet(args: &[String]) -> Result<(), String> {
          maintainer account; verify-record pins the bytes GitHub actually stored."
     );
     Ok(())
-}
-
-fn render_revocation(args: &[String]) -> Result<(), String> {
-    let flags = Flags::parse(args, &["--input", "--out"])?;
-    let draft = read_bounded(flags.required("--input")?)?;
-    let (revocation_id, comment) = release_authorization_record::render_revocation(&draft)?;
-    let out = PathBuf::from(flags.get("--out").unwrap_or(DEFAULT_OUT));
-    crate::write_report_in(&out, "revocation-comment.md", &comment)?;
-    println!("revocation_id: {revocation_id}");
-    println!(
-        "Wrote {}/revocation-comment.md. Nothing was posted.",
-        out.display()
-    );
-    Ok(())
-}
-
-fn verify_record(args: &[String]) -> Result<(), String> {
-    let flags = Flags::parse(
-        args,
-        &[
-            "--repository",
-            "--issue",
-            "--comment",
-            "--expected-body-sha256",
-            "--bindings",
-            "--fixture",
-            "--out",
-        ],
-    )?;
-    let number = |flag: &str| -> Result<u64, String> {
-        let text = flags.required(flag)?;
-        parse_plain_u64(text).ok_or_else(|| format!("`{flag}` must be a positive integer"))
-    };
-    let policy_text = std::fs::read_to_string(authorizer_policy::POLICY_PATH)
-        .map_err(|e| format!("read {}: {e}", authorizer_policy::POLICY_PATH))?;
-    let policy = authorizer_policy::AuthorizerPolicy::parse(&policy_text)?;
-    let locator = release_authorization_record::Locator {
-        repository_id: policy.repository_id,
-        repository_name: flags.required("--repository")?.to_string(),
-        issue: number("--issue")?,
-        comment_id: number("--comment")?,
-        body_sha256: flags.required("--expected-body-sha256")?.to_string(),
-    };
-    let bindings = release_authorization_record::Bindings::parse(&read_bounded(
-        flags.required("--bindings")?,
-    )?)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-    let receipt = match flags.get("--fixture") {
-        Some(dir) => release_authorization_record::verify(
-            &github_reader::FixtureReader::new(Path::new(dir)),
-            &policy,
-            &locator,
-            &bindings,
-            now,
-        ),
-        None => release_authorization_record::verify(
-            &github_reader::LiveReader::new(),
-            &policy,
-            &locator,
-            &bindings,
-            now,
-        ),
-    };
-    let out = PathBuf::from(flags.get("--out").unwrap_or(DEFAULT_OUT));
-    crate::write_report_in(&out, "authorization-receipt.json", &receipt.json())?;
-    crate::write_report_in(&out, "authorization-receipt.md", &receipt.markdown())?;
-    println!("Wrote {}/authorization-receipt.{{json,md}}", out.display());
-    println!("disposition: {}", receipt.disposition.as_str());
-    if receipt.admits() {
-        Ok(())
-    } else if receipt.disposition == release_authorization_record::Disposition::Authorized {
-        Err(
-            "the record evaluates as authorized in a saved-fixture replay; a replay is \
-             never live authority"
-                .to_string(),
-        )
-    } else {
-        Err(format!(
-            "release authorization record is `{}`, not authorized: {}",
-            receipt.disposition.as_str(),
-            receipt.reasons.join("; ")
-        ))
-    }
 }
 
 // ----- shared canonical-form helpers -----
