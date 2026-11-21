@@ -425,6 +425,11 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   navigation retain their own eligibility and ranking. The TypeScript repair
   preview can still identify a place to add the missing assertion when no
   existing assertion supplies a headline.
+  For a modeled Python predicate, the credited assertion must contain the
+  located call at the edited boundary. A name-only or file-only preview
+  relation remains navigational even when the legacy row omits a domain
+  relation. Artifact replay preserves a unique observer’s source identity
+  and abstains when that identity is ambiguous.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or

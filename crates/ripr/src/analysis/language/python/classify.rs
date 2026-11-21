@@ -2147,7 +2147,15 @@ fn classify_change_for_owner_inner<'a>(
         format!("owner_kind: {}", owner.kind_label()),
     ];
     if related.len() > 1 && matches!(class, ExposureClass::Exposed) {
-        surfaced_alignment.append_headline_observers(&related, &row_alignments, &mut evidence);
+        if let Some(boundary) = &boundary {
+            evidence.extend(boundary.headline_observers(
+                &related,
+                &row_alignments,
+                &related_candidates,
+            ));
+        } else {
+            surfaced_alignment.append_headline_observers(&related, &row_alignments, &mut evidence);
+        }
     }
     if !owner.decorators.is_empty() {
         evidence.push(format!("owner_decorators: {}", owner.decorators.join(", ")));

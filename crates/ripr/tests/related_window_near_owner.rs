@@ -220,3 +220,124 @@ fn python_headline_uses_the_credited_count_call() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Pin the public one-row projection to independent source facts. Both
+/// Python constants bind the changed boundary only in test_at. The two
+/// heuristic fixtures never call the changed owner.
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+#[test]
+fn public_packet_pairs_boundaries_and_discloses_heuristic_rows() -> Result<(), String> {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for (fixture, observer) in [
+        (
+            "python_module_constant_boundary_rival_control",
+            Some("test_at"),
+        ),
+        (
+            "python_module_constant_boundary_test_local_control",
+            Some("test_at"),
+        ),
+        ("python_related_test_name_similarity", None),
+        ("javascript_js_preview", None),
+    ] {
+        let case = fixtures.join(fixture);
+        let run = |command: &str, args: &[&str]| -> Result<String, String> {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+                .arg(command)
+                .arg("--root")
+                .arg(case.join("input"))
+                .arg("--diff")
+                .arg(case.join("diff.patch"))
+                .args(args)
+                .output()
+                .map_err(|e| e.to_string())?;
+            String::from_utf8(output.stdout).map_err(|e| e.to_string())
+        };
+        let report: serde_json::Value = serde_json::from_str(&run("check", &["--format", "json"])?)
+            .map_err(|e| e.to_string())?;
+        let finding = &report["findings"][0];
+        let id = finding["id"].as_str().ok_or("missing fixture finding")?;
+        let packet: serde_json::Value = serde_json::from_str(&run(
+            "context",
+            &["--at", id, "--max-related-tests", "1", "--json"],
+        )?)
+        .map_err(|e| e.to_string())?;
+        let human = run("check", &["--format", "human"])?;
+        let agent = run("explain", &["--format", "agent", id])?;
+        let rows = packet["related_tests"]
+            .as_array()
+            .ok_or("missing packet rows")?;
+        assert_eq!(rows.len(), 1, "{fixture}");
+        if let Some(name) = observer {
+            assert_eq!(rows[0]["name"], name, "{fixture}: {packet}");
+            assert!(
+                human
+                    .lines()
+                    .any(|l| l.trim_start().starts_with("Related test") && l.contains(name)),
+                "{fixture}: {human}"
+            );
+            assert!(
+                agent
+                    .lines()
+                    .any(|l| l.starts_with("t1=") && l.contains(name)),
+                "{fixture}: {agent}"
+            );
+            assert_eq!(finding["oracle_strength"], "strong");
+        } else {
+            let message = "only name or file matches were retained";
+            assert!(human.contains(message), "{fixture}: {human}");
+            assert!(
+                packet["missing"].as_array().is_some_and(|xs| xs
+                    .iter()
+                    .any(|s| s.as_str().is_some_and(|x| x.contains(message)))),
+                "{fixture}: {packet}"
+            );
+            assert!(
+                !agent.lines().any(|l| l.starts_with("t1=")),
+                "{fixture}: {agent}"
+            );
+            assert_eq!(finding["oracle_strength"], "none");
+        }
+    }
+    Ok(())
+}
+
+/// Calling the threshold and asserting another input in the same test does
+/// not observe the change. The raw row still retains its exact-value grade.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_headline_pairs_the_assertion_with_its_boundary_call() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/python_module_constant_boundary_rival_control");
+    for (target, source) in [
+        ("change.diff", "diff.patch"),
+        ("svc/a/src/pricing.py", "input/svc/a/src/pricing.py"),
+    ] {
+        scratch.write(
+            target,
+            &std::fs::read_to_string(fixture.join(source)).map_err(|e| e.to_string())?,
+        )?;
+    }
+    scratch.write("svc/b/tests/test_pricing.py",
+        "from svc.a.src.pricing import discounted_total\n\ndef test_above():\n    assert discounted_total(20000) == 18000\n\ndef test_split():\n    discounted_total(10000)\n    assert discounted_total(20000) == 18000\n")?;
+    let output = analyze_change(&scratch, LanguageId::Python)?;
+    let [finding] = output.findings.as_slice() else {
+        return Err("expected one boundary finding".to_string());
+    };
+    assert_eq!(finding.related_tests.len(), 2);
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|row| row.oracle_strength == ripr::domain::OracleStrength::Strong)
+    );
+    assert!(finding.headline_related_test().is_none());
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|s| s.starts_with("related_test_observer_missing: "))
+    );
+    Ok(())
+}

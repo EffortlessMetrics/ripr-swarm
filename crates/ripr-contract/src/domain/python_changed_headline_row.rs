@@ -13,9 +13,10 @@ pub const RELATED_TEST_CHANGED_IN_DIFF_PREFIX: &str = "related_test_changed_in_d
 /// stamp only breaks ties at the resulting rank (#14027).
 pub fn python_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
     let observers = finding.headline_observers();
+    let has_observer_evidence = finding.has_headline_observer_evidence();
     let eligible = |row: &RelatedTest| {
         finding.headline_candidate(row)
-            && (observers.is_empty()
+            && (!has_observer_evidence
                 || observers
                     .iter()
                     .any(|observer| std::ptr::eq(*observer, row)))

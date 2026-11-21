@@ -15,10 +15,31 @@ impl RelatedTest {
         )
     }
 
+    fn uncertain_preview_relation<'a>(&self, finding: &'a Finding) -> Option<&'a str> {
+        if self.relation_reason.is_some()
+            || !matches!(
+                finding.language,
+                Some(LanguageId::Python | LanguageId::TypeScript | LanguageId::JavaScript)
+            )
+        {
+            return None;
+        }
+        finding
+            .evidence
+            .iter()
+            .filter_map(|line| line.strip_prefix("related_test_uncertain: "))
+            .find_map(|value| {
+                let (relation, name) = value.split_once(" (")?;
+                (name.strip_suffix(')')? == self.name).then_some(relation)
+            })
+    }
+
     pub(super) fn headline_has_path(&self, finding: &Finding) -> bool {
         // A missing relation is the legacy representation, including Python's
         // adapter. Its alignment and row grade can supply independent evidence.
-        if self.miss == Some(RelatedTestMiss::NoCallPath) {
+        if self.miss == Some(RelatedTestMiss::NoCallPath)
+            || self.uncertain_preview_relation(finding).is_some()
+        {
             return false;
         }
         if self.relation_reason == Some(super::RelationReason::ImportPathAffinity)
@@ -83,7 +104,17 @@ impl Finding {
     pub fn missing_related_test_headline(&self) -> String {
         let only_location_matches = !self.related_tests.is_empty()
             && self.related_tests.iter().all(|row| {
-                row.relation_reason.is_some_and(|reason| {
+                matches!(
+                    row.uncertain_preview_relation(self),
+                    Some(
+                        "same_stem"
+                            | "test_name_similarity"
+                            | "fixture_name"
+                            | "same_file_proximity"
+                            | "describe_name"
+                            | "test_name"
+                    )
+                ) || row.relation_reason.is_some_and(|reason| {
                     reason.is_proximity_only() || reason == super::RelationReason::OwnerNamedTest
                 })
             });
@@ -112,6 +143,13 @@ impl Finding {
             && row.miss.is_none()
             && row.headline_has_path(self))
         .then_some(row)
+    }
+
+    pub(super) fn has_headline_observer_evidence(&self) -> bool {
+        self.evidence.iter().any(|line| {
+            line.starts_with("related_test_observer: ")
+                || line.starts_with("related_test_observer_missing: ")
+        })
     }
 
     pub(super) fn headline_observers(&self) -> Vec<&RelatedTest> {
