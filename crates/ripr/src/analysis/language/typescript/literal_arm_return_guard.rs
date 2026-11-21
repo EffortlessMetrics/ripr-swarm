@@ -74,22 +74,25 @@ pub(crate) fn literal_arm_return(
     if source.lines().nth(changed).map(str::trim) != Some(line_text.trim()) {
         return None;
     }
-    let returns = owner_returns(&owner.file, source)?;
-    // `undefined` is an ordinary identifier: a parameter, local, module
-    // binding, or a comment between `const` and the name can shadow the
-    // global, and the recorded source cannot prove which one a
-    // `return undefined` reads. Decline the rule rather than treat it as a
-    // scalar; a bare `return;` is the same unreadable value here.
-    if returns
-        .iter()
-        .any(|(_, value)| *value == Some(ArmConstant::Undefined))
-    {
+    let (returns, binds_undefined) = owner_returns(&owner.file, source)?;
+    // `undefined` is an ordinary identifier: a parameter or a top-level
+    // declaration may bind it, and the recorded source cannot prove which
+    // one a `return undefined` reads. Decline only when such a binding is
+    // proven; otherwise an `undefined` return (or a bare `return;`) is an
+    // unreadable other arm, not a scalar that disables the changed arm.
+    if binds_undefined {
         return None;
     }
     let mut changed_seen = false;
     let mut new_value_shared = false;
     for (return_line, value) in &returns {
         let value = value.as_ref()?;
+        // A bare `return;` or a global `return undefined;` yields no literal,
+        // so it cannot be the source of an assertion expecting one and does
+        // not make the changed arm's old literal ambiguous.
+        if *value == ArmConstant::Undefined {
+            continue;
+        }
         if *return_line == changed {
             if changed_seen || *value != new_value {
                 return None;
@@ -323,10 +326,14 @@ fn scalar_constant(text: &str) -> Option<ArmConstant> {
 }
 
 /// Every return statement at the owner's own function level, as (0-based
-/// line within `source`, its value when a scalar literal). `None` when the
-/// owner does not parse, is a generator or a concise arrow, or declares no
+/// line within `source`, its value when a scalar literal), and whether a
+/// top-level declaration binds the name `undefined`. `None` when the owner
+/// does not parse, is a generator or a concise arrow, or declares no
 /// function body this reader can locate.
-fn owner_returns(file: &Path, source: &str) -> Option<Vec<(usize, Option<ArmConstant>)>> {
+fn owner_returns(
+    file: &Path,
+    source: &str,
+) -> Option<(Vec<(usize, Option<ArmConstant>)>, bool)> {
     for (prefix, suffix) in WRAPPERS {
         let wrapped = format!("{prefix}{source}{suffix}");
         let prefix_lines = prefix.matches('\n').count();
@@ -342,18 +349,20 @@ fn owner_returns(file: &Path, source: &str) -> Option<Vec<(usize, Option<ArmCons
                 owners: 0,
                 refused: false,
                 returns: Vec::new(),
+                binds_undefined: false,
             };
             oxc_ast_visit::Visit::visit_program(&mut collector, &parsed.program);
             if collector.refused || collector.owners != 1 {
                 return None;
             }
-            Some(
+            Some((
                 collector
                     .returns
                     .into_iter()
                     .map(|(line, value)| (line.saturating_sub(prefix_lines), value))
                     .collect::<Vec<_>>(),
-            )
+                collector.binds_undefined,
+            ))
         })
         .ok()
         .flatten();
@@ -375,6 +384,9 @@ struct ReturnCollector<'t> {
     owners: usize,
     refused: bool,
     returns: Vec<(usize, Option<ArmConstant>)>,
+    /// A top-level declaration binds the name `undefined`, so a
+    /// `return undefined` may read it rather than the global.
+    binds_undefined: bool,
 }
 
 impl ReturnCollector<'_> {
@@ -382,11 +394,68 @@ impl ReturnCollector<'_> {
         self.newlines
             .partition_point(|&newline| newline < offset as usize)
     }
+
+    /// Whether a top-level declaration binds the name `undefined`. The AST
+    /// sees through comments and formatting, so `const /* shadow */
+    /// undefined` is caught where a source substring scan missed it.
+    fn note_top_level_binding(&mut self, kind: oxc_ast::ast_kind::AstKind<'_>) {
+        use oxc_ast::ast::{BindingPattern, ImportDeclarationSpecifier};
+        use oxc_ast::ast_kind::AstKind;
+        match kind {
+            AstKind::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    if let BindingPattern::BindingIdentifier(id) = &declarator.id
+                        && id.name.as_str() == "undefined"
+                    {
+                        self.binds_undefined = true;
+                    }
+                }
+            }
+            AstKind::Function(function) => {
+                if function
+                    .id
+                    .as_ref()
+                    .is_some_and(|id| id.name.as_str() == "undefined")
+                {
+                    self.binds_undefined = true;
+                }
+            }
+            AstKind::Class(class) => {
+                if class
+                    .id
+                    .as_ref()
+                    .is_some_and(|id| id.name.as_str() == "undefined")
+                {
+                    self.binds_undefined = true;
+                }
+            }
+            AstKind::ImportDeclaration(import) => {
+                for specifier in import.specifiers.iter().flatten() {
+                    let local = match specifier {
+                        ImportDeclarationSpecifier::ImportSpecifier(specifier) => &specifier.local,
+                        ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                            &specifier.local
+                        }
+                        ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                            &specifier.local
+                        }
+                    };
+                    if local.name.as_str() == "undefined" {
+                        self.binds_undefined = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl<'a> oxc_ast_visit::Visit<'a> for ReturnCollector<'_> {
     fn enter_node(&mut self, kind: oxc_ast::ast_kind::AstKind<'a>) {
         use oxc_ast::ast_kind::AstKind;
+        if self.depth == 0 {
+            self.note_top_level_binding(kind);
+        }
         let refused = match kind {
             AstKind::Function(function) => function.generator || function.body.is_none(),
             AstKind::ArrowFunctionExpression(arrow) => arrow.expression,

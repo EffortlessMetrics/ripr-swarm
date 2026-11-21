@@ -155,7 +155,7 @@ fn a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused() {
 }
 
 #[test]
-fn an_undefined_return_is_refused_without_a_proven_binding() {
+fn an_undefined_return_is_refused_only_with_a_proven_binding() {
     // A module-level binding and a comment between `const` and the name both
     // shadow the global; the recorded source cannot prove which one a
     // `return undefined` reads, so the rule declines instead of treating the
@@ -174,6 +174,12 @@ fn an_undefined_return_is_refused_without_a_proven_binding() {
             None
         );
     }
+    // Without a binding the `undefined` return is an unreadable other arm,
+    // not a reason to disable the rule: the changed arm is still located.
+    let global = "export function dir(n: number): unknown {\n  if (n === 1) {\n    return 7;\n  }\n  return undefined;\n}\n";
+    assert!(
+        literal_arm_return(&owner(global), 12, "    return 7;", Some("    return 5;")).is_some()
+    );
     // Numeric control: the same shape with numbers still locates the arm.
     let numeric = "export function dir(n: number): number {\n  if (n === 1) {\n    return 7;\n  }\n  return 2;\n}\n";
     assert!(
@@ -316,6 +322,31 @@ fn an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm() -> Result<(), 
             finding.missing
         );
     }
+    Ok(())
+}
+
+/// A global `return undefined;` fallback is an unreadable other arm, not a
+/// reason to disable the rule: the changed arm is still withheld.
+#[test]
+fn a_global_undefined_fallback_keeps_the_arm_withheld() -> Result<(), String> {
+    let source = "export function dir(n: number): string | undefined {\n  switch (n) {\n    case 1:\n      return 'one';\n    case 2:\n      return 'two';\n    default:\n      return 'other';\n  }\n  return undefined;\n}\n";
+    let finding = finding_at(
+        "arm-undefined-fallback",
+        source,
+        4,
+        "      return 'one';",
+        "      return 'uno';",
+        &vitest("    expect(dir(2)).toBe('two');\n"),
+    )?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("expect other arms' results (`'two'`)")),
+        "{:?}",
+        finding.missing
+    );
     Ok(())
 }
 

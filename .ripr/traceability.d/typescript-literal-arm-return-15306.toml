@@ -13,6 +13,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::an_undefined_return_is_refused_only_with_a_proven_binding",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_global_undefined_fallback_keeps_the_arm_withheld",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::an_unreadable_expected_side_keeps_the_verdict",
   "crates/ripr/src/analysis/language/typescript/tests/literal_arm_return_tests.rs::a_lookup_that_is_not_all_distinct_literals_keeps_exposed",
   "fixtures/typescript_vitest_unpinned_literal_arm_return",
