@@ -873,7 +873,9 @@ mod tests {
         )?;
         let adjacent = "tests/extra/cli_help_hierarchy.rs";
         let error = refusal("ripr", &[("src/lib.rs", ""), (adjacent, "")])?;
-        assert!(error.contains(adjacent), "{error}");
+        if !error.contains(adjacent) {
+            return Err(format!("missing refusal for {adjacent}: {error}"));
+        }
         let error = refusal(
             "ripr-contract",
             &[
@@ -884,7 +886,9 @@ mod tests {
             ],
         )?;
         for path in RIPR_PACKAGED_HELP_HARNESS {
-            assert!(error.contains(path), "{error}");
+            if !error.contains(path) {
+                return Err(format!("missing ripr-contract refusal for {path}: {error}"));
+            }
         }
         Ok(())
     }
