@@ -823,7 +823,10 @@ impl Snapshot {
         }
         Err(AttemptFailure::new(
             CODE_ITEM_NOT_FOUND,
-            format!("no canonical item {id} exists in the current snapshot"),
+            format!(
+                "no canonical item {} exists in the current snapshot",
+                super::escape_echoed_argument(id)
+            ),
             "list the current canonical ids with ripr_list_gaps, then retry",
         ))
     }
@@ -1019,7 +1022,10 @@ impl WorkspaceSession {
         {
             return Err(AttemptFailure::new(
                 CODE_STALE_SNAPSHOT,
-                format!("snapshot {requested} is not the current completed snapshot"),
+                format!(
+                    "snapshot {} is not the current completed snapshot",
+                    super::escape_echoed_argument(requested)
+                ),
                 "re-read ripr_workspace_status for the current snapshot identity, then retry",
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));

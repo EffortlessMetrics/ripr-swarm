@@ -16,6 +16,43 @@ use std::path::PathBuf;
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 
+/// Characters echoed from caller-supplied arguments into error text, before
+/// the `...` truncation marker.
+const MAX_ECHO_CHARS: usize = 256;
+
+/// The one escaping rule for every caller-supplied value echoed into a
+/// failure detail (canonical_id, class, snapshot_id, attempt_id, language).
+/// Control characters (ESC, newline, ...) and invisible format characters
+/// (bidi marks, zero-width characters, BOM) are rendered as visible escapes so
+/// an echoed value can neither forge a line, drive a terminal, nor reorder the
+/// surrounding text. The echo is capped so a large value cannot push the
+/// error past the response bound.
+pub(super) fn escape_echoed_argument(text: &str) -> String {
+    let mut out = String::new();
+    for (index, character) in text.chars().enumerate() {
+        if index == MAX_ECHO_CHARS {
+            out.push_str("...");
+            break;
+        }
+        if character.is_control() {
+            out.extend(character.escape_default());
+        } else if matches!(
+            character,
+            '\u{061C}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206F}'
+                | '\u{FEFF}'
+        ) {
+            out.extend(character.escape_unicode());
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
+
 /// Largest JSON-serialized request id (quotes and escapes included) the
 /// transport admits. JSON-RPC ids are correlation tokens, not payloads; an
 /// id near the response cap leaves no room for any correlated reply and

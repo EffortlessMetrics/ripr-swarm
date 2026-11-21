@@ -451,14 +451,16 @@ fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
     let (detail, recovery) = if root_present {
         (
             format!(
-                "no repair attempt or receipt `{attempt_id}` is held by this server session, and no durable attempt manifest in this workspace root's store has that identity. Transactions created by ripr_prepare_repair live only in this server's memory (they are never written to the durable store), so one from an earlier server process or past the 64-entry superseded bound is gone"
+                "no repair attempt or receipt `{}` is held by this server session, and no durable attempt manifest in this workspace root's store has that identity. Transactions created by ripr_prepare_repair live only in this server's memory (they are never written to the durable store), so one from an earlier server process or past the 64-entry superseded bound is gone",
+                super::escape_echoed_argument(attempt_id)
             ),
             "if the id came from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again to create a current transaction; durable attempts come from the CLI repair workflow and are listed by ripr_list_repair_attempts",
         )
     } else {
         (
             format!(
-                "no repair attempt or receipt `{attempt_id}` exists in this session, and the workspace root is unavailable so the durable store cannot be read"
+                "no repair attempt or receipt `{}` exists in this session, and the workspace root is unavailable so the durable store cannot be read",
+                super::escape_echoed_argument(attempt_id)
             ),
             "restart the server with `ripr mcp --stdio --root <repository>` and retry",
         )
@@ -490,7 +492,10 @@ fn load_durable_attempt(
             RepairAttemptInventoryEntry::Invalid { directory, .. } if directory == attempt_id => {
                 return Err(AttemptFailure::new(
                     CODE_ATTEMPT_INVALID,
-                    format!("repair attempt `{attempt_id}` failed canonical validation"),
+                    format!(
+                        "repair attempt `{}` failed canonical validation",
+                        super::escape_echoed_argument(attempt_id)
+                    ),
                     "read ripr_list_repair_attempts for the invalid directory identity; inspect `ripr agent status` for the full canonical validation diagnostic",
                 ));
             }
@@ -500,7 +505,8 @@ fn load_durable_attempt(
     Err(AttemptFailure::new(
         CODE_ATTEMPT_NOT_FOUND,
         format!(
-            "no durable repair attempt manifest `{attempt_id}` exists in this workspace root's store. Transactions created by ripr_prepare_repair are in-memory session state and never appear in the durable store"
+            "no durable repair attempt manifest `{}` exists in this workspace root's store. Transactions created by ripr_prepare_repair are in-memory session state and never appear in the durable store",
+            super::escape_echoed_argument(attempt_id)
         ),
         "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id; for an id from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again",
     ))
