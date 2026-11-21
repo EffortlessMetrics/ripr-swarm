@@ -557,7 +557,8 @@ guidance instead of `cargo install ripr`.
 
 When the download never reached its host (no DNS answer, a refused or dropped
 connection, or the 30-second fetch timeout), the message says so and names the
-offline route: check the network connection or proxy and retry, or set
+offline route: check the network connection and retry (behind a proxy, set VS Code
+`http.proxy` and keep `http.proxySupport` on), or set
 `ripr.server.path` to a `ripr` binary already on the machine
 (`ripr.server.downloadBaseUrl` for a mirror).
 
