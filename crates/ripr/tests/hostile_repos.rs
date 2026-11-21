@@ -2837,3 +2837,59 @@ fn fifo_typescript_config_files_do_not_block_the_run() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// `--committed` judges HEAD, so a staged alternate layout of a path-less
+/// `[[bin]]` under `autobins = false` (`src/bin/extra/main.rs` beside the
+/// committed `src/bin/extra.rs`) must not drop the committed binary's root
+/// (#15892 review). Without the staged file the change is checked; with it,
+/// the committed-history run still checks the same change.
+#[test]
+fn committed_run_keeps_a_declared_bin_despite_a_staged_alternate_layout() -> Result<(), String> {
+    let scratch = Scratch::new("staged-bin-layout")?;
+    let root = scratch.path.join("repo");
+    let manifest = "[package]\nname = \"hx\"\nversion = \"0.0.0\"\nedition = \"2021\"\nautobins = false\n\n[[bin]]\nname = \"extra\"\n\n[workspace]\n";
+    let w = |rel: &str, body: &str| -> Result<(), String> {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+        fs::write(path, body).map_err(|e| format!("write {rel} failed: {e}"))
+    };
+    fs::create_dir_all(&root).map_err(|e| format!("mkdir root failed: {e}"))?;
+    git(&root, &["init", "-q", "-b", "main"])?;
+    w("Cargo.toml", manifest)?;
+    w("src/lib.rs", "pub fn unrelated() {}\n")?;
+    w(
+        "src/bin/extra.rs",
+        "fn bulk(qty: u32) -> bool {\n    qty > 10\n}\n\nfn main() {\n    println!(\"{}\", bulk(3));\n}\n",
+    )?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feat"])?;
+    w(
+        "src/bin/extra.rs",
+        "fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n\nfn main() {\n    println!(\"{}\", bulk(3));\n}\n",
+    )?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "change"])?;
+
+    let before = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&before, "committed bin before staging")?;
+    assert!(
+        summary_line(&before).starts_with("Summary: 2 changed behaviors checked: "),
+        "premise: the committed bin change is checked\n{}",
+        before.stdout
+    );
+
+    w("src/bin/extra/main.rs", "fn main() {}\n")?;
+    git(&root, &["add", "-A"])?;
+    let after = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&after, "committed bin with a staged alternate layout")?;
+    assert_eq!(
+        summary_line(&before),
+        summary_line(&after),
+        "a staged alternate layout must not change the committed run\n{}",
+        after.stdout
+    );
+    Ok(())
+}
