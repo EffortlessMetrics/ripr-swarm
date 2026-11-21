@@ -1124,6 +1124,11 @@ in `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs`,
   `fixtures/match_arm_proximity_confirmation_not_credited` and its control
   `fixtures/match_arm_proximity_wrapper_confirms`, registered in the honesty
   corpus.
+- A predicate assertion that discards the owner call's value (#14206):
+  `fixtures/rust_predicate_owner_value_masked_is_some`,
+  `fixtures/rust_predicate_owner_value_masked_tuple_projection` and their
+  control `fixtures/rust_predicate_owner_value_observed_payload`, registered in
+  the honesty corpus (#14346).
 - 9 new golden fixtures (see traceability.toml for the full list).
 - `crates/ripr/src/analysis/classifier.rs` — 2 existing tests updated.
 
