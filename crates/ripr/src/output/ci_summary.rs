@@ -170,8 +170,18 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
 
 /// The checkout path as `pwd -P` and `$PWD` spelled it for the step.
 fn repo_relative_for(root: &Path) -> RepoRelative {
-    let physical = fs::canonicalize(root)
+    let canonical = fs::canonicalize(root).ok();
+    let physical = canonical
+        .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // Producers print command roots in their human display spelling
+    // (`command_root_display`): on Windows that is forward-slashed without the
+    // verbatim prefix, not the native canonical spelling. Match it too (#15858).
+    let display = canonical
+        .as_deref()
+        .map(crate::output::path::human_path)
+        .filter(|display| *display != physical)
         .unwrap_or_default();
     // Like the shell, trust `$PWD` only while it still names the working
     // directory; otherwise the logical path is the physical one.
@@ -196,6 +206,7 @@ fn repo_relative_for(root: &Path) -> RepoRelative {
         .unwrap_or_default();
     RepoRelative {
         physical: physical.into_bytes(),
+        display: display.into_bytes(),
         logical: logical.into_bytes(),
     }
 }

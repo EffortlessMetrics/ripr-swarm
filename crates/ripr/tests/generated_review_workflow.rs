@@ -5589,7 +5589,9 @@ fn the_pull_request_comment_states_a_blocking_gate() -> Result<(), Box<dyn Error
 /// #15858: the start-here commands and paths a packet wrote with the
 /// checkout path are shown from the repository root in the real
 /// `reports ci-summary`, so they paste into the reader's own checkout. A
-/// value that does not name the checkout is left as written.
+/// value that does not name the checkout is left as written. The
+/// missing-base fetch (`selected.next_command`) and the first-action packet
+/// that stands in when start-here is absent get the same rewrite.
 #[cfg(unix)]
 #[test]
 fn start_here_commands_in_the_summary_are_shown_from_the_repository_root()
@@ -5597,38 +5599,77 @@ fn start_here_commands_in_the_summary_are_shown_from_the_repository_root()
     let root = replay::unique_temp_dir("start-here-root")?;
     let checkout = fs::canonicalize(&root)?;
     let abs = checkout.to_str().ok_or("checkout path is not UTF-8")?;
-    fs::create_dir_all(root.join("target/ripr/reports"))?;
-    let packet = serde_json::json!({
-        "status": "advisory",
-        "selected": {
-            "state": "repair_ready",
-            "repair_command": format!("ripr agent repair --root {abs} --seam-id abc --phase before"),
-            "verify_command": format!("cargo test --manifest-path {abs}/Cargo.toml discount"),
-            "receipt_path": format!("{abs}/target/ripr/receipts/abc.json"),
-            "repair": { "target_file": "src/lib.rs", "related_test": "tests/pricing.rs" },
-        },
-        "warnings": [],
-    });
-    fs::write(
-        root.join("target/ripr/reports/start-here.json"),
-        serde_json::to_vec(&packet)?,
-    )?;
-    let output = replay::ripr_with_env(
-        &root,
-        &["reports", "ci-summary", "--root", "."],
-        &["GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "RIPR_GATE_MODE"],
-        &[],
-    )?;
-    let summary = String::from_utf8(output.stdout)?;
-    if !output.status.success() {
-        return Err(format!(
-            "ci-summary failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
+    let reports = root.join("target/ripr/reports");
+    fs::create_dir_all(&reports)?;
+    let summary = |packets: &[(&str, serde_json::Value)]| -> Result<String, Box<dyn Error>> {
+        for name in ["start-here.json", "first-useful-action.json"] {
+            let _ = fs::remove_file(reports.join(name));
+        }
+        for (name, packet) in packets {
+            fs::write(reports.join(name), serde_json::to_vec(packet)?)?;
+        }
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &["GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "RIPR_GATE_MODE"],
+            &[],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "ci-summary failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8(output.stdout)?)
+    };
+    // The directory is kept when a run fails, for inspection.
+    let repair_ready = summary(&[(
+        "start-here.json",
+        serde_json::json!({
+            "status": "advisory",
+            "selected": {
+                "state": "repair_ready",
+                "repair_command": format!("ripr agent repair --root {abs} --seam-id abc --phase before"),
+                "verify_command": format!("cargo test --manifest-path {abs}/Cargo.toml discount"),
+                "receipt_path": format!("{abs}/target/ripr/receipts/abc.json"),
+                "repair": { "target_file": "src/lib.rs", "related_test": "tests/pricing.rs" },
+            },
+            "warnings": [],
+        }),
+    )])?;
+    let missing_base = summary(&[(
+        "start-here.json",
+        serde_json::json!({
+            "status": "blocked",
+            "selected": {
+                "state": "missing_base",
+                "next_command": format!("git -C {abs} fetch --no-tags origin main"),
+            },
+            "warnings": [],
+        }),
+    )])?;
+    let first_action = summary(&[(
+        "first-useful-action.json",
+        serde_json::json!({
+            "status": "advisory",
+            "action_kind": "repair",
+            "commands": {
+                "repair": format!("ripr agent repair --root {abs} --seam-id abc --phase before"),
+                "context_packet": format!("ripr agent packet --root {abs} --seam-id abc"),
+                "verify": format!("cargo test --manifest-path {abs}/Cargo.toml discount"),
+                "receipt": format!("ripr agent receipt --root {abs} --seam-id abc"),
+            },
+            "warnings": [],
+        }),
+    )])?;
+    for (case, text) in [
+        ("repair_ready", &repair_ready),
+        ("missing_base", &missing_base),
+        ("first_action", &first_action),
+    ] {
+        assert!(!text.contains(abs), "{case}\n{text}");
     }
-    let _ = fs::remove_dir_all(&root);
-    assert!(!summary.contains(abs), "{summary}");
     for line in [
         "- Start repair: `ripr agent repair --root . --seam-id abc --phase before`\n",
         "- Receipt path: `./target/ripr/receipts/abc.json`\n",
@@ -5636,12 +5677,26 @@ fn start_here_commands_in_the_summary_are_shown_from_the_repository_root()
         "- Repair target: `src/lib.rs`\n",
         "- Related test: `tests/pricing.rs`\n",
     ] {
-        assert!(summary.contains(line), "{line}\n{summary}");
+        assert!(repair_ready.contains(line), "{line}\n{repair_ready}");
     }
     assert!(
-        summary.contains("cargo test --manifest-path ./Cargo.toml discount`"),
-        "{summary}"
+        repair_ready.contains("cargo test --manifest-path ./Cargo.toml discount`"),
+        "{repair_ready}"
     );
+    assert!(
+        missing_base
+            .contains("- Safe next action command: `git -C . fetch --no-tags origin main`\n"),
+        "{missing_base}"
+    );
+    for line in [
+        "- Repair start: `ripr agent repair --root . --seam-id abc --phase before`\n",
+        "- Agent packet: `ripr agent packet --root . --seam-id abc`\n",
+        "ripr agent receipt --root . --seam-id abc`\n",
+        "cargo test --manifest-path ./Cargo.toml discount`\n",
+    ] {
+        assert!(first_action.contains(line), "{line}\n{first_action}");
+    }
+    let _ = fs::remove_dir_all(&root);
     Ok(())
 }
 
