@@ -1,0 +1,11 @@
+# Mocha verify command launches the local binary; the npm-init placeholder
+# test script is never a verify route (#15340).
+[[extend]]
+id = "RIPR-SPEC-0085"
+tests = [
+  "crates/ripr/tests/typescript_mocha_verify_command.rs::mocha_project_verify_command_launches_the_local_mocha_binary",
+  "crates/ripr/tests/typescript_mocha_verify_command.rs::placeholder_test_script_without_a_framework_emits_no_npm_test_command",
+  "crates/ripr/src/analysis/language/typescript/package.rs::tests::verify_command_framework_mocha_launches_the_local_binary",
+  "crates/ripr/src/analysis/language/typescript/package.rs::tests::verify_command_never_routes_through_the_npm_init_placeholder_script",
+  "crates/ripr/src/analysis/language/typescript/package.rs::tests::manifest_placeholder_script_is_recognized_only_for_the_npm_init_default",
+]

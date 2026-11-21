@@ -1,0 +1,1838 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/hidden_row_span_fallback/input",
+  "config_path": "<cwd>/fixtures/hidden_row_span_fallback/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":12,"findings":12,"exposed":0,"weakly_exposed":12,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:673b680edda72ed54f5476ef0c51ebaaf06b376786375b4b6b49d2937ddd6d9a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":24,"candidate_line_count":12,"probe_count":12,"finding_count":12},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_limits.ts:typescript_preview:c71c6b41",
+      "canonical_gap_id": "gap:typescript:typescript_preview:c71c6b41",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:c71c6b41",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 3,
+        "expression": "        throw new RangeError(\"read limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"read limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"read limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"read limit exceeded\"); (line 3)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"read limit exceeded\": changed TypeScript thrown or rejected error at line 3 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"read limit exceeded\");","line":3}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"read limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:c71c6b41;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"read limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 3 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"read limit exceeded\");","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"read limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 3 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"read limit exceeded\");","line":3}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:3: `throw new RangeError(\"read limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"read limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 3,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:c71c6b41;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:c71c6b41"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"read limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"read limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:edfdf851",
+      "canonical_gap_id": "gap:typescript:typescript_preview:edfdf851",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:edfdf851",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 6,
+        "expression": "        throw new RangeError(\"write limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"write limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"write limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"write limit exceeded\"); (line 6)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"write limit exceeded\": changed TypeScript thrown or rejected error at line 6 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"write limit exceeded\");","line":6}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"write limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=6;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:edfdf851;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"write limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 6 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"write limit exceeded\");","line":6}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"write limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 6 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"write limit exceeded\");","line":6}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:6: `throw new RangeError(\"write limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"write limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 6,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=6;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:edfdf851;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:edfdf851"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"write limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"write limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:b3ca8e4b",
+      "canonical_gap_id": "gap:typescript:typescript_preview:b3ca8e4b",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:b3ca8e4b",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 9,
+        "expression": "        throw new RangeError(\"connect limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"connect limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"connect limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"connect limit exceeded\"); (line 9)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"connect limit exceeded\": changed TypeScript thrown or rejected error at line 9 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"connect limit exceeded\");","line":9}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"connect limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:b3ca8e4b;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"connect limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 9 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"connect limit exceeded\");","line":9}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"connect limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 9 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"connect limit exceeded\");","line":9}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:9: `throw new RangeError(\"connect limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"connect limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 9,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:b3ca8e4b;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:b3ca8e4b"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"connect limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"connect limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:e73535f4",
+      "canonical_gap_id": "gap:typescript:typescript_preview:e73535f4",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:e73535f4",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 12,
+        "expression": "        throw new RangeError(\"idle limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"idle limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"idle limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"idle limit exceeded\"); (line 12)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"idle limit exceeded\": changed TypeScript thrown or rejected error at line 12 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"idle limit exceeded\");","line":12}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"idle limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=12;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:e73535f4;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"idle limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 12 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"idle limit exceeded\");","line":12}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"idle limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 12 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"idle limit exceeded\");","line":12}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:12: `throw new RangeError(\"idle limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"idle limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 12,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=12;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:e73535f4;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:e73535f4"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"idle limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"idle limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:4de4af75",
+      "canonical_gap_id": "gap:typescript:typescript_preview:4de4af75",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:4de4af75",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 15,
+        "expression": "        throw new RangeError(\"retry limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"retry limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"retry limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"retry limit exceeded\"); (line 15)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"retry limit exceeded\": changed TypeScript thrown or rejected error at line 15 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"retry limit exceeded\");","line":15}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"retry limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=15;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:4de4af75;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"retry limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 15 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"retry limit exceeded\");","line":15}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"retry limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 15 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"retry limit exceeded\");","line":15}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:15: `throw new RangeError(\"retry limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"retry limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 15,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=15;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:4de4af75;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:4de4af75"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"retry limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"retry limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:9048dd58",
+      "canonical_gap_id": "gap:typescript:typescript_preview:9048dd58",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:9048dd58",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 18,
+        "expression": "        throw new RangeError(\"burst limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"burst limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"burst limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"burst limit exceeded\"); (line 18)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"burst limit exceeded\": changed TypeScript thrown or rejected error at line 18 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"burst limit exceeded\");","line":18}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"burst limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=18;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:9048dd58;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"burst limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 18 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"burst limit exceeded\");","line":18}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"burst limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 18 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"burst limit exceeded\");","line":18}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:18: `throw new RangeError(\"burst limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"burst limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 18,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=18;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:9048dd58;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:9048dd58"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"burst limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"burst limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:963448c8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:963448c8",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:963448c8",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 21,
+        "expression": "        throw new RangeError(\"flush limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"flush limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"flush limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"flush limit exceeded\"); (line 21)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"flush limit exceeded\": changed TypeScript thrown or rejected error at line 21 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"flush limit exceeded\");","line":21}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"flush limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=21;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:963448c8;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"flush limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 21 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"flush limit exceeded\");","line":21}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"flush limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 21 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"flush limit exceeded\");","line":21}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:21: `throw new RangeError(\"flush limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"flush limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 21,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=21;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:963448c8;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:963448c8"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"flush limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"flush limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:44074a4c",
+      "canonical_gap_id": "gap:typescript:typescript_preview:44074a4c",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:44074a4c",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 24,
+        "expression": "        throw new RangeError(\"sync limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"sync limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"sync limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"sync limit exceeded\"); (line 24)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"sync limit exceeded\": changed TypeScript thrown or rejected error at line 24 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"sync limit exceeded\");","line":24}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"sync limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=24;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:44074a4c;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"sync limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 24 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"sync limit exceeded\");","line":24}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"sync limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 24 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"sync limit exceeded\");","line":24}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:24: `throw new RangeError(\"sync limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"sync limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 24,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=24;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:44074a4c;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:44074a4c"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"sync limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"sync limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:b1f7586f",
+      "canonical_gap_id": "gap:typescript:typescript_preview:b1f7586f",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:b1f7586f",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 27,
+        "expression": "        throw new RangeError(\"open limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"open limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"open limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"open limit exceeded\"); (line 27)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"open limit exceeded\": changed TypeScript thrown or rejected error at line 27 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"open limit exceeded\");","line":27}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"open limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=27;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:b1f7586f;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"open limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 27 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"open limit exceeded\");","line":27}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"open limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 27 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"open limit exceeded\");","line":27}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:27: `throw new RangeError(\"open limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"open limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 27,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=27;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:b1f7586f;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:b1f7586f"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"open limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"open limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:b4cb9ccc",
+      "canonical_gap_id": "gap:typescript:typescript_preview:b4cb9ccc",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:b4cb9ccc",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 30,
+        "expression": "        throw new RangeError(\"close limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"close limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"close limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"close limit exceeded\"); (line 30)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"close limit exceeded\": changed TypeScript thrown or rejected error at line 30 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"close limit exceeded\");","line":30}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"close limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=30;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:b4cb9ccc;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"close limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 30 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"close limit exceeded\");","line":30}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"close limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 30 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"close limit exceeded\");","line":30}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:30: `throw new RangeError(\"close limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"close limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 30,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=30;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:b4cb9ccc;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:b4cb9ccc"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"close limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"close limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:873e8038",
+      "canonical_gap_id": "gap:typescript:typescript_preview:873e8038",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:873e8038",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 33,
+        "expression": "        throw new RangeError(\"seek limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"seek limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"seek limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"seek limit exceeded\"); (line 33)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"seek limit exceeded\": changed TypeScript thrown or rejected error at line 33 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"seek limit exceeded\");","line":33}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"seek limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=33;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:873e8038;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"seek limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 33 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"seek limit exceeded\");","line":33}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"seek limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 33 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"seek limit exceeded\");","line":33}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:33: `throw new RangeError(\"seek limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"seek limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 33,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=33;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:873e8038;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:873e8038"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"seek limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"seek limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_limits.ts:typescript_preview:42193050",
+      "canonical_gap_id": "gap:typescript:typescript_preview:42193050",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_limits.ts:typescript_preview:42193050",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/limits.ts",
+        "line": 36,
+        "expression": "        throw new RangeError(\"poll limit exceeded\");",
+        "owner": "typescript:src/limits.ts::check"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 related test(s) found for owner `check`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"poll limit exceeded\"`."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach weak: 1 related test(s) found for owner `check`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws RangeError matching \"poll limit exceeded\"`.", "local flow reaches error variant: throw new RangeError(\"poll limit exceeded\"); (line 36)", "related test tests/limits.test.ts:1 check smoke uses smoke only oracle: expect(...).toBeTruthy(...)", "missing discriminator throws RangeError matching \"poll limit exceeded\": changed TypeScript thrown or rejected error at line 36 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw new RangeError(\"poll limit exceeded\");","line":36}
+      ],
+      "evidence": ["owner: check", "missing_discriminator: throws RangeError matching \"poll limit exceeded\"", "typescript_oracle_observed: () => check(\"other\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/limits.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limits.ts;line=36;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:42193050;owner=check", "related_test_relation: same_file_proximity (check smoke)", "related_test_uncertain: same_file_proximity (check smoke)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `check`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "throws RangeError matching \"poll limit exceeded\"",
+            "reason": "changed TypeScript thrown or rejected error at line 36 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"poll limit exceeded\");","line":36}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "throws RangeError matching \"poll limit exceeded\"",
+          "reason": "changed TypeScript thrown or rejected error at line 36 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"error_variant","text":"throw new RangeError(\"poll limit exceeded\");","line":36}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "check smoke",
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "expect(...).toBeTruthy(...)"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/limits.ts:36: `throw new RangeError(\"poll limit exceeded\");`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "throws RangeError matching \"poll limit exceeded\"",
+        "oracle_kind": "smoke_only",
+        "oracle_strength": "smoke",
+        "owner": "check",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/limits.test.ts",
+          "line": 1,
+          "name": "check smoke"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Replace or augment the truthiness check with an exact-value toBe/toEqual/toStrictEqual assertion.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/limits.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 36,
+            "owner": "check",
+            "raw": "file=src/limits.ts;line=36;kind=typescript_preview_probe;source_id=probe:src_limits.ts:typescript_preview:42193050;owner=check",
+            "sample": null,
+            "source_id": "probe:src_limits.ts:typescript_preview:42193050"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"poll limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `throws RangeError matching \"poll limit exceeded\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/limits.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/limits.ts","digest":"sha256:bcdcd3471533094a0f37ca280bf727369ba6dc2987c7217d09a914dd6139ab21"}]}
+}

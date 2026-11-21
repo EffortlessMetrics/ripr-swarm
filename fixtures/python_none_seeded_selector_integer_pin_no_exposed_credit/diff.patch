@@ -1,0 +1,11 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -1,6 +1,6 @@
+ def largest(xs):
+     best = None
+     for x in xs:
+-        if best is None or x > best:
++        if best is None or x >= best:
+             best = x
+     return best

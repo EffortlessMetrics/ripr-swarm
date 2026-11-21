@@ -6,11 +6,30 @@ use crate::cli::suggest::unknown_argument;
 use crate::output::first_pr::{FIRST_PR_HELP, FirstPrOptions, first_pr_with_options};
 
 pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
+    run_named(args, "first-pr")
+}
+
+/// The `start-here` alias: identical behavior, but refusals name `start-here`.
+pub(crate) fn start_here(args: &[String]) -> Result<(), String> {
+    run_named(args, "start-here")
+}
+
+fn run_named(args: &[String], command: &'static str) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(());
     }
-    first_pr_with_options(parse_options(args)?)
+    let options = parse_options(args)?;
+    // #15249: a missing or non-directory `--root` is the shared root refusal,
+    // naming the command actually run, before any disclosure or write.
+    // This is the directory check only: packet writes follow `--out-dir`, and
+    // `--check` writes nothing, so an unrelated external `target` link must
+    // not block composing a packet into an independent directory.
+    crate::cli::commands_context::ensure_command_root_dir(
+        std::path::Path::new(&options.root),
+        command,
+    )?;
+    first_pr_with_options(options)
 }
 
 pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
@@ -72,9 +91,12 @@ pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
                 i += 1;
                 options.receipts_dir = non_empty_arg(args, i, "--receipts-dir")?.to_string();
             }
-            "--out-dir" => {
+            // `--output-dir` is the directory spelling `check` uses (#10543
+            // item 4); `--out-dir` stays accepted as a hidden alias so
+            // existing scripts keep working.
+            "--output-dir" | "--out-dir" => {
                 i += 1;
-                options.out_dir = non_empty_arg(args, i, "--out-dir")?.to_string();
+                options.out_dir = non_empty_arg(args, i, "--output-dir")?.to_string();
             }
             "--check" => options.check = true,
             "--run-chain" => options.run_chain = true,
@@ -160,6 +182,17 @@ mod tests {
                     "first-pr typo must suggest --gap-ledger from its help body, got {other:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #10543 item 4: `--output-dir` is the documented spelling and
+    /// `--out-dir` the hidden alias; both set the same directory.
+    #[test]
+    fn output_dir_and_its_out_dir_alias_set_the_same_directory() -> Result<(), String> {
+        for flag in ["--output-dir", "--out-dir"] {
+            let parsed = parse_options(&[flag.to_string(), "reports-here".to_string()])?;
+            assert_eq!(parsed.out_dir, "reports-here", "{flag}");
         }
         Ok(())
     }

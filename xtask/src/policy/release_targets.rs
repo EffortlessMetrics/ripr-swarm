@@ -16,6 +16,7 @@
 //! checked release graph instead of declaring a second one.
 
 mod candidate_registry;
+pub(super) mod milestone_parity;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -327,6 +328,29 @@ fn report_spec() -> PolicyReportSpec<'static> {
 
 /// Evaluate one manifest document. Pure: no filesystem, no network, no clock.
 fn evaluate_release_targets(path: &str, text: &str) -> ReleaseTargetsOutcome {
+    let (graph, violations) = evaluate_release_graph(path, text);
+    ReleaseTargetsOutcome {
+        violations,
+        candidate_registry: None,
+        releases: graph.releases.iter().map(release_summary).collect(),
+        parents_outside_committed_sets: graph
+            .parents
+            .iter()
+            .filter(|parent| parent.counted_in.as_deref() == Some("none"))
+            .count(),
+        prerequisite_edges: graph.prerequisite_edges,
+        rolling_issues: graph.rolling.len(),
+    }
+}
+
+struct ReleaseGraph {
+    releases: Vec<ReleaseRecord>,
+    parents: Vec<ParentRecord>,
+    rolling: Vec<RollingRecord>,
+    prerequisite_edges: usize,
+}
+
+fn evaluate_release_graph(path: &str, text: &str) -> (ReleaseGraph, Vec<String>) {
     let mut violations = Vec::new();
     let (document, mut parse_violations) = crate::parse_ci_ledger_document(path, text);
     for violation in parse_violations.drain(..) {
@@ -359,17 +383,15 @@ fn evaluate_release_targets(path: &str, text: &str) -> ReleaseTargetsOutcome {
     check_prerequisite_ordering(path, &releases, &edges, &mut violations);
     check_referential_closure(path, &releases, &parents, &edges, &rolling, &mut violations);
 
-    ReleaseTargetsOutcome {
+    (
+        ReleaseGraph {
+            releases,
+            parents,
+            rolling,
+            prerequisite_edges: edges.len(),
+        },
         violations,
-        candidate_registry: None,
-        releases: releases.iter().map(release_summary).collect(),
-        parents_outside_committed_sets: parents
-            .iter()
-            .filter(|parent| parent.counted_in.as_deref() == Some("none"))
-            .count(),
-        prerequisite_edges: edges.len(),
-        rolling_issues: rolling.len(),
-    }
+    )
 }
 
 fn release_summary(release: &ReleaseRecord) -> ReleaseSummary {

@@ -356,12 +356,10 @@ pub(crate) fn parse_policy_history_options(
             }
             "--pr-number" => {
                 i += 1;
-                pr_number = Some(non_empty_string_arg(
-                    args,
-                    i,
-                    "--pr-number",
-                    "policy history",
-                )?);
+                let value = non_empty_string_arg(args, i, "--pr-number", "policy history")?;
+                let parsed =
+                    crate::cli::commands_numeric::parse_positive_u64(&value, "--pr-number")?;
+                pr_number = Some(parsed.to_string());
             }
             "--out" => {
                 i += 1;
@@ -392,9 +390,10 @@ pub(crate) fn parse_policy_history_options(
         )
     })?;
     if let Some(jsonl) = out_jsonl.as_ref()
-        && (crate::output::path::same_output_leaf(jsonl, &out)
-            || crate::output::path::same_output_leaf(jsonl, &out_md)
-            || crate::output::path::same_output_leaf(jsonl, &current))
+        && [&out, &out_md, &current].into_iter().any(|path| {
+            crate::output::path::same_output_leaf(jsonl, path)
+                || crate::output::path::output_replaces_input(jsonl, path)
+        })
     {
         return Err(
             "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
@@ -740,6 +739,7 @@ pub(crate) fn parse_policy_suppression_health_options(
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut manifest = PathBuf::from(output::suppressions::SUPPRESSIONS_PATH);
+    let mut manifest_explicit = false;
     let mut out = PathBuf::from(output::suppression_health::DEFAULT_SUPPRESSION_HEALTH_OUT);
     let mut out_md = PathBuf::from(output::suppression_health::DEFAULT_SUPPRESSION_HEALTH_MD_OUT);
 
@@ -757,6 +757,7 @@ pub(crate) fn parse_policy_suppression_health_options(
             "--manifest" => {
                 i += 1;
                 manifest = non_empty_path_arg(args, i, "--manifest", "policy suppression-health")?;
+                manifest_explicit = true;
             }
             "--out" => {
                 i += 1;
@@ -787,6 +788,7 @@ pub(crate) fn parse_policy_suppression_health_options(
     Ok(PolicySuppressionHealthOptions {
         root,
         manifest,
+        manifest_explicit,
         out,
         out_md,
     })

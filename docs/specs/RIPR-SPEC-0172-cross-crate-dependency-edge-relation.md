@@ -219,6 +219,16 @@ same-named `fn` in another crate of the package (an integration test's or a
 binary's root) or an `extern` declaration is no settled rival and keeps
 refusing the pin.
 
+A package is named by its directory below the analysis root, including the
+directories above a `crates/` segment (#15299). A workspace nested below the
+root (`rust/crates/alpha`, `w2/crates/alpha`), as in a mixed-language
+monorepo, keeps its members apart: `w2/crates/alpha` and `w2/crates/beta`
+are two packages whose same-named `fn`s are no rivals of each other, and
+`w1/crates/alpha` and `w2/crates/alpha` in two workspaces are two packages,
+so one workspace's test never relates to the other's owner. Reading the
+nested workspace from the repository root gives the same relation as reading
+it with `--root w2`.
+
 ## Non-Goals
 
 No transitive reach: a dependency-of-a-dependency never admits. No
@@ -370,6 +380,8 @@ The competitor and owner-crate foreign-import rules above still apply.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
+- `crates/ripr/tests/nested_workspace_package_identity.rs::a_member_of_a_workspace_below_the_root_keeps_its_own_test`
+- `crates/ripr/tests/nested_workspace_package_identity.rs::the_same_crate_path_in_two_workspaces_names_two_packages`
 
 ## Path keywords never seed assertion-target affinity (#9171)
 
@@ -425,6 +437,28 @@ into a callable library function. One helper, `root_build_script_unmounted`,
 decides both the relation gate and the wording. Repo-mode seams never come from
 a build script, so `test_grip_evidence` needs no guard. Fixture:
 `fixtures/rust_build_script_no_test_reach`.
+
+## Declared test targets outside `tests/` (#15332)
+
+A `[[test]]` entry whose manifest `path` names a file outside both `tests/`
+and `src/` (`path = "checks/score_check.rs"`) roots an integration-test crate,
+as a `tests/` file does: a call spelled through the package's own library name
+(`my_pkg::clamp_score(..)`) names the owner, so the same-test boundary pairing
+(RIPR-SPEC-0186) reads it like the `tests/score.rs` control. Only the declared
+entry file itself is admitted, and only an entry `cargo test` runs through
+libtest: one spelling `test = false`, `harness = false` or any
+`required-features` keeps the path-shape reading, as do a file no `[[test]]`
+names and a `[[bin]]` entry. Only the analysis root's own package qualifies:
+a member or nested package's declared entry has no package prefix of its own
+in the path-shape keys, so it never reads as the root package's test. Other
+`tests/`-shape consumers (helper hops, `crate::` resolution) keep the
+path-shape reading. The manifest is read through the
+committed-source overlay (`MemberCrates::is_declared_test_target_entry`);
+absent manifest authority answers no.
+
+- `crates/ripr/tests/declared_test_target_crate_name.rs::a_declared_test_target_outside_tests_pairs_its_crate_named_call`
+- `crates/ripr/tests/declared_test_target_crate_name.rs::a_file_no_test_target_declares_stays_uncredited`
+- `crates/ripr/tests/declared_test_target_crate_name.rs::a_member_package_declared_test_never_reads_as_the_root_package`
 
 ## Implementation Mapping
 

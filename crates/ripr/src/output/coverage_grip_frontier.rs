@@ -33,6 +33,7 @@ pub(crate) struct CoverageGripFrontierReport {
     quadrants: CoverageQuadrants,
     interpretation: String,
     warnings: Vec<String>,
+    input_failures: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +94,24 @@ pub(crate) fn build_coverage_grip_frontier_report(
     );
     let quadrants = coverage_quadrants(parsed.coverage.as_ref());
     let mut warnings = parsed.warnings;
+    // Supplied inputs the report could not use, kept apart from the advisory
+    // warnings so the CLI can refuse an explicitly named unusable input.
+    let mut input_failures = warnings.clone();
+    if coverage.status == "unsupported" && input.coverage_path.is_some() {
+        input_failures
+            .push("coverage input has no supported coverage/grip frontier fields".to_string());
+    }
+    if ripr.source.is_none() && input_failures.is_empty() {
+        let supplied = input.ledger_path.is_some()
+            || input.baseline_delta_path.is_some()
+            || input.zero_status_path.is_some();
+        if supplied {
+            input_failures.push(
+                "the supplied PR evidence ledger, baseline delta or RIPR Zero status carried no RIPR movement"
+                    .to_string(),
+            );
+        }
+    }
     if coverage.status == "not_available" {
         warnings.push("coverage input not supplied; coverage axis is not available".to_string());
     } else if coverage.status == "unsupported" {
@@ -127,7 +146,20 @@ pub(crate) fn build_coverage_grip_frontier_report(
         quadrants,
         interpretation,
         warnings,
+        input_failures,
     }
+}
+
+/// The status the report was written with.
+pub(crate) fn coverage_grip_frontier_status(report: &CoverageGripFrontierReport) -> &str {
+    &report.status
+}
+
+/// Supplied inputs the frontier could not use, for the CLI refusal.
+pub(crate) fn coverage_grip_frontier_input_failures(
+    report: &CoverageGripFrontierReport,
+) -> &[String] {
+    &report.input_failures
 }
 
 pub(crate) fn render_coverage_grip_frontier_json(
