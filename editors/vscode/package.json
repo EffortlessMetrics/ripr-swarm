@@ -140,7 +140,7 @@
         "ripr.server.path": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to a ripr executable; a leading ~ means your home directory. Overrides bundled, downloaded, and PATH server resolution.",
+          "description": "Absolute path to a ripr executable; a leading ~ means your home directory. Overrides cached, downloaded, and PATH server resolution. No bundled server ships yet: bundled resolution is planned for future platform-specific VSIXs and is not a live step today.",
           "scope": "resource"
         },
         "ripr.server.args": {
@@ -158,7 +158,7 @@
         "ripr.server.autoDownload": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically download the matching ripr server binary when no configured, bundled, cached, or (while ripr.server.version is empty) compatible PATH server is available. Downloads over HTTPS — by default from github.com/EffortlessMetrics/ripr releases, configurable via ripr.server.downloadBaseUrl — and archives are SHA-256 verified against the release manifest before extraction.",
+          "description": "Automatically download the matching ripr server binary when no configured or cached server is available. A compatible ripr on PATH is checked before the download only while this is enabled and ripr.server.version is empty; a pinned version tries the download first, and PATH remains the fallback when the download does not produce a server or this is disabled. No bundled server ships yet, so bundled resolution is not a live step. Downloads over HTTPS — by default from github.com/EffortlessMetrics/ripr releases, configurable via ripr.server.downloadBaseUrl — and archives are SHA-256 verified against the release manifest before extraction.",
           "scope": "resource"
         },
         "ripr.server.version": {
