@@ -823,6 +823,19 @@ fn refusal_next(
     next
 }
 
+/// The next step for a repair start held only by an uncommitted inline test
+/// target (#11397): commit or stash that file, as `ripr repair` says, then
+/// refresh. Refreshing the unchanged tree cannot lift the hold.
+fn held_target_next(file: &str) -> Value {
+    json!({
+        "kind": "commit_then_refresh",
+        "reason": super::repair_admission::SEAM_GATE_REFUSED,
+        "detail": format!("the repair start is held because `{file}` has uncommitted changes; commit or stash `{file}`, then run ripr_refresh again. Re-running ripr_refresh on the unchanged tree returns the same refusal"),
+        "mcp": { "tool": "ripr_refresh", "arguments": {} },
+        "after_editing_tests": Value::Null,
+    })
+}
+
 impl WorkspaceSession {
     /// The live session transaction for one canonical item of one committed
     /// snapshot, if prepare created one.
@@ -868,6 +881,14 @@ impl WorkspaceSession {
                 item.terminal_static_limit().as_ref(),
             );
             let mut next = next;
+            // A seam held only by an uncommitted inline test target: a refresh
+            // of the same tree reproduces the refusal, so the step is the
+            // commit the CLI names, not an edit-and-recheck loop.
+            if reason == super::repair_admission::SEAM_GATE_REFUSED
+                && let Some(file) = readiness.held_file.as_deref()
+            {
+                next = held_target_next(file);
+            }
             if next["after_editing_tests"].is_object() {
                 next["after_editing_tests"] = verify_after_editing_tests(snapshot.base.as_deref());
             }

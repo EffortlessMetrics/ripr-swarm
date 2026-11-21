@@ -8708,6 +8708,11 @@ pub(crate) fn classify_resolved_owner(
         } else {
             None
         };
+        let unused_default = if weak && untaken.is_none() {
+            ts_unused_default(&post_ladder_context)
+        } else {
+            None
+        };
         if let Some(guard) = untaken {
             verdict.class = ExposureClass::ReachableUnrevealed;
             verdict.discriminate_state = StageState::Unknown;
@@ -8721,6 +8726,18 @@ pub(crate) fn classify_resolved_owner(
                 summary: format!(
                     "No related test call enters `{}`: {}.",
                     guard.condition, guard.observed
+                ),
+            });
+        } else if let Some(unused) = unused_default {
+            verdict.class = ExposureClass::ReachableUnrevealed;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![ts_unused_default_missing(&owner.name, &unused)];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::No,
+                shape: "default_not_applied",
+                summary: format!(
+                    "No related call lets the default of `{}` apply: {}.",
+                    unused.parameter, unused.observed
                 ),
             });
         } else if let Some(shape) =
@@ -9009,6 +9026,13 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::InfectionUnknown if infection.is_some() => {
             "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.".to_string()
+        }
+        ExposureClass::ReachableUnrevealed
+            if infection
+                .as_ref()
+                .is_some_and(|infection| infection.shape == "default_not_applied") =>
+        {
+            "TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted.".to_string()
         }
         ExposureClass::ReachableUnrevealed if infection.is_some() => {
             "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
@@ -9445,6 +9469,13 @@ fn ts_apply_post_ladder_rules(
         )];
         return;
     }
+    // #15393: a changed default parameter value no related call lets apply.
+    if let Some(unused) = ts_unused_default(context) {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![ts_unused_default_missing(&context.owner.name, &unused)];
+        return;
+    }
     // RIPR-SPEC-0246 rule 6: a changed line in a `catch` arm no related test
     // can make run.
     if ts_catch_arm_unreached(context) {
@@ -9814,6 +9845,386 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
                 .join(", ")
         ),
     })
+}
+
+/// The finding line for a default no related call lets apply.
+fn ts_unused_default_missing(owner_name: &str, unused: &TsUnusedDefault) -> String {
+    format!(
+        "The change to `{owner_name}` only moves the default value of `{}`, and every related call passes that argument: {}. The default never applies under the tests, so no assertion can observe it. Add a call that omits the argument.",
+        unused.parameter, unused.observed
+    )
+}
+
+/// The default parameter no related call lets apply, and the calls seen.
+struct TsUnusedDefault {
+    parameter: String,
+    observed: String,
+}
+
+/// #15393: `Some` when the edit changes only one default parameter value of
+/// the owner, and every call that can reach the owner passes a value at that
+/// position that cannot be `undefined`, so the default never applies. Calls
+/// are read from the direct related tests and from the owner's own module;
+/// any other workspace file that names the owner, a non-direct relation, a
+/// shadowed or non-call owner reference, a spread, an identifier argument or
+/// an incomplete workspace scan returns `None`, keeping the verdict.
+/// The arguments of the call at every code reference to `name`: each word
+/// occurrence in `masked` (comments and literals blanked) must open a call
+/// whose arguments parse in `text`. `None` when any reference does not, so a
+/// call the argument reader drops (`name /* c */ ()`, an argument it cannot
+/// balance) refuses instead of leaving only the parsed calls to witness the
+/// default (#15393 review). The mask blanks each character to one space, so
+/// a reference is aligned by character position, not byte offset: a
+/// non-ASCII comment or string keeps the two texts comparable.
+fn ts_calls_at_code_references(text: &str, masked: &str, name: &str) -> Option<Vec<Vec<String>>> {
+    if name.is_empty() {
+        return None;
+    }
+    let text_offsets: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+    let masked_offsets: Vec<usize> = masked.char_indices().map(|(at, _)| at).collect();
+    if text_offsets.len() != masked_offsets.len() {
+        return None;
+    }
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+    let mut calls = Vec::new();
+    for (idx, _) in masked.match_indices(name) {
+        let before = masked[..idx].chars().next_back();
+        let after = masked[idx + name.len()..].chars().next();
+        if before.is_some_and(is_ident) || after.is_some_and(is_ident) {
+            continue;
+        }
+        let position = masked_offsets.binary_search(&idx).ok()?;
+        let rest = text
+            .get(*text_offsets.get(position)?..)?
+            .strip_prefix(name)?;
+        let inner = rest.trim_start().strip_prefix('(')?;
+        calls.push(positional_prefix(balanced_call_arguments(inner)?));
+    }
+    Some(calls)
+}
+
+fn ts_unused_default(context: &TsPostLadderContext<'_>) -> Option<TsUnusedDefault> {
+    use super::unused_default_guard::{argument_is_definitely_defined, changed_default_parameter};
+    let owner = context.owner;
+    let source = owner.source_text.as_deref()?;
+    let root = context.workspace_root?;
+    if context.candidates.is_empty() || owner.name.is_empty() {
+        return None;
+    }
+    let changed = context.line.checked_sub(owner.start_line)?;
+    let change = changed_default_parameter(
+        &owner.file,
+        source,
+        changed,
+        context.line_text,
+        context.old_line_text?,
+    )?;
+    let fills = |arguments: &[String]| {
+        arguments
+            .iter()
+            .take(change.index + 1)
+            .all(|argument| !argument.trim_start().starts_with("..."))
+            && arguments
+                .get(change.index)
+                .is_some_and(|argument| argument_is_definitely_defined(argument))
+    };
+    let mut observed: Vec<String> = Vec::new();
+    let mut test_files: Vec<&Path> = Vec::new();
+    for candidate in context.candidates {
+        if !matches!(
+            candidate.relation,
+            TypeScriptRelationKind::DirectOwnerCall
+                | TypeScriptRelationKind::ImportAliasOwnerCall
+                | TypeScriptRelationKind::ImportedOwnerCall
+                // The owner's own name through a barrel; a renaming
+                // re-export refuses in the workspace scan below.
+                | TypeScriptRelationKind::ReExportChainFollowed
+        ) {
+            return None;
+        }
+        let test = candidate.test;
+        let names =
+            ts_owner_call_names(candidate, owner, context.alias_map, context.workspace_root);
+        let receivers = unshadowed_owner_namespace_receivers(
+            test,
+            owner,
+            context.alias_map,
+            context.workspace_root,
+        );
+        let body = test.body_text.as_str();
+        if ['\'', '"', '`']
+            .iter()
+            .any(|quote| body.contains(&format!("[{quote}{}{quote}]", owner.name)))
+        {
+            return None;
+        }
+        let masked_body = ts_mask_literals_and_comments(body);
+        let mut calls = 0usize;
+        for name in names {
+            if local_identifier_declared_in_test_body(body, name)
+                || !every_owner_reference_is_a_call(&masked_body, name, &receivers)
+            {
+                return None;
+            }
+            for arguments in ts_calls_at_code_references(body, &masked_body, name)? {
+                if !fills(&arguments) {
+                    return None;
+                }
+                calls += 1;
+                observed.push(format!("({})", arguments.join(", ")));
+            }
+        }
+        if calls == 0 {
+            return None;
+        }
+        test_files.push(test.file.as_path());
+    }
+    // Any other caller could omit the argument. The owner's own module may
+    // call it only with the position filled; any other source or test file
+    // that names the owner (outside a pure `export { .. } from` re-export)
+    // could be a caller this reader does not resolve.
+    let scan = super::collect_workspace_typescript_files_with_handwritten(root, &[], &[]);
+    // A truncated scan or a skipped symlink may hide a caller.
+    if scan.truncated || scan.skipped_links > 0 {
+        return None;
+    }
+    // A whole-line re-export: nothing but the specifier follows `from`, so
+    // blanking or skipping the line drops no code (#15581 review).
+    let is_reexport = |line: &str| {
+        let line = line.trim_start();
+        (line.starts_with("export {") && line.contains("} from ") || line.starts_with("export *"))
+            && ts_statement_ends_at_specifier(&ts_mask_literals_and_comments(line), "from")
+    };
+    let mut texts: Vec<(&Path, String)> = Vec::with_capacity(scan.files.len());
+    for path in &scan.files {
+        let relative = path.strip_prefix(root).unwrap_or(path);
+        // Scanned paths are root-relative: read them under the root, not the
+        // process's working directory.
+        let Ok(text) = std::fs::read_to_string(root.join(relative)) else {
+            return None;
+        };
+        texts.push((relative, text));
+    }
+    // The names a loader can use for the owner's module, or for a barrel
+    // that re-exports it (`require('./index')` then a computed call): each
+    // such file's stem, and its directory for an `index` file.
+    let mut owner_stems = ts_module_stems(&owner.file)?;
+    for (relative, text) in &texts {
+        let barrel = text.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("export *")
+                || line.starts_with("export")
+                    && line.contains(" from ")
+                    && word_occurrences(line, &owner.name) > 0
+        });
+        if barrel {
+            owner_stems.extend(ts_module_stems(relative)?);
+        }
+    }
+    // Every plain call in `text` (with the lines `blank` names emptied) must
+    // fill the position; any other reference refuses.
+    let calls_all_fill = |text: &str, blank: &dyn Fn(usize, &str) -> bool| {
+        let rest: String = text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| if blank(index + 1, line) { "" } else { line })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let masked = ts_mask_literals_and_comments(&rest);
+        word_occurrences(&masked, &owner.name) == 0
+            || (every_owner_reference_is_a_call(&masked, &owner.name, &[])
+                && ts_calls_at_code_references(&rest, &masked, &owner.name)
+                    .is_some_and(|calls| calls.iter().all(|arguments| fills(arguments))))
+    };
+    for (relative, text) in &texts {
+        let relative = *relative;
+        let text = text.as_str();
+        if test_files.contains(&relative) {
+            // A sibling test, hook or helper in a related test file may call
+            // the owner without being a related candidate: every call in the
+            // file outside its import lines must fill the position.
+            // A loader, a computed key or an import alias names the owner
+            // where this text scan cannot follow it.
+            if text.contains("require(")
+                || text.contains("import(")
+                || ['\'', '"', '`']
+                    .iter()
+                    .any(|quote| text.contains(&format!("[{quote}{}{quote}]", owner.name)))
+            {
+                return None;
+            }
+            let import_lines = static_import_lines(text)?;
+            let import_line = |number: usize, _: &str| import_lines.contains(&number);
+            if !calls_all_fill(text, &import_line) {
+                return None;
+            }
+            continue;
+        }
+        if relative == owner.file.as_path() {
+            // A default export is imported under any name, and an aliased
+            // re-export renames the owner: callers this scan cannot name.
+            if text.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with("export default") && word_occurrences(line, &owner.name) > 0
+                    || is_reexport(line) && line.contains(" as ")
+            }) {
+                return None;
+            }
+            // Blank only the declaration line, which names the owner once;
+            // a recursive call in the body must fill the position too.
+            let declaration = text.lines().nth(owner.start_line.saturating_sub(1))?;
+            if word_occurrences(&ts_mask_literals_and_comments(declaration), &owner.name) != 1 {
+                return None;
+            }
+            let start_line = owner.start_line;
+            let blank = |number: usize, line: &str| number == start_line || is_reexport(line);
+            if !calls_all_fill(text, &blank) {
+                return None;
+            }
+            continue;
+        }
+        // A CommonJS `require`, a dynamic `import()` or a mock loader's
+        // `requireActual` / `importActual` of the owner's module binds a
+        // namespace whose members this scan cannot follow
+        // (`Object.values(require('./def'))`, #15393 review). The whole file
+        // is checked, so a loader call split across lines still refuses.
+        let loads_module = ["require(", "import(", "requireActual(", "importActual("]
+            .iter()
+            .any(|loader| text.contains(loader));
+        let names_module = |stem: &String| {
+            ['/', '\'', '"', '`']
+                .iter()
+                .any(|lead| text.contains(&format!("{lead}{stem}")))
+        };
+        if loads_module && owner_stems.iter().any(names_module) {
+            return None;
+        }
+        // A namespace object can reach the owner under a computed key, and a
+        // re-export that renames the owner hides its callers.
+        if text.lines().any(|line| {
+            let line = line.trim_start();
+            (line.starts_with("import") || line.starts_with("export")) && line.contains("* as ")
+        }) {
+            return None;
+        }
+        // A re-export that renames the owner hides its callers.
+        if text.lines().any(|line| {
+            is_reexport(line) && word_occurrences(line, &owner.name) > 0 && line.contains(" as ")
+        }) {
+            return None;
+        }
+        let named = text
+            .lines()
+            .filter(|line| !is_reexport(line))
+            .any(|line| word_occurrences(line, &owner.name) > 0);
+        if named {
+            return None;
+        }
+    }
+    observed.sort();
+    observed.dedup();
+    Some(TsUnusedDefault {
+        parameter: change.name,
+        observed: format!(
+            "observed `{}` calls: {}",
+            owner.name,
+            observed
+                .iter()
+                .map(|call| format!("`{call}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    })
+}
+
+/// `true` when, on a masked line, the text after the last `keyword` is one
+/// string literal and an optional `;`: masking blanks a literal's contents,
+/// so a quote inside it never ends the check early.
+fn ts_statement_ends_at_specifier(masked_line: &str, keyword: &str) -> bool {
+    let Some(at) = masked_line.rfind(keyword) else {
+        return false;
+    };
+    let rest = masked_line[at + keyword.len()..].trim();
+    let rest = rest.strip_suffix(';').unwrap_or(rest).trim_end();
+    let mut chars = rest.chars();
+    let (Some(open), Some(close)) = (chars.next(), chars.next_back()) else {
+        return false;
+    };
+    matches!(open, '\'' | '"') && open == close && !chars.as_str().contains(['\'', '"', '`'])
+}
+
+/// The names a module specifier can use for `file`: its stem, and its
+/// directory for an `index` file. `None` when either is unreadable.
+fn ts_module_stems(file: &Path) -> Option<Vec<String>> {
+    let stem = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())?
+        .to_string();
+    let mut stems = vec![stem];
+    if stems[0] == "index" {
+        let directory = file
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())?;
+        stems.push(directory.to_string());
+    }
+    Some(stems)
+}
+
+/// The 1-based lines of the file's static `import ... from '...'`
+/// statements, each gathered whole across lines. `None` when a statement
+/// renames a binding (`as`, which also covers `* as ns`) or never closes:
+/// a renamed owner has callers this text scan cannot name.
+fn static_import_lines(text: &str) -> Option<Vec<usize>> {
+    // Statement starts are read on masked text, so `import` inside a
+    // comment or a template never opens one.
+    let masked_text = ts_mask_literals_and_comments(text);
+    if masked_text.lines().count() != text.lines().count() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    let mut statement: Option<String> = None;
+    for (index, masked_line) in masked_text.lines().enumerate() {
+        let starts = statement.is_none()
+            && masked_line
+                .trim_start()
+                .strip_prefix("import")
+                .is_some_and(|rest| rest.starts_with([' ', '{', '*']));
+        if statement.is_none() && !starts {
+            continue;
+        }
+        lines.push(index + 1);
+        let mut gathered = statement.take().unwrap_or_default();
+        gathered.push(' ');
+        gathered.push_str(masked_line.trim());
+        let specifier_here = masked_line.contains(" from ")
+            || masked_line.contains("}from")
+            || masked_line.trim_start().starts_with("from ")
+            || (starts && !masked_line.contains('{') && !masked_line.contains(" as "));
+        if !specifier_here {
+            statement = Some(gathered);
+            continue;
+        }
+        // The statement must end on this line at its specifier: code after
+        // it would be blanked with the import.
+        // Only the specifier may follow `from` (or `import` for a
+        // side-effect import): `...'./def'; const x = pick('y');` would hide
+        // a call behind a closing quote (#15581 review).
+        let keyword = if masked_line.contains("from") {
+            "from"
+        } else {
+            "import"
+        };
+        if !ts_statement_ends_at_specifier(masked_line, keyword) {
+            return None;
+        }
+        if word_occurrences(&gathered, "as") > 0 {
+            return None;
+        }
+    }
+    statement.is_none().then_some(lines)
 }
 
 /// Positive evidence is deliberately narrower than the guard-exclusion rule:

@@ -77,6 +77,7 @@ mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
 mod policy_root;
+pub(crate) use policy::parse_clippy_lints_ledger;
 #[cfg(test)]
 pub(crate) use policy::parse_workspace_lints_section;
 pub(crate) use policy_root::{
@@ -18423,123 +18424,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .statuses
             .iter()
             .all(|status| status.chars().all(|character| character == 'D'))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LedgerLintEntry {
-    name: String,
-    level: String,
-    activate_when_msrv: Option<String>,
-    reason: Option<String>,
-    blocked_by: Option<String>,
-    block_line: usize,
-    is_planned: bool,
-}
-
-/// Parse `[[active.<group>]]` and `[[planned]]` blocks out of
-/// `policy/clippy-lints.toml`. Returns the entries in source order.
-fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) {
-    let mut entries = Vec::new();
-    let mut violations = Vec::new();
-    let mut current: Option<LedgerLintEntry> = None;
-
-    fn flush(
-        current: &mut Option<LedgerLintEntry>,
-        entries: &mut Vec<LedgerLintEntry>,
-        violations: &mut Vec<String>,
-    ) {
-        if let Some(entry) = current.take() {
-            if entry.name.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry missing required `name`",
-                    entry.block_line
-                ));
-                return;
-            }
-            if entry.level.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry `{}` missing required `level`",
-                    entry.block_line, entry.name
-                ));
-                return;
-            }
-            entries.push(entry);
-        }
-    }
-
-    for (index, raw) in text.lines().enumerate() {
-        let line_number = index + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("[[") {
-            let header = rest.trim_end_matches(']').trim_end_matches('[').trim();
-            // Only reset when we cross into a new array-of-tables that
-            // matters to the lint policy. Other top-level tables (like
-            // `[policy]`) are flushed too so the next array-of-tables starts
-            // clean.
-            flush(&mut current, &mut entries, &mut violations);
-            let is_active = header.starts_with("active.");
-            let is_planned = header == "planned";
-            if is_active || is_planned {
-                current = Some(LedgerLintEntry {
-                    name: String::new(),
-                    level: String::new(),
-                    activate_when_msrv: None,
-                    reason: None,
-                    blocked_by: None,
-                    block_line: line_number,
-                    is_planned,
-                });
-            }
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            // Plain table header (e.g. `[policy]`); not a lint entry.
-            flush(&mut current, &mut entries, &mut violations);
-            continue;
-        }
-        let Some(entry) = current.as_mut() else {
-            continue;
-        };
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = raw_value.trim();
-        let unquoted = unquote_toml_basic_string(value);
-        match key {
-            "name" => {
-                if let Some(name) = unquoted {
-                    entry.name = name;
-                }
-            }
-            "level" => {
-                if let Some(level) = unquoted {
-                    entry.level = level;
-                }
-            }
-            "activate_when_msrv" => {
-                if let Some(msrv) = unquoted {
-                    entry.activate_when_msrv = Some(msrv);
-                }
-            }
-            "reason" => {
-                if let Some(reason) = unquoted {
-                    entry.reason = Some(reason);
-                }
-            }
-            "blocked_by" => {
-                if let Some(blocked_by) = unquoted {
-                    entry.blocked_by = Some(blocked_by);
-                }
-            }
-            _ => {}
-        }
-    }
-    flush(&mut current, &mut entries, &mut violations);
-    (entries, violations)
 }
 
 /// Strip the `clippy::` prefix from a ledger-style lint name so it can be

@@ -1,0 +1,9 @@
+# Note a condition-only after row over a whole old line; the producer keeps `before` uncut (#15420).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::render_finding_marks_a_condition_only_after_row_over_a_whole_old_line",
+  "crates/ripr/src/output/human.rs::tests::render_finding_adds_no_condition_note_when_the_sides_match",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::predicate_before_keeps_the_whole_old_line_when_the_body_changes_too",
+  "crates/ripr/tests/guard_side_flip.rs::a_changed_error_or_an_unreadable_guard_keeps_the_gap",
+]

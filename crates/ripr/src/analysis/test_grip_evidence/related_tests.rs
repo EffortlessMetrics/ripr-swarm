@@ -19,7 +19,7 @@ pub(super) use context::{CompactTest, call_text_contains_named_call};
 /// satisfies. The two-step "match then rank" replaces the old binary
 /// `calls_owner || same_file_or_named` check from earlier campaigns.
 ///
-/// Detection per reason — strict ordering: the first reason that fires
+/// Detection per reason â€” strict ordering: the first reason that fires
 /// wins, so e.g. a test that both `calls owner` and `is in same file`
 /// carries `direct_owner_call`, never `same_test_file`.
 pub(super) fn find_related_tests_with_context<'context, 'index>(
@@ -51,12 +51,18 @@ fn find_related_tests_in<'context, 'index>(
     context: &'context CompactGripContext<'index>,
     pool: Option<RelationPool<'_>>,
 ) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     let owner = OwnerContext::resolve(seam, context);
     let target_tokens = assertion_target_tokens(seam);
     let prefix = owner.prefix.as_deref();
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     let inaccessible_direct: BTreeSet<usize> = context
         .owner_for_seam(seam)
         .map(|function| {
@@ -76,6 +82,9 @@ fn find_related_tests_in<'context, 'index>(
         })
         .unwrap_or_default();
     candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -85,6 +94,9 @@ fn find_related_tests_in<'context, 'index>(
         &owner,
         &target_tokens,
     );
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     match_assertion_target_affinity(&mut candidates, context, prefix, &target_tokens);
     match_same_test_file(&mut candidates, context, prefix, &owner);
     match_same_module(&mut candidates, context, prefix, &owner);
@@ -96,6 +108,10 @@ fn find_related_tests_in<'context, 'index>(
         if candidates.is_empty() {
             return Vec::new();
         }
+    }
+
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
     }
 
     // An inaccessible direct call cannot regain oracle credit through a
@@ -176,6 +192,9 @@ fn find_related_tests_in<'context, 'index>(
         })
     });
 
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     dedupe_related_candidates(candidates, context)
 }
 
@@ -206,7 +225,7 @@ pub(super) struct OwnerContext<'index> {
 }
 
 impl<'index> OwnerContext<'index> {
-    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
+    pub(super) fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
         let owner_fn = context.owner_for_seam(seam);
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
@@ -377,7 +396,10 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
-    for test_index in indices {
+    for (position, test_index) in indices.iter().enumerate() {
+        if position.is_multiple_of(32) && cancellation::checkpoint().is_err() {
+            return;
+        }
         let Some(indexed) = context.tests.get(*test_index) else {
             continue;
         };
@@ -1039,8 +1061,8 @@ pub(super) fn same_test_file(test_file: &Path, owner_stem: &str) -> bool {
 /// `src/` or `tests/`, joined by `/`, dropping the file extension.
 /// Returns `None` for files that do not sit under one of those roots.
 /// Examples (Unix-style after normalize):
-/// - `crates/ripr/src/auth/login.rs` → `auth/login`
-/// - `tests/cli_smoke.rs`            → `cli_smoke`
+/// - `crates/ripr/src/auth/login.rs` â†’ `auth/login`
+/// - `tests/cli_smoke.rs`            â†’ `cli_smoke`
 pub(super) fn module_path_for(file: &Path) -> Option<String> {
     let normalized = normalize_path(file);
     let body = normalized
@@ -1121,7 +1143,7 @@ pub(super) fn same_module(owner_module: &str, test_module: &str) -> bool {
 }
 
 /// Body mentions the owner via an explicit qualified-path or `use`
-/// shape — without calling it. The direct-call check has already
+/// shape â€” without calling it. The direct-call check has already
 /// excluded callers, so this fires for tests that import the symbol
 /// (or qualify it via a path) but route through some wrapper (common
 /// in integration tests).
@@ -1134,7 +1156,7 @@ pub(super) fn same_module(owner_module: &str, test_module: &str) -> bool {
 /// 1. a `module::owner_name` qualified path anywhere in the body
 ///    (catches `crate::pricing::discounted_total`,
 ///    `super::pricing::discounted_total`, `pricing::discounted_total`
-///    — they all contain `::owner_name`); or
+///    â€” they all contain `::owner_name`); or
 /// 2. an inline `use ... owner_name` line in the test body. File-
 ///    scope `use` lines are not in `test.body` so this only covers
 ///    in-function imports.
@@ -1183,7 +1205,7 @@ pub(super) fn import_affinity_tokens(code_lines: &[String]) -> BTreeSet<String> 
 /// Drop everything after a `//` line comment and replace string-literal
 /// contents with empty strings. v1 best-effort: handles `"..."` with
 /// `\\` and `\"` escapes; raw strings (`r#"..."#`), char literals
-/// (`'a'`), and block comments (`/* ... */`) are out of scope — those
+/// (`'a'`), and block comments (`/* ... */`) are out of scope â€” those
 /// shapes are rare inside test bodies and treating them as code is a
 /// safe over-match (the previous helper accepted them all).
 pub(super) fn strip_comments_and_strings(line: &str) -> String {

@@ -338,7 +338,13 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPackagedReadme => super::check_packaged_readme(),
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
-        XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
+        XtaskCommand::CheckReleaseTargets(args) => match args.as_slice() {
+            [] => super::check_release_targets(),
+            [flag, path] if flag == "--fixture" => {
+                crate::policy::check_release_milestone_fixture(path)
+            }
+            _ => Err("usage: cargo xtask check-release-targets [--fixture <path>]".to_string()),
+        },
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
         XtaskCommand::SizeScaling(args) => super::size_scaling::run(&args),
         XtaskCommand::WarmAb(args) => super::warm_ab::run(&args),
