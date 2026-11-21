@@ -1994,3 +1994,11 @@ path = "docs/specs/RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md"
 status = "accepted"
 owner = "product-swarm"
 standalone_reason = "Pins which enclosing #[mutants::skip] scopes (fn, impl, trait, inline module, file) withhold a finding the way cargo-mutants skips it, the fail-closed parser rules, and the scope disclosure and explain line (#14135, #14133)."
+
+[[artifact]]
+id = "RIPR-SPEC-0451"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0451-dx-scoreboard-generated-recall-rows.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Pins the generated recall-of-missed and no-seam DX scoreboard rows so the #12900 mutation spot-check measures are produced by the report generator rather than hand-calculated (#12900)."
