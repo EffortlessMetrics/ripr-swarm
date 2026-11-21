@@ -302,12 +302,20 @@ fn post_acknowledgement_requires_created_id_and_reports_only_numeric_status() ->
             return Err("missing acknowledged ID".into());
         }
     }
+    let invalid_utf8 = b"HTTP/2.0 201 Created\n\n\xff";
+    let offset = invalid_utf8.len() - 1;
+    let err = posted_comment_id(0, invalid_utf8)
+        .err()
+        .ok_or("accepted invalid response encoding")?;
+    if !err.ends_with(&format!("at byte {offset}")) {
+        return Err(format!("missing safe encoding offset: {err}"));
+    }
     for (exit, response, expected) in [
         (1, "HTTP/2.0 403 Forbidden\r\nsecret", "HTTP 403"),
         (
             0,
             "HTTP/2.0 201 Created\n\nsecret",
-            "unreadable comment body",
+            "unreadable comment body at line 1, column 1",
         ),
         (
             0,

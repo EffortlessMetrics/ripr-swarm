@@ -235,14 +235,23 @@ fn posted_comment_id(exit: i32, bytes: &[u8]) -> Result<u64, String> {
             "GitHub comment request returned HTTP {status} (gh exit {exit})"
         ));
     }
-    let response = std::str::from_utf8(bytes)
-        .map_err(|_| "GitHub returned HTTP 201 with an unreadable response")?;
+    let response = std::str::from_utf8(bytes).map_err(|e| {
+        format!(
+            "GitHub returned HTTP 201 with an unreadable response at byte {}",
+            e.valid_up_to()
+        )
+    })?;
     let (_, body) = response
         .split_once("\r\n\r\n")
         .or_else(|| response.split_once("\n\n"))
         .ok_or("GitHub returned HTTP 201 without a response body")?;
-    let published: Value = serde_json::from_str(body)
-        .map_err(|_| "GitHub returned HTTP 201 with an unreadable comment body")?;
+    let published: Value = serde_json::from_str(body).map_err(|e| {
+        format!(
+            "GitHub returned HTTP 201 with an unreadable comment body at line {}, column {}",
+            e.line(),
+            e.column()
+        )
+    })?;
     published["id"]
         .as_u64()
         .filter(|id| *id > 0)
