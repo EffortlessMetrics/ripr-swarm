@@ -53,7 +53,7 @@ pub fn pytest_verify_interpreter(command: &str) -> Option<&'static str> {
 /// The set of source languages an adapter can report.
 ///
 /// `Rust` is the reference language. `TypeScript`, `JavaScript`, `Python`,
-/// and `Perl` are preview surfaces added in later work items.
+/// `Perl`, and `Go` are preview surfaces added in later work items.
 /// JavaScript is implemented by the TypeScript-family adapter and remains
 /// separately labeled in output. Adding a new variant here is a deliberate
 /// contract change and must update RIPR-SPEC-0026.
@@ -65,16 +65,18 @@ pub enum LanguageId {
     JavaScript,
     Python,
     Perl,
+    Go,
 }
 
 impl LanguageId {
     /// Every language id, in declaration order.
-    pub const ALL: [LanguageId; 5] = [
+    pub const ALL: [LanguageId; 6] = [
         LanguageId::Rust,
         LanguageId::TypeScript,
         LanguageId::JavaScript,
         LanguageId::Python,
         LanguageId::Perl,
+        LanguageId::Go,
     ];
 
     /// Human-facing language name for prose (`TypeScript`, `JavaScript`),
@@ -86,6 +88,7 @@ impl LanguageId {
             LanguageId::JavaScript => "JavaScript",
             LanguageId::Python => "Python",
             LanguageId::Perl => "Perl",
+            LanguageId::Go => "Go",
         }
     }
 
@@ -106,6 +109,7 @@ impl LanguageId {
             LanguageId::JavaScript => "javascript",
             LanguageId::Python => "python",
             LanguageId::Perl => "perl",
+            LanguageId::Go => "go",
         }
     }
 
@@ -117,6 +121,7 @@ impl LanguageId {
             "javascript" => Some(LanguageId::JavaScript),
             "python" => Some(LanguageId::Python),
             "perl" => Some(LanguageId::Perl),
+            "go" => Some(LanguageId::Go),
             _ => None,
         }
     }
@@ -128,6 +133,9 @@ impl LanguageId {
             LanguageId::JavaScript => cfg!(feature = "lang-typescript"),
             LanguageId::Python => cfg!(feature = "lang-python"),
             LanguageId::Perl => cfg!(feature = "lang-perl"),
+            // Reserved identity only: `lang-go` compiles the placeholder module but
+            // no adapter runs until a later slice (#6349).
+            LanguageId::Go => false,
         }
     }
 
@@ -138,6 +146,7 @@ impl LanguageId {
             LanguageId::JavaScript => "lang-typescript",
             LanguageId::Python => "lang-python",
             LanguageId::Perl => "lang-perl",
+            LanguageId::Go => "lang-go",
         }
     }
 
@@ -155,6 +164,7 @@ impl LanguageId {
     /// analysis-outcome detail limit.
     pub fn unavailable_adapter_recovery(self) -> String {
         match self {
+            LanguageId::Go => "Go analysis is not available yet; the `lang-go` feature reserves an identity and does not contain an adapter".to_string(),
             LanguageId::Perl => format!(
                 "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it"
             ),
@@ -867,7 +877,7 @@ mod tests {
         // Catches duplicates, gaps and a stale `ALL`. It cannot enumerate the
         // enum: a variant added to the match but to neither `COUNT` nor `ALL`
         // is not detected, only forced to be classified here.
-        const COUNT: usize = 5;
+        const COUNT: usize = 6;
         fn ordinal(language: LanguageId) -> usize {
             match language {
                 LanguageId::Rust => 0,
@@ -875,6 +885,7 @@ mod tests {
                 LanguageId::JavaScript => 2,
                 LanguageId::Python => 3,
                 LanguageId::Perl => 4,
+                LanguageId::Go => 5,
             }
         }
         let ordinals: Vec<usize> = LanguageId::ALL.iter().copied().map(ordinal).collect();
@@ -933,6 +944,21 @@ mod tests {
         assert_eq!(LanguageId::JavaScript.as_str(), "javascript");
         assert_eq!(LanguageId::Python.as_str(), "python");
         assert_eq!(LanguageId::Perl.as_str(), "perl");
+        assert_eq!(LanguageId::Go.as_str(), "go");
+    }
+
+    #[test]
+    fn language_id_from_wire_rejects_aliases_and_unknown_tokens() {
+        for rejected in ["golang", "Golang", "GO", ""] {
+            assert_eq!(LanguageId::from_wire(rejected), None, "{rejected:?}");
+        }
+        assert_eq!(LanguageId::from_wire("go"), Some(LanguageId::Go));
+    }
+
+    #[test]
+    fn language_id_go_wire_token_is_go() {
+        assert_eq!(LanguageId::Go.as_str(), "go");
+        assert_eq!(LanguageId::Go.display_name(), "Go");
     }
 
     #[test]
@@ -982,6 +1008,11 @@ mod tests {
         assert_eq!(LanguageId::JavaScript.required_feature(), "lang-typescript");
         assert_eq!(LanguageId::Python.required_feature(), "lang-python");
         assert_eq!(LanguageId::Perl.required_feature(), "lang-perl");
+        assert_eq!(LanguageId::Go.required_feature(), "lang-go");
+        assert!(
+            !LanguageId::Go.is_available(),
+            "Go identity is closed but no adapter runs yet (#6349)"
+        );
     }
 
     #[test]
@@ -992,6 +1023,7 @@ mod tests {
             LanguageId::JavaScript,
             LanguageId::Python,
             LanguageId::Perl,
+            LanguageId::Go,
         ] {
             assert_eq!(
                 language.unavailable_adapter_notice().is_some(),
@@ -1348,6 +1380,7 @@ mod tests {
                 ("javascript", "JavaScript"),
                 ("python", "Python"),
                 ("perl", "Perl"),
+                ("go", "Go"),
             ]
         );
         for language in LanguageId::ALL {
