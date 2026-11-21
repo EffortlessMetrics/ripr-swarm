@@ -85,6 +85,15 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The targeted rerun report of `ripr rerun --json`.
+        "rerun",
+        &[producer(
+            "crates/ripr/src/cli/rerun.rs",
+            "const TARGETED_RERUN_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // The refusal envelope `ripr rerun --json` writes when it cannot
         // produce a targeted rerun report, keyed with that report's version
         // through its own mirrored constant.
@@ -604,6 +613,17 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["analysis_scope.scope", "run_limitations"],
+    },
+    // `ripr rerun --json`. The fixture is a capture of a gap-selector run
+    // whose ledger carries typed command specs, with host paths made
+    // portable; the producer-byte authority is `rerun_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/rerun.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/rerun.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["scope_limitations", "receipt_command_conflict"],
     },
     // The refusal envelopes of `ripr rerun --json`, `ripr agent brief --json`
     // and `ripr agent packet --json`: captures of real refusals with the
