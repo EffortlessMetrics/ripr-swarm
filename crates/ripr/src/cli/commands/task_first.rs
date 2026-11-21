@@ -823,9 +823,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                     .map_err(CommandError::Failure)?;
                 print!("{rendered}");
             } else {
+                // A short summary, not the whole status page (#15282 item 7):
+                // `ripr status --attempt` keeps the full page.
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
                 print!(
                     "{}",
-                    crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+                    crate::app::agent_status::complete_summary::render_already_complete_summary(
+                        &report, &root
+                    )
                 );
             }
             eprintln!(
