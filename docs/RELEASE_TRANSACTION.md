@@ -1091,12 +1091,21 @@ Record the channel's state as an owner-backed disposition instead, in
 }
 ```
 
-`state` is `withheld` (the #1470 record says `not_authorized`, or the channel
-was never dispatched) or `failed` (dispatched, did not publish, and #1470
-carries the corrective decision). `authority_url` is the owner's #1470 comment
-that says so. Section 7's publication receipt accepts a run receipt or a
-disposition for each marketplace, never both and never neither. K still waits
-for the terminal `ripr#1481` channel matrix.
+The Open VSX file is the same with `"channel": "open_vsx"`. `state` is
+`withheld` (the #1470 record says `not_authorized`, or the channel was never
+dispatched) or `failed` (dispatched, the admitted bytes are not what the
+channel serves, and #1470 carries the corrective decision). `authority_url` is
+the owner's #1470 comment that says so; section 7 checks its form and does not
+fetch it.
+
+A disposition is the terminal outcome and wins over a workflow result. The
+extension workflow can succeed without publishing the admitted bytes, so a
+`failed` disposition may sit beside a run receipt; section 7 then records the
+failed row and keeps the run under `workflow_run` as supporting evidence. A
+`withheld` disposition beside a run receipt is contradictory and stops. With no
+disposition, the marketplace row is its successful run receipt. A marketplace
+with neither file stops. K still waits for the terminal `ripr#1481` channel
+matrix.
 
 ### npm and PyPI
 
@@ -1183,15 +1192,22 @@ run_receipt_row() {
   jq -e -c --arg sha "$SOURCE_RELEASE_HEAD" 'select(.headSha == $sha and .status == "completed" and .conclusion == "success")' "$1"
 }
 marketplace_row() {
-  # $1 = packet file stem, $2 = channel key. Exactly one of a run receipt or
-  # an owner-backed disposition must exist; a missing row is a stop.
-  local run="$PACKET_ROOT/$1-run-receipt.json" disposition="$PACKET_ROOT/$1-disposition.json"
-  if test -e "$run"; then
-    # Explicit return: errexit does not reach a command substitution.
-    test ! -e "$disposition" || return 1
-    run_receipt_row "$run"
+  # $1 = packet file stem, $2 = channel key. An owner-backed disposition is
+  # the terminal outcome and wins over a workflow result: a run can succeed
+  # without publishing the admitted bytes. A missing row is a stop.
+  local run="$PACKET_ROOT/$1-run-receipt.json" disposition="$PACKET_ROOT/$1-disposition.json" row
+  if test -e "$disposition"; then
+    # Explicit returns: errexit does not reach a command substitution.
+    row="$(jq -e -c --arg channel "$2" --arg sha "$SOURCE_RELEASE_HEAD" 'select((keys | sort) == ["authority_url", "channel", "source_release_head", "state"] and .channel == $channel and .source_release_head == $sha and (.state == "withheld" or .state == "failed") and (.authority_url | type == "string" and test("^https://github\\.com/EffortlessMetrics/ripr/issues/1470#issuecomment-[0-9]+$")))' "$disposition")" || return 1
+    if test -e "$run"; then
+      # A withheld channel was never dispatched, so it has no run. A failed
+      # one keeps its run, whatever its conclusion, as supporting evidence.
+      jq -e -c --argjson row "$row" --arg sha "$SOURCE_RELEASE_HEAD" 'select($row.state == "failed" and .headSha == $sha) | $row + {workflow_run: .}' "$run" || return 1
+    else
+      printf '%s\n' "$row"
+    fi
   else
-    jq -e -c --arg channel "$2" --arg sha "$SOURCE_RELEASE_HEAD" 'select((keys | sort) == ["authority_url", "channel", "source_release_head", "state"] and .channel == $channel and .source_release_head == $sha and (.state == "withheld" or .state == "failed") and (.authority_url | type == "string" and test("^https://github\\.com/EffortlessMetrics/ripr/issues/1470#issuecomment-[0-9]+$")))' "$disposition"
+    run_receipt_row "$run"
   fi
 }
 SERVER_ROW="$(run_receipt_row "$PACKET_ROOT/server-run-receipt.json")"
