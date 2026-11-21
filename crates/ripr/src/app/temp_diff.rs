@@ -156,7 +156,9 @@ mod tests {
             std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
         }
         std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
-        Ok(root)
+        // Absolute, so a relative TMPDIR cannot leave symlink fixtures
+        // dangling (a relative link target resolves from the link's parent).
+        std::fs::canonicalize(&root).map_err(|err| err.to_string())
     }
 
     /// Candidate names spelled out literally, so the test does not share the
@@ -193,12 +195,19 @@ mod tests {
     fn an_existing_directory_is_skipped_and_left_untouched() -> Result<(), String> {
         let root = fresh_root("skip")?;
         plant(&root, 0..1)?;
+        let marker = candidate(&root, 0).join("owner.txt");
+        std::fs::write(&marker, "kept").map_err(|err| err.to_string())?;
         let path = write_diff_under(&root, STAMP, DIFF)?;
         assert_eq!(path, candidate(&root, 1).join("diff.patch"));
         let planted = std::fs::read_dir(candidate(&root, 0))
             .map_err(|err| err.to_string())?
             .count();
-        assert_eq!(planted, 0, "the pre-existing directory gained an entry");
+        assert_eq!(planted, 1, "the pre-existing directory gained an entry");
+        assert_eq!(
+            std::fs::read_to_string(&marker).map_err(|err| err.to_string())?,
+            "kept",
+            "the pre-existing directory was replaced"
+        );
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 
@@ -210,10 +219,22 @@ mod tests {
         let root = fresh_root("symlink")?;
         let target = root.join("attacker-owned");
         std::fs::create_dir(&target).map_err(|err| err.to_string())?;
+        std::fs::write(target.join("owner.txt"), "kept").map_err(|err| err.to_string())?;
         std::os::unix::fs::symlink(&target, candidate(&root, 0)).map_err(|err| err.to_string())?;
         let path = write_diff_under(&root, STAMP, DIFF)?;
         assert_eq!(path, candidate(&root, 1).join("diff.patch"));
         assert!(!target.join("diff.patch").exists());
+        let link = std::fs::symlink_metadata(candidate(&root, 0)).map_err(|err| err.to_string())?;
+        assert!(
+            link.file_type().is_symlink(),
+            "the planted link was replaced"
+        );
+        assert_eq!(
+            std::fs::read_to_string(candidate(&root, 0).join("owner.txt"))
+                .map_err(|err| err.to_string())?,
+            "kept",
+            "the planted link no longer reaches its target"
+        );
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 
