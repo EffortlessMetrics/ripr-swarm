@@ -1,0 +1,11 @@
+# Registers the one-hint-per-range preview-withheld fold (#15315) under RIPR-SPEC-0127.
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_preview_hints_never_share_a_range",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_static_gap_marker_never_absorbs_a_line_row",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_preview_findings_publish_passive_rows_at_changed_lines",
+]
+code = [
+  "crates/ripr/src/lsp/diagnostics.rs",
+]

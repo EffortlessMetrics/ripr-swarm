@@ -475,7 +475,8 @@ fn session_option_value_is_valid(key: &str, value: &Value) -> bool {
 
 fn ignored_initialization_option_warning(key: &str, source: &str) -> String {
     format!(
-        "ripr: ignoring malformed initializationOption '{key}' (invalid type or literal); using {source} value instead"
+        "ripr: ignoring malformed initializationOption '{key}' (invalid type or literal; accepted: {}); using {source} value instead",
+        session_option_accepted_values(key)
     )
 }
 
@@ -502,6 +503,71 @@ fn is_supported_session_option(key: &str) -> bool {
     )
 }
 
+/// [`pulled_options_or_rejections`] with the rejections joined into one
+/// message, as the unit tests read them.
+#[cfg(test)]
+pub(super) fn validated_pulled_options(values: &[Value]) -> Result<Option<Value>, String> {
+    pulled_options_or_rejections(values).map_err(|rejections| {
+        rejections
+            .into_iter()
+            .map(|rejection| rejection.detail)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
+/// One rejected part of a pulled `ripr` section (#15312): the rejected key
+/// (`None` for a malformed response shape) and the repair detail.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PulledOptionRejection {
+    pub(super) key: Option<String>,
+    pub(super) detail: String,
+}
+
+impl PulledOptionRejection {
+    fn shape(detail: String) -> Self {
+        Self { key: None, detail }
+    }
+}
+
+/// The status-payload summary of a rejected pull: the rejected key names
+/// first, then the details, so a bounded rendering always keeps every key
+/// name (#15312).
+pub(super) fn pulled_rejection_summary(rejections: &[PulledOptionRejection]) -> String {
+    let keys = rejections
+        .iter()
+        .filter_map(|rejection| rejection.key.as_deref())
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>();
+    let details = rejections
+        .iter()
+        .map(|rejection| rejection.detail.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if keys.is_empty() {
+        details
+    } else {
+        format!("rejected ripr settings {}: {details}", keys.join(", "))
+    }
+}
+
+/// Echoed rejected values are clipped (#15312) so a long bad value cannot
+/// push the key's accepted values past the client-visible message bound.
+const MAX_ECHOED_PULLED_VALUE_CHARS: usize = 60;
+
+fn clipped_value_echo(value: &Value) -> String {
+    let rendered = value.to_string();
+    if rendered.chars().count() <= MAX_ECHOED_PULLED_VALUE_CHARS {
+        return rendered;
+    }
+    let mut clipped = rendered
+        .chars()
+        .take(MAX_ECHOED_PULLED_VALUE_CHARS)
+        .collect::<String>();
+    clipped.push('…');
+    clipped
+}
+
 /// Validate one `workspace/configuration` response for the bounded `ripr`
 /// section before anything is applied (#2031, RIPR-SPEC-0136).
 ///
@@ -512,29 +578,47 @@ fn is_supported_session_option(key: &str) -> bool {
 /// literal fail the whole pull (fail-closed — a silently ignored requested
 /// setting would masquerade as accepted), while unsupported keys are outside
 /// the governed section and ignored.
-pub(super) fn validated_pulled_options(values: &[Value]) -> Result<Option<Value>, String> {
+///
+/// Every rejection is kept separate (#15312): one entry per rejected key (or
+/// one for a malformed response shape), so a caller can bound each entry on
+/// its own and no rejected key is hidden behind another one's text.
+pub(super) fn pulled_options_or_rejections(
+    values: &[Value],
+) -> Result<Option<Value>, Vec<PulledOptionRejection>> {
     if values.len() != 1 {
-        return Err(format!(
+        return Err(vec![PulledOptionRejection::shape(format!(
             "workspace/configuration returned {} items for one requested `ripr` section",
             values.len()
-        ));
+        ))]);
     }
     let Some(item) = values.first() else {
-        return Err("workspace/configuration returned no items; send one item for the `ripr` section (or null)".to_string());
+        return Err(vec![PulledOptionRejection::shape("workspace/configuration returned no items; send one item for the `ripr` section (or null)".to_string())]);
     };
     if item.is_null() {
         return Ok(None);
     }
     let Some(object) = item.as_object() else {
-        return Err(format!(
-            "workspace/configuration item for the `ripr` section must be an object or null, got {item}; send an object of ripr settings or null"
-        ));
+        return Err(vec![PulledOptionRejection::shape(format!(
+            "workspace/configuration item for the `ripr` section must be an object or null, got {}; send an object of ripr settings or null",
+            clipped_value_echo(item)
+        ))]);
     };
-    for (key, value) in object {
-        if !is_supported_session_option(key) {
-            continue;
-        }
-        validate_pulled_value(key, value)?;
+    // Every rejected key is named (#15312): stopping at the first one would
+    // hide the other rejected settings until the user fixed them one by one.
+    let rejections = object
+        .iter()
+        .filter(|(key, _)| is_supported_session_option(key))
+        .filter_map(|(key, value)| {
+            validate_pulled_value(key, value)
+                .err()
+                .map(|detail| PulledOptionRejection {
+                    key: Some(key.clone()),
+                    detail,
+                })
+        })
+        .collect::<Vec<_>>();
+    if !rejections.is_empty() {
+        return Err(rejections);
     }
     Ok(Some(Value::Object(supported_session_options(object))))
 }
@@ -564,8 +648,25 @@ fn validate_pulled_value(key: &str, value: &Value) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "workspace/configuration value for `{key}` has an invalid type or literal: {value}; fix the value in the editor settings"
+        "workspace/configuration value for `{key}` has an invalid type or literal (accepted: {}); got {}; fix the value in the editor settings",
+        session_option_accepted_values(key),
+        clipped_value_echo(value)
     ))
+}
+
+/// The accepted values of one supported session option, named in every
+/// rejection so a user can repair the setting without reading the docs
+/// (#15312). Mirrors `session_option_value_is_valid`.
+fn session_option_accepted_values(key: &str) -> &'static str {
+    match key {
+        "baseRef" => "a Git ref string (empty for the default base)",
+        "checkMode" => "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+        "includeUnchangedTests" | "seamDiagnostics" => "true or false",
+        "diagnosticProfile" => "\"actionable\" or \"full\"",
+        "gitTimeoutMs" => "a non-negative whole number of milliseconds",
+        "refreshDeadlineMs" => "a whole number of milliseconds, at least 100",
+        _ => "no value (the key is not a ripr setting)",
+    }
 }
 
 fn parse_mode(value: &str) -> Option<Mode> {
@@ -892,6 +993,81 @@ include_unchanged_tests = false
         ] {
             if validated_pulled_options(&values).is_ok() {
                 return Err(format!("malformed pull must fail closed: {values:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #15312: every rejected key is named with its accepted values, not
+    /// only the first one in map order.
+    #[test]
+    fn validated_pulled_options_names_every_rejected_key_with_accepted_values() -> Result<(), String>
+    {
+        let err = match validated_pulled_options(&[json!({
+            "baseRef": 5,
+            "checkMode": "bogus",
+            "diagnosticProfile": "loud",
+            "seamDiagnostics": "yes",
+        })]) {
+            Err(err) => err,
+            Ok(pulled) => return Err(format!("invalid values must fail the pull: {pulled:?}")),
+        };
+        for needle in [
+            "`baseRef`",
+            "a Git ref string",
+            "`checkMode`",
+            "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+            "`diagnosticProfile`",
+            "\"actionable\" or \"full\"",
+            "`seamDiagnostics`",
+            "true or false",
+        ] {
+            if !err.contains(needle) {
+                return Err(format!("the rejection must name {needle}: {err}"));
+            }
+        }
+        // A valid sibling key is not reported as rejected.
+        let err = match validated_pulled_options(&[json!({
+            "checkMode": "fast",
+            "diagnosticProfile": "loud",
+        })]) {
+            Err(err) => err,
+            Ok(pulled) => return Err(format!("invalid profile must fail: {pulled:?}")),
+        };
+        if err.contains("`checkMode`") {
+            return Err(format!("a valid key must not be named: {err}"));
+        }
+
+        // A long bad value cannot push the key's accepted values past the
+        // client-visible bound: the echo is clipped and comes last.
+        let long = "x".repeat(1000);
+        let rejections = match pulled_options_or_rejections(&[json!({
+            "diagnosticProfile": long,
+            "seamDiagnostics": "yes",
+            "baseRef": 5,
+        })]) {
+            Err(rejections) => rejections,
+            Ok(pulled) => return Err(format!("invalid values must fail: {pulled:?}")),
+        };
+        let profile = rejections
+            .iter()
+            .find(|rejection| rejection.key.as_deref() == Some("diagnosticProfile"))
+            .ok_or("the long value's key must be rejected")?;
+        let bounded = crate::lsp::component_outcome::bounded_message(&profile.detail);
+        if !bounded.contains("`diagnosticProfile`")
+            || !bounded.contains("\"actionable\" or \"full\"")
+            || bounded.contains(&"x".repeat(61))
+        {
+            return Err(format!(
+                "key and accepted values must survive the bound: {bounded}"
+            ));
+        }
+        // The status summary names every rejected key before any detail.
+        let summary =
+            crate::lsp::component_outcome::bounded_message(&pulled_rejection_summary(&rejections));
+        for key in ["`diagnosticProfile`", "`seamDiagnostics`", "`baseRef`"] {
+            if !summary.contains(key) {
+                return Err(format!("the bounded summary must name {key}: {summary}"));
             }
         }
         Ok(())

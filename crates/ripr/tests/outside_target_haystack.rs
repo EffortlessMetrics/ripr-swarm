@@ -1,6 +1,6 @@
 //! A Rust file that no Cargo target compiles (a benchmark or corpus haystack
 //! such as `benchmarks/haystacks/code/rust-library.rs`) contributes no
-//! related test and no lexical-fallback limitation (#8999). The same file
+//! related test or parser-based assertion refusal (#8999, #14768). The same file
 //! compiled through a `#[path]` module is the positive control: its test is
 //! related and its parser refusal is disclosed. Each case reads the rendered
 //! finding classification, related test files and analysis outcome.
@@ -15,8 +15,14 @@ const HAY_SOURCE: &str =
     "use keyed::discount;\n#[test]\nfn corpus_case() {\n    assert_eq!(discount(10), 5);\n}\n";
 // The same text with a token the reference parser refuses, so it is indexed
 // lexically.
-const REFUSED_HAY_SOURCE: &str = "use keyed::discount;\n#[test]\nfn corpus_case() {\n    assert_eq!(discount(10), 5);\n}\nfn broken( {\n";
+const REFUSED_HAY_SOURCE: &str = "use keyed::discount;\n#[test]\nfn corpus_case() {\n    assert_eq!(discount(10), 5);\n}\nmacro_rules! declare { ($name:ident) => { mod $name; } }\nfn broken( {\n";
+// A metavariable name can spell a mount token without generating a mount.
+const ORDINARY_MACRO: &str =
+    "macro_rules! value { ($mod:ident, $include:expr) => { ($mod, $include) }; }\n";
 const TESTS: &str = "use keyed::discount;\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(10), 5);\n}\n";
+const MANIFEST: &str = "[package]\nname = \"keyed\"\nversion = \"0.0.0\"\nedition = \"2024\"\nexclude = [\"/benchmarks\"]\n";
+const LIB: &str = "pub fn discount(q: u32) -> u32 {\n    if q > 9 { 5 } else { 0 }\n}\n";
+const SIBLING_MOUNT: &str = "#[path = \"../../a/benchmarks/hay.rs\"]\nmod mount;\n#[path = \"../../a/src/lib.rs\"]\nmod implementation;\nuse implementation::discount;\n";
 const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
 --- a/src/lib.rs
@@ -61,29 +67,29 @@ struct Run {
     related_files: Vec<String>,
     outcome_kind: String,
     limitations: String,
+    human: String,
 }
 
 fn run(lib_extra: &str, manifest_extra: &str, haystack: Option<&str>) -> Result<Run, String> {
     let scratch = Scratch::create()?;
     scratch.write(
         "Cargo.toml",
-        &format!(
-            "[package]\nname = \"keyed\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n{manifest_extra}"
-        ),
+        &format!("{MANIFEST}\n[workspace]\n{manifest_extra}"),
     )?;
-    let lib = format!(
-        "pub fn discount(q: u32) -> u32 {{\n    if q > 9 {{ 5 }} else {{ 0 }}\n}}\n{lib_extra}"
-    );
-    scratch.write("src/lib.rs", &lib)?;
+    scratch.write("src/lib.rs", &format!("{LIB}{lib_extra}"))?;
     scratch.write("tests/api.rs", TESTS)?;
     if let Some(source) = haystack {
         scratch.write(HAY, source)?;
     }
     scratch.write("change.diff", DIFF)?;
+    analyze(&scratch, &Mode::Fast)
+}
+
+fn analyze(scratch: &Scratch, mode: &Mode) -> Result<Run, String> {
     let report = check_workspace(CheckInput {
         root: scratch.0.clone(),
         diff_file: Some(scratch.0.join("change.diff")),
-        mode: Mode::Fast,
+        mode: mode.clone(),
         format: OutputFormat::Json,
         include_unchanged_tests: true,
         ..CheckInput::default()
@@ -119,7 +125,21 @@ fn run(lib_extra: &str, manifest_extra: &str, haystack: Option<&str>) -> Result<
         related_files,
         outcome_kind: outcome["kind"].as_str().unwrap_or_default().to_string(),
         limitations: outcome["limitations"].to_string(),
+        human: render_check(&report, &OutputFormat::Human)?,
     })
+}
+
+fn nested_package_fixture() -> Result<Scratch, String> {
+    let scratch = Scratch::create()?;
+    scratch.write("a/Cargo.toml", MANIFEST)?;
+    scratch.write("a/src/lib.rs", LIB)?;
+    scratch.write("a/tests/api.rs", TESTS)?;
+    scratch.write(
+        "a/benchmarks/hay.rs",
+        &HAY_SOURCE.replace("keyed::", "super::"),
+    )?;
+    scratch.write("change.diff", &DIFF.replace("src/lib.rs", "a/src/lib.rs"))?;
+    Ok(scratch)
 }
 
 #[test]
@@ -139,17 +159,18 @@ fn an_uncompiled_haystack_is_not_a_related_test() -> Result<(), String> {
 
 #[test]
 fn an_uncompiled_unparsed_haystack_is_not_a_lexical_limitation() -> Result<(), String> {
-    // The workspace-wide macro-binding scan still reads this unparsed file, so
-    // the class may stay `static_unknown`; the claim here is only that the file
-    // is neither related evidence nor a lexical-fallback disclosure.
-    let run = run("", "", Some(REFUSED_HAY_SOURCE))?;
+    let baseline = run(ORDINARY_MACRO, "", None)?;
+    let run = run(ORDINARY_MACRO, "", Some(REFUSED_HAY_SOURCE))?;
     assert_eq!(run.related_files, ["tests/api.rs"], "{}", run.limitations);
+    assert_eq!(run.classification, baseline.classification);
     assert_eq!(
         run.outcome_kind, "complete_with_findings",
         "{}",
         run.limitations
     );
     assert!(!run.limitations.contains(HAY), "{}", run.limitations);
+    assert!(!run.human.contains(HAY), "{}", run.human);
+    assert!(run.human.contains("discount_boundary"), "{}", run.human);
     Ok(())
 }
 
@@ -214,5 +235,188 @@ fn a_module_building_macro_keeps_the_file_whatever_its_spacing() -> Result<(), S
             run.related_files
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_custom_test_target_and_path_module_keep_the_same_source() -> Result<(), String> {
+    let source =
+        format!("{HAY_SOURCE}macro_rules! declare {{ ($name:ident) => {{ mod $name; }} }}\n");
+    let manifest = format!("\n[[test]]\nname = \"hay\"\npath = \"{HAY}\"\n");
+    let module = format!(
+        "extern crate self as keyed;\n#[cfg(test)]\n#[path = \"../{HAY}\"]\nmod haystack;\n"
+    );
+    for (lib, manifest) in [("", manifest.as_str()), (module.as_str(), "")] {
+        let run = run(lib, manifest, Some(&source))?;
+        assert_eq!(run.related_files, [HAY, "tests/api.rs"]);
+    }
+    Ok(())
+}
+
+#[test]
+fn draft_retains_a_file_mounted_by_an_unselected_workspace_member() -> Result<(), String> {
+    let scratch = nested_package_fixture()?;
+    scratch.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"3\"\n",
+    )?;
+    scratch.write("b/Cargo.toml", &MANIFEST.replace("\"keyed\"", "\"b\""))?;
+    scratch.write("b/src/lib.rs", SIBLING_MOUNT)?;
+    for mode in [Mode::Draft, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["a/benchmarks/hay.rs", "a/tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    scratch.write("b/src/lib.rs", "pub fn unrelated() {}\n")?;
+    assert_eq!(
+        analyze(&scratch, &Mode::Deep)?.related_files,
+        ["a/tests/api.rs"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_declared_test_target_can_forward_a_module_keyword() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write(
+        "Cargo.toml",
+        &format!("{MANIFEST}\n[[test]]\nname = \"driver\"\npath = \"benchmarks/driver.rs\"\n"),
+    )?;
+    scratch.write("src/lib.rs", LIB)?;
+    scratch.write("tests/api.rs", TESTS)?;
+    scratch.write(
+        "benchmarks/hay.rs",
+        &HAY_SOURCE.replace("keyed::", "super::"),
+    )?;
+    scratch.write(
+        "benchmarks/driver.rs",
+        "use keyed::discount;\nmacro_rules! mount { ($kw:tt, $name:ident) => { $kw $name; }; }\nmount!(mod, hay);\n",
+    )?;
+    scratch.write("change.diff", DIFF)?;
+    for mode in [Mode::Draft, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["benchmarks/hay.rs", "tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_or_malformed_root_manifest_keeps_uncertainty() -> Result<(), String> {
+    let absent = nested_package_fixture()?;
+    let malformed = nested_package_fixture()?;
+    malformed.write("Cargo.toml", "[workspace\n")?;
+    let unreadable = nested_package_fixture()?;
+    std::fs::create_dir(unreadable.0.join("Cargo.toml")).map_err(|error| error.to_string())?;
+    for mode in [Mode::Draft, Mode::Deep] {
+        assert_eq!(analyze(&absent, &mode)?.related_files, ["a/tests/api.rs"]);
+        for scratch in [&malformed, &unreadable] {
+            assert_eq!(
+                analyze(scratch, &mode)?.related_files,
+                ["a/benchmarks/hay.rs", "a/tests/api.rs"],
+                "{mode:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_standalone_autodiscovered_test_symlink_keeps_its_source() -> Result<(), String> {
+    let scratch = nested_package_fixture()?;
+    scratch.write(
+        "a/benchmarks/hay.rs",
+        &format!("{HAY_SOURCE}\nmacro_rules! declare {{ ($name:ident) => {{ mod $name; }}; }}\n"),
+    )?;
+    let alias = scratch.0.join("a/tests/alias.rs");
+    std::os::unix::fs::symlink("../benchmarks/hay.rs", &alias)
+        .map_err(|error| error.to_string())?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["a/benchmarks/hay.rs", "a/tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    std::fs::remove_file(alias).map_err(|error| error.to_string())?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(analyze(&scratch, &mode)?.related_files, ["a/tests/api.rs"]);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_governing_workspace_keeps_an_unselected_sibling_mount() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write(
+        "inner/Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"3\"\n",
+    )?;
+    scratch.write("inner/a/Cargo.toml", MANIFEST)?;
+    scratch.write("inner/a/src/lib.rs", LIB)?;
+    scratch.write("inner/a/tests/api.rs", TESTS)?;
+    scratch.write(
+        "inner/a/benchmarks/hay.rs",
+        &HAY_SOURCE.replace("keyed::", "super::"),
+    )?;
+    scratch.write(
+        "inner/b/Cargo.toml",
+        &MANIFEST.replace("\"keyed\"", "\"b\""),
+    )?;
+    scratch.write("inner/b/src/lib.rs", SIBLING_MOUNT)?;
+    scratch.write(
+        "change.diff",
+        &DIFF.replace("src/lib.rs", "inner/a/src/lib.rs"),
+    )?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["inner/a/benchmarks/hay.rs", "inner/a/tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    scratch.write("inner/b/src/lib.rs", "pub fn unrelated() {}\n")?;
+    assert_eq!(
+        analyze(&scratch, &Mode::Deep)?.related_files,
+        ["inner/a/tests/api.rs"]
+    );
+    Ok(())
+}
+
+#[test]
+fn an_explicit_root_in_a_skipped_directory_keeps_mount_uncertainty() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write(
+        "Cargo.toml",
+        &format!("{MANIFEST}\n[[test]]\nname = \"driver\"\npath = \"target/driver.rs\"\n"),
+    )?;
+    scratch.write("src/lib.rs", LIB)?;
+    scratch.write("tests/api.rs", TESTS)?;
+    scratch.write(
+        "benchmarks/hay.rs",
+        &HAY_SOURCE.replace("keyed::", "super::"),
+    )?;
+    scratch.write(
+        "target/driver.rs",
+        "use keyed::discount;\n#[path = \"../benchmarks/hay.rs\"]\nmod allocated;\n",
+    )?;
+    scratch.write("change.diff", DIFF)?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep] {
+        assert_eq!(
+            analyze(&scratch, &mode)?.related_files,
+            ["benchmarks/hay.rs", "tests/api.rs"],
+            "{mode:?}"
+        );
+    }
+    scratch.write("Cargo.toml", MANIFEST)?;
+    assert_eq!(
+        analyze(&scratch, &Mode::Deep)?.related_files,
+        ["tests/api.rs"]
+    );
     Ok(())
 }

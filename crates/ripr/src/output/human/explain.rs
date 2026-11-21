@@ -286,7 +286,12 @@ fn reach_edge_unresolved(finding: &Finding) -> bool {
 /// established what is missing, and a gap whose next step was withheld (an
 /// exact oracle already covers the direct sink) indicates no assertion repair.
 fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<String> {
-    if crate::output::next_step::unresolved_edge_guidance(finding).is_some() {
+    // Base-side evidence (`base_deleted`, `moved_or_renamed`) is not a
+    // candidate edit target: its Next step recommends no test change, so a
+    // test recipe here would contradict it (#15271).
+    if finding.source_currentness.is_base_side()
+        || crate::output::next_step::unresolved_edge_guidance(finding).is_some()
+    {
         return Vec::new();
     }
     if !matches!(
@@ -343,9 +348,11 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
                 format!("assert on what {owner} returns or changes")
             }
-            RelatedTestMiss::AssertionNotCredited
-            | RelatedTestMiss::AssertionInert
-            | RelatedTestMiss::AssertionAdmissionUnproven => {
+            // An admission limit alone cannot tell the reader to replace a check.
+            RelatedTestMiss::AssertionNotCredited | RelatedTestMiss::AssertionAdmissionUnproven => {
+                continue;
+            }
+            RelatedTestMiss::AssertionInert => {
                 "use a plain, always-run `assert_eq!`/`assert!` ripr can resolve".to_string()
             }
             RelatedTestMiss::ObservationUnconfirmed => {
@@ -489,6 +496,25 @@ mod tests {
     }
 
     #[test]
+    fn legacy_refusal_adds_no_recipe_to_an_independent_weak_assertion() {
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![row(
+            "assert!(value.is_some())",
+            OracleStrength::Weak,
+            RelatedTestMiss::WeakAssertion,
+        )];
+        let weak_recipe = verdict_changers(&finding, None);
+        assert!(weak_recipe.iter().any(|need| need.contains("exact value")));
+
+        finding.related_tests.push(row(
+            "assert_eq!(value, expected)",
+            OracleStrength::None,
+            RelatedTestMiss::AssertionNotCredited,
+        ));
+        assert_eq!(verdict_changers(&finding, None), weak_recipe);
+    }
+
+    #[test]
     fn unresolved_reach_edge_recipe_does_not_promise_a_direct_call_closes_it() {
         let mut finding = sample_perl_finding();
         finding.class = ExposureClass::NoStaticPath;
@@ -588,6 +614,32 @@ mod tests {
             without_shape.contains("  To change the verdict, a test needs to:\n"),
             "{without_shape}"
         );
+    }
+
+    #[test]
+    fn base_side_finding_gets_no_test_recipe() {
+        // #15271: base-side evidence recommends no test change, so the
+        // verdict block must not ask a test to call deleted code. The same
+        // finding on the candidate side keeps its recipe (the control).
+        use crate::domain::SourceCurrentness;
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("add a test that calls the owner".to_string());
+        finding.related_tests = Vec::new();
+        let current = render_verdict_explanation(&finding, None);
+        assert!(
+            current.contains("  To change the verdict, a test needs to:\n"),
+            "{current}"
+        );
+        for side in [
+            SourceCurrentness::BaseDeleted,
+            SourceCurrentness::MovedOrRenamed,
+        ] {
+            finding.source_currentness = side;
+            let text = render_verdict_explanation(&finding, None);
+            assert!(!text.contains("To change the verdict"), "{text}");
+            assert!(!text.contains("assert on its result"), "{text}");
+        }
     }
 
     #[test]

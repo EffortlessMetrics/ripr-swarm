@@ -31,7 +31,14 @@ fn run_program_in(
     let mut command = Command::new(program);
     command.args(args);
     if let Some(root) = root {
-        command.current_dir(root);
+        // Fixtures inside Cargo's repository-local temp directory must not
+        // discover the source checkout when the fixture has no repository.
+        command
+            .current_dir(root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
     }
     command
         .output()
@@ -235,9 +242,19 @@ fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), Str
     })
 }
 
+/// Keep Git metadata in the owned parent. The no-write check on the working
+/// directory continues to permit only the original invalid configuration.
+fn in_help_checkout(
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    in_git_root("repair", |repo| {
+        help_workspace::in_help_workspace_under(repo, test)
+    })
+}
+
 #[test]
 fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Result<(), String> {
-    in_help_workspace(|root| {
+    in_help_checkout(|root| {
         let attempt = "repair-attempt-0123456789abcdef01234567";
         for phase in ["after", "verify"] {
             let mut args = vec![

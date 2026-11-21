@@ -3264,6 +3264,91 @@ mod tests {
         Ok(())
     }
 
+    /// #14864: every `description` string inside a tool's `inputSchema`
+    /// (argument descriptions, including nested ones) rides each `tools/list`
+    /// like the tool description itself, so it is fixed per-session context.
+    /// Enumerate the published schemas rather than a parallel list.
+    fn argument_description_bytes(tools: &Value) -> Result<usize, String> {
+        fn walk(value: &Value, total: &mut usize) {
+            match value {
+                Value::Object(map) => {
+                    for (key, child) in map {
+                        match child {
+                            Value::String(text) if key == "description" => *total += text.len(),
+                            _ => walk(child, total),
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| walk(item, total)),
+                _ => {}
+            }
+        }
+        let rows = tools["tools"].as_array().ok_or("tool catalog lost tools")?;
+        let mut total = 0;
+        for row in rows {
+            let name = row["name"].as_str().ok_or("unnamed tool")?;
+            let schema = row
+                .get("inputSchema")
+                .ok_or_else(|| format!("tool {name} lost its inputSchema"))?;
+            walk(schema, &mut total);
+        }
+        if total > 1700 {
+            return Err(format!(
+                "tool argument descriptions total {total} UTF-8 bytes, over 1700"
+            ));
+        }
+        Ok(total)
+    }
+
+    #[test]
+    fn argument_description_bytes_keep_session_context_lean() -> Result<(), String> {
+        // Reconciled on main 332729ac after #14475 shortened five argument
+        // descriptions (ripr_list_gaps 721, ripr_refresh 484, the rest 410).
+        // Slim only drops outputSchema, so both modes serve the same input
+        // schemas; pin both so a mode-specific change cannot slip past.
+        for mode in [ToolsListMode::Slim, ToolsListMode::Full] {
+            let total = argument_description_bytes(&tools_list_result_for(mode))?;
+            assert_eq!(
+                total, 1615,
+                "tool argument descriptions total for {mode:?} moved; reconcile the pin"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn argument_description_budget_rejects_one_lengthened_argument() -> Result<(), String> {
+        let mut tools = tools_list_result_for(ToolsListMode::Slim);
+        let limit = tools["tools"]
+            .as_array_mut()
+            .and_then(|rows| rows.iter_mut().find(|row| row["name"] == "ripr_list_gaps"))
+            .and_then(|row| row.pointer_mut("/inputSchema/properties/limit/description"))
+            .ok_or("ripr_list_gaps lost its limit argument description")?;
+        let grown = format!("{} More words.", limit.as_str().ok_or("limit description")?);
+        *limit = json!(grown);
+        let total = argument_description_bytes(&tools)?;
+        // " More words." is 12 bytes: the total moves by exactly that, so a
+        // walker that skipped or double-counted the argument would fail here.
+        if total != 1615 + 12 {
+            return Err(format!(
+                "a lengthened argument description moved the total to {total}, not 1627"
+            ));
+        }
+        // Growth past the ceiling is refused with the named total.
+        let padded = format!("{grown}{}", "a".repeat(200));
+        if let Some(limit) = tools["tools"]
+            .as_array_mut()
+            .and_then(|rows| rows.iter_mut().find(|row| row["name"] == "ripr_list_gaps"))
+            .and_then(|row| row.pointer_mut("/inputSchema/properties/limit/description"))
+        {
+            *limit = json!(padded);
+        }
+        match argument_description_bytes(&tools) {
+            Err(error) if error.contains("tool argument descriptions total") => Ok(()),
+            other => Err(format!("ceiling growth escaped its diagnosis: {other:?}")),
+        }
+    }
+
     #[test]
     fn description_budget_rejects_inventory_growth_in_utf8_bytes() -> Result<(), String> {
         let mut tools = tools_list_result();

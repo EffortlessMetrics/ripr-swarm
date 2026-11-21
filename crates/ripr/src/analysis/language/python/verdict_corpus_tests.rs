@@ -1587,6 +1587,32 @@ fn a_mock_passed_for_a_called_parameter_pins_its_arguments() -> Result<(), Strin
         on_parse_class(ON_PARSE, 2, ON_PARSE_OLD, returned)?,
         ExposureClass::Exposed
     );
+    let awaited = "async def test_on_parse():\n    m = await on_parse('1', Mock())\n    m.assert_called_once_with(1)\n";
+    assert_eq!(
+        on_parse_class(&format!("async {ON_PARSE}"), 2, ON_PARSE_OLD, awaited)?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        on_parse_class(ON_PARSE, 2, ON_PARSE_OLD, awaited)?,
+        ExposureClass::Exposed
+    );
+    for owner in [
+        format!("@wrapper\nasync {ON_PARSE}"),
+        format!(
+            "async {}",
+            ON_PARSE.replace("return handler", "handler = Mock()\n    return handler")
+        ),
+    ] {
+        assert_ne!(
+            on_parse_class(
+                &owner,
+                2 + usize::from(owner.starts_with('@')),
+                ON_PARSE_OLD,
+                awaited
+            )?,
+            ExposureClass::Exposed
+        );
+    }
     // The same mock reached through the local the test passed.
     assert_eq!(
         on_parse_class(

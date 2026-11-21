@@ -3207,6 +3207,7 @@ suite('Extension Smoke', () => {
       'npx --no-install jest tests/discount.test.ts',
       'pnpm exec vitest run src/util.test.ts',
       'yarn ava tests/math.test.ts',
+      'npx --no-install mocha test/age.spec.js',
       'bun run jest tests/discount.test.ts',
       'npm test -- tests/math.test.ts'
     ]) {

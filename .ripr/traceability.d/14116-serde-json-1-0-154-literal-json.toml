@@ -1,0 +1,9 @@
+# serde_json 1.0.154 joins the audited literal-JSON registry releases (#14116).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_identity_accepts_each_audited_release_with_its_own_checksum",
+]
+code = [
+  "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
+]
