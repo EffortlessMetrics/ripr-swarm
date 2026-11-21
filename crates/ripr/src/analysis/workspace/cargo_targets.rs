@@ -2891,7 +2891,8 @@ harness=false
         let manifest = "[package]\nname='fixture'\nversion='0.1.0'\nedition='2024'\n\
             [workspace]\n\
             [[test]]\nname='registered'\npath='src/registered.rs'\nharness=false\n\
-            [[test]]\nname='enabled'\npath='src/enabled.rs'\nharness=true\n";
+            [[test]]\nname='enabled'\npath='src/enabled.rs'\nharness=true\n\
+            [[test]]\nname='skipped_alias'\npath='alias/enabled.rs'\ntest=false\nharness=false\n";
         write_member_package(&real, "", manifest)?;
         for path in ["src/registered.rs", "src/enabled.rs", "src/undeclared.rs"] {
             write_file(&real, path, "")?;
@@ -2906,6 +2907,7 @@ harness=false
                 "src/enabled.rs",
                 "src/undeclared.rs",
                 "alias/registered.rs",
+                "alias/enabled.rs",
             ]
             .map(|path| inventory.verdict(&root, Path::new(path)))
         });
@@ -2918,6 +2920,7 @@ harness=false
                     HarnessDisabled,
                     HarnessEnabled,
                     NotDeclared,
+                    HarnessEnabled | NotDeclared,
                     HarnessEnabled | NotDeclared
                 ]
             ) {
