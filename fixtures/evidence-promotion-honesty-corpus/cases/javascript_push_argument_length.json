@@ -1,0 +1,29 @@
+{
+  "id": "javascript_push_argument_length",
+  "language": "javascript",
+  "tier": "pure",
+  "source_fixture": "fixtures/javascript_push_argument_length",
+  "vector": "count_does_not_pin_changed_argument",
+  "probe_family": "side_effect",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "exact_value",
+      "strength": "strong"
+    }
+  ]
+}

@@ -9,13 +9,16 @@
 //! - per keyed gap, `caught`: putting that one line back to its base text
 //!   makes the suite fail (a one-line revert of the change, not a mutation
 //!   engine);
-//! - `production_untouched`: `src/lib.rs` still equals the head text, so a
-//!   trial cannot pass by editing the code under test.
+//! - `production_untouched`: the changed source file still equals the head
+//!   text, so a trial cannot pass by editing the code under test.
+//!
+//! The suite is each language's runner over the whole repository: `cargo
+//! test`, `python3 -m pytest`, or `node --test`.
 //!
 //! A gap counts as caught only when all three hold.
 
 use super::scenarios::{SCENARIOS, Scenario};
-use super::{Suite, capture, classify_suite, materialize, strings, write_file};
+use super::{Suite, classify_suite, materialize, run_tests, write_file};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -60,16 +63,10 @@ pub(crate) fn trial_setup(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_suite(root: &Path, target_dir: &Path) -> Suite {
-    let target = target_dir.display().to_string();
-    match capture(
-        Path::new("cargo"),
-        &strings(&["test", "--offline", "-q"]),
-        root,
-        None,
-        &[("CARGO_TARGET_DIR", target.as_str())],
-    ) {
+fn run_suite(scenario: &Scenario, root: &Path, target_dir: &Path) -> Suite {
+    match run_tests(scenario.language, root, target_dir, None) {
         Ok(output) => classify_suite(
+            scenario.language,
             output.exit,
             &format!("{}\n{}", output.stdout, output.stderr),
         ),
@@ -86,26 +83,26 @@ fn not_established(suite: &Suite) -> Option<&str> {
 
 /// Run the suite; an instrument failure aborts scoring this repository, so
 /// it shows up as an incomplete score rather than a low one.
-fn measured_suite(root: &Path, target_dir: &Path) -> Result<Suite, String> {
-    match run_suite(root, target_dir) {
+fn measured_suite(scenario: &Scenario, root: &Path, target_dir: &Path) -> Result<Suite, String> {
+    match run_suite(scenario, root, target_dir) {
         Suite::InstrumentError(reason) => Err(format!("instrument failure: {reason}")),
         suite => Ok(suite),
     }
 }
 
-/// Where `score_one` keeps the agent's `src/lib.rs` while it swaps in head
+/// Where `score_one` keeps the agent's copy of the changed source file while it swaps in head
 /// and reverted text. It sits outside `src/` so an interrupted score (Ctrl-C,
 /// a terminated process) can be recovered: the next run restores from it instead
 /// of mistaking the head text it left behind for the agent's own file.
 const AGENT_LIB_COPY: &str = ".trial-score-agent-lib.rs";
 
-/// Score one repository. `src/lib.rs` is put back to what the agent left on
+/// Score one repository. The changed source file is put back to what the agent left on
 /// every path, including errors and an interrupted earlier run, so a rerun
 /// sees the same input.
 fn score_one(scenario: &Scenario, root: &Path, target_dir: &Path) -> Result<Value, String> {
-    let current = hold_agent_lib(root)?;
+    let current = hold_agent_lib(scenario, root)?;
     let scored = score_against_head(scenario, root, target_dir, current == scenario.head_lib);
-    match (scored, release_agent_lib(root, &current)) {
+    match (scored, release_agent_lib(scenario, root, &current)) {
         (Ok(row), Ok(())) => Ok(row),
         (Ok(_), Err(restore)) => Err(restore),
         (Err(error), Ok(())) => Err(error),
@@ -113,15 +110,15 @@ fn score_one(scenario: &Scenario, root: &Path, target_dir: &Path) -> Result<Valu
     }
 }
 
-/// The `src/lib.rs` the agent left, kept in `AGENT_LIB_COPY` before scoring
+/// The changed source file the agent left, kept in `AGENT_LIB_COPY` before scoring
 /// touches the file. A copy left by an interrupted run wins over the file.
-fn hold_agent_lib(root: &Path) -> Result<String, String> {
+fn hold_agent_lib(scenario: &Scenario, root: &Path) -> Result<String, String> {
     let copy_path = root.join(AGENT_LIB_COPY);
     if copy_path.is_file() {
         return fs::read_to_string(&copy_path)
             .map_err(|err| format!("failed to read {}: {err}", copy_path.display()));
     }
-    let lib_path = root.join("src/lib.rs");
+    let lib_path = root.join(scenario.source_path);
     let current = fs::read_to_string(&lib_path)
         .map_err(|err| format!("failed to read {}: {err}", lib_path.display()))?;
     // Publish the copy whole or not at all: a copy truncated by an interrupt
@@ -134,9 +131,9 @@ fn hold_agent_lib(root: &Path) -> Result<String, String> {
     Ok(current)
 }
 
-/// Put the agent's `src/lib.rs` back, then drop the copy.
-fn release_agent_lib(root: &Path, current: &str) -> Result<(), String> {
-    write_file(&root.join("src/lib.rs"), current)?;
+/// Put the agent's source file back, then drop the copy.
+fn release_agent_lib(scenario: &Scenario, root: &Path, current: &str) -> Result<(), String> {
+    write_file(&root.join(scenario.source_path), current)?;
     let copy_path = root.join(AGENT_LIB_COPY);
     fs::remove_file(&copy_path)
         .map_err(|err| format!("failed to remove {}: {err}", copy_path.display()))
@@ -154,17 +151,17 @@ fn score_against_head(
     target_dir: &Path,
     production_untouched: bool,
 ) -> Result<Value, String> {
-    let lib_path = root.join("src/lib.rs");
+    let lib_path = root.join(scenario.source_path);
     // Score the tests against the real head, never an agent's edit.
     write_file(&lib_path, scenario.head_lib)?;
-    let head = measured_suite(root, target_dir)?;
+    let head = measured_suite(scenario, root, target_dir)?;
     let head_pass = head == Suite::Pass;
     let mut gaps = Vec::new();
     for gap in scenario.gaps {
         let reverted = revert_line(scenario, gap.line)
             .ok_or_else(|| format!("{}: cannot revert line {}", scenario.id, gap.line))?;
         write_file(&lib_path, &reverted)?;
-        let suite = measured_suite(root, target_dir)?;
+        let suite = measured_suite(scenario, root, target_dir)?;
         let fails = suite == Suite::TestFailed;
         gaps.push(json!({
             "owner": gap.owner,
@@ -221,6 +218,7 @@ pub(crate) fn trial_score(dir: &Path) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::scenarios::Language;
     use super::*;
 
     #[test]
@@ -249,23 +247,30 @@ mod tests {
 
     #[test]
     fn only_a_compiled_failing_run_counts_as_a_failure() {
-        assert_eq!(classify_suite(Some(0), "test result: ok."), Suite::Pass);
         assert_eq!(
-            classify_suite(Some(101), "test result: FAILED. 0 passed; 1 failed"),
+            classify_suite(Language::Rust, Some(0), "test result: ok."),
+            Suite::Pass
+        );
+        assert_eq!(
+            classify_suite(
+                Language::Rust,
+                Some(101),
+                "test result: FAILED. 0 passed; 1 failed"
+            ),
             Suite::TestFailed
         );
         // A revert that breaks compilation exits 101 too; it is no catch.
         let compile = "error[E0308]: mismatched types\nerror: could not compile `shop`";
         assert!(matches!(
-            classify_suite(Some(101), compile),
+            classify_suite(Language::Rust, Some(101), compile),
             Suite::NotEstablished(_)
         ));
         assert!(matches!(
-            classify_suite(None, ""),
+            classify_suite(Language::Rust, None, ""),
             Suite::InstrumentError(_)
         ));
         assert!(matches!(
-            classify_suite(Some(101), ""),
+            classify_suite(Language::Rust, Some(101), ""),
             Suite::NotEstablished(_)
         ));
         assert_eq!(revert_line(&SCENARIOS[0], 999), None);
@@ -334,10 +339,13 @@ mod tests {
             None
         );
         assert_eq!(
-            hold_agent_lib(&root).ok().as_deref(),
+            hold_agent_lib(&SCENARIOS[0], &root).ok().as_deref(),
             Some(agent_lib.as_str())
         );
-        assert_eq!(error_of(release_agent_lib(&root, &agent_lib)), None);
+        assert_eq!(
+            error_of(release_agent_lib(&SCENARIOS[0], &root, &agent_lib)),
+            None
+        );
         assert_eq!(
             fs::read_to_string(root.join("src/lib.rs")).ok().as_deref(),
             Some(agent_lib.as_str())
@@ -347,7 +355,7 @@ mod tests {
         // Without a copy, the file itself is held and a copy is written
         // before anything changes it.
         assert_eq!(
-            hold_agent_lib(&root).ok().as_deref(),
+            hold_agent_lib(&SCENARIOS[0], &root).ok().as_deref(),
             Some(agent_lib.as_str())
         );
         assert_eq!(
@@ -359,11 +367,14 @@ mod tests {
 
         // A staging file left by an interrupted copy write is never trusted:
         // the intact file wins, and the copy is published whole.
-        assert_eq!(error_of(release_agent_lib(&root, &agent_lib)), None);
+        assert_eq!(
+            error_of(release_agent_lib(&SCENARIOS[0], &root, &agent_lib)),
+            None
+        );
         let partial = root.join(format!("{AGENT_LIB_COPY}.partial"));
         assert_eq!(error_of(fs::write(&partial, "")), None);
         assert_eq!(
-            hold_agent_lib(&root).ok().as_deref(),
+            hold_agent_lib(&SCENARIOS[0], &root).ok().as_deref(),
             Some(agent_lib.as_str())
         );
         assert_eq!(

@@ -223,6 +223,79 @@ and does not consult the edition. In a 2015-edition crate a non-root file's
 `extern crate dep as name;` could hide a foreign glob there. That is an accepted
 residual; the scan has no edition input.
 
+### Audited pass-through wrappers confine their argument mentions (#14116)
+
+A trusted name mentioned in another macro's arguments is a binding site for
+the whole workspace (RIPR-SPEC-0197), because the expansion may emit a
+definition or import of that name anywhere. Three registry macros paste their
+arguments only into generated function bodies, closures and expressions:
+
+- `proptest!` (proptest 1.12.0 `src/sugar.rs`): each `fn` item becomes a
+  generated `fn` whose body holds the caller's body; strategies become `let`
+  initializers; the closure form becomes a closure.
+- `prop_assert!`, `prop_assert_eq!`, `prop_assert_ne!`, `prop_assume!` and
+  `prop_oneof!` (the same crate): expressions over the caller's tokens.
+- `serde_json::json!` (the audited literal `json!` identity): an expression
+  over the caller's tokens.
+
+Inside such a body a `use` or a non-exported `macro_rules!` binds only within
+the call's own text. So the argument site of such a call is scoped to the
+call's line and byte range and kept to its crate, and it no longer refuses a
+test elsewhere, when all of these hold:
+
+- The call is spelled `proptest::proptest!` or `serde_json::json!` (either
+  with a leading `::`), and the crate root passes the drop-in authority
+  (audited locked version and plain registry manifest, not shadowed by a
+  workspace package, module or rename, and not taken over by a plain import
+  of the root name unless the path is absolute); or it is a bare
+  `proptest!` whose module (the file, or the inline module holding the call)
+  has an admitted exact `proptest::prelude::*` glob.
+- For a bare `proptest!`: the file has no plain import and no `macro_rules!`
+  or `macro` of any of the wrapper names above, no glob in a block or inline
+  module between the call and its module (an inner glob would shadow the
+  module's), and no other item-position macro call there that might expand
+  to such an import.
+- No parsed import anywhere in the file binds a `prop_*` macro name above or
+  one of the inert attribute names below, either directly or by a rename
+  (`use helper as prop_assert;` makes `prop_assert!` a call of `helper`), and
+  no rename binds `proptest`.
+- The arguments hold no `macro_rules`, `macro`, `mod`, `extern`, `include` or
+  `use` token, since a nested `#[macro_export]` definition, a module, pasted
+  file text or a renaming import inside the pasted body can leave a function
+  body or redirect a nested call.
+- Every attribute in the arguments is a single-segment built-in that runs no
+  expander: `test`, `ignore`, `should_panic`, `allow`, `expect`, `warn`,
+  `deny`, `forbid`, `doc`, `inline`, `cfg`, `must_use`, `track_caller`, or
+  proptest's own `proptest_config` header. A `derive`, `cfg_attr` or path
+  attribute (`#[dep::define(..)]`) may invoke a procedural macro that emits
+  an exported definition beside the item it decorates.
+- Every nested macro call in the arguments is a single-segment trusted
+  assertion-context name, a single-segment `prop_*` macro above, or one
+  whose own arguments mention no trusted name. A path such as
+  `dep::prop_assert!` names whatever `dep` exports. Any other nested call
+  could define a name from its arguments where the call's scope cannot bound
+  it. When a nested `prop_*` call is trusted by name under a qualified outer
+  call, the bare `proptest!` conditions above must also hold, so the name
+  reaches the audited prelude.
+
+A confined argument mention rebinds nothing outside the call, so it does not
+make the trusted calls nested in the arguments (`assert_eq!(v, vec![1])`)
+opaque elsewhere in the file. A name the file genuinely rebinds still makes
+every one of its calls, inside the confined call too, a workspace-wide site
+for what its arguments mention.
+
+A `macro_rules!` or `macro` definition that takes one of the wrapper names
+and whose transcriber pastes caller tokens (any `$`) is itself a binding site
+for every trusted name in its crate
+(`WrapperRedefinition`): through textual scope it may replace the audited
+macro for calls below it, including in child modules declared in other files,
+which the calling file cannot see. A definition whose transcribers paste
+nothing adds nothing a call's arguments can bind and reports no such site.
+
+Any other spelling, version, source, argument shape or local redefinition
+keeps the workspace-wide argument site. A test inside the call keeps the
+scoped site, so a generated test is not credited by this rule.
+
 ## Non-Goals
 
 - Repository mode does not list or name `verus!` regions; it only guarantees

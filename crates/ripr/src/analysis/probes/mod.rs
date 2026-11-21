@@ -122,6 +122,8 @@ mod record_field_boundary_tests;
 #[cfg(test)]
 mod replacement_identity_tests;
 #[cfg(test)]
+mod unsafe_interior_line_tests;
+#[cfg(test)]
 mod where_bound_boundary_tests;
 
 #[cfg(test)]

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask release-readiness` `installed-command-surface` now checks `ripr first-pr --help` for the canonical `--output-dir` flag (renamed from `--out-dir` in #15224) and pins `FIRST_PR_HELP_NEEDLES` against `crates/ripr/src/output/first_pr/options.rs` in `repository_help_surfaces_satisfy_command_surface_needles` so future help renames surface in `cargo test` instead of mid-release (#10543, #2379).

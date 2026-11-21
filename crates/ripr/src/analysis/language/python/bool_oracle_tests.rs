@@ -841,7 +841,6 @@ fn negative_control_given_is_not_none_or_other_uncredited_forms_then_nothing_is_
 fn negative_control_given_a_non_bool_owner_then_truthy_and_identity_forms_are_not_credited() {
     for source in [
         pytest_body(&["assert is_adult(18)"]),
-        pytest_body(&["assert is_adult(18) is True"]),
         pytest_body(&["assert not is_adult(0)"]),
         unittest_body(&["self.assertTrue(is_adult(18))"]),
         unittest_body(&["self.assertFalse(is_adult(0))"]),
@@ -853,12 +852,8 @@ fn negative_control_given_a_non_bool_owner_then_truthy_and_identity_forms_are_no
 
 #[test]
 fn negative_control_given_a_non_literal_argument_then_the_identity_form_is_not_credited() {
-    for source in [
-        pytest_body(&["age = 18", "assert is_adult(age) is True"]),
-        unittest_body(&["age = 18", "self.assertTrue(is_adult(age))"]),
-    ] {
-        assert_not_credited(BOOL_OWNER, &source, true);
-    }
+    let source = unittest_body(&["age = 18", "self.assertTrue(is_adult(age))"]);
+    assert_not_credited(BOOL_OWNER, &source, true);
 }
 
 #[test]
@@ -930,4 +925,35 @@ fn negative_control_given_a_testcase_that_may_override_the_assertion_then_the_fi
     );
     assert_eq!(is_adult_finding(&stock)?.class, ExposureClass::Exposed);
     Ok(())
+}
+
+#[test]
+fn given_an_identity_pin_then_it_is_exact_without_a_bool_owner_or_literal_arguments() {
+    for (owner, source) in [
+        (COUNT_OWNER, pytest_body(&["assert is_adult(18) is True"])),
+        (COUNT_OWNER, pytest_body(&["assert False is is_adult(0)"])),
+        (
+            BOOL_OWNER,
+            pytest_body(&["age = 18", "assert is_adult(age) is True"]),
+        ),
+        (
+            "def is_iterable(x):\n    try:\n        iter(x)\n    except TypeError:\n        return False\n    return True\n",
+            pytest_body(&["assert is_adult(NotIterable()) is False"]),
+        ),
+    ] {
+        let strengths = credited_strengths(owner, &source);
+        assert_eq!(strengths, vec![OracleStrength::Strong], "{source}");
+    }
+}
+
+#[test]
+fn negative_control_given_identity_against_none_or_a_negated_bool_then_it_stays_weak() {
+    for source in [
+        pytest_body(&["assert is_adult(18) is None"]),
+        pytest_body(&["assert is_adult(18) is not False"]),
+        pytest_body(&["assert is_adult(18) is not True"]),
+    ] {
+        let strengths = credited_strengths(COUNT_OWNER, &source);
+        assert_eq!(strengths, vec![OracleStrength::Weak], "{source}");
+    }
 }

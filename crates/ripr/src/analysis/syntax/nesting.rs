@@ -49,8 +49,6 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     if !memoized_within_nesting_budget(text) && rust_nesting_refusal(text).is_some() {
         return None;
     }
-    #[cfg(test)]
-    CLEAN_PARSE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let (parse, error_count) = parse_source_file_checked(text);
     mark_within_nesting_budget(text);
     (error_count == 0).then_some(parse)
@@ -88,17 +86,15 @@ fn mark_within_nesting_budget(text: &str) {
     });
 }
 
-/// [`CLEAN_PARSE_CALLS`] on this thread so far.
+/// Calls to [`parse_source_file_checked`] on this thread, including cache hits.
 #[cfg(test)]
 pub(crate) fn nesting_parse_calls() -> usize {
-    CLEAN_PARSE_CALLS.with(std::cell::Cell::get)
+    CHECKED_PARSE_CALLS.with(std::cell::Cell::get)
 }
 
 #[cfg(test)]
 thread_local! {
-    /// Parses that reached the parser on this thread, so a test can prove a
-    /// producer parses each file once.
-    pub(crate) static CLEAN_PARSE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CHECKED_PARSE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// [`parse_clean_source_file`] memoized per thread for small texts.
@@ -195,6 +191,8 @@ pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
 /// know whether the file is clean (or how many errors it has) no longer
 /// validate the same tree again on every memo hit.
 pub(crate) fn parse_source_file_checked(text: &str) -> (Parse<SourceFile>, usize) {
+    #[cfg(test)]
+    CHECKED_PARSE_CALLS.with(|calls| calls.set(calls.get() + 1));
     if text.len() > PARSE_CACHE_MAX_BYTES {
         return parse_source_file_uncached(text);
     }
@@ -1760,7 +1758,7 @@ mod memoized_parse_tests {
 #[cfg(test)]
 mod nesting_budget_memo_tests {
     use super::{
-        NESTING_REFUSAL_ESTIMATES, PARSE_CACHE_ENTRIES, RUST_NESTING_BUDGET,
+        NESTING_REFUSAL_ESTIMATES, PARSE_CACHE_ENTRIES, RUST_NESTING_BUDGET, nesting_parse_calls,
         parse_clean_source_file, parse_source_file_checked, rust_nesting_refusal,
     };
 
@@ -1792,7 +1790,15 @@ mod nesting_budget_memo_tests {
     #[test]
     fn only_a_text_that_passed_the_estimate_is_marked() {
         let unchecked = "fn nesting_memo_unchecked_15396() { let x = 1; }\n";
-        assert_eq!(parse_source_file_checked(unchecked).1, 0);
+        let calls = nesting_parse_calls();
+        for _ in 0..2 {
+            assert_eq!(parse_source_file_checked(unchecked).1, 0);
+        }
+        assert_eq!(
+            nesting_parse_calls() - calls,
+            2,
+            "count the direct cache hit too"
+        );
         let before = estimates();
         assert!(parse_clean_source_file(unchecked).is_some());
         assert!(parse_clean_source_file(unchecked).is_some());
@@ -1812,9 +1818,15 @@ mod nesting_budget_memo_tests {
             "fixture must exceed the budget"
         );
         let before = estimates();
+        let calls = nesting_parse_calls();
         for _ in 0..3 {
             assert!(parse_clean_source_file(&deep).is_none());
         }
+        assert_eq!(
+            nesting_parse_calls(),
+            calls,
+            "refused text reached the parser"
+        );
         assert_eq!(
             estimates() - before,
             3,

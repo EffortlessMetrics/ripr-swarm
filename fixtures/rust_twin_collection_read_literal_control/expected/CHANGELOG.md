@@ -128,3 +128,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_twin_collection_read_literal_control (11)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_twin_collection_read_literal_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

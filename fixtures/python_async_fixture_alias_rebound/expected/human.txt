@@ -1,0 +1,52 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_async_fixture_alias_rebound/input
+config: <cwd>/fixtures/python_async_fixture_alias_rebound/input/ripr.toml
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: static limitation `unresolved_pytest_fixture` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  File: src/cart.py:7
+  Language: python
+  Language status: preview
+  Static exposure: unknown (severity: note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
+  Why unknown: test `test_discounted` takes pytest fixture `cart` that ripr does not read, so it cannot tell what it supplies; open the fixture to see whether it passes the changed input
+  Changed behavior: return self.total - 5
+  Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture,
+    and static analysis cannot tell whether it supplies an input that exercises the change or the
+    value the test expects
+  Related test: tests/test_cart.py:16 test_discounted
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: 1 related Python test(s) found for owner `discounted`
+    - infection unknown: Static limit `unresolved_pytest_fixture` prevents a safe Python infection claim
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_async_fixture_alias_rebound/input --diff <cwd>/fixtures/python_async_fixture_alias_rebound/diff.patch --mode fast probe:src_cart.py:python_preview:b2d8df81
+  ripr context --root <cwd>/fixtures/python_async_fixture_alias_rebound/input --diff <cwd>/fixtures/python_async_fixture_alias_rebound/diff.patch --mode fast --at probe:src_cart.py:python_preview:b2d8df81
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

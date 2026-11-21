@@ -331,6 +331,9 @@ fn drive_before_phase_inner(
     // and the Rust seam inventory cannot translate. The gap id is the attempt
     // identity (the manifest's seam slot); the seam translator is skipped,
     // and `--seam-id gap:...` keeps its translating behaviour untouched.
+    // #15249: a missing or non-directory `--root` is the shared root refusal,
+    // not a git failure from the seam translation or the workflow lock below.
+    commands_context::ensure_command_root(&options.root, "agent repair --phase before")?;
     if let Some(gap_id) = options.gap_id.clone() {
         options.seam_id = Some(gap_id);
     } else if let Some(seam_id) = options.seam_id.clone() {
@@ -432,8 +435,12 @@ impl GapWorkflowArtifactBackup {
         for (path, prior) in self.entries {
             match prior {
                 Some(bytes) => {
+                    // Replace, never rewrite in place: an interrupted restore
+                    // then leaves the overwritten file or the prior one, not a
+                    // truncated copy of the prior evidence.
                     if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
-                        && let Err(error) = std::fs::write(&path, bytes)
+                        && let Err(error) =
+                            crate::atomic_file::write(&path, &bytes, "prior workflow artifact")
                     {
                         failures.push(format!("restore {} failed: {error}", path.display()));
                     }
@@ -1010,6 +1017,47 @@ mod tests {
             }
             if packet.exists() {
                 return Err("a file the failed start created was kept".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
+    }
+
+    /// The restore replaces each overwritten file instead of rewriting it in
+    /// place: a reader still holding the overwritten file (modelled by a hard
+    /// link) keeps its bytes, while the path carries the complete prior bytes.
+    /// An in-place truncate-and-write changes the held bytes too, and is what
+    /// leaves a truncated baseline behind when a restore is interrupted.
+    #[test]
+    fn gap_artifact_backup_restore_replaces_files_instead_of_rewriting_them() -> Result<(), String>
+    {
+        let root = test_root("gap-backup-replace")?;
+        let result = (|| -> Result<(), String> {
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
+            let baseline = workflow.join("attempt-baseline.json");
+            std::fs::write(&baseline, b"sentinel-baseline").map_err(|e| e.to_string())?;
+            let backup = GapWorkflowArtifactBackup::capture(&root);
+            std::fs::write(&baseline, b"overwritten-by-failed-start").map_err(|e| e.to_string())?;
+            let held = workflow.join("attempt-baseline.json.held");
+            std::fs::hard_link(&baseline, &held).map_err(|e| e.to_string())?;
+            backup.restore()?;
+            if std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline" {
+                return Err("prior baseline bytes were not restored".to_string());
+            }
+            if std::fs::read(&held).map_err(|e| e.to_string())? != b"overwritten-by-failed-start" {
+                return Err("the baseline was rewritten in place".to_string());
+            }
+            let mut names = std::fs::read_dir(&workflow)
+                .map_err(|e| e.to_string())?
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            names.sort();
+            if names != ["attempt-baseline.json", "attempt-baseline.json.held"] {
+                return Err(format!("restore left extra files: {names:?}"));
             }
             Ok(())
         })();

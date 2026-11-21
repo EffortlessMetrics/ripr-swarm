@@ -249,7 +249,13 @@ pub(crate) fn build_policy_readiness_report(input: PolicyReadinessInput) -> Poli
     let suppression_health = suppression_health_axis(&suppression);
     let calibration_health = calibration_axis(&recommendation, &mutation);
     let preview_evidence_boundary = preview_axis(preview);
-    warnings.extend(suppression_health.warnings.clone());
+    // An invalid suppression-health input already contributed its notice above;
+    // adding the axis copy would count one bad input twice.
+    for notice in &suppression_health.warnings {
+        if !warnings.contains(notice) {
+            warnings.push(notice.clone());
+        }
+    }
     warnings.extend(preview_evidence_boundary.warnings.clone());
 
     // A gate decision that failed evaluation is a config error for
