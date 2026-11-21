@@ -347,17 +347,21 @@ pub const SHA256_DIGEST_PATTERN: &str = "^sha256:[0-9a-f]{64}$";
 /// anything.
 pub const LONG_FLAG_PATTERN: &str = "^--[a-z]";
 /// A relative working directory, as `repair-assurance.schema.json` publishes
-/// it: non-empty with no line break, no `name:` drive or scheme prefix before
-/// the first separator, no leading `/` or `\\`, and no `..` segment.
+/// it, read with ECMAScript regex semantics (the JSON Schema dialect): `.`
+/// matches no line terminator (LF, CR, U+2028, U+2029); `[^\\/]+:` needs at
+/// least one character before the colon, so a first segment such as
+/// `:literal` passes while `c:` or `https:` does not; no leading `/` or `\\`;
+/// and no `..` segment.
 pub const RELATIVE_WORKDIR_PATTERN: &str =
     r"^(?![^\\/]+:)(?![\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).+$";
 
 fn is_relative_working_directory(text: &str) -> bool {
     let is_separator = |c: char| c == '/' || c == '\\';
     let first_segment = text.split(is_separator).next().unwrap_or("");
+    let line_terminator = |c: char| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}');
     !text.is_empty()
-        && !text.contains('\n')
-        && !first_segment.contains(':')
+        && !text.contains(line_terminator)
+        && !first_segment.chars().skip(1).any(|c| c == ':')
         && !text.starts_with(is_separator)
         && !text.split(is_separator).any(|segment| segment == "..")
 }

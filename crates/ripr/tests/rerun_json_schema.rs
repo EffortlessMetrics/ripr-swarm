@@ -500,6 +500,42 @@ fn the_checker_covers_every_keyword_the_rerun_schema_uses() -> Result<(), String
     }
 }
 
+/// The checker reads the shared working-directory pattern with ECMAScript
+/// semantics, the JSON Schema regex dialect. Each expectation below was
+/// evaluated with an ECMAScript engine against the published pattern.
+#[test]
+fn the_checker_reads_the_working_directory_pattern_like_ecmascript() -> Result<(), String> {
+    let schema = json!({"type": "string", "pattern": published_schema::RELATIVE_WORKDIR_PATTERN});
+    let cases = [
+        (".", true),
+        ("crates/ripr", true),
+        (":literal", true),
+        ("a..b/c", true),
+        ("", false),
+        ("c:/x", false),
+        ("https:x", false),
+        ("::x", false),
+        ("/abs", false),
+        ("\\abs", false),
+        ("a/../b", false),
+        ("a\\..\\b", false),
+        ("..", false),
+        ("a\nb", false),
+        ("a\rb", false),
+        ("a\u{2028}b", false),
+        ("a\u{2029}b", false),
+    ];
+    for (text, expected) in cases {
+        let accepted = published_schema::check(&json!(text), &schema, &schema, "workdir").is_ok();
+        if accepted != expected {
+            return Err(format!(
+                "working directory {text:?}: accepted {accepted}, ECMAScript reads {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Every run conforms and is the case it claims to be. The ready boundary
 /// seam carries an admitted existing test target, so the readiness branch is
 /// read from real output too.
