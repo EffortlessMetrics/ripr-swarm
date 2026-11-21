@@ -4,8 +4,8 @@
 //! `schemas/ripr/rerun.schema.json` describes the targeted rerun report. The
 //! documents here come from one fixture package run through every branch the
 //! schema names: both selectors, `--before` movement (unchanged, improved,
-//! regressed, and an unusable before artifact), `--check-parity` (matched and
-//! capped), a gap ledger whose records conflict, a ledger carrying the typed
+//! regressed, closed, indeterminate, and an unusable before artifact),
+//! `--check-parity` (matched and capped), a gap ledger whose records conflict, a ledger carrying the typed
 //! command specs `ripr agent packet` produced, and selectors that resolve to
 //! nothing. Each document is also asserted to be the case it claims to be, so
 //! a schema branch is never "covered" by a run that skipped it.
@@ -79,8 +79,10 @@ fn fixture_repo(root: &Path) -> Result<(), String> {
 }
 
 fn ripr(args: &[&str], env: &[(&str, &str)]) -> Result<Output, String> {
+    // An ambient seam cap would turn every parity run into the capped case.
     Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(args)
+        .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
         .envs(env.iter().copied())
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
@@ -205,7 +207,7 @@ fn rerun_documents() -> Result<Vec<(&'static str, Value)>, String> {
                 "root": root_arg,
                 "records": [
                     {"canonical_gap_id": gap, "anchor": anchored,
-                     "verification_commands": ["cargo test far"],
+                     "verification_commands": ["cargo test far", ""],
                      "receipt_command": "ripr receipt write --gap a"},
                     {"canonical_gap_id": gap,
                      "verification_commands": ["cargo test far"],
@@ -253,15 +255,33 @@ fn rerun_documents() -> Result<Vec<(&'static str, Value)>, String> {
         write(&root.join("tests/pricing.rs"), BOUNDARY_TEST)?;
         let (improved, improved_bytes) = changed(&["--before", &current_path], &[])?;
         let improved_path = keep("improved.json", &improved_bytes)?;
+        // With every seam now strongly gripped, a before artifact that lists
+        // the same seams as weakly gripped closes them all; one that lists
+        // them as `intentional` (the same rank, another class) moves them
+        // without an order, which is `movement_indeterminate`. Only the
+        // before stimulus is derived; the reports are the command's bytes.
+        let restated = |class: &str| -> Result<Vec<u8>, String> {
+            let mut before = improved.clone();
+            for seam in before["seams"].as_array_mut().into_iter().flatten() {
+                seam["static_class"] = json!(class);
+            }
+            serde_json::to_vec(&before).map_err(|error| format!("encode before: {error}"))
+        };
+        let weak_path = keep("all-weak.json", &restated("weakly_gripped")?)?;
+        let (closed, _) = changed(&["--before", &weak_path], &[])?;
+        let intentional_path = keep("all-intentional.json", &restated("intentional")?)?;
+        let (indeterminate, _) = changed(&["--before", &intentional_path], &[])?;
         write(&root.join("tests/pricing.rs"), WEAK_TEST)?;
         let (regressed, _) = changed(&["--before", &improved_path], &[])?;
 
-        Ok(vec![
+        let mut documents = vec![
             ("current", current),
             ("named_test", named_test),
             ("unchanged", unchanged),
             ("improved", improved),
             ("regressed", regressed),
+            ("closed", closed),
+            ("indeterminate", indeterminate),
             ("parity_matched", parity_matched),
             ("parity_capped", parity_capped),
             ("before_unavailable", before_unavailable),
@@ -270,7 +290,10 @@ fn rerun_documents() -> Result<Vec<(&'static str, Value)>, String> {
             ("gap_conflict", gap_conflict),
             ("gap_typed", gap_typed),
             ("gap_unresolved", gap_unresolved),
-        ])
+        ];
+        #[cfg(feature = "lang-typescript")]
+        documents.push(("typescript_gap", typescript_gap_rerun(&side)?));
+        Ok(documents)
     })();
     // A failing run keeps the fixture and the before artifacts (their names
     // are unique per run) so they can be inspected.
@@ -279,6 +302,65 @@ fn rerun_documents() -> Result<Vec<(&'static str, Value)>, String> {
         let _ = std::fs::remove_dir_all(&side);
     }
     documents
+}
+
+/// A gap rerun over the TypeScript preview fixture: its related test has no
+/// oracle text and no relation, which the producer writes as empty strings.
+/// The ledger names the finding by the evidence id the fixture's golden
+/// `check` report records, so the selected seam is the one the golden pins.
+#[cfg(feature = "lang-typescript")]
+fn typescript_gap_rerun(side: &Path) -> Result<Value, String> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/typescript_effect_probe_shapes");
+    let root = side.join("typescript");
+    for path in ["ripr.toml", "src/profile.ts", "tests/profile.test.ts"] {
+        let target = root.join(path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        }
+        std::fs::copy(fixture.join("input").join(path), &target)
+            .map_err(|error| format!("copy {path}: {error}"))?;
+    }
+    let golden = std::fs::read_to_string(fixture.join("expected/check.json"))
+        .map_err(|error| format!("read the TypeScript golden: {error}"))?;
+    let golden: Value = serde_json::from_str(&golden)
+        .map_err(|error| format!("parse the TypeScript golden: {error}"))?;
+    let finding = golden["findings"][0]["id"]
+        .as_str()
+        .ok_or("the TypeScript golden has no finding id")?
+        .to_string();
+    let root_arg = root.display().to_string();
+    let ledger = side.join("typescript-ledger.json");
+    write(
+        &ledger,
+        &json!({
+            "kind": "gap_decision_ledger",
+            "root": root_arg,
+            "records": [{
+                "canonical_gap_id": "gap:typescript",
+                "evidence_ids": [finding],
+                "anchor": {"file": "src/profile.ts", "owner": "updateProfile", "line": 4},
+                "verification_commands": ["npm test", ""]
+            }]
+        })
+        .to_string(),
+    )?;
+    let ledger_arg = ledger.display().to_string();
+    json_of(
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--gap",
+            "gap:typescript",
+            "--gap-ledger",
+            &ledger_arg,
+            "--json",
+        ],
+        &[],
+    )
+    .map(|(value, _)| value)
 }
 
 fn conforms(document: &Value, schema: &Value, label: &str) -> Result<(), String> {
@@ -322,7 +404,13 @@ fn expected(label: &str) -> Value {
         "current" | "named_test" => {
             changed("current_state_only", Value::Null, Value::Null, Value::Null)
         }
-        "unchanged" | "improved" | "regressed" => {
+        "indeterminate" => changed(
+            "limited",
+            json!("movement_indeterminate"),
+            json!("limited"),
+            Value::Null,
+        ),
+        "unchanged" | "improved" | "regressed" | "closed" => {
             changed(label, Value::Null, json!(label), Value::Null)
         }
         "parity_matched" => changed(
@@ -360,6 +448,12 @@ fn expected(label: &str) -> Value {
             "movement": null, "parity": null,
             "route": ["receipt_command", "receipt_command_conflict", "verify_commands"],
             "scope_limitations": ["gap_anchor_unresolved"],
+        }),
+        "typescript_gap" => json!({
+            "selector": "canonical_gap", "state": "current_state_only", "limitation": null,
+            "movement": null, "parity": null,
+            "route": ["receipt_command", "verify_commands"],
+            "scope_limitations": null,
         }),
         "gap_typed" => json!({
             "selector": "canonical_gap", "state": "current_state_only", "limitation": null,
@@ -401,6 +495,40 @@ fn rerun_json_conforms_for_every_selector_and_option() -> Result<(), String> {
         if observed != expected {
             return Err(format!(
                 "{label}: observed {observed}, expected {expected}\n{document:#}"
+            ));
+        }
+        // The empty strings the producer writes are part of the real
+        // contract: a blank legacy verify display survives deduplication,
+        // and a TypeScript related test with no oracle or relation is "".
+        let empty_verify = document["route"]["verify_commands"]
+            .as_array()
+            .is_some_and(|commands| commands.iter().any(|command| command == ""));
+        let empty_related = document["seams"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|seam| {
+                seam["related_tests"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .any(|test| {
+                ["evidence_summary", "relation_reason", "relation_confidence"]
+                    .iter()
+                    .all(|field| test[*field] == "")
+            });
+        let wanted = match label {
+            "gap_conflict" => Some((true, false)),
+            "typescript_gap" => Some((true, true)),
+            _ => None,
+        };
+        if let Some(wanted) = wanted
+            && (empty_verify, empty_related) != wanted
+        {
+            return Err(format!(
+                "{label}: empty verify display and empty related-test text {:?}, expected {wanted:?}\n{document:#}",
+                (empty_verify, empty_related)
             ));
         }
     }

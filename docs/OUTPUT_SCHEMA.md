@@ -117,7 +117,7 @@ map is:
 | `ripr diff --json` (`kind: "ripr_diff"`; published as `schemas/ripr/diff.schema.json`) | `schema_version` | `0.1` |
 | `ripr capabilities --json` (`kind: "ripr_language_capabilities"`; published as `schemas/ripr/capabilities.schema.json`, #14067) | `schema_version` | `0.1` |
 | `ripr check --format repo-exposure-json` | `schema_version` | `0.5` |
-| `ripr rerun --json` (published as `schemas/ripr/rerun.schema.json`) | `schema_version` | `ripr-targeted-rerun-v1` |
+| `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
 | `ripr agent brief` | `schema_version` | `0.2` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
@@ -21985,10 +21985,14 @@ The report is published as
 refusal written with exit code 2 is `rerun-refusal.schema.json`).
 `crates/ripr/tests/rerun_json_schema.rs` validates the bytes the real command
 writes for both selectors, `--before` movement (unchanged, improved, regressed,
-and an unusable or incompatible before artifact), `--check-parity` (matched and
-capped), a gap ledger whose records conflict, a ledger carrying the typed
-command specs `ripr agent packet` produced, and selectors that resolve to
-nothing. Beyond the field shapes, the schema binds these rules: `limitation`
+closed, indeterminate, and an unusable or incompatible before artifact),
+`--check-parity` (matched and capped), a gap ledger whose records conflict, a
+ledger carrying the typed command specs `ripr agent packet` produced, a
+TypeScript gap rerun, and selectors that resolve to nothing. Text the producer
+may leave empty stays a plain string: a TypeScript related test with no oracle
+or relation writes `""` for `evidence_summary`, `relation_reason` and
+`relation_confidence`, and a blank legacy `verify_commands` display is kept as
+written. Beyond the field shapes, the schema binds these rules: `limitation`
 is present exactly when `state` is `limited`; a `movement` section carries the
 report `state` and the before/after `authority_boundary`, and a report without
 one is `current_state_only` or `limited`; a `limited` movement is

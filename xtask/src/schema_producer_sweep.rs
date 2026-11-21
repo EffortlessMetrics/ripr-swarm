@@ -163,7 +163,7 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         schema_path: "schemas/ripr/rerun.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
-            "narrower authority: rerun_json_conforms_for_every_selector_and_option in crates/ripr/tests/rerun_json_schema.rs validates the real CLI bytes for thirteen runs across both selectors, --before movement and --check-parity, and published_rerun_schema_rejects_documents_it_forbids is the negative experiment; the report carries host paths and input hashes, so the committed fixture is a portable capture kept as an edge fixture",
+            "narrower authority: rerun_json_conforms_for_every_selector_and_option in crates/ripr/tests/rerun_json_schema.rs validates the real CLI bytes for sixteen runs (one over the TypeScript preview fixture) across both selectors, --before movement and --check-parity, and published_rerun_schema_rejects_documents_it_forbids is the negative experiment; the report carries host paths and input hashes, so the committed fixture is a portable capture kept as an edge fixture",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/rerun.valid.json"],
         excluded: &[],

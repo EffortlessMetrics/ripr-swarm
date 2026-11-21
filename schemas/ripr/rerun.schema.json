@@ -856,8 +856,8 @@
           "minimum": 1
         },
         "owner": {
-          "type": "string",
-          "minLength": 1
+          "description": "The production owner; empty when the analysis could not name one.",
+          "type": "string"
         },
         "static_class": {
           "description": "The seam's static grip class, as the full pipeline names it.",
@@ -884,12 +884,10 @@
             ],
             "properties": {
               "test_name": {
-                "type": "string",
-                "minLength": 1
+                "type": "string"
               },
               "file": {
-                "type": "string",
-                "minLength": 1
+                "type": "string"
               },
               "line": {
                 "type": "integer",
@@ -904,16 +902,16 @@
                 "minLength": 1
               },
               "evidence_summary": {
-                "type": "string",
-                "minLength": 1
+                "description": "Empty when the evidence is absent (a TypeScript gap rerun writes an empty string rather than null).",
+                "type": "string"
               },
               "relation_reason": {
-                "type": "string",
-                "minLength": 1
+                "description": "Empty when the evidence is absent (a TypeScript gap rerun writes an empty string rather than null).",
+                "type": "string"
               },
               "relation_confidence": {
-                "type": "string",
-                "minLength": 1
+                "description": "Empty when the evidence is absent (a TypeScript gap rerun writes an empty string rather than null).",
+                "type": "string"
               }
             }
           }
@@ -929,12 +927,10 @@
             ],
             "properties": {
               "value": {
-                "type": "string",
-                "minLength": 1
+                "type": "string"
               },
               "reason": {
-                "type": "string",
-                "minLength": 1
+                "type": "string"
               }
             }
           }
@@ -985,22 +981,19 @@
         "required_evidence": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "present_evidence": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "missing_evidence": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "target_selection": {
@@ -1113,8 +1106,7 @@
           "minLength": 1
         },
         "workspace_identity": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "currentness": {
           "type": "string",
@@ -1361,10 +1353,10 @@
       ],
       "properties": {
         "verify_commands": {
+          "description": "The ledger's legacy display strings, deduplicated in first-occurrence order but otherwise as written (an empty string included).",
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "receipt_command": {
