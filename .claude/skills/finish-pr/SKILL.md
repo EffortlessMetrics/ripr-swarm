@@ -145,11 +145,11 @@ is green. Being Ready for review is not REVIEW_READY or permission to arm
 auto-merge.
 
 The [staged admission route](../../../docs/MERGE_FLOW.md#staged-admission-and-group-qualification)
-requires protected installation and readback before use. Its deliberate Ready-PR
+requires protected installation and readback before use. On a Ready PR, the explicit `merge-ready`
 label requests one five-minute read-only metadata check. Product work waits for
 the selected native group. Check the [installed CI events](../../../docs/CI.md#what-starts-what-in-this-source-stage)
-before applying a label. Leave the request pending when the installed run
-exceeds the authorized budget.
+before applying a label. Leave the label unapplied when the installed full PR qualification exceeds the
+authorized budget.
 
 # Release-scope law
 
