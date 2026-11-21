@@ -1086,8 +1086,33 @@ Mocks and spies: `vi.` or `jest.` with `mock`, `doMock`,
 `node:test`, are mocks at any depth. A non-string specifier counts as an
 owner-module mock (fail closed). `spyOn(x, "owner")` with
 `.mockReturnValue`, `.mockImplementation`, `.mockResolvedValue` or
-`.mockRejectedValue` removes the trusted relation and adds
+`.mockRejectedValue`, their `*Once` forms, `.mockReturnThis` or a Jasmine
+`.and.` strategy (`returnValue`, `returnValues`, `callFake`, `throwError`,
+`resolveTo`, `rejectWith`) removes the trusted relation and adds
 `typescript_spy_fabricated_observer`; a bare `spyOn` still relates.
+
+Replaced owner function (#15939): a function owner is not related through a
+test file that replaces it on its module object, wherever in the file the
+replacement sits (the test body, a hook, the top level, a sibling test). The
+replacements read are `stub(x, "owner")`, a three-argument
+`replace(x, "owner", fake)`, `replaceProperty` and `defineProperty` naming the
+owner, `mock.method(x, "owner", fake)` (or with two arguments when the file
+mentions `mockImplementation`), a `spyOn(x, "owner")` fabricated anywhere in
+the file, directly or through the variable it is bound to, and a member
+assignment `x.owner = ...`. The target `x` counts when it is rooted at a
+local the file imports (a plain identifier, a dotted path, a cast) or is not
+rooted at an identifier at all (a call result such as `require("./m")`); a
+global or a body-local object (`console`, `Date`, a fixture) is not the
+owner's module. A whole-object stub `stub(x)` or a member name that is not a
+plain string literal replaces every member of `x`. A default-exported owner
+is also named by `"default"`. The finding carries
+`typescript_spy_fabricated_observer`. `spy(x, "owner")`, a two-argument
+`mock.method` with no `mockImplementation` in the file, a two-argument
+`replace` (`String.prototype.replace`) and a replacement naming another
+member still relate. Not read: `Object.assign(x, { owner: fake })`, a
+replacement made by a helper in another file, and a restore before a sibling
+test's call (that sibling loses its relation). The fact is text-level and can
+only withhold.
 
 **Rule 5. A default import anchors only a default-exported owner.** A bare
 call `local(` through `import local from "<owner module>"` has a declaration
@@ -2545,6 +2570,17 @@ keys); do not take the next number.
   (rule 23).
 
 ## Test Mapping
+
+- #15939 (replaced owner function):
+  `crates/ripr/tests/typescript_replaced_owner_function.rs` runs the binary over
+  each replacement call in the test body, in a hook and at the top level, the
+  hook-bound spy fabricated in the test, the named-import call beside a stubbed
+  namespace, the `require` binding, the `default` member, and the call-through,
+  other-member and other-target controls; `tests/function_replacement_tests.rs`
+  pins the recorded entry forms;
+  `fixtures/typescript_adversarial_stubbed_namespace_owner` and its control
+  `fixtures/typescript_namespace_owner_call_through_spy` pin the rendered
+  findings.
 
 - #15622 (Deno registrations and `@std/assert`):
   `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs` pins

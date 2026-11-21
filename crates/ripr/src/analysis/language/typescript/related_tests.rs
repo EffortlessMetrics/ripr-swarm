@@ -2425,6 +2425,12 @@ pub(crate) fn owner_call_relation(
     if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return None;
     }
+    // #15939: the test file swaps the owner function on its
+    // module object (`sinon.stub(ns, 'owner')`, `ns.owner = fake`, a spy
+    // fabricated in a hook), so the calls below run the substitute.
+    if super::function_replacement::owner_function_replaced_in_file(test, owner) {
+        return None;
+    }
     let observes_generic_call = || {
         test.assertions.iter().any(|assertion| {
             assertion
@@ -4180,11 +4186,24 @@ pub(crate) fn root_relative_mock_names_module(source: &str, module: &str) -> boo
 
 /// Fabrication method shapes that replace a spy's observed value (#4103
 /// shape 4).
-const SPY_FABRICATION_SHAPES: [&str; 4] = [
+const SPY_FABRICATION_SHAPES: [&str; 15] = [
     ".mockReturnValue(",
     ".mockImplementation(",
     ".mockResolvedValue(",
     ".mockRejectedValue(",
+    // A `*Once` fabrication still replaces the call a one-call test asserts.
+    ".mockReturnValueOnce(",
+    ".mockImplementationOnce(",
+    ".mockResolvedValueOnce(",
+    ".mockRejectedValueOnce(",
+    ".mockReturnThis(",
+    // Jasmine spy strategies.
+    ".and.returnValue(",
+    ".and.returnValues(",
+    ".and.callFake(",
+    ".and.throwError(",
+    ".and.resolveTo(",
+    ".and.rejectWith(",
 ];
 
 /// #4103 shape 4: `true` when the test body spies on the owner name
@@ -4228,7 +4247,7 @@ pub(crate) fn test_spies_owner_with_fabrication_for_owner(
 /// `call_start` (with `after_open` the body right after the call's open
 /// paren) fabricates its value: a fabrication shape chained directly after
 /// the call closes, or invoked on the variable the spy result is bound to.
-fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
+pub(crate) fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
     let Some(close_rel) = spy_call_close_offset(after_open) else {
         return false;
     };
@@ -4295,7 +4314,7 @@ fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
             .take_while(|ch| is_javascript_identifier_char(*ch))
             .map(char::len_utf8)
             .sum::<usize>();
-        prefix = &stripped[..stripped.len() - qualifier_bytes];
+        prefix = stripped[..stripped.len() - qualifier_bytes].trim_end();
     }
     if let Some(stripped) = strip_trailing_await_keyword(prefix) {
         prefix = stripped;

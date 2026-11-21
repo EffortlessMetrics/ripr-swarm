@@ -687,6 +687,21 @@ pub(crate) fn named_limitations_for_spy_fabrication_from_candidates(
             });
             break;
         }
+        // #15939: the same limitation for a replacement the
+        // spy guard does not read (a stub, a member assignment, a spy
+        // fabricated in a hook).
+        if super::function_replacement::owner_function_replaced_in_file(test, owner) {
+            limitations.push(TypeScriptNamedLimitation {
+                name: "typescript_spy_fabricated_observer",
+                sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
+                why_not_actionable: format!(
+                    "the file of test `{}` replaces `{}` on its module object (a stub, a member assignment or a spy fabricated outside the test body); the observed value does not flow from the changed sink",
+                    test.name, owner.name
+                ),
+                repair_route: "analysis/typescript-spy-oracle-resolution",
+            });
+            break;
+        }
     }
     limitations
 }
