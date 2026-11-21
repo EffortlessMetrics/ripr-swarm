@@ -1002,8 +1002,9 @@ When no finding is selected and every omitted finding is a removed line
 left is on removed code, which is never an edit target` instead of `no gap
 selected for repair`. It describes the findings left after suppression, not
 the whole diff: a policy-suppressed finding on added code is not counted, so
-the line does not claim the diff only removes code. The the `Safe next action` line says that
-the diff removes code, that removed code is never an edit target, and so
+the line does not claim the diff only removes code.
+
+The `Safe next action` line says that the diff removes code, that removed code is never an edit target, and so
 nothing is selected for repair. It then gives the static evidence on the
 removed code as class counts in the Summary line's plain words and order
 (`appear noticed by tests`, `partly noticed`, `reached but not noticed`,
