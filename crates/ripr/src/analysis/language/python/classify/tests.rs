@@ -4,7 +4,9 @@ use super::super::owners_tests::{extract_owners, extract_tests};
 use super::super::related_tests::TestLookup;
 use super::classify_change_with_old;
 use super::classify_change_with_source;
-use crate::domain::{ExposureClass, Finding, OracleStrength, ProbeFamily, StageState};
+use crate::domain::{
+    ExposureClass, Finding, OracleStrength, ProbeFamily, StageState, StaticLimitKind,
+};
 use std::path::Path;
 
 // #12948: both ranges are empty for zero, so the exact output pin cannot
@@ -481,6 +483,51 @@ fn classify_case(
     let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
     classify_change_with_old(file, line, after, Some(before), &owners, &tests)
         .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
+#[test]
+fn import_limit_describes_typed_defaults_and_calls() -> Result<(), String> {
+    let annotation = classify_case(
+        "import typing as t\n\nclass Markup(str):\n    def expandtabs(self, /, tabsize: t.SupportsIndex = 4):\n        return tabsize\n",
+        "",
+        4,
+        "    def expandtabs(self, /, tabsize: t.SupportsIndex = 8):",
+        "    def expandtabs(self, /, tabsize: t.SupportsIndex = 4):",
+    )?;
+    assert!(annotation.related_tests.is_empty());
+
+    let call = classify_case(
+        "from billing import remote_total\n\ndef total(client):\n    return remote_total(client, include_tax=True)\n",
+        "from src.subject import total\n\ndef test_total():\n    assert total(None) == 12\n",
+        4,
+        "    return remote_total(client, include_tax=False)",
+        "    return remote_total(client, include_tax=True)",
+    )?;
+    assert_eq!(call.related_tests.len(), 1, "{call:?}");
+    assert_eq!(call.ripr.reach.state, StageState::Yes, "{call:?}");
+
+    for finding in [annotation, call] {
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::MissingImportGraph),
+            "{finding:?}"
+        );
+        assert!(
+            finding.evidence.iter().any(|line| {
+                line == "static_limit missing_import_graph: changed line uses an imported name"
+            }),
+            "{finding:?}"
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| { line.contains("the changed line uses an imported name.") }),
+            "{finding:?}"
+        );
+    }
+    Ok(())
 }
 
 // RIPR-SPEC-0028 / #5389: a registered test may not run, or may suppress
