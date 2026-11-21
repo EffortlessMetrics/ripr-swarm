@@ -60,6 +60,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_render_failures_never_admit_a_successful_set",
   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_rejects_stale_destinations_and_conflicting_interfaces",
   "crates/ripr/src/analysis/probes/replacement_identity_tests.rs",
+  "crates/ripr/src/analysis/probes/inline_branch_value_tests.rs",
   "crates/ripr/tests/cli_smoke/diff_pairing.rs",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke/sample_output.rs::parallel_fixture_state_and_cleanup_are_independent",

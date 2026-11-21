@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+code = [
+  "crates/ripr/src/analysis/probes/classify.rs",
+  "crates/ripr/src/analysis/syntax/ra/probe_shapes.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/probes/inline_branch_value_tests.rs",
+  "crates/ripr/tests/inline_branch_value_edit.rs::an_inline_branch_value_edit_is_a_return_value_not_a_boundary",
+  "crates/ripr/tests/inline_branch_value_edit.rs::an_inline_condition_edit_stays_the_predicate",
+  "crates/ripr/tests/inline_branch_value_edit.rs::an_added_inline_if_keeps_its_single_predicate",
+]

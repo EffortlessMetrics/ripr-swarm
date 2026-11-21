@@ -183,6 +183,128 @@ pub(super) fn operator_owner<'a>(
     })
 }
 
+/// An operator assertion can reach the impl without entering the branch that
+/// returns the changed value. Read a literal receiver only for direct binary
+/// operations on one-field tuple constructors; any other input abstains.
+pub(in crate::analysis) fn operator_assertions_skip_branch(
+    probe: &crate::domain::Probe,
+    owner: &FunctionSummary,
+    tests: &[&TestSummary],
+    index: &RustIndex,
+) -> Option<String> {
+    use ra_ap_syntax::{AstNode, ast};
+
+    if tests.is_empty() || !has_operator_shape(owner) {
+        return None;
+    }
+    let operator = operator_owner(owner, index)?;
+    if operator.unary || operator.access.is_some() {
+        return None;
+    }
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let body = function.body()?.stmt_list()?;
+    if body.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::IfExpr(branch) = body.tail_expr()? else {
+        return None;
+    };
+    let then_value = branch.then_branch()?.tail_expr()?;
+    let ast::ElseBranch::Block(other) = branch.else_branch()? else {
+        return None;
+    };
+    let else_value = other.tail_expr()?;
+    let changed_then = then_value.syntax().text() == probe.expression.as_str();
+    if changed_then == (else_value.syntax().text() == probe.expression.as_str()) {
+        return None;
+    }
+    let changed = if changed_then { then_value } else { else_value };
+    let offset: usize = changed.syntax().text_range().start().into();
+    if probe.location.line
+        != owner.start_line
+            + owner
+                .body
+                .get(..offset)?
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count()
+    {
+        return None;
+    }
+    let ast::Expr::BinExpr(condition) = branch.condition()? else {
+        return None;
+    };
+    if condition.lhs()?.syntax().text() != "self.0" {
+        return None;
+    }
+    let bound: i128 = condition.rhs()?.syntax().text().to_string().parse().ok()?;
+    let cmp = condition.op_token()?;
+    let literal = |value: &str| -> Option<i128> {
+        value
+            .trim()
+            .strip_prefix(operator.impl_type)?
+            .trim_start()
+            .strip_prefix('(')?
+            .strip_suffix(')')?
+            .trim()
+            .parse()
+            .ok()
+    };
+    for test in tests {
+        let [assertion] = test.assertions.as_slice() else {
+            return None;
+        };
+        let facts = index.files().get(&test.file)?;
+        let source = facts.source.as_ref();
+        if !test_applies_operator_to_owner(test, owner, &operator, Some(source), index) {
+            return None;
+        }
+        // Restrict this proof to a test consisting solely of the assertion:
+        // another call or a setup helper could feed different receiver values.
+        let (_, body) = test.body.split_once('{')?;
+        let statement = body
+            .trim()
+            .strip_suffix('}')?
+            .trim()
+            .trim_end_matches(';')
+            .trim();
+        if statement != assertion.text.trim().trim_end_matches(';').trim() {
+            return None;
+        }
+        let operands = super::super::reveal::assertion_comparison_operands(statement)?;
+        let [actual, expected] = if literal(operands[1]).is_some() {
+            operands
+        } else {
+            [operands[1], operands[0]]
+        };
+        literal(expected)?;
+        let (left, right) = actual.split_once(operator.token)?;
+        literal(right)?;
+        let receiver = literal(left)?;
+        let enters_then = match cmp.text() {
+            ">" => receiver > bound,
+            ">=" => receiver >= bound,
+            "<" => receiver < bound,
+            "<=" => receiver <= bound,
+            "==" => receiver == bound,
+            "!=" => receiver != bound,
+            _ => return None,
+        };
+        if enters_then == changed_then {
+            return None;
+        }
+    }
+    Some(format!(
+        "The related operator assertions use receivers that select the other branch of `{}`, so they do not activate the changed return value",
+        condition.syntax().text()
+    ))
+}
+
 /// Whether `test` applies the owner's operator to a value of the owner's type.
 pub(super) fn test_applies_operator_to_owner(
     test: &TestSummary,
