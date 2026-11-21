@@ -1,0 +1,22 @@
+[[behavior]]
+id = "RIPR-SPEC-0441"
+name = "Advisory raw runner occupancy with incomplete attempt accounting"
+spec = "docs/specs/RIPR-SPEC-0441-runner-occupancy.md"
+code = ["xtask/src/reports/ci_budget.rs", "xtask/src/reports/ci_budget/occupancy.rs", "xtask/src/reports/ci_budget/native.rs", "xtask/src/command.rs"]
+tests = [
+  "xtask/src/command.rs::tests::ci_budget_help_advertises_all_attempt_observation",
+  "xtask/src/reports/ci_budget.rs::all_attempt_option_tests::empty_collection_retains_selected_mode_in_both_outputs",
+  "xtask/src/reports/ci_budget/native.rs::tests::unavailable_early_attempt_retains_later_observed_work",
+  "xtask/src/reports/ci_budget/native.rs::tests::native_two_attempts_sum_actual_work",
+  "xtask/src/reports/ci_budget/native.rs::tests::native_identity_and_inventory_fail_closed",
+  "xtask/src/reports/ci_budget/native.rs::tests::paginated_jobs_are_complete_and_duplicates_refuse",
+  "xtask/src/reports/ci_budget/occupancy.rs::tests::parallel_and_failed_work_sum",
+  "xtask/src/reports/ci_budget/occupancy.rs::tests::skipped_work_does_not_fabricate_occupancy",
+  "xtask/src/reports/ci_budget/occupancy.rs::tests::duplicate_is_counted_once_and_conflict_excluded",
+  "xtask/src/reports/ci_budget/occupancy.rs::tests::earlier_attempts_retained_not_multiplied",
+  "xtask/src/reports/ci_budget/occupancy.rs::tests::timestamps_are_validated_not_truncated",
+  "xtask/src/reports/ci_budget.rs::tests::occupancy_renders_nonlegacy_jobs_and_incompleteness",
+  "xtask/src/reports/ci_budget.rs::tests::multiple_attempt_snapshots_label_legacy_ordinals_and_deduped_work",
+]
+outputs = ["docs/specs/RIPR-SPEC-0441-runner-occupancy.md"]
+metrics = ["unit_test_pass_rate"]
