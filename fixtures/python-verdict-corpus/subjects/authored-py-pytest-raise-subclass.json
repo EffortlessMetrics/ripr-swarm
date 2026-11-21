@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-raise-subclass",
+  "origin": "authored",
+  "version_label": "authored@raise-subclass",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "d92031507cd9efb045178b095665413da895cc3e325602939a8a1292d0de8c55"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_parse.py",
+      "sha256": "140bb70659f69f67e536469db750f3154d816337cc45f99846a41a015a2bf0a7"
+    },
+    {
+      "path": "vers/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vers/parse.py",
+      "sha256": "9ae381b2b2ec96a124de2e53742c0a00069c582a1ce13f859b6ca18c5ded898e"
+    }
+  ]
+}

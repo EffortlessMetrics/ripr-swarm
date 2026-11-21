@@ -19,6 +19,7 @@
   ],
   "properties": {
     "schema_version": { "const": "0.2" },
+    "artifact": { "$ref": "#/$defs/check_findings_artifact" },
     "tool": { "const": "ripr" },
     "status": {
       "const": "refused",
@@ -216,6 +217,55 @@
     }
   },
   "$defs": {
+    "check_findings_artifact": {
+      "description": "Provenance and content-commitment envelope that only `ripr check --format check-findings-json` adds, as the document's first member (ADR 0020 amendment, #9103). It is the repo-exposure artifact envelope with kind `check_findings` and the check-findings analysis format and command. `content_sha256` commits the emitted bytes with the digest replaced by a fixed placeholder; it is a commitment, not a proof of correctness.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind", "schema_version", "canonicalization", "generated_at", "producer",
+        "repository", "analysis", "snapshot_identity", "content_sha256"
+      ],
+      "properties": {
+        "kind": { "const": "check_findings" },
+        "schema_version": { "const": "1" },
+        "canonicalization": { "const": "raw_json_placeholder_v1" },
+        "generated_at": { "type": "string", "pattern": "^(unix_ms:[0-9]+|unavailable)$" },
+        "producer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool", "version"],
+          "properties": {
+            "tool": { "const": "ripr" },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root", "head"],
+          "properties": {
+            "root": { "type": "string", "minLength": 1 },
+            "head": { "type": "string", "minLength": 1 }
+          }
+        },
+        "analysis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "mode", "base_revision", "input_identity", "command", "profile", "worktree"],
+          "properties": {
+            "format": { "const": "check-findings-json" },
+            "mode": { "type": "string", "minLength": 1 },
+            "base_revision": { "$ref": "#/$defs/nullable_string" },
+            "input_identity": { "type": "string", "minLength": 1 },
+            "command": { "const": "ripr check --format check-findings-json" },
+            "profile": { "type": "string", "minLength": 1 },
+            "worktree": { "enum": ["clean", "dirty", "unavailable"] }
+          }
+        },
+        "snapshot_identity": { "type": "string", "pattern": "^snapshot:" },
+        "content_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
     "refusal_error": {
       "description": "The shared refusal block (#11584): machine-readable code and message, plus the one runnable step the refusal prose already states (null when none is stated unconditionally).",
       "type": "object",

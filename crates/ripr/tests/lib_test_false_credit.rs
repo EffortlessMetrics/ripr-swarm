@@ -154,6 +154,31 @@ fn lib_test_false_unit_tests_are_not_a_discriminator() -> Result<(), String> {
 }
 
 #[test]
+fn a_forwarded_module_may_mount_only_from_outside_the_skipped_chain() -> Result<(), String> {
+    let passthrough =
+        "macro_rules! passthrough { ($item:item) => { $item }; }\npassthrough! { mod runtime; }\n";
+    let skipped_lib = format!("{OWNER}{passthrough}{UNIT_TESTS}");
+    let skipped = TempCrate::create(
+        LIB_TEST_FALSE,
+        &[("src/lib.rs", &skipped_lib), ("src/runtime.rs", "")],
+    )?
+    .finding()?;
+    assert!(!credits_a_discriminator(&skipped.class), "{skipped:?}");
+
+    let remap = "macro_rules! remap { ($keyword:tt $input:ident;) => { $keyword lib; }; }\nremap! { mod unrelated; }\n";
+    let running = TempCrate::create(
+        &format!("{LIB_TEST_FALSE}\n[[test]]\nname = \"driver\"\npath = \"src/driver.rs\"\n"),
+        &[
+            ("src/lib.rs", &lib_source(UNIT_TESTS)),
+            ("src/driver.rs", remap),
+        ],
+    )?
+    .finding()?;
+    assert!(credits_a_discriminator(&running.class), "{running:?}");
+    Ok(())
+}
+
+#[test]
 fn lib_test_false_unit_tests_in_a_child_module_are_not_a_discriminator() -> Result<(), String> {
     // The skip follows the library's module tree, not only its root file.
     let lib = format!("{OWNER}\n#[cfg(test)]\nmod checks;\n");

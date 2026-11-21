@@ -144,24 +144,9 @@ impl BranchIndex {
             return None;
         }
         let environment: BTreeMap<String, i128> = self.names.iter().cloned().zip(values).collect();
-        let target = normalized_expression(seam_expression);
-        if self.both_arms.contains(&target) {
-            return None;
-        }
-        let matches = self
-            .at_line
-            .get(&(target, line))
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let [(position, in_then)] = matches else {
-            return None;
-        };
-        let indexed = self.ifs.get(*position)?;
-        if indexed.rebound {
-            return None;
-        }
+        let (indexed, in_then) = self.arm_at(seam_expression, line)?;
         let condition = fold_condition(indexed.condition.as_ref()?, &environment)?;
-        let reached = if *in_then { condition } else { !condition };
+        let reached = if in_then { condition } else { !condition };
         if !reached {
             return Some(false);
         }
@@ -180,6 +165,33 @@ impl BranchIndex {
             }
         }
         Some(true)
+    }
+
+    /// The edited side of a single outer guard with this exact condition.
+    pub(super) fn outer_arm(&self, expression: &str, line: usize, condition: &str) -> Option<bool> {
+        let (guard, in_then) = self.arm_at(expression, line)?;
+        (guard.enclosing.is_empty() && guard.condition.as_deref() == Some(condition))
+            .then_some(in_then)
+    }
+
+    fn arm_at(&self, seam_expression: &str, line: usize) -> Option<(&IndexedIf, bool)> {
+        let target = normalized_expression(seam_expression);
+        if self.both_arms.contains(&target) {
+            return None;
+        }
+        let matches = self
+            .at_line
+            .get(&(target, line))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let [(position, in_then)] = matches else {
+            return None;
+        };
+        let indexed = self.ifs.get(*position)?;
+        if indexed.rebound {
+            return None;
+        }
+        Some((indexed, *in_then))
     }
 }
 
