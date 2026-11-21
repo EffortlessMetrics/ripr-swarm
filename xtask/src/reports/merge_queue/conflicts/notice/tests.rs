@@ -161,7 +161,7 @@ fn explicit_notice_rechecks_membership_and_suppresses_the_next_serial_post() -> 
     api.state.borrow_mut()["data"]["repository"]["pullRequest"]["mergeQueueEntry"]["id"] =
         json!("reentered");
     if deliver(&api, &s, &initial, Some(&body), true).is_ok() {
-        return Err("old evidence survived dequeue/requeue".into());
+        return Err("accepted old evidence after dequeue and requeue".into());
     }
     *api.state.borrow_mut() = membership();
     *api.comments.borrow_mut() =
