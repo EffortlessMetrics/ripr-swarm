@@ -1,6 +1,7 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
 import { test } from 'node:test';
-import { admitSubject, CASES, digest, retainHostCase, servedBytes, TARGET } from './contract';
+import { admitSubject, CASES, digest, retainHostCase, servedBytes, TARGET, checkHostSocketPath, withHostUserData } from './contract';
 
 // Explicit receipt fixtures exercise admission only, not archive qualification.
 function fixture() {
@@ -80,4 +81,34 @@ test('retains failed host execution separately from success and unstarted cases'
   assert.deepStrictEqual((records[0] as any).host, host);
   assert.strictEqual(records[1].executed, 0);
   assert.strictEqual(records[1].outcome, 'not_run');
+});
+
+test('hosted IPC length is measured in bytes at the Linux pathname boundary', { skip: process.platform !== 'linux' }, () => {
+  // The hosted checkout prefix that failed, joined so no machine path is committed.
+  const root = ['', 'home', 'runner', 'work', 'ripr-swarm', 'ripr-swarm', 'target/ripr/managed-download/run-X0p2x0'].join('/');
+  checkHostSocketPath(root + '/valid/user');
+  for (const kind of ['manifest_tampered', 'archive_tampered']) {
+    assert.throws(() => checkHostSocketPath(root + '/' + kind + '/user'), /exceeds 107 bytes/);
+  }
+  const exact = '/' + 'a'.repeat(91);
+  checkHostSocketPath(exact);
+  assert.throws(() => checkHostSocketPath(exact + 'a'), /exceeds 107 bytes/);
+  assert.throws(() => checkHostSocketPath('/' + 'é'.repeat(46)), /exceeds 107 bytes/);
+});
+
+test('each host gets a private short profile that is removed on success or failure', { skip: process.platform !== 'linux' }, async () => {
+  const profiles: string[] = [];
+  for (const kind of CASES) {
+    const run = withHostUserData(async (userData) => {
+      assert.ok(!profiles.includes(userData));
+      profiles.push(userData);
+      assert.strictEqual(fs.statSync(userData).mode & 0o777, 0o700);
+      checkHostSocketPath(userData);
+      if (kind === 'manifest_tampered') { throw new Error('host failed before activation'); }
+    });
+    if (kind === 'manifest_tampered') { await assert.rejects(run, /before activation/); }
+    else { await run; }
+    assert.ok(!fs.existsSync(profiles[profiles.length - 1]));
+  }
+  assert.strictEqual(profiles.length, CASES.length);
 });
