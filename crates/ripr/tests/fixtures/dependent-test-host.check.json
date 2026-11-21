@@ -1,0 +1,32 @@
+{
+  "dependent": {
+    "classification": "no_static_path",
+    "static_limit_kind": null,
+    "related_tests": [],
+    "has_canonical_gap": true,
+    "stop_reasons": [],
+    "host_evidence": [
+      "The directly dependent package at `facade/Cargo.toml` hosts indexed tests. Whether those tests reach this owner is unresolved."
+    ]
+  },
+  "facade": {
+    "classification": "no_static_path",
+    "static_limit_kind": "rust_integration_public_api_path_unresolved",
+    "related_tests": [],
+    "has_canonical_gap": false,
+    "stop_reasons": [
+      "transitive_reach_unresolved"
+    ],
+    "host_evidence": [
+      "For example, the test `payload` (facade/tests/t.rs:4) names workspace crate `facade`, whose root `pub use` names `inner`, the crate holding this change. ripr does not resolve whether this test reaches this item; inspect it to judge whether this change is observed."
+    ]
+  },
+  "independent": {
+    "classification": "no_static_path",
+    "static_limit_kind": null,
+    "related_tests": [],
+    "has_canonical_gap": true,
+    "stop_reasons": [],
+    "host_evidence": []
+  }
+}

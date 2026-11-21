@@ -1494,10 +1494,10 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         {
             forbidden.push(input);
         }
-        if forbidden
-            .iter()
-            .any(|path| output::path::same_output_leaf(jsonl, path))
-        {
+        if forbidden.iter().any(|path| {
+            output::path::same_output_leaf(jsonl, path)
+                || output::path::output_replaces_input(jsonl, path)
+        }) {
             return Err(
                 "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
                     .to_string(),
@@ -1532,6 +1532,8 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
     let mut existing_comments = None;
     let mut mode = output::pr_inline_comment_publish_plan::CommentMode::Off;
     let mut pull_request = None;
+    let mut token_seen: Option<bool> = None;
+    let mut write_seen: Option<bool> = None;
     let mut event_name = None;
     let mut head_repo = None;
     let mut base_repo = None;
@@ -1586,9 +1588,10 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
             "--pull-request" => {
                 i += 1;
                 let value = non_empty_string_arg(args, i, "--pull-request", "pr-comments plan")?;
-                pull_request = Some(value.parse::<u64>().map_err(|err| {
-                    format!("pr-comments plan --pull-request must be a positive integer: {err}")
-                })?);
+                pull_request = Some(crate::cli::commands_numeric::parse_positive_u64(
+                    &value,
+                    "--pull-request",
+                )?);
             }
             "--event-name" => {
                 i += 1;
@@ -1617,17 +1620,36 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
                     "pr-comments plan",
                 )?);
             }
-            "--token-available" => token_available = true,
-            "--no-token" => token_available = false,
-            "--write-permission" => write_permission = true,
-            "--no-write-permission" => write_permission = false,
+            "--token-available" | "--no-token" => {
+                let available = args[i] == "--token-available";
+                if token_seen.is_some_and(|prior| prior != available) {
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --token-available or --no-token, not both; pass only one",
+                    ));
+                }
+                token_seen = Some(available);
+                token_available = available;
+            }
+            "--write-permission" | "--no-write-permission" => {
+                let granted = args[i] == "--write-permission";
+                if write_seen.is_some_and(|prior| prior != granted) {
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        &args[i],
+                        "pr-comments plan takes either --write-permission or --no-write-permission, not both; pass only one",
+                    ));
+                }
+                write_seen = Some(granted);
+                write_permission = granted;
+            }
             "--max-inline-comments" => {
                 i += 1;
                 let value =
                     non_empty_string_arg(args, i, "--max-inline-comments", "pr-comments plan")?;
-                max_inline_comments = value.parse::<usize>().map_err(|err| {
-                    format!("pr-comments plan --max-inline-comments must be a number: {err}")
-                })?;
+                max_inline_comments = crate::cli::commands_numeric::parse_non_negative_usize(
+                    &value,
+                    "--max-inline-comments",
+                )?;
             }
             "--out" => {
                 i += 1;
@@ -2065,11 +2087,12 @@ fn read_optional_manifest_for_report(
     root: &Path,
     manifest: &Path,
 ) -> Option<Result<String, String>> {
-    let read_path = if manifest.is_absolute() {
-        manifest.to_path_buf()
-    } else {
-        root.join(manifest)
-    };
+    if !manifest.is_absolute() {
+        // The default manifest is checkout content: share the contained,
+        // regular-file read the other suppressions loaders use (#15546).
+        return crate::output::suppressions::read_root_manifest(root, manifest).transpose();
+    }
+    let read_path = manifest.to_path_buf();
     match crate::bounded_input::read_to_string(&read_path) {
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
@@ -2131,12 +2154,13 @@ fn non_empty_string_arg(
     }
 }
 
+pub(super) const OUTCOME_FORMAT_NAMES: &[&str] = &["md", "markdown", "text", "json"];
+
 fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
-    const ACCEPTED: &[&str] = &["md", "markdown", "text", "json"];
     match value {
         "md" | "markdown" | "text" => Ok(OutcomeFormat::Markdown),
         "json" => Ok(OutcomeFormat::Json),
-        _ => Err(unknown_value("outcome format", value, ACCEPTED)),
+        _ => Err(unknown_value("outcome format", value, OUTCOME_FORMAT_NAMES)),
     }
 }
 
@@ -7120,6 +7144,7 @@ language = "rust"
     fn init_ci_github_writes_workflow_and_preserves_existing_config() -> Result<(), String> {
         let dir = unique_command_test_dir("init-ci");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let config = dir.join(CONFIG_FILE_NAME);
         std::fs::write(&config, "# existing policy\n")
             .map_err(|err| format!("write existing config: {err}"))?;
@@ -7149,6 +7174,7 @@ language = "rust"
         let workflow_dir = dir.join(".github/workflows");
         std::fs::create_dir_all(&workflow_dir)
             .map_err(|err| format!("create workflow dir: {err}"))?;
+        crate::git::run_git(&dir, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
         let workflow = workflow_dir.join("ripr.yml");
         std::fs::write(&workflow, "name: Existing\n")
             .map_err(|err| format!("write existing workflow: {err}"))?;

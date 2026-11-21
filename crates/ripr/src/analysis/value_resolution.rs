@@ -1696,7 +1696,7 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
             }
             continue;
         }
-        if let Some(args) = attr_call_args(attr, "case") {
+        if let Some(args) = rstest_case_attr_args(attr) {
             // `#[case]` without args - no scalar values to capture.
             if args.is_empty() {
                 continue;
@@ -1739,8 +1739,8 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
     // rstest binds case values positionally to the `#[case]` parameters
     // only; the others are fixtures. Without any `#[case]` marker every
     // parameter counts, as before #4601. (Rows written inside the legacy
-    // `#[rstest(a, case(..))]` attribute and named `#[case::name(..)]`
-    // rows are not parsed, so they bind nothing.)
+    // `#[rstest(a, case(..))]` attribute are not parsed, so they bind
+    // nothing; named `#[case::name(..)]` rows bind like plain ones.)
     let params = extract_fn_params(&test.body);
     let params = if params.iter().any(|param| param.is_case) {
         params.into_iter().filter(|param| param.is_case).collect()
@@ -1777,7 +1777,7 @@ fn test_case_bound_context(test: &TestSummary, ident: &str) -> Option<(Vec<Vec<S
     Some((cases, position))
 }
 
-/// Number of rstest `#[case(..)]` rows on `test`.
+/// Number of rstest `#[case(..)]` / `#[case::name(..)]` rows on `test`.
 pub(crate) fn rstest_case_row_count(test: &TestSummary) -> usize {
     let (cases, _) = extract_rstest_case_params(test);
     cases.len()
@@ -1936,6 +1936,31 @@ fn attr_call_args<'a>(attr: &'a str, name: &str) -> Option<&'a str> {
     let inner = attr_inner(attr)?;
     let rest = inner.strip_prefix(name)?.trim_start();
     let args = rest.strip_prefix('(')?.strip_suffix(')')?.trim();
+    Some(args)
+}
+
+/// Arguments of an rstest case row: `#[case(..)]` or its named form
+/// `#[case::description(..)]`, which rstest documents for readable test
+/// names and which carries the same positional row.
+fn rstest_case_attr_args(attr: &str) -> Option<&str> {
+    if let Some(args) = attr_call_args(attr, "case") {
+        return Some(args);
+    }
+    let inner = attr_inner(attr)?;
+    let open = inner.find('(')?;
+    // A path may be spaced (`case :: equal`), as the syntax reader accepts.
+    let path = inner[..open]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let description = path.strip_prefix("case::")?;
+    let identifier = description.strip_prefix("r#").unwrap_or(description);
+    let mut chars = identifier.chars();
+    let starts = chars.next().is_some_and(|c| c == '_' || c.is_alphabetic());
+    if !starts || !chars.all(|c| c == '_' || c.is_alphanumeric()) {
+        return None;
+    }
+    let args = inner[open..].strip_prefix('(')?.strip_suffix(')')?.trim();
     Some(args)
 }
 

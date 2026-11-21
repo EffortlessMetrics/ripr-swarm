@@ -118,6 +118,15 @@ names the test as an inspection pointer. The re-export is not resolved and no
 item is matched beyond the names in (3): the pointer says only that the test
 names the facade crate and the facade's root `pub use` names the owner's crate.
 
+#### Direct dependent test host (#13974)
+
+For an otherwise unqualified `no_static_path` with no related tests, the
+finding may name one direct dependent package with indexed tests (#13974).
+This hint requires a complete Cargo path-dependency graph and a normal or
+dev edge. It supplies an inspection location only. A facade witness takes
+precedence and keeps its specific limitation, stop reason and repair disposition.
+Tests outside the selected index cannot supply the hint.
+
 #### Doctest relation guard (#9982)
 
 A doctest is named for the item it documents and runs only that item's

@@ -21,12 +21,15 @@ use std::path::{Path, PathBuf};
 
 /// Where a library exports a function: the library root file and the module
 /// segments between the crate name and the function.
-pub(super) struct PublicPath {
-    pub(super) root: PathBuf,
-    pub(super) modules: Vec<String>,
+pub(in crate::analysis::classify) struct PublicPath {
+    pub(in crate::analysis::classify) root: PathBuf,
+    pub(in crate::analysis::classify) modules: Vec<String>,
 }
 
-pub(super) fn public_path(index: &RustIndex, callee: &FunctionSummary) -> Option<PublicPath> {
+pub(in crate::analysis::classify) fn public_path(
+    index: &RustIndex,
+    callee: &FunctionSummary,
+) -> Option<PublicPath> {
     let normalized = related_tests::normalize_path(&callee.file);
     let prefix = related_tests::package_prefix(&callee.file).unwrap_or_default();
     let relative = normalized.strip_prefix(&prefix)?.strip_prefix("src/")?;

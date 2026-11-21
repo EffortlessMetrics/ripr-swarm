@@ -336,7 +336,8 @@ valid-ledger control that yields no reasons.
   `failed_derivation_leaves_an_existing_output_untouched`,
   `xtask_only_commits_share_the_control_disposition_under_their_own_theme`,
   `inline_test_only_product_paths_count_as_evidence`,
-  `path_inventories_bind_the_captured_record_partition`.
+  `path_inventories_bind_the_captured_record_partition`,
+  `recorded_provisional_overrides_resolve_only_the_reviewed_rows`.
 - `xtask/src/reports/release_ledger/tests.rs`: `finalize_defaults_to_the_pinned_base_and_output_directory`,
   `finalize_requires_the_frozen_cut_as_a_full_sha`,
   `finalize_requires_cut_packet_and_audit`,

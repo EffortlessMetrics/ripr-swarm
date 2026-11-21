@@ -295,7 +295,7 @@ cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-doc-roles
 cargo xtask check-droid-review-config
-cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]
+cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>] | --pre-label <PR> <target-branch>
 cargo xtask check-executable-files
 cargo xtask check-file-policy
 cargo xtask check-covered-by
@@ -1379,6 +1379,38 @@ This writes a ripr-managed `.git/hooks/pre-commit` hook that runs
 pre-existing hook is already ripr-managed, the command updates it idempotently.
 If a pre-existing hook is not ripr-managed, the command refuses to overwrite it
 so local user hooks are not clobbered.
+
+## Release milestone fixture comparison
+
+Run `cargo xtask check-release-targets --fixture <path>` to compare a local JSON
+snapshot with `policy/release-targets.toml`. The snapshot uses `schema_version: 2`,
+`repository: "EffortlessMetrics/ripr-swarm"`, and an explicit `complete` boolean.
+It contains three arrays.
+
+- `milestones` records have `number`, `title`, and `description`.
+- `issues` records have `number`, `closed`, `milestone`, and `labels` (strings).
+- `pull_requests` records have `number`, `closed`, `milestone`, and `closes`
+  (issue numbers in the same repository).
+
+Use a milestone number or `null` for each `milestone` field. Include every
+manifest issue with a milestone role, all issues in the observed candidate
+milestones, every PR that closes committed work, and all referenced milestones.
+
+Include a `pagination` object with one page array for each of `milestones`,
+`issues`, and `pull_requests`. Each page records its one-based `page`, an explicit
+`next_page` pointing to the next consecutive page or `null` on the terminal
+page, and the numeric `ids` observed on that page. A single terminal page with
+empty `ids` represents a captured empty list. The comparator checks for gaps,
+broken links, duplicate pages or IDs, and exact agreement between the captured
+IDs and the snapshot rows. Page and row serialization order may vary.
+
+Use `complete: false` when coverage is uncertain. The witness checks the
+internal consistency of the fixture's captured page chain. Its coverage claim
+depends on the capture preserving the observed links and IDs. The command writes
+`target/ripr/reports/release-milestone-fixture.{json,md}` and exits successfully
+only when the local comparison is `in_sync`. The report is evidence about the
+supplied fixture alone. See the [fixture comparison contract](specs/RIPR-SPEC-0452-release-milestone-fixture-parity.md)
+for comparison and refusal rules.
 
 ## CI Reports
 

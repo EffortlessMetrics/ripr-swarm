@@ -477,6 +477,10 @@ export interface RiprClientRuntime {
   ): RiprLanguageClient;
   createFileSystemWatcher(pattern: vscode.GlobPattern): vscode.FileSystemWatcher;
   readFile(filePath: string): Promise<string | undefined>;
+  /** Existence probe that does not read the file (`ripr.openReport`, #15318). */
+  fileExists?(filePath: string): Promise<boolean>;
+  /** Opens a file in an editor; the default uses the VS Code document APIs. */
+  openFileInEditor?(filePath: string): Promise<void>;
   runRipr(command: string, args: string[], cwd: string): Promise<string>;
   runRiprProcess?(
     command: string,
@@ -523,6 +527,8 @@ const defaultRuntime: RiprClientRuntime = {
       : new LanguageClient('ripr', 'ripr', serverOptions, clientOptions),
   createFileSystemWatcher: (pattern) => vscode.workspace.createFileSystemWatcher(pattern),
   readFile: readOptionalFile,
+  fileExists: fileExistsOnDisk,
+  openFileInEditor: openFileInVsCodeEditor,
   runRipr,
   writeClipboard: async (text) => {
     await vscode.env.clipboard.writeText(text);
@@ -2847,26 +2853,33 @@ export class RiprClientController {
       this.runtime.showInformationMessage('Open a workspace before using ripr: Open Report.');
       return;
     }
-    const primaryPath = path.join(workspaceRoot, 'target', 'ripr', 'reports', 'pr-evidence-summary.md');
-    const fallbackPath = path.join(workspaceRoot, 'target', 'ripr', 'reports', 'start-here.md');
+    const reportsDir = riprReportsDir(workspaceRoot);
+    const fileExists = this.runtime.fileExists ?? fileExistsOnDisk;
     let resolvedPath: string | undefined;
-    for (const candidate of [primaryPath, fallbackPath]) {
-      const content = await this.runtime.readFile(candidate);
-      if (content !== undefined) {
-        resolvedPath = candidate;
-        break;
+    try {
+      for (const name of OPEN_REPORT_CANDIDATES) {
+        const candidate = path.join(reportsDir, name);
+        if (await fileExists(candidate)) {
+          resolvedPath = candidate;
+          break;
+        }
       }
+    } catch (error) {
+      // A stat error other than "not found" (EACCES, ENOTDIR) is not a missing
+      // report; say so instead of leaving an unhandled command rejection.
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`ripr open report could not check ${reportsDir}: ${message}`);
+      this.warnWithOutput(`ripr could not check ${reportsDir} for a report.`);
+      return;
     }
     if (!resolvedPath) {
       this.runtime.showInformationMessage(
-        'No report yet. Run `ripr pr-summary` in this workspace to generate one.'
+        `No ripr report found in ${reportsDir}. Run \`ripr pr-summary\` in this workspace to generate one.`
       );
       return;
     }
     try {
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolvedPath));
-      await vscode.window.showTextDocument(document);
-      this.runtime.showInformationMessage('Opened ripr report.');
+      await (this.runtime.openFileInEditor ?? openFileInVsCodeEditor)(resolvedPath);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.output.appendLine(`ripr open report failed: ${message}`);
@@ -2876,8 +2889,17 @@ export class RiprClientController {
 
   async showTopLimitation(): Promise<void> {
     const client = this.client;
-    if (!client) {
-      this.runtime.showInformationMessage('RIPR has not completed an analysis snapshot yet.');
+    // A stopped client can stay bound after the crash circuit opens, so treat
+    // any client that is not actively running as missing (#15303).
+    if (!client || !this.clientIsActivelyRunning(client)) {
+      const enabled = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      ).enabled;
+      this.runtime.showInformationMessage(
+        enabled
+          ? 'ripr top limitation requires a running server; the server is not running. Run ripr: Restart Server, then try again.'
+          : `ripr top limitation requires a running server; ripr is disabled. ${disabledStatus().nextStep}`
+      );
       return;
     }
     let response: Record<string, unknown> | null = null;
@@ -2922,7 +2944,8 @@ export class RiprClientController {
       this.output.appendLine(`  unlock_condition: ${unlock}`);
     }
     this.output.show();
-    const summary = status || category || repairRoute || 'See ripr output for limitation details.';
+    const rawSummary = status || category || repairRoute;
+    const summary = rawSummary ? rawSummary.replace(/_/g, ' ') : 'See ripr output for limitation details.';
     this.runtime.showInformationMessage(`ripr top limitation: ${summary}`);
   }
 
@@ -5446,6 +5469,36 @@ async function readReceiptStatus(
     repoRoot,
     generatedAt: provenance ? stringField(provenance, 'generated_at') : undefined
   };
+}
+
+/** Report names `ripr.openReport` tries, in order. */
+const OPEN_REPORT_CANDIDATES = ['pr-evidence-summary.md', 'start-here.md'];
+
+/**
+ * Where the ripr server and CLI write reports: `<workspace>/target/ripr/reports`.
+ * The Rust side hardcodes this workspace-relative root (`DEFAULT_OUTPUT_ROOT` in
+ * `atomic_file.rs`) and does not consult `CARGO_TARGET_DIR` or
+ * `build.target-dir`, so the extension must not either, or it would look
+ * somewhere the server never writes (#15318).
+ */
+export function riprReportsDir(workspaceRoot: string): string {
+  return path.join(workspaceRoot, 'target', 'ripr', 'reports');
+}
+
+async function openFileInVsCodeEditor(filePath: string): Promise<void> {
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+  await vscode.window.showTextDocument(document);
+}
+
+async function fileExistsOnDisk(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch (error) {
+    if (isFileNotFound(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function readOptionalFile(filePath: string): Promise<string | undefined> {

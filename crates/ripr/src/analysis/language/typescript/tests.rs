@@ -1,5 +1,7 @@
 //! Tests for the TypeScript preview adapter.
 
+mod classification_property_tests;
+
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +40,9 @@ pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
 
 #[test]
 fn node_expected_failure_test_cannot_donate_classifier_oracle_credit() -> Result<(), String> {
+    let mut owner = test_owner("applyDiscount", "src/lib.ts");
+    owner.params = vec!["amount".into(), "threshold".into()];
+    owner.arity = Some(2);
     let qualified = r#"
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -70,7 +75,7 @@ test("qualified", { expectFailure: true }, () => {
                 Path::new("src/lib.ts"),
                 2,
                 "    if (amount >= threshold) {",
-                &[test_owner("applyDiscount", "src/lib.ts")],
+                std::slice::from_ref(&owner),
                 &tests,
                 None,
                 &ReExportIndex::empty(),
@@ -5434,8 +5439,8 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         commonjs_whole_function: false,
         constructor_callback: false,
         module_entries: Vec::new(),
-        arity: None,
-        params: Vec::new(),
+        arity: Some(2),
+        params: vec!["amount".into(), "threshold".into()],
         source_text: None,
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5536,8 +5541,8 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         commonjs_whole_function: false,
         constructor_callback: false,
         module_entries: Vec::new(),
-        arity: None,
-        params: Vec::new(),
+        arity: Some(2),
+        params: vec!["amount".into(), "threshold".into()],
         source_text: None,
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -12403,6 +12408,157 @@ fn ts_fieldconstruction_multi_value_change_nullish_fallback_whole_object_stays_e
     Ok(())
 }
 
+/// #14928: classify the #14857 two-value change (`retries` and `verbose`
+/// move) against a test whose single assertion is `expect(<subject>)…`.
+fn ts_multi_value_change_class_for_subject(
+    subject: &str,
+    matcher: &str,
+) -> Result<ExposureClass, String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number; enabled: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30, enabled: true };\n}\n";
+    let test_src = format!(
+        "import {{ f }} from \"./owner\";\nconst defaults = {{ config: {{ retries: 3, verbose: false, timeout: 30, enabled: true }} }};\nconst limit = 4;\ntest(\"subject\", () => {{ expect({subject}).{matcher}; }});\n"
+    );
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), &test_src);
+    assert_eq!(owners.len(), 1, "expected one owner from live extractor");
+    assert_eq!(tests.len(), 1, "expected one test from live extractor");
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30, enabled: true };",
+        Some("  return { retries: 3, verbose: false, timeout: 30, enabled: true };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| format!("expected a finding for `{subject}`"))?;
+    Ok(finding.class)
+}
+
+/// #14928: the untouched-field guard must apply to every base that is a
+/// plain projection of the owner's result. A postfix non-null assertion and a
+/// prefix negation each still read a field the edit never touched, so neither
+/// may inherit the blanket owner-call credit. A generic call
+/// (`f<string>().timeout`) is covered by the grammar test below: the owner-call
+/// reader does not yet resolve `f<T>(...)`, so end to end it already reads
+/// `weakly_exposed` and cannot discriminate here.
+#[test]
+fn ts_fieldconstruction_multi_value_change_untouched_field_through_plain_chain_downgrades()
+-> Result<(), String> {
+    for (subject, matcher) in [
+        ("f()!.timeout", "toBe(30)"),
+        ("!f().enabled", "toBe(false)"),
+        ("!f()?.enabled", "toBe(false)"),
+        // Review of #15607: bases the earlier operator check already guarded
+        // stay guarded under the grammar.
+        ("void f().timeout", "toBeUndefined()"),
+        ("~f().timeout", "toBe(-31)"),
+        ("delete f().timeout", "toBe(true)"),
+        ("[f()][0].timeout", "toBe(30)"),
+        ("[f()][0]?.timeout", "toBe(30)"),
+    ] {
+        let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
+        assert!(
+            matches!(class, ExposureClass::WeaklyExposed),
+            "`{subject}` reads an untouched field and must be weakly_exposed, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14928 controls: the same plain-chain shapes that read EITHER changed
+/// field, or receive the whole object, keep `exposed`; a compound base
+/// (`??`, a comparison, a ternary) is not a projection and keeps its credit.
+#[test]
+fn ts_fieldconstruction_multi_value_change_plain_chain_changed_or_compound_stays_exposed()
+-> Result<(), String> {
+    for (subject, matcher) in [
+        ("f()!.verbose", "toBe(true)"),
+        ("!f().verbose", "toBe(false)"),
+        (
+            "f() ?? defaults.config",
+            "toEqual({ retries: 5, verbose: true, timeout: 30, enabled: true })",
+        ),
+        (
+            "f()! ?? defaults.config",
+            "toEqual({ retries: 5, verbose: true, timeout: 30, enabled: true })",
+        ),
+        // A comparison and a ternary over an UNTOUCHED field: the base is
+        // compound, so the guard does not apply.
+        ("limit < f().timeout", "toBe(true)"),
+        ("cond ? f().timeout : 0", "toBe(30)"),
+        ("limit < f() > (bounds).minimum", "toBe(true)"),
+    ] {
+        let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
+        assert!(
+            matches!(class, ExposureClass::Exposed),
+            "`{subject}` must stay exposed, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14928: the plain-chain grammar itself, independent of the classifier.
+#[test]
+fn ts_chain_is_plain_projection_accepts_chains_and_rejects_compounds() {
+    use super::classifier::ts_chain_is_plain_projection as plain;
+    for base in [
+        "f()",
+        "a.f()",
+        "this.g()",
+        "f()?",
+        "f()!",
+        "!f()",
+        "!!f()",
+        "f<string>()",
+        "f<Map<string, number[]>>()",
+        "f<() => void>()",
+        "f<A | B>()",
+        "f()?.g<T>()",
+        "f?.()",
+        "f()[0]",
+        "(f())",
+        "new F()",
+        "await f()",
+        // Admitted by the original operator check, kept by the union.
+        "void f()",
+        "~f()",
+        "delete f()",
+        "typeof f()",
+        "[f()][0]",
+        "this.#impl()",
+    ] {
+        assert!(plain(base), "`{base}` is a plain chain");
+    }
+    for base in [
+        "f() ?? defaults",
+        "f() || fallback",
+        "cond ? f() : g()",
+        "a, f()",
+        "x = f()",
+        "a < b",
+        "a < b > c",
+        "f<string>",
+        "f() > 0",
+        "f()! != g()",
+        "f() !== g()",
+        "a + f()",
+        "a ! b",
+        // Devin review: a call inside a would-be type-argument list is a
+        // chained comparison, not a generic call.
+        "limit < f() > (bounds)",
+        "a < g(x) > (y)",
+    ] {
+        assert!(!plain(base), "`{base}` is not a plain chain");
+    }
+    // An empty base holds no operator, so the original reading (kept by the
+    // union) guards it, as it did before #14928: the fail-closed direction.
+    assert!(plain(""), "an empty base stays guarded");
+}
+
 /// #14814 control: the changed field itself, read off the owner's result,
 /// still confirms. `expect(f().retries)` observes `retries`, so the finding
 /// stays `exposed`. A fix that suppressed this too would over-apply.
@@ -15360,10 +15516,9 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
     Ok(())
 }
 
-/// Mocha fail-closed control: a detected mocha framework has NO file-target
-/// command mapping, so with no lockfile/runner evidence the inferred command
-/// is `None`. The evidence MUST NOT invent a `typescript_verify_command`.
-/// The runner is known (`typescript_test_runner: mocha`), so
+/// Mocha without a lockfile: like Vitest and Jest (#1239), a detected mocha
+/// framework launches the local binary through `npx --no-install`, which never
+/// downloads a missing package (#15340). The runner is known (`typescript_test_runner: mocha`), so
 /// `typescript_test_runner_unresolved` must stay omitted (#7646): that
 /// limitation names a missing runner, not a missing file-target command.
 #[test]
@@ -15438,14 +15593,15 @@ fn mocha_no_lockfile_omits_runner_unresolved_when_mocha_detected() -> Result<(),
         ));
     }
 
-    // No command must be invented.
-    let invented_cmd = finding
+    // The command launches the local mocha binary and never downloads it.
+    let has_local_launch = finding
         .evidence
         .iter()
-        .find(|ev| ev.starts_with("typescript_verify_command:"));
-    if let Some(cmd) = invented_cmd {
+        .any(|ev| ev == "typescript_verify_command: npx --no-install mocha tests/lib.test.ts");
+    if !has_local_launch {
         return Err(format!(
-            "mocha without lockfile: no command should be invented, but got: {cmd:?}"
+            "mocha without lockfile: expected the local npx --no-install mocha launch; evidence={:?}",
+            finding.evidence
         ));
     }
 
@@ -16057,9 +16213,9 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
-        params: Vec::new(),
+        params: vec!["amount".into(), "threshold".into()],
         method_kind: TypeScriptMethodKind::Ordinary,
-        arity: None,
+        arity: Some(2),
         source_text: None,
     };
     let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
@@ -16112,8 +16268,11 @@ fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), 
 /// call with two identical arguments as the boundary witness.
 #[test]
 fn spec_0027_non_literal_boundary_requires_identical_arguments() -> Result<(), String> {
+    let mut owner = test_owner("isAllowed", "src/lib.ts");
+    owner.params = vec!["count".into(), "limit".into()];
+    owner.arity = Some(2);
     let below = [exact_value_test("isAllowed", "isAllowed(4, 5)", "true")];
-    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &below)?;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (count <= limit) {", &below)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(
         missing_discriminator_values(&finding),
@@ -16124,8 +16283,22 @@ fn spec_0027_non_literal_boundary_requires_identical_arguments() -> Result<(), S
         exact_value_test("isAllowed", "isAllowed(4, 5)", "true"),
         exact_value_test("isAllowed", "isAllowed(5, 5)", "false"),
     ];
-    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &at)?;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (count <= limit) {", &at)?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    owner.params = vec!["時".into(), "unused".into(), "limit".into()];
+    owner.arity = Some(3);
+    for (call, result, expected) in [
+        ("isAllowed(0, 0, 10)", "false", ExposureClass::WeaklyExposed),
+        ("isAllowed(10, 0, 10)", "true", ExposureClass::Exposed),
+    ] {
+        let tests = [exact_value_test("isAllowed", call, result)];
+        assert_eq!(
+            classify_boundary_line_for_owner(&owner, "  if (時 >= limit) {", &tests)?.class,
+            expected,
+            "{call}"
+        );
+    }
 
     // Object-literal props name both operands: equal values witness the
     // boundary, unequal values do not.
@@ -17117,11 +17290,11 @@ fn e4104_const_result_local_binding_witnesses_predicate_boundary() -> Result<(),
 fn e4104_optional_chaining_predicate_witnesses_boundary() -> Result<(), String> {
     let mut owner = boundary_witness_owner();
     owner.name = "userIsAdmin".to_string();
-    owner.params = vec!["order".to_string()];
-    owner.arity = Some(1);
+    owner.params = vec!["order".to_string(), "other".to_string()];
+    owner.arity = Some(2);
     owner.source_text = Some(
         concat!(
-            "export function userIsAdmin(order: Order): boolean {\n",
+            "export function userIsAdmin(order: Order, other?: Order): boolean {\n",
             "    if (order?.role === \"admin\") {\n",
             "        return true;\n",
             "    }\n",
@@ -17142,6 +17315,18 @@ fn e4104_optional_chaining_predicate_witnesses_boundary() -> Result<(), String> 
         ExposureClass::Exposed,
         "an optional-chaining predicate normalizes to a comparable boundary and witnesses via the object pin"
     );
+    for call in [
+        r#"userIsAdmin({}, { role: "admin" })"#,
+        r#"userIsAdmin("admin", {})"#,
+    ] {
+        let test = exact_value_test("userIsAdmin", call, "false");
+        let finding = classify_boundary_line_for_owner(
+            &owner,
+            "    if (order?.role === \"admin\") {",
+            &[test],
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{call}");
+    }
     Ok(())
 }
 
@@ -21837,6 +22022,7 @@ mod class_entry_tests;
 mod class_receiver_overclaim_tests;
 mod close_to_pin_tests;
 mod committed_snapshot_tests;
+mod commonjs_barrel_tests;
 mod commonjs_class_receiver_tests;
 mod commonjs_default_class_tests;
 mod commonjs_default_function_tests;
@@ -21853,6 +22039,7 @@ mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
 mod floating_promise_tests;
+mod folded_module_constant_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
 mod getter_matcher_key_tests;
@@ -21905,6 +22092,7 @@ mod table_case_tests;
 mod table_loop_tests;
 mod typed_loose_equality_tests;
 mod unemitted_stage_unknown_tests;
+mod unused_default_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;
 mod vitest_for_tests;

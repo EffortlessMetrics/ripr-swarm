@@ -1,0 +1,11 @@
+# Registers the rstest named case-row controls (#15341): a
+# `#[case::description(..)]` row binds its cells like a `#[case(..)]` row, so
+# a named row at a changed boundary is an owner input (RIPR-SPEC-0231 rule 9
+# row inputs).
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/rstest_named_case_rows.rs::a_named_row_at_the_changed_boundary_is_credited",
+  "crates/ripr/tests/rstest_named_case_rows.rs::named_rows_off_the_boundary_are_not_credited",
+  "crates/ripr/src/analysis/value_resolution/tests.rs::extract_rstest_cases_reads_named_case_rows",
+]
