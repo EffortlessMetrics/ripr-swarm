@@ -1507,9 +1507,11 @@ pub(crate) fn dogfood_gate_adoption_scenarios() -> Vec<DogfoodGateScenario> {
 pub(crate) fn dogfood_gate_adoption_run(
     scenario: &DogfoodGateScenario,
 ) -> Result<DogfoodGateRun, String> {
-    // Direct test callers must refresh the binary so gate receipts cannot
-    // validate a stale artifact left by an earlier build.
-    run("cargo", &["build", "-p", "ripr"])?;
+    // Direct test callers share the one fixture-binary build (#12916):
+    // `ripr_fixture_binary` itself runs the refreshing `cargo build -p ripr`
+    // once per process, so gate receipts cannot validate a stale artifact.
+    // A second unconditional build here only relinked the shared
+    // `target/debug` binary and serialized every caller on it.
     let binary = ripr_fixture_binary()?;
     dogfood_gate_adoption_run_with_binary(scenario, &binary)
 }
