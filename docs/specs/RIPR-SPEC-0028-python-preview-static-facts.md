@@ -2243,8 +2243,12 @@ accumulator selection shape (either `best = next(it)` followed by `for x in it`,
 or `best = xs[0]` followed by `for x in xs[1:]` or `for x in xs`, both with conditional
 `best = x` and `return best`), an unresolved boundary is
 `infection_unknown` when each oracle-eligible test has one or more assertions
-and each has a strong direct comparison of the owner call on an integer list
-or tuple with an integer. The owner may have a second parameter unused by this
+and each has a strong direct comparison of the owner call on a literal list
+or tuple with a literal. A literal here is an integer, float, string or boolean
+constant (numbers optionally signed); elements that compare equal under the
+selector's `>=` or `<=` also compare equal under `==` against any such literal,
+so the pin cannot tell which of two equal elements was selected. `None` and
+container elements are not literals for this rule. The owner may have a second parameter unused by this
 closed body, bound positionally, by name, or by an integer-literal default.
 When there are two parameters, every default must be an integer literal even
 when explicitly overridden, because defaults are evaluated at definition time. Such a scalar
@@ -2252,7 +2256,7 @@ does not resolve the loop's comparison operands. A
 single line with multiple assertions or `and`
 conjuncts qualifies only when every statement and conjunct is such a direct
 pin. A test with exactly one direct owner-call assignment followed by one
-integer equality assertion on that local also qualifies when test facts show
+literal equality assertion on that local also qualifies when test facts show
 no implicit setup, substitution, opaque module or edited-test uncertainty.
 Qualified calls must resolve to the owner through test imports. The changed
 condition must be the comparison alone: a further `and` or `or` operand can run
