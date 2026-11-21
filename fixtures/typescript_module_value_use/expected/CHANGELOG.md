@@ -264,3 +264,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_module_value_use (23)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless typescript_module_value_use --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

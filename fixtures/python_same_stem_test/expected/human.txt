@@ -23,7 +23,7 @@ Start here:
   Changed behavior: return amount - 2
   Missing check: Only heuristic Python test links were found for `reconcile_total`; verify the
     suggested test location or add a direct pytest or unittest call with an exact-value assertion
-  Related test: tests/test_reconcile.py:4 test_reconcile_fixture_contract
+  No discriminating test identified: only name or file matches were retained, with no established test path (1 matched before the display limit).
   Evidence: reach weak · infection yes · propagation yes · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

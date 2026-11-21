@@ -239,3 +239,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_module_reader_replacement (20)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless python_module_reader_replacement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

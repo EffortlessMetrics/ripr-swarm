@@ -827,3 +827,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — javascript_jsx_preview (40)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless javascript_jsx_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

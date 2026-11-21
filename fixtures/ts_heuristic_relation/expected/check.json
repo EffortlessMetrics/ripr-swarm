@@ -139,7 +139,7 @@
       },
       "stop_reasons": [],
       "oracle_kind": "unknown",
-      "oracle_strength": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.",
       "suggested_next_action": "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.",
       "language": "typescript",

@@ -21,7 +21,7 @@ Start here:
   Why weak: test reach to this change is not established
   Changed behavior: export const stop = Symbol('stop');
   Missing check: Only heuristic TypeScript test links were found for `stop`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
-  Related test: tests/sentinel.test.ts:3 collect halts at the stop sentinel
+  No discriminating test identified: the retained rows do not identify an observer (1 matched before the display limit).
   Next step — TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

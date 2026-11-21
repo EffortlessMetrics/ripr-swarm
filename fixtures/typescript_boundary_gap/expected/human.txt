@@ -23,7 +23,7 @@ Start here:
   Missing check (1 of 2): Only heuristic TypeScript test links were found for `applyDiscount`;
     verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value
     assertion
-  No discriminating test identified: the retained rows do not identify an observer (2 matched before the display limit).
+  No discriminating test identified: only name or file matches were retained, with no established test path (2 matched before the display limit).
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
     check `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available

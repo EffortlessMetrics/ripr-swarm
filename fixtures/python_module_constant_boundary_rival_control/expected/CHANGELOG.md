@@ -45,3 +45,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — python_module_constant_boundary_rival_control (5)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless python_module_constant_boundary_rival_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

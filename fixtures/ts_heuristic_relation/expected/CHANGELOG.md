@@ -648,3 +648,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_heuristic_relation (40)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

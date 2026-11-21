@@ -22,7 +22,7 @@ Start here:
   Changed behavior: if amount >= DISCOUNT_THRESHOLD:
   Check (observed, advisory): Related Python test reaches `discounted_total` with an `exact_value`
     oracle. Static evidence suggests the changed behavior is observed under an exact-value check
-  Related test (1 of 3 matched rows): svc/a/tests/test_pricing.py:9 test_above
+  Related test (1 of 3 matched rows): svc/a/tests/test_pricing.py:13 test_at
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

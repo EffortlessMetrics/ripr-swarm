@@ -24,7 +24,7 @@ Start here:
     (a constant, decorator argument or conditional definition) that runs when a test imports the
     module; related tests are linked only by a name heuristic and the preview adapter does not
     follow top-level values into their use sites, so it does not grade this edit as a gap
-  Related test: tests/test_versioned.py:3 test_it
+  No discriminating test identified: only name or file matches were retained, with no established test path (1 matched before the display limit).
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

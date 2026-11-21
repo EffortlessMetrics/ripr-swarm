@@ -23,7 +23,7 @@ Start here:
   Analyzer limit: Static limit `missing_import_graph`: the module string changed, but the preview
     adapter cannot resolve a reached reader and a deciding assertion under its binding, activation
     and value limits. The consumer path is unknown
-  Related test: tests/test_settings.py:3 test_greeting
+  No discriminating test identified: only name or file matches were retained, with no established test path (1 matched before the display limit).
   Evidence: reach unknown · infection unknown · propagation unknown · observation unknown · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

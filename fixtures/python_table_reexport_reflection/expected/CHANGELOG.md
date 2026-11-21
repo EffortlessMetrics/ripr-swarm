@@ -137,3 +137,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_table_reexport_reflection (12)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless python_table_reexport_reflection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
