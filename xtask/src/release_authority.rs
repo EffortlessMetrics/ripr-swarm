@@ -96,8 +96,9 @@ fn render_packet(args: &[String]) -> Result<(), String> {
         out.display()
     );
     println!(
-        "Nothing was posted. Posting the comment is a separate action of the authorized \
-         maintainer account; verify-record pins the bytes GitHub actually stored."
+        "Nothing was posted, and a rendered packet authorizes nothing. Posting the comment is \
+         a separate action of the authorized maintainer account. GitHub may store other bytes \
+         than these, so the digest of the posted body is read back from GitHub."
     );
     Ok(())
 }
