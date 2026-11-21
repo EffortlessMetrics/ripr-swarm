@@ -277,6 +277,16 @@ otherwise indexes nothing for it:
   invocation as ambiguous), and the expansion carries no `cfg` other than
   `cfg(test)` and no `cfg_attr`.
 
+An indexed generated test borrows the name scopes of its invocation site
+unless it can rebind a name there. Besides a `use` or item in the expanded
+body, any attribute on the generated `fn` other than a built-in test harness
+or a body-preserving built-in (`ignore`, `should_panic`, `cfg`, lint levels,
+`doc`, `inline`, `track_caller`, `must_use`, `deprecated`, `rustfmt::skip`,
+rstest `case`, `serial`) may be an attribute macro that rewrites the body, so
+such a test borrows no invocation scopes (#12857). Only the attribute's path
+is read for this, so a `#[doc = "..."]` string with an unmatched `(` keeps
+the credit, while an attribute whose path cannot be read withholds it.
+
 A generator that is a table, itoa's `test! { name(value, expected) ... }`
 (#6925), is the one repetition shape: the whole matcher is
 `$( row ) sep? *` (or `+`), where a row is `$name:ident`, `literal`, `tt`
@@ -832,6 +842,7 @@ unresolved rather than credited.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
+- `crates/ripr/src/analysis/classify/call_identity.rs::tests::attribute_macro_on_a_generated_test_takes_no_invocation_scopes`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape`

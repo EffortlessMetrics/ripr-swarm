@@ -50,6 +50,7 @@ pub(in crate::analysis) fn integer_literal_fits_type(text: &str, ty: &str) -> bo
 }
 mod boolean_projection;
 pub(super) mod closure_adaptor;
+mod exit_record_types;
 mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
@@ -6377,27 +6378,15 @@ impl OwnerReturnPin {
         owner: &FunctionSummary,
         index: &RustIndex,
     ) -> bool {
-        let source = owner.body.as_str();
-        let Some(parse) = parse_clean_source_file(source) else {
-            return false;
-        };
-        let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
-            return false;
-        };
-        let Some(body) = function.body() else {
-            return false;
-        };
-        exit_position_records(&body).iter().all(|record| {
-            record
-                .path()
-                .and_then(|path| path.segment())
-                .is_some_and(|segment| {
-                    super::element_field_pin::drop_is_plain(
-                        index,
-                        &segment.syntax().text().to_string(),
-                    )
+        exit_record_types::exit_record_types(owner.body.as_str())
+            .as_ref()
+            .as_deref()
+            .is_some_and(|types| {
+                types.iter().all(|name| {
+                    name.as_deref()
+                        .is_some_and(|name| super::element_field_pin::drop_is_plain(index, name))
                 })
-        })
+            })
     }
 
     /// #6692: the owner-side gates for a `field_construction` probe in a

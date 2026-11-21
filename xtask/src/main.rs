@@ -23123,6 +23123,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
 
     if matches!(
         path,
+        "benchmarks/mutation_spot_check/run_python_calibration.py"
+            | "benchmarks/mutation_spot_check/test_run_python_calibration.py"
+    ) {
+        return Some(
+            "Bounded Python real-mutant calibration must run the authored subjects' own pytest suites with the subject interpreter and drive ripr check --diff per mutant; it is stdlib-only, never on the default CI path, and its receipt is re-derived by the Rust-owned python_calibration tests (#12901).",
+        );
+    }
+
+    if matches!(
+        path,
         "tools/python/installed-wheel-identity/verify_installed_wheel.py"
             | "tools/python/installed-wheel-identity/test_verify.py"
     ) {

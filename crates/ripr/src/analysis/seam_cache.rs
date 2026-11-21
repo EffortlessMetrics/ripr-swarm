@@ -754,7 +754,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// boundary-input summaries, invocation-scope refusal, success-only failure
 /// seams, module-const readers and gated doctest limits (#12757, #12852,
 /// #13592, #14951, #15846). Main reused `1.162`..`1.185` with other meanings.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.203";
+/// `1.204`: compose with protected main through its `1.187` generation:
+/// attribute-macro generated tests take no invocation scopes (#12857).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.204";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -996,7 +998,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.203";
 /// `0.203`: match full `1.201` for test-local empty macros.
 /// `0.204`: match full `1.202` for unit-tail statement blocks.
 /// `0.205`: match full `1.203` for the protected-main composition.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.205";
+/// `0.206`: match full `1.204` for protected main's `1.187` / `0.189`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.206";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1239,7 +1242,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.205";
 /// `0.203`: match full `1.201` for test-local empty macros.
 /// `0.204`: match full `1.202` for unit-tail statement blocks.
 /// `0.205`: match full `1.203` for the protected-main composition.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.205";
+/// `0.206`: match full `1.204` for protected main's `1.187` / `0.189`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.206";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5786,7 +5790,8 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.203");
+        // 1.203 -> 1.204: protected main's attribute-macro scope refusal (#12857).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.204");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5932,8 +5937,8 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.205");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.205");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.206");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.206");
     }
 
     #[test]
@@ -6450,6 +6455,10 @@ mod tests {
             // the import line's own predecessor.
             ("protected-main-selected-cargo-target", "1.185", "0.187"),
             ("pre-protected-main-composition", "1.202", "0.204"),
+            // Protected main's attribute-macro scope generation (#12857) and
+            // the first composition it was merged into.
+            ("protected-main-attribute-macro-scope", "1.187", "0.189"),
+            ("pre-attribute-macro-scope-composition", "1.203", "0.205"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {

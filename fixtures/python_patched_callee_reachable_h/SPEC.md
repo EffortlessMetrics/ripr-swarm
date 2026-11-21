@@ -1,4 +1,4 @@
-# Fixture: python_patched_callee_reachable_unrevealed
+# Fixture: python_patched_callee_reachable_h
 
 Spec: RIPR-SPEC-0028
 Spec: RIPR-SPEC-0108
@@ -12,7 +12,7 @@ the changed code (the patched-callee shape of #13632).
 
 ## When
 
-`cargo xtask fixtures python_patched_callee_reachable_unrevealed` analyzes the
+`cargo xtask fixtures python_patched_callee_reachable_h` analyzes the
 changed return through the real CLI.
 
 ## Then

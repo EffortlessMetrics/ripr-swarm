@@ -164,6 +164,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/help.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: help_json_conforms_and_reaches_every_branch in crates/ripr/tests/help_json_schema.rs validates the real CLI bytes and asserts they reach every exit-contract kind, flag scope and workflow next-route kind, and published_help_schema_rejects_documents_it_forbids is the negative experiment; the document changes with every catalog edit, so the committed fixture is a capture trimmed to ten command rows and one workflow, kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/help.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/rerun.schema.json",
         pointer: None,
         corpus: Corpus::Authority(

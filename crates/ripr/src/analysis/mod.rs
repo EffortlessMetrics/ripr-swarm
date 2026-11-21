@@ -45,11 +45,11 @@ pub(crate) use facts::cfg_predicates::{attribute_is_plain_test_gate, outer_attri
 pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::capture_disclosures;
 pub(crate) use pipeline::is_rust_excluded_by_config_detail;
+pub(crate) use pipeline::names_parsed_file_limitation;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
     diff_changed_python_line_limit, diff_changed_typescript_line_limit,
 };
-pub(crate) use pipeline::{NON_TEXT_ONLY_DETAIL, names_parsed_file_limitation};
 mod diff_intake_disclosure;
 /// Honest seam-count reports for repo-scope inventory progress (#8643).
 /// Installed by the app progress owner for the duration of one walk; the

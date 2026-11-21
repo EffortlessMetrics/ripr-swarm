@@ -6842,6 +6842,15 @@ fn non_rust_programming_policy_requires_retention_rule() {
     );
     assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
     assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+    assert!(
+        non_rust_programming_retention_reason(
+            "benchmarks/mutation_spot_check/run_python_calibration.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("benchmarks/mutation_spot_check/other.py").is_none()
+    );
 }
 
 #[test]

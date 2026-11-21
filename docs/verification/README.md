@@ -36,6 +36,7 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/pr-evidence.schema.json`](../../schemas/ripr/pr-evidence.schema.json) | Canonical PR evidence summary packet. |
 | [`schemas/ripr/review-comments.schema.json`](../../schemas/ripr/review-comments.schema.json) | `ripr review-comments` guidance output. |
 | [`schemas/ripr/agent-status.schema.json`](../../schemas/ripr/agent-status.schema.json) | `ripr agent status --json` inventory: the seven agent-loop artifacts, recorded repair attempts with their receipt readings, and the next command status selects. |
+| [`schemas/ripr/help.schema.json`](../../schemas/ripr/help.schema.json) | `ripr help --json` command and workflow discovery: catalog commands with effects, flags and typed exit contracts, workflows with their steps, and the catalog digest. |
 | [`schemas/ripr/rerun.schema.json`](../../schemas/ripr/rerun.schema.json) | `ripr rerun --json` targeted rerun report: the seams a changed test or gap ledger selects, the file-fact cache work, and the optional `--before` movement, `--check-parity` comparison and ledger route. |
 | [`schemas/ripr/cache-export.schema.json`](../../schemas/ripr/cache-export.schema.json) | `ripr cache export` success report: the export directory and the entry, file and byte counts it copied. |
 | [`schemas/ripr/cache-status.schema.json`](../../schemas/ripr/cache-status.schema.json) | `ripr cache status --json` report: cache location, readability, and owned versus foreign file counts. |

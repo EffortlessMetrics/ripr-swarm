@@ -771,7 +771,9 @@ the `rejects` exact-error override, so neither re-raises it. Owner:
   strong, or `relational_check` / weak under `not`; `throw`, `throws` and
   `Throw` are `broad_error` / weak, except as rule 10 states; `include`,
   `match`, `above`, `below`, `least`, `most`, `lengthOf` and the like are
-  `relational_check` / weak; the property terminals `true`, `false`, `ok`,
+  `relational_check` / weak. The `empty` property also reads as relational:
+  it observes emptiness of the receiver, leaving its element values and order
+  open (#15342). The property terminals `true`, `false`, `ok`,
   `null`, `undefined` and `exist` are `smoke_only` / smoke. Any other
   chain word or terminal yields no assertion.
 
@@ -2758,6 +2760,44 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15306: a changed one-line `return <literal>` whose owner returns only
+  distinct scalar literals (a switch or if-chain lookup) is credited only when
+  some strong related assertion expects the arm's old or new literal (either
+  distinguishes the versions when the call takes the arm). When another arm
+  also returns the new literal, an exact assertion expecting it counts as that
+  arm's result only when its call's literal inputs provably leave the changed
+  arm closed (the #8569 condition reader) and the owner's module names it
+  once (no recursion or re-export); otherwise it keeps the verdict. The rule
+  applies only to a lone one-for-one line replacement in the file. The changed
+  line is located, and its selector read, from the owner text's own first
+  line (an arrow after `export const dir =` starts one line later), and the
+  text must hold the changed line there. Argument slots skip commas inside comments; an unterminated comment
+  or string leaves them unreadable. A `return undefined` with an `undefined`
+  binding in scope, and a BigInt literal (`5n !== 5`), are refused.
+  When every strong assertion on a direct owner call expects another arm's
+  readable literal, the change is not observed: the existing literal-return reading makes it
+  `infection_unknown`, with a line naming the unpinned arm result.
+  A duplicated old literal, any non-literal or multi-line return, a generator
+  or concise-arrow owner, a non-direct relation, and a snapshot, structural,
+  dynamic or table-row expected side on a direct owner call, and any strong
+  assertion whose expected text spells the old or new literal (alone or inside an
+  object, array or expression), keep the verdict.
+  `tests/literal_arm_return_tests.rs` pins the reader
+  (`a_switch_arm_literal_return_is_located_with_its_old_value` and its
+  refusals) and the production path:
+  `an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm`,
+  `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
+  `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
+  `a_shared_new_result_is_credited_only_on_the_selected_arm`,
+  `a_recursive_owner_keeps_a_shared_new_result`,
+  `a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result`,
+  `an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return`,
+  `an_arrow_on_the_next_line_locates_the_changed_return`,
+  `a_multiline_arrow_reads_the_changed_arms_own_selector`,
+  `a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused`,
+  `a_bigint_return_is_not_a_readable_scalar`,
+  `an_unreadable_expected_side_keeps_the_verdict` and
+  `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
 - #15393: an edit that changes only one default parameter value of the owner
   (on a one-line signature or its own parameter line) is not observed when
   every call of every direct, aliased or barrel-followed related test passes
@@ -2910,6 +2950,10 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15306: `crates/ripr/src/analysis/language/typescript/literal_arm_return_guard.rs`
+  reads the owner's literal returns and the related assertions' expected
+  values; `classify_resolved_owner` in `classifier.rs` withholds
+  `observation_confirmed` when the changed arm is unpinned.
 - #15393: `crates/ripr/src/analysis/language/typescript/unused_default_guard.rs`
   locates the changed default and reads call arguments; `ts_unused_default`
   in `classifier.rs` applies it in `ts_apply_post_ladder_rules` and the
