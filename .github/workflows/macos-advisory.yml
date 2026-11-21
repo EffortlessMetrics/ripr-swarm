@@ -52,7 +52,8 @@ concurrency:
 # compiling when the 40-minute limit cancelled the job, as on every night
 # from 2026-11-12. A cancelled job also skips its cache save, so no later
 # night started any warmer. The limit is unchanged; each job now carries
-# half the work and saves its own cache.
+# half the work and saves its own cache, also when its check step fails or
+# hits its own deadline.
 # The integration suites (cli_smoke, portable_consumer*, mcp_stdio) are not run
 # here; the TMPDIR-symlink experiment from #8391 is separate follow-up.
 
@@ -83,6 +84,10 @@ jobs:
           # and two jobs saving one key would keep whichever saved first.
           shared-key: ripr-macos-advisory-1.95-${{ matrix.check }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          # With the step deadlines below: a cold build that does not fit
+          # fails its step instead of having the job cancelled, and a failed
+          # job still saves what it compiled, so the next run starts warm.
+          cache-on-failure: true
 
       - name: Record host
         shell: bash
@@ -92,8 +97,12 @@ jobs:
           rustc --version
           cargo --version
 
+      # 34 minutes, under the 40-minute job limit: a step that hits its own
+      # deadline fails the job (its evidence is missing) and leaves time for
+      # the cache save, which a job cancelled at 40 minutes never reaches.
       - name: Clippy (advisory outcome)
         if: matrix.check == 'clippy'
+        timeout-minutes: 34
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-advisory"
@@ -110,8 +119,14 @@ jobs:
         if: matrix.check == 'lib-tests'
         run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
+      # Cold, this needs about 45 minutes (2026-11-21, run 44952411009: a
+      # 31-minute build, then 17,132 of 20,887 tests in 9 minutes before the
+      # job was cancelled), so a cold run cannot finish inside the job limit.
+      # The step deadline turns that night into a failed job that saves its
+      # build; the build is then cached and later nights run the tests only.
       - name: Library tests (advisory outcome)
         if: matrix.check == 'lib-tests'
+        timeout-minutes: 34
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-advisory"
