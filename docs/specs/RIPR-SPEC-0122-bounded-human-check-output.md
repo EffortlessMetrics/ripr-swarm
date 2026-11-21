@@ -218,7 +218,8 @@ encoding. This presentation rule also applies when no finding is selected;
 it does not re-coordinate base-side findings or change their currentness.
 
 When the hidden identity list exceeds its 20-row window, its remainder
-line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
+line tells readers to set `RIPR_CHECK_FINDINGS_BYTES=0` for all JSON IDs.
+The Machine data line supplies the `--format json` flag once.
 Default check JSON has its own findings-array byte budget; the explicit
 opt-out recovers the full finding set without changing either display cap.
 When that JSON budget engages, it keeps the highest-priority findings
@@ -231,9 +232,8 @@ the omitted findings need more than 20 rows, so a gap in a late-sorting file is
 named ahead of an already-noticed finding in an early one. The chosen rows
 still print in report (file, line) order, and the remainder line counts the
 findings outside the window by class, for example `… and 7 more omitted
-finding(s): 7 exposed; every identity is in --format json with
-RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer rows every row is listed
-(#14233). The hidden test-stub rows use a separate report-order cutoff: they
+finding(s): 7 exposed. For all JSON IDs, set RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or
+fewer rows every row is listed (#14233). The hidden test-stub rows use a separate report-order cutoff: they
 take the first 20 omitted findings in report order and keep the ones that offer
 a stub route, so a routed stub row can fall outside the displayed `Hidden:`
 window and a row inside that window can have no stub route (#14687).
