@@ -301,13 +301,6 @@ Updated:
 
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.200 for same-line owner calls (#14487)
-
-A second directly asserted call on the same line can supply the boundary input.
-The classified cache now rejects entries built before this evidence was recorded.
-The unchanged-attempt fixture retains its weak grip. Its portable reports and
-dependent verification and receipt hashes were regenerated from the 1.200 producer.
-
 ## Pending — boundary_gap (7)
 
 Reason:
@@ -331,13 +324,6 @@ Updated:
 - `expected/gate-adoption/*/gate-decision.{json,md}` (6 scenarios)
 
 # Golden Output Changes
-
-## Pending — corpus cache generation 1.200 for same-line owner calls (#14487)
-
-A second directly asserted call on the same line can supply the boundary input.
-The classified cache now rejects entries built before this evidence was recorded.
-The unchanged-attempt fixture retains its weak grip. Its portable reports and
-dependent verification and receipt hashes were regenerated from the 1.200 producer.
 
 ## Pending — boundary_gap (6)
 
