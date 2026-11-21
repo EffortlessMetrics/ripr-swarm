@@ -137,3 +137,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — binding_value_counterpart_width (12)
+
+Reason:
+RIPR-SPEC-0001: a name-only comparison tail reaches the return sink; both return_value findings stay infection_unknown (#15274)
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

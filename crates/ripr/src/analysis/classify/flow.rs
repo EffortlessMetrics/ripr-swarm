@@ -573,6 +573,13 @@ fn return_value_sink(
         );
     }
     if !is_obvious_return_expression(&probe.expression) {
+        // #15274: a comparison that is the owner's whole tail is the returned
+        // value whatever its operands spell (`n >= LIMIT` has no literal,
+        // call or arithmetic), as its predicate twin on the same line reads
+        // it. An expression that spells a value keeps the sink below.
+        if let Some(tail) = predicate_as_owner_tail(probe, owner_fn) {
+            return flow_sink(FlowSinkKind::ReturnValue, tail.text, tail.line, owner);
+        }
         return flow_sink(
             FlowSinkKind::Unknown,
             "unknown sink",
@@ -998,7 +1005,7 @@ fn tail_if_branch_value(
         }
         if raw_branch.is_empty()
             || !(looks_like_branch_tail_expression(raw_branch)
-                || is_plain_identifier(raw_branch)
+                || is_plain_path(raw_branch)
                 || is_quoted_literal(raw_branch))
         {
             return None;
@@ -1172,6 +1179,14 @@ fn is_plain_identifier(text: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+}
+
+/// A plain identifier or a `::` path of plain identifiers (`Level::High`,
+/// `Self::MAX`, `limits::DEFAULT`): a unit variant, constant or binding
+/// named as the branch's whole value (#15274). Generic arguments, a leading
+/// `::` and a qualified `<T as Trait>::X` path are not read.
+fn is_plain_path(text: &str) -> bool {
+    text.split("::").all(is_plain_identifier)
 }
 
 fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Option<LocalTextFact> {
@@ -2315,6 +2330,186 @@ mod tests {
         let sinks = local_flow_sinks(&probe, Some(&owner));
         assert_eq!(sinks.len(), 1, "{sinks:?}");
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
+    }
+
+    /// #15274: the return-value probe of a comparison that is the owner's
+    /// whole tail reaches the return sink whatever its operands spell, as
+    /// its predicate twin does.
+    #[test]
+    fn name_only_comparison_tail_reaches_the_return_sink() {
+        for (body, expression) in [
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn same(a: Level, b: Level) -> bool {\n    a == b\n}",
+                "a == b",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    (n >= LIMIT)\n}",
+                "n >= LIMIT",
+            ),
+        ] {
+            assert!(!is_obvious_return_expression(expression), "{expression}");
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{body}");
+            assert_eq!(sinks[0].text, expression, "{body}");
+            assert_eq!(sinks[0].line, 2, "{body}");
+        }
+    }
+
+    /// #15274: a tail that spells a value keeps the sink it had, with its
+    /// literals intact. Reading it through the comparison-tail reader would
+    /// blank them (`c ==     || c == `) and break the witness match.
+    #[test]
+    fn literal_comparison_tail_keeps_its_own_return_sink_text() {
+        for (body, expression) in [
+            (
+                "pub fn is_sep(c: char) -> bool {\n    c == ',' || c == ';'\n}",
+                "c == ',' || c == ';'",
+            ),
+            (
+                "pub fn is_flag(flag: &str) -> bool {\n    flag == \"-v\"\n}",
+                "flag == \"-v\"",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    n >= 1000\n}",
+                "n >= 1000",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{body}");
+            assert_eq!(sinks[0].text, expression, "{body}");
+        }
+    }
+
+    /// #15274: only the owner's whole one-comparison tail is read. A unit
+    /// owner, a `let`-bound comparison, a connective tail whose other operand
+    /// can mask the change, a comparison that is a statement, and a probe
+    /// retargeted from other changed text keep the unknown sink.
+    #[test]
+    fn name_only_comparison_off_the_owner_tail_keeps_the_unknown_sink() {
+        for (body, expression, after) in [
+            (
+                "pub fn check(n: u32) {\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over(n: u32) -> bool {\n    let over = n >= LIMIT;\n    over\n}",
+                "n >= LIMIT",
+                "let over = n >= LIMIT;",
+            ),
+            (
+                "pub fn over(n: u32, ready: bool) -> bool {\n    n >= LIMIT && ready\n}",
+                "n >= LIMIT && ready",
+                "n >= LIMIT && ready",
+            ),
+            (
+                "pub fn over(n: u32, ready: bool) -> bool {\n    n >= LIMIT\n        && ready\n}",
+                "n >= LIMIT",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over(n: u32) -> bool {\n    n >= LIMIT;\n    true\n}",
+                "n >= LIMIT",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over(n: u32) -> bool {\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+                "limit()",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::ReturnValue, expression, 2);
+            probe.after = Some(after.to_string());
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}: {sinks:?}");
+        }
+        // Another function's probe never borrows this owner's tail.
+        let owner = tail_owner("pub fn over_limit(n: u32) -> bool {\n    n >= LIMIT\n}");
+        let mut foreign = probe(ProbeFamily::ReturnValue, "n >= LIMIT", 2);
+        foreign.owner = Some(SymbolId("src/lib.rs::other".to_string()));
+        let sinks = local_flow_sinks(&foreign, Some(&owner));
+        assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{sinks:?}");
+    }
+
+    /// #15274: a tail `if` whose arms are paths (unit variants, constants)
+    /// decides the returned value like one whose arms are literals.
+    #[test]
+    fn tail_if_with_path_branches_flows_to_the_returned_value() {
+        for (body, sink) in [
+            (
+                "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::High } else { Level::Low }\n}",
+                "Level::High",
+            ),
+            (
+                "pub fn cap(n: u32) -> u32 {\n    if n > 10 { limits::tier::HIGH } else { Self::LOW }\n}",
+                "limits::tier::HIGH",
+            ),
+            (
+                "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::High } else if n > 5 { Level::Mid } else { Level::Low }\n}",
+                "Level::High",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", 2), Some(&owner));
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{body}");
+            assert_eq!(sinks[0].text, sink, "{body}");
+            assert_eq!(sinks[0].line, 2, "{body}");
+        }
+        for path in ["Level::High", "Self::MAX", "limits::DEFAULT", "value", "_x"] {
+            assert!(is_plain_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "::core::MAX",
+            "Level::",
+            "Level::<T>::High",
+            "<T as Limit>::MAX",
+            "Level::High as u8",
+            "a.b",
+            "Level :: High",
+            "9lives",
+        ] {
+            assert!(!is_plain_path(path), "{path}");
+        }
+    }
+
+    /// #15274: arms that return the same path leave the condition without a
+    /// returned value to decide, and a path the reader does not read whole
+    /// is no plain value.
+    #[test]
+    fn tail_if_with_unread_or_equal_path_branches_fails_closed() {
+        for body in [
+            "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::Low } else { Level::Low }\n}",
+            "pub fn level(n: u32) -> u8 {\n    if n > 10 { <A as Limit>::MAX } else { <B as Limit>::MAX }\n}",
+            "pub fn level(n: u32) -> u8 {\n    if n > 10 { Tier::<A>::MAX } else { Tier::<B>::MAX }\n}",
+            "pub fn level(n: u32) {\n    if n > 10 { Level::High } else { Level::Low }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", 2), Some(&owner));
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
     }
 
     #[test]
