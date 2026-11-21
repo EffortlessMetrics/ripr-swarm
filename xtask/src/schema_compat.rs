@@ -159,6 +159,65 @@ fn required_names_only(branch: &Value) -> bool {
             .all(|name| name.as_str().is_some_and(|name| seen.insert(name)))
 }
 
+fn named_definition(reference: &str) -> Option<&str> {
+    let name = reference.strip_prefix("#/$defs/")?;
+    (!name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')))
+    .then_some(name)
+}
+
+/// A reference back to the changed property can reverse the implication,
+/// for instance underneath a sibling's `not`. Keep this proof within a
+/// single schema resource whose references can only address named definitions.
+fn resolved_schema_refs(key: &str, node: &Value, resolved: &BTreeSet<&str>) -> bool {
+    match key {
+        "$ref" => node
+            .as_str()
+            .and_then(named_definition)
+            .is_some_and(|name| resolved.contains(name)),
+        "$schema" | "$id" | "$anchor" | "$dynamicAnchor" | "$dynamicRef" | "$recursiveAnchor"
+        | "$recursiveRef" => false,
+        _ => match node {
+            Value::Object(fields) => fields
+                .iter()
+                .all(|(key, value)| resolved_schema_refs(key, value, resolved)),
+            Value::Array(items) => items
+                .iter()
+                .all(|value| resolved_schema_refs("", value, resolved)),
+            _ => true,
+        },
+    }
+}
+
+/// Admit a definition only after its dependencies resolve. A pass without
+/// progress leaves a cycle, dangling reference, or unsupported schema resource.
+fn closed_definition_graph(root: &serde_json::Map<String, Value>) -> bool {
+    let Some(defs) = root.get("$defs").and_then(Value::as_object) else {
+        return false;
+    };
+    let mut resolved = BTreeSet::new();
+    while resolved.len() < defs.len() {
+        let prior = resolved.len();
+        for (name, schema) in defs {
+            if !resolved.contains(name.as_str())
+                && (schema.is_boolean() || schema.is_object())
+                && resolved_schema_refs("", schema, &resolved)
+            {
+                resolved.insert(name.as_str());
+            }
+        }
+        if resolved.len() == prior {
+            return false;
+        }
+    }
+    root.iter().all(|(key, node)| {
+        matches!(key.as_str(), "$schema" | "$id" | "$defs")
+            || resolved_schema_refs(key, node, &resolved)
+    })
+}
+
 /// A top-level property can add a receipt version by retaining its original
 /// local reference as one arm of an inclusive union. Check the legacy
 /// definition itself, and resolve every other arm before accepting the union.
@@ -170,20 +229,13 @@ fn retains_local_reference(
 ) -> bool {
     fn definition<'a>(root: &'a serde_json::Map<String, Value>, arm: &Value) -> Option<&'a Value> {
         let arm = arm.as_object().filter(|arm| arm.len() == 1)?;
-        let name = arm.get("$ref")?.as_str()?.strip_prefix("#/$defs/")?;
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        {
-            return None;
-        }
+        let name = named_definition(arm.get("$ref")?.as_str()?)?;
         root.get("$defs")?
             .get(name)
             .filter(|schema| schema.is_object() || schema.is_boolean())
     }
 
-    let Some(legacy) = definition(old_root, prior) else {
+    let Some(old_defs) = old_root.get("$defs").and_then(Value::as_object) else {
         return false;
     };
     let Some(arms) = candidate
@@ -194,7 +246,16 @@ fn retains_local_reference(
     else {
         return false;
     };
-    definition(new_root, prior) == Some(legacy)
+    // Preserving the first target alone misses a changed transitive target
+    // whose use under `not` reverses an otherwise widening edit.
+    old_root.get("$schema") == new_root.get("$schema")
+        && old_root.get("$id") == new_root.get("$id")
+        && definition(old_root, prior).is_some()
+        && old_defs.iter().all(|(key, schema)| {
+            new_root.get("$defs").and_then(|defs| defs.get(key)) == Some(schema)
+        })
+        && closed_definition_graph(old_root)
+        && closed_definition_graph(new_root)
         && arms.contains(prior)
         && arms.iter().all(|arm| definition(new_root, arm).is_some())
 }
@@ -673,9 +734,64 @@ mod tests {
                 ));
             }
         }
+        for reference in [
+            json!({"$ref":"#/properties/receipt"}),
+            json!({"$ref":"#"}),
+            json!({"$dynamicRef":"#receipt"}),
+            json!({"$id":"other", "$ref":"#/$defs/prior"}),
+        ] {
+            let mut referenced_old = old.clone();
+            let mut referenced_new = valid.clone();
+            for root in [&mut referenced_old, &mut referenced_new] {
+                root["properties"]["sibling"] = json!({"not":reference});
+            }
+            if !matches!(
+                assess(&referenced_old, &referenced_new),
+                Compat::Violations(_)
+            ) {
+                return Err(format!(
+                    "unproved union with an indirect reference was accepted: {reference}"
+                ));
+            }
+        }
         valid["$defs"]["prior"] = json!({"const":"different"});
         if !matches!(assess(&old, &valid), Compat::Violations(_)) {
             return Err("replacement of the historic receipt target was accepted".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retained_receipt_checks_transitive_targets_and_refuses_unresolved_graphs()
+    -> Result<(), String> {
+        let old = json!({
+            "properties": {"receipt":{"$ref":"#/$defs/prior"}},
+            "$defs": {"prior":{"not":{"$ref":"#/$defs/shared"}}, "shared":{"enum":["ban"]}}
+        });
+        let mut widened = old.clone();
+        widened["properties"]["receipt"] =
+            json!({"anyOf":[{"$ref":"#/$defs/next"},{"$ref":"#/$defs/prior"}]});
+        widened["$defs"]["next"] = json!({"$ref":"#/$defs/leaf"});
+        widened["$defs"]["leaf"] = json!({"const":"future"});
+        if !matches!(
+            assess(&old, &widened),
+            Compat::Compatible { breaking: 0, .. }
+        ) {
+            return Err("refused an acyclic union preserving the entire original graph".into());
+        }
+        for (key, invalid) in [
+            ("shared", json!({"enum":["ban","old"]})),
+            ("leaf", json!({"$ref":"#/$defs/missing"})),
+            ("leaf", json!({"$ref":"#/$defs/next"})),
+            ("leaf", json!({"$ref":"#/$defs/leaf"})),
+        ] {
+            let mut doc = widened.clone();
+            doc["$defs"][key] = invalid;
+            if !matches!(assess(&old, &doc), Compat::Violations(_)) {
+                return Err(format!(
+                    "accepted changed semantics or unresolvable graph: {doc}"
+                ));
+            }
         }
         Ok(())
     }
