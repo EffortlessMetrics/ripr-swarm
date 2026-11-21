@@ -76,6 +76,15 @@ needed 1041, so following the hint produced another partial run.
    run: dependent packages the wider run adds can still meet the index
    guard, which refuses with `diff_scope_oversized` and names its own repair
    route. The same holds for the next-file minimum.
+7. When the enabled-language changed lines of the whole diff exceed both the
+   smallest recorded language line limit and the built-in 2,000-line limit,
+   no partial-budget raise can complete the run (the budget is clamped to the
+   limit). Every recovery surface (human, analysis outcome, LSP status and
+   document recovery) then leads with narrowing the diff (a `PATH` argument
+   or a nearer `--base`) and names raising that language limit as the route
+   on a runner with more memory, instead of an incremental budget raise
+   (#15484). Disabled-language lines and an index-guard refusal do not count
+   toward this decision.
 
 ## Required Evidence
 
@@ -120,7 +129,10 @@ needed 1041, so following the hint produced another partial run.
   `partial_widen_minimums_admit_the_next_file_and_one_less_does_not`,
   `partial_widen_names_the_whole_diff_only_when_its_limits_can_grant_it`,
   `partial_widen_counts_every_language_against_the_line_clamp`,
-  `partial_widen_omits_the_whole_diff_when_its_packages_exceed_the_index_guard`.
+  `partial_widen_omits_the_whole_diff_when_its_packages_exceed_the_index_guard`,
+  `partial_widen_says_to_narrow_when_no_budget_can_complete_the_run`.
+- `crates/ripr/tests/hostile_repos.rs`:
+  `partial_scope_over_the_analysis_limit_says_to_narrow_not_to_raise_the_budget`.
 
 ## Implementation Mapping
 

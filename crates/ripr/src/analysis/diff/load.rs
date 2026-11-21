@@ -2311,6 +2311,31 @@ fn missing_ref_repair(
          then re-run"
             .to_string();
     }
+    // A full commit id is never a branch: a fetch creates no `origin/<sha>`,
+    // so branch-shaped advice cannot restore it. Name the commit fetch
+    // instead (and the history it needs in a shallow clone). Only a full id:
+    // `git fetch` cannot request an abbreviated one, and a short hex word
+    // (`deadbeef`, `cafe123`) is as likely a branch, so those keep the
+    // branch advice below.
+    // Git also accepts a full-length hex branch name, so a fetched branch of
+    // that spelling keeps its working tracking advice (#8652).
+    if looks_like_commit_id(missing_ref) {
+        let remotes = configured_remotes(root, git_timeout);
+        if let Some(advice) =
+            remote_tracking_advice(root, missing_ref, flag, remotes.as_deref(), git_timeout)
+        {
+            return advice;
+        }
+    }
+    if looks_like_commit_id(missing_ref)
+        && let Some(remote) = commit_fetch_remote(root, git_timeout)
+    {
+        return if is_shallow_repository(root, git_timeout) {
+            format!("Fetch the commit (for example `git fetch --unshallow {remote} {missing_ref}`)")
+        } else {
+            format!("Fetch the commit (for example `git fetch {remote} {missing_ref}`)")
+        };
+    }
     if is_shallow_repository(root, git_timeout) {
         // An ancestor offset of a present commit (`HEAD~5`) needs depth
         // only. A branch, or an offset of one that is absent
@@ -2367,6 +2392,24 @@ fn missing_ref_repair(
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
     }
+    // A `v1.2.3`-shaped name is a release tag far more often than a branch,
+    // and `git fetch <remote>` does not bring tags that no fetched branch
+    // reaches. Shape only: asking the remote which tags exist costs a network
+    // round trip this local diagnosis never makes.
+    // Unqualified, like the branch fallback below: `git fetch --tags`
+    // follows the current branch's remote, which in a fork checkout is often
+    // the one publishing the release (`upstream`), not `origin`.
+    // With no `origin`, Git has no default to fall back on outside a
+    // tracking branch, so the remote is named.
+    if looks_like_release_tag(missing_ref)
+        && let Some(remote) = commit_fetch_remote(root, git_timeout)
+    {
+        return if remote == "origin" {
+            "Fetch the tags (for example `git fetch --tags`)".to_string()
+        } else {
+            format!("Fetch the tags (for example `git fetch --tags {remote}`)")
+        };
+    }
     let plain_branch = branch_like && !missing_ref.contains('/');
     match remotes.as_deref() {
         Some([]) if !plain_branch => format!(
@@ -2391,6 +2434,52 @@ fn missing_ref_repair(
             // collapse into `Some([])` and report "no remote" unobserved.
             "Fetch the ref (for example `git fetch`)".to_string()
         }
+    }
+}
+
+/// Whether `name` is spelled like a full commit id: 40 (SHA-1) or 64
+/// (SHA-256) hex digits, the only forms `git fetch <remote> <id>` accepts.
+fn looks_like_commit_id(name: &str) -> bool {
+    matches!(name.len(), 40 | 64) && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Whether `name` is spelled like a dotted release tag (`v2.0`, `v1.2.3`,
+/// `v1.2.3-rc.1`): `v`, at least two dot-separated numeric parts, and an
+/// optional `-`/`+` suffix. A bare `v2` or `v2-feature` stays branch-shaped,
+/// because branches are named that way too.
+fn looks_like_release_tag(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('v') else {
+        return false;
+    };
+    let (version, suffix) = match rest.find(['-', '+']) {
+        Some(at) => (&rest[..at], Some(&rest[at + 1..])),
+        None => (rest, None),
+    };
+    let parts = version.split('.').collect::<Vec<_>>();
+    parts.len() >= 2
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && suffix.is_none_or(|suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        })
+}
+
+/// The remote a commit fetch names: `origin` when configured or when the
+/// remote list is unknown, otherwise the first plain remote. `None` when no
+/// remote is configured, so the add-remote advice applies instead.
+fn commit_fetch_remote(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    match configured_remotes(root, git_timeout) {
+        None => Some("origin".to_string()),
+        Some(remotes) if remotes.iter().any(|remote| remote == "origin") => {
+            Some("origin".to_string())
+        }
+        Some(remotes) => remotes
+            .into_iter()
+            .find(|remote| remote_name_is_plain(remote)),
     }
 }
 
@@ -2505,11 +2594,19 @@ fn remote_tracking_advice(
         .collect();
     match found.as_slice() {
         [] => None,
-        [only] => Some(format!(
-            "the fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
-        )),
+        [only] => {
+            let short = only.strip_prefix("refs/remotes/").unwrap_or(only);
+            let spelling = if short_spelling_is_unambiguous(root, short, only, git_timeout) {
+                short
+            } else {
+                only
+            };
+            Some(format!(
+                "The fetched branch is `{spelling}`, not a local `{missing_ref}`: pass `{flag} {spelling}`"
+            ))
+        }
         _ => Some(format!(
-            "the fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
+            "The fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
             found
                 .iter()
                 .map(|tracking| format!("`{tracking}`"))
@@ -2517,6 +2614,31 @@ fn remote_tracking_advice(
                 .join(", ")
         )),
     }
+}
+
+/// Whether the short `<remote>/<ref>` spelling resolves to exactly the
+/// `refs/remotes/...` ref `full`, so quoting it cannot be shadowed by a tag
+/// or local branch of that name.
+fn short_spelling_is_unambiguous(
+    root: &Path,
+    short: &str,
+    full: &str,
+    git_timeout: Option<Duration>,
+) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--symbolic-full-name",
+            short,
+        ],
+        git_timeout,
+    )
+    .is_ok_and(|output| {
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == full
+    })
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -5640,14 +5762,137 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/topic"),
+            repair.contains("--base origin/topic`"),
             "the repair must name the resolvable remote-tracking ref, got: {repair}"
         );
         let head_repair = missing_ref_repair(&dir, "topic", "--head", None);
         assert!(
-            head_repair.contains("--head refs/remotes/origin/topic")
-                && !head_repair.contains("--base"),
+            head_repair.contains("--head origin/topic`") && !head_repair.contains("--base"),
             "the head repair must name its own flag, got: {head_repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_commit_fetch_for_a_hex_id() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-hex-id")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let repair = missing_ref_repair(&dir, sha, "--base", None);
+        assert!(
+            repair.contains(&format!("`git fetch origin {sha}`")),
+            "a commit id needs the commit fetch, got: {repair}"
+        );
+        assert!(
+            !repair.contains("fetched branch") && !repair.contains("origin/0123"),
+            "a commit id is never a branch, got: {repair}"
+        );
+        // `git fetch` cannot request an abbreviated id, and a short hex word
+        // may be a branch: those keep the branch advice.
+        for short in ["0123abc", "deadbeef", "1234567"] {
+            let repair = missing_ref_repair(&dir, short, "--base", None);
+            assert!(
+                !repair.contains("Fetch the commit")
+                    && repair.contains(&format!("fetched branch is named `origin/{short}`")),
+                "{short} keeps branch advice, got: {repair}"
+            );
+        }
+        // A fetched hex-named branch gets the tracking advice, not a commit fetch.
+        run_git_checked(
+            &dir,
+            &["update-ref", "refs/remotes/origin/deadbeef", "HEAD"],
+        )?;
+        let tracked = missing_ref_repair(&dir, "deadbeef", "--base", None);
+        assert!(tracked.contains("--base origin/deadbeef`"), "{tracked}");
+        // Git accepts a full-length hex branch name too: once fetched, its
+        // tracking form is the working advice, not a commit fetch.
+        let hex_branch = "fedcba9876543210fedcba9876543210fedcba98";
+        run_git_checked(
+            &dir,
+            &[
+                "update-ref",
+                &format!("refs/remotes/origin/{hex_branch}"),
+                "HEAD",
+            ],
+        )?;
+        let tracked = missing_ref_repair(&dir, hex_branch, "--base", None);
+        assert!(
+            tracked.contains(&format!("--base origin/{hex_branch}`"))
+                && !tracked.contains("Fetch the commit"),
+            "{tracked}"
+        );
+        let branch = missing_ref_repair(&dir, "feature-x", "--base", None);
+        assert!(
+            branch.contains("fetched branch is named `origin/feature-x`"),
+            "{branch}"
+        );
+        // Six hex digits is below the abbreviation floor: branch advice.
+        let tiny = missing_ref_repair(&dir, "abcdef", "--base", None);
+        assert!(!tiny.contains("Fetch the commit"), "{tiny}");
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_tag_fetch_for_a_release_tag_shape() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-tag-shape")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        for tag in ["v9.9.9", "v2.0", "v1.2.3-rc.1"] {
+            let repair = missing_ref_repair(&dir, tag, "--base", None);
+            assert!(
+                repair.contains("`git fetch --tags`") && !repair.contains("fetched branch"),
+                "{tag} needs the tag fetch, got: {repair}"
+            );
+        }
+        for branch in [
+            "velocity",
+            "v",
+            "version-2",
+            "v2",
+            "v2-feature",
+            "v3_beta",
+            "v1.x",
+        ] {
+            let repair = missing_ref_repair(&dir, branch, "--base", None);
+            assert!(
+                !repair.contains("--tags") && repair.contains("fetched branch"),
+                "{branch} stays branch advice, got: {repair}"
+            );
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_prefers_the_short_tracking_spelling_when_unambiguous()
+    -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-short-tracking")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/master", "HEAD"])?;
+
+        let repair = missing_ref_repair(&dir, "master", "--base", None);
+        assert_eq!(
+            repair,
+            "The fetched branch is `origin/master`, not a local `master`: pass `--base origin/master`"
         );
 
         ignore_remove_dir_all(&dir);
@@ -5695,7 +5940,7 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/upstream/topic"),
+            repair.contains("--base upstream/topic`"),
             "the repair must name the one existing tracking ref, got: {repair}"
         );
 
@@ -5728,7 +5973,7 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "feature/topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/feature/topic"),
+            repair.contains("--base origin/feature/topic`"),
             "a slashed branch must probe remote-tracking forms, got: {repair}"
         );
 

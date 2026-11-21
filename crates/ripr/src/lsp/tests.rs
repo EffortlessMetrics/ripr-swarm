@@ -25101,6 +25101,7 @@ fn partition_partial_scope() -> crate::analysis::PartialDiffScope {
         whole_diff_budgets: None,
         over_limit_files: Vec::new(),
         line_budget_limits: Vec::new(),
+        enabled_changed_lines: 0,
         partition_identity: "sha256:partition".to_string(),
     }
 }
@@ -25781,6 +25782,7 @@ async fn workspace_status_keeps_outside_partition_reason_when_both_apply() -> Re
         whole_diff_budgets: None,
         over_limit_files: Vec::new(),
         line_budget_limits: Vec::new(),
+        enabled_changed_lines: 0,
         partition_identity: "sha256:partition".to_string(),
     };
     backend

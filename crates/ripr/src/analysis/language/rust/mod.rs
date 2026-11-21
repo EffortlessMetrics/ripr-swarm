@@ -845,6 +845,10 @@ pub struct PartialDiffScope {
     /// budget raised would be clamped back to the same partition (#13641
     /// review).
     pub line_budget_limits: Vec<(&'static str, usize)>,
+    /// Changed lines across the enabled-language files of the whole diff.
+    /// Unlike the uninspected lower bound, it leaves out disabled-language
+    /// files, which no line limit or budget counts.
+    pub enabled_changed_lines: usize,
     /// Lowercase hex sha256 of the canonical partition form (decision 7).
     pub partition_identity: String,
 }
@@ -860,7 +864,57 @@ impl PartialDiffScope {
     /// first, then the CLI-shaped "re-run" tail. See
     /// [`Self::budget_raise_instruction`] for the budget assignment itself.
     pub(crate) fn widen_instruction(&self) -> String {
+        if let Some((total, limit, env)) = self.unreachable_whole_diff() {
+            return format!(
+                "narrow the diff with a PATH argument or a nearer `--base` (the whole diff is \
+                 {total} changed lines, over the {limit}-line analysis limit, so raising only \
+                 the partial budget cannot complete the run; on a runner with more memory, \
+                 raising {env} first is the other route), then re-run"
+            );
+        }
         format!("{}, then re-run", self.budget_raise_instruction())
+    }
+
+    /// The whole diff's changed-line count and the smallest analysis limit it
+    /// exceeds, when the diff is also larger than the built-in limit: the line
+    /// budget is clamped to that limit, so an incremental "raise to at least
+    /// N" would only walk toward a run that never completes. `None` when the
+    /// whole diff can be granted, when an over-limit file already carries its
+    /// own limit-raise route, or when no language limit is recorded.
+    fn unreachable_whole_diff(&self) -> Option<(usize, usize, &'static str)> {
+        if self.whole_diff_budgets.is_some() || !self.over_limit_files.is_empty() {
+            return None;
+        }
+        // Only enabled-language lines count against a line limit; a cleared
+        // whole-diff budget can also come from the index guard, which this
+        // line-limit advice must not claim.
+        let total = self.enabled_changed_lines;
+        let (env, limit) = self
+            .line_budget_limits
+            .iter()
+            .min_by_key(|(_, limit)| *limit)
+            .copied()?;
+        // Raising an analysis limit is the documented route while the diff
+        // stays within reach of the built-in guard; past it, narrowing leads
+        // and the limit raise stays named for larger runners.
+        (total > limit && total > DIFF_CHANGED_RUST_LINE_LIMIT).then_some((total, limit, env))
+    }
+
+    /// Whether no partial-budget raise can complete the run, so every
+    /// recovery surface leads with narrowing instead.
+    pub(crate) fn whole_diff_is_unreachable(&self) -> bool {
+        self.unreachable_whole_diff().is_some()
+    }
+
+    /// The lead-in each surface puts before [`Self::widen_instruction`]:
+    /// "widen the partition" is wrong when the advice is to analyze less.
+    pub(crate) fn widen_lead(&self, capitalized: bool) -> &'static str {
+        match (self.unreachable_whole_diff().is_some(), capitalized) {
+            (false, true) => "To widen the analyzed partition, ",
+            (false, false) => "to widen the analyzed partition, ",
+            (true, true) => "To get a complete result, ",
+            (true, false) => "to get a complete result, ",
+        }
     }
 
     /// The budget-raise instruction every partial-result surface shares: the
@@ -1691,6 +1745,7 @@ fn select_admitted_partial_diff_partition(
                 limits
             },
         ),
+        enabled_changed_lines: enabled_lines,
         partition_identity: sha256_hex(canonical.as_bytes()),
     }))
 }
@@ -8392,6 +8447,70 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     #[test]
+    fn partial_widen_says_to_narrow_when_no_budget_can_complete_the_run() -> Result<(), String> {
+        // A diff larger than even the built-in analysis limit cannot be
+        // completed by walking the line budget upward: the budget is clamped
+        // to the limit, so "raise to at least N" never ends in a full run.
+        let files = [
+            changed_file("src/a.rs", 1_500, 0),
+            changed_file("src/b.rs", 1_500, 0),
+            changed_file("src/c.rs", 1_500, 0),
+        ];
+        let with_limit = |limit: usize| PartialDiffBudgets {
+            line_limit: limit,
+            language_line_limits: vec![LanguageLineLimit {
+                language: LanguageId::Rust,
+                limit,
+                env: DIFF_CHANGED_RUST_LINE_LIMIT_ENV,
+            }],
+            ..budgets(7, 1_600)
+        };
+        let narrow = require_partial(
+            select_partial_diff_partition(&files, &with_limit(4_499), ALL_LANGUAGES),
+            "whole diff over the recorded line limit",
+        )?;
+        assert_eq!(narrow.whole_diff_budgets, None);
+        assert_eq!(
+            narrow.widen_instruction(),
+            "narrow the diff with a PATH argument or a nearer `--base` (the whole diff is 4500 \
+             changed lines, over the 4499-line analysis limit, so raising only the partial \
+             budget cannot complete the run; on a runner with more memory, raising \
+             RIPR_MAX_DIFF_CHANGED_RUST_LINES first is the other route), then re-run"
+        );
+        assert_eq!(narrow.widen_lead(true), "To get a complete result, ");
+        // Only enabled-language lines count: the same partition whose whole
+        // diff is mostly disabled-language lines (or whose whole-diff budget
+        // the index guard cleared) is not a line-limit problem.
+        let mostly_disabled = PartialDiffScope {
+            enabled_changed_lines: 6,
+            ..narrow.clone()
+        };
+        assert!(!mostly_disabled.whole_diff_is_unreachable());
+        assert_eq!(
+            mostly_disabled.widen_lead(true),
+            "To widen the analyzed partition, "
+        );
+        // Control: the same diff under a limit that can hold it keeps the
+        // incremental advice, which can complete the run.
+        let reachable = require_partial(
+            select_partial_diff_partition(&files, &with_limit(5_000), ALL_LANGUAGES),
+            "whole diff within the recorded line limit",
+        )?;
+        assert!(
+            reachable
+                .widen_instruction()
+                .starts_with("raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 3000"),
+            "{}",
+            reachable.widen_instruction()
+        );
+        assert_eq!(
+            reachable.widen_lead(true),
+            "To widen the analyzed partition, "
+        );
+        Ok(())
+    }
+
+    #[test]
     fn partial_widen_names_the_whole_diff_only_when_its_limits_can_grant_it() -> Result<(), String>
     {
         // #10894: a whole-diff budget above the effective analysis-cost limit
@@ -8414,6 +8533,7 @@ fn absent_delimiter_boundary_returns_head() {
             over.widen_instruction(),
             "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
         );
+
         let fits = require_partial(
             select_partial_diff_partition(&files, &capped(95), ALL_LANGUAGES),
             "whole diff at the line limit",

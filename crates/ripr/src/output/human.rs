@@ -1213,9 +1213,10 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
     // continuation route; the budget has no off switch (zero is rejected).
     // The widen wording is shared with JSON, LSP and the analysis outcome.
     out.push_str(&format!(
-        "  To widen the analyzed partition, {}. Overrides above the analysis-cost limit are \
+        "  {}{}. Overrides above the analysis-cost limit are \
          clamped, the budget cannot be switched off, and named partition continuation is not \
          available.\n  partition_identity: {}\n\n",
+        scope.widen_lead(true),
         scope.widen_instruction(),
         scope.partition_identity,
     ));
@@ -7485,6 +7486,7 @@ mod tests {
                 whole_diff_budgets: None,
                 over_limit_files: Vec::new(),
                 line_budget_limits: Vec::new(),
+                enabled_changed_lines: 0,
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -7582,6 +7584,7 @@ mod tests {
                 whole_diff_budgets: None,
                 over_limit_files: Vec::new(),
                 line_budget_limits: Vec::new(),
+                enabled_changed_lines: 0,
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -7730,6 +7733,7 @@ mod tests {
                 whole_diff_budgets: None,
                 over_limit_files: Vec::new(),
                 line_budget_limits: Vec::new(),
+                enabled_changed_lines: 0,
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,

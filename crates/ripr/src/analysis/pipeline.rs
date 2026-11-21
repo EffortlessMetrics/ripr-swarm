@@ -3639,8 +3639,14 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
         AnalysisLimitationKind::DiffScopeOversized,
         AnalysisStage::AnalysisPipeline,
         AnalysisRecovery::new(
-            AnalysisRecoveryKind::IncreaseConfiguredLimit,
-            format!("To widen the analyzed partition, {}.", scope.widen_instruction()),
+            // The kind matches the advice: no budget raise can complete an
+            // unreachable whole diff, so the route is narrowing it.
+            if scope.whole_diff_is_unreachable() {
+                AnalysisRecoveryKind::NarrowDiff
+            } else {
+                AnalysisRecoveryKind::IncreaseConfiguredLimit
+            },
+            format!("{}{}.", scope.widen_lead(true), scope.widen_instruction()),
         )?,
     )
     .with_affected_items(scope.uninspected_changed_lines_lower_bound.max(1) as u64)?
@@ -9325,6 +9331,7 @@ index 0000000..1111111 100644
             whole_diff_budgets: None,
             over_limit_files: Vec::new(),
             line_budget_limits: Vec::new(),
+            enabled_changed_lines: 0,
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -10405,8 +10412,10 @@ index 0000000..1111111 100644
                 && limitation
                     .recovery
                     .detail
-                    .contains("widen the analyzed partition")),
-            "the partial scope must be disclosed as a limitation"
+                    .contains("narrow the diff with a PATH argument")
+                && limitation.recovery.kind == AnalysisRecoveryKind::NarrowDiff),
+            "the partial scope must be disclosed as a limitation; an over-guard whole diff \
+             leads with narrowing"
         );
         Ok(())
     }

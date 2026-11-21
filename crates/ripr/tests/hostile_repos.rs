@@ -764,6 +764,148 @@ fn oversized_file_is_left_out_of_a_partial_scope_with_a_repair_route() -> Result
     Ok(())
 }
 
+/// A repository with an `origin` remote that has no fetched refs, so every
+/// unresolved `--base` reaches the fetch advice.
+fn repo_with_origin(scratch: &Scratch, name: &str) -> Result<PathBuf, String> {
+    let root = plain(scratch, name)?;
+    git(
+        &root,
+        &["remote", "add", "origin", "https://example.invalid/x.git"],
+    )?;
+    Ok(root)
+}
+
+fn base_refusal(root: &Path, base: &str) -> Result<String, String> {
+    let ran = ripr(root, &["check", "--base", base], &[])?;
+    assert_sane(&ran, base)?;
+    if ran.code != Some(2) || !ran.stderr.contains("does not resolve to a commit") {
+        return Err(format!(
+            "{base}: expected an unresolved-base refusal\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    Ok(ran.stderr)
+}
+
+#[test]
+fn unresolved_commit_id_base_names_the_commit_fetch_route() -> Result<(), String> {
+    let scratch = Scratch::new("hexbase")?;
+    let root = repo_with_origin(&scratch, "r")?;
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let stderr = base_refusal(&root, sha)?;
+    if !stderr.contains(&format!("`git fetch origin {sha}`")) || stderr.contains("fetched branch") {
+        return Err(format!("a commit id needs the commit fetch\n{stderr}"));
+    }
+    // A name that is not hex keeps the branch advice.
+    let stderr = base_refusal(&root, "feature-x")?;
+    if !stderr.contains("fetched branch is named `origin/feature-x`") {
+        return Err(format!("a branch name keeps branch advice\n{stderr}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn unresolved_release_tag_base_names_the_tag_fetch_route() -> Result<(), String> {
+    let scratch = Scratch::new("tagbase")?;
+    let root = repo_with_origin(&scratch, "r")?;
+    let stderr = base_refusal(&root, "v9.9.9")?;
+    if !stderr.contains("`git fetch --tags`") || stderr.contains("fetched branch") {
+        return Err(format!("a release-tag name needs the tag fetch\n{stderr}"));
+    }
+    let stderr = base_refusal(&root, "velocity")?;
+    if stderr.contains("--tags") || !stderr.contains("fetched branch is named `origin/velocity`") {
+        return Err(format!("a non-tag name keeps branch advice\n{stderr}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn fetched_only_base_advice_is_a_capitalized_sentence_with_the_short_spelling() -> Result<(), String>
+{
+    let scratch = Scratch::new("trackbase")?;
+    let root = repo_with_origin(&scratch, "r")?;
+    git(&root, &["update-ref", "refs/remotes/origin/master", "HEAD"])?;
+    let stderr = base_refusal(&root, "master")?;
+    if !stderr.contains(
+        "(the analysis did not run). The fetched branch is `origin/master`, not a local `master`: pass `--base origin/master`",
+    ) {
+        return Err(format!(
+            "expected a capitalized sentence naming the short spelling\n{stderr}"
+        ));
+    }
+    // A tag named like the short form shadows it: only the full ref is safe.
+    git(&root, &["tag", "origin/master", "HEAD~1"])?;
+    let stderr = base_refusal(&root, "master")?;
+    if !stderr.contains("pass `--base refs/remotes/origin/master`") {
+        return Err(format!(
+            "a shadowed short spelling must not be named\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn partial_scope_over_the_analysis_limit_says_to_narrow_not_to_raise_the_budget()
+-> Result<(), String> {
+    let scratch = Scratch::new("narrowadvice")?;
+    let root = scratch.path.join("r");
+    repo(&root, |root| {
+        for file in 0..8 {
+            let mut body = String::new();
+            for i in 0..300 {
+                body.push_str(&format!(
+                    "pub fn f{file}_{i}(a: u32) -> u32 {{ a + {i} }}\n"
+                ));
+            }
+            fs::write(root.join(format!("src/m{file}.rs")), body)
+                .map_err(|e| format!("write failed: {e}"))?;
+        }
+        Ok(())
+    })?;
+    let run = |limit: &str| {
+        ripr(
+            &root,
+            &["check"],
+            &[
+                ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", limit),
+                ("RIPR_PARTIAL_DIFF_LINE_BUDGET", "1000"),
+            ],
+        )
+    };
+    // 2,400 changed lines against the built-in 2,000-line limit: no budget
+    // can complete it.
+    let over = run("2000")?;
+    assert_sane(&over, "over the limit")?;
+    if over.code != Some(0)
+        || !over
+            .stdout
+            .contains("narrow the diff with a PATH argument or a nearer `--base`")
+        || over
+            .stdout
+            .contains("RIPR_PARTIAL_DIFF_LINE_BUDGET to at least")
+    {
+        return Err(format!(
+            "an unreachable whole diff must say to narrow\n{:?}\n{}\n{}",
+            over.code, over.stdout, over.stderr
+        ));
+    }
+    // Control: the limit admits the whole diff, so the incremental raise can
+    // complete the run and stays the advice.
+    let fits = run("5000")?;
+    assert_sane(&fits, "within the limit")?;
+    if !fits
+        .stdout
+        .contains("RIPR_PARTIAL_DIFF_LINE_BUDGET to at least")
+        || fits.stdout.contains("narrow the diff with a PATH argument")
+    {
+        return Err(format!(
+            "a reachable whole diff keeps the raise advice\n{:?}\n{}\n{}",
+            fits.code, fits.stdout, fits.stderr
+        ));
+    }
+    Ok(())
+}
+
 /// A changed package larger than the 1,200-file narrowing threshold runs at
 /// default settings: that threshold bounds time, and only the higher
 /// `RIPR_MAX_DIFF_INDEX_FILES` memory guard refuses. Before the split, the

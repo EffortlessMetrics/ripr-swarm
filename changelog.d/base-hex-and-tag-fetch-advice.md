@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An unresolved `--base` spelled like a full commit id (40 or 64 hex digits) now names `git fetch origin <sha>` (with `--unshallow` in a shallow clone), and a dotted release-tag name (`v9.9.9`, `v1.2.3-rc.1`) names `git fetch --tags` (which follows the current branch's remote), instead of the branch-fetch advice that cannot restore either; abbreviated ids and names like `v2-feature` keep the branch advice, and a fetched branch spelled like a full id keeps its tracking advice (#15484).
