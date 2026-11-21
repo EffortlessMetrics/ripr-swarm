@@ -554,6 +554,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             // withhold credit, never grant it.
             let Some(call_arguments) = owner_call_arguments(actual, &owner.name)
                 .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
+                .or_else(|| qualified_owner_call_arguments(actual, &owner.name))
             else {
                 return false;
             };
@@ -871,6 +872,12 @@ pub(in crate::analysis) fn every_owner_call_separates(
         let body = test.body.as_str();
         let mentions = count_name_tokens(body, &owner.name);
         if mentions == 0 {
+            continue;
+        }
+        // As in `owner_change_visibility`: an ignored test never runs, so its
+        // calls reach nothing, and a `should_panic` test passes on either
+        // version by panicking, so neither supplies a reaching call.
+        if crate::analysis::classify::is_ignored(test) || super::is_should_panic(test) {
             continue;
         }
         if case_row_bindings(test).is_some()
@@ -1748,8 +1755,8 @@ fn equality_assertion_shape_uncached(oracle_text: &str) -> Option<(bool, Vec<Str
 /// qualified paths stay not evaluable.
 fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
     let trimmed = operand.trim();
-    let open = super::named_call_open_paren_index(trimmed, owner_name)?;
-    let before = trimmed[..open - owner_name.len()].trim_end();
+    let (name_start, open) = super::named_call_span(trimmed, owner_name)?;
+    let before = trimmed[..name_start].trim_end();
     // A bare name only: a method receiver names a different entity than the
     // free function the seam owns, and a qualified path cannot be resolved
     // to the owner's module from the assertion alone, so both stay not
@@ -1802,6 +1809,34 @@ fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<S
     let rest = trimmed[name_end..].trim_start();
     let inner = rest.strip_prefix('(')?.strip_suffix(')')?;
     owner_call_arguments(inner, owner_name)
+}
+
+/// The owner call's arguments when `operand` is a path-qualified call
+/// `crate_or_module::owner(..)`, optionally awaited (#15414). Invisibility
+/// only: equal values at every asserted input can only withhold credit, so
+/// reading a path the assertion alone cannot resolve to the owner's module
+/// risks a missed credit, never a false one. [`owner_call_arguments`] keeps
+/// refusing the path for its credit-granting callers (#6701 review).
+fn qualified_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
+    let trimmed = operand.trim();
+    let call = trimmed.strip_suffix(".await").unwrap_or(trimmed).trim_end();
+    let open = super::named_call_open_paren_index(call, owner_name)?;
+    let name_start = open - owner_name.len();
+    let path = call[..name_start].strip_suffix("::")?;
+    let path = path.strip_prefix("::").unwrap_or(path);
+    // Plain identifier segments only (`billing::fees::`): a receiver, a
+    // generic or a turbofish names something the fold does not model.
+    let plain_segment = |segment: &str| {
+        !segment.is_empty()
+            && !segment.starts_with(|ch: char| ch.is_ascii_digit())
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    if !path.split("::").all(plain_segment) {
+        return None;
+    }
+    owner_call_arguments(&call[name_start..], owner_name)
 }
 
 /// Evaluate the owner's body as a pure integer function of `arguments`.
@@ -1956,6 +1991,8 @@ impl FoldPlan {
 }
 
 mod branch_index;
+mod tuple_guard;
+pub(in crate::analysis) use tuple_guard::tuple_branch_reached;
 
 #[cfg(test)]
 mod fold_plan;
@@ -1963,7 +2000,7 @@ mod fold_plan;
 #[cfg(test)]
 thread_local! {
     /// How many function texts this thread has read for the fold.
-    static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::analysis::test_grip_evidence) static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// #14419: an owner whose whole body is one range-shaped tail the token fold
@@ -3723,6 +3760,31 @@ pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64
                 evaluated: 3_500,
             }
         );
+        Ok(())
+    }
+
+    /// #15277 review: a turbofish call is the same owner call, so a wrong
+    /// literal through it is contradicted, not left not evaluable (which
+    /// kept a statically wrong pin at full strength).
+    #[test]
+    fn wrongval_assertion_through_a_turbofish_call_is_contradicted() -> Result<(), String> {
+        let generic_owner = BOUNDARY_OWNER.replace("discounted_total(", "discounted_total<T>(");
+        let verdict = verdict_for_owner(
+            &generic_owner,
+            "assert_eq!(discounted_total::<u8>(5_000, 5_000), 5_000);",
+        );
+        assert_eq!(
+            verdict?,
+            ExactValueVerdict::Contradicted {
+                expected: "5_000".to_string(),
+                evaluated: 3_500,
+            }
+        );
+        let consistent = verdict_for_owner(
+            &generic_owner,
+            "assert_eq!(discounted_total::<u8>(5_000, 5_000), 3_500);",
+        );
+        assert_eq!(consistent?, ExactValueVerdict::Consistent);
         Ok(())
     }
 

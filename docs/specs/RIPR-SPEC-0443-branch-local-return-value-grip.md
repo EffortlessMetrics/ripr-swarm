@@ -108,6 +108,16 @@ answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
   single-identifier wrapper (`wrapper(owner(..))`), matching the sibling
   invisibility path. A wrapper that changes the arguments is not modelled
   and answers `None`.
+- For a same-file free call passing a literal one-field tuple struct, a
+  comparison such as `a.0 > 100` can select the other arm of a tail `if`.
+  The constructor and its primitive field type must be established, and both
+  numbers must fit that type. A diff can also read a directly resolved
+  `Add::add` this way, including `let a = Money(2); let b = Money(3);`
+  followed by `assert_eq!(a + b, Money(0))`. Every related call must skip
+  the edited arm before the diff loses credit. The assertion must compare
+  like-typed values, with derived value equality for the returned newtype.
+  A destructor that can run user code, a taken arm, a shadow, an unsupported
+  field, or an unreadable call preserves the prior reading (#15770).
 - The owner body is parsed. Every parameter must be a plain identifier and
   the argument count must match, or the answer is `None`.
 - If the owner body rebinds a parameter (`let name = ..`), assigns one

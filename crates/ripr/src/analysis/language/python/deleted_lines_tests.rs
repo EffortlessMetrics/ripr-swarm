@@ -1918,3 +1918,89 @@ fn deleting_two_adjacent_membership_member_lines_needs_a_row_on_each() -> Result
     }
     Ok(())
 }
+
+#[test]
+fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<(), String> {
+    let shape = |first: &str, close: &str, original: &str| {
+        let source =
+            format!("def capped_total(items):\n    {first}\n        \" the payload!\"\n{close}");
+        let test = format!(
+            "from src.cart import capped_total\n\ndef test_message():\n    assert capped_total([1]) == {original:?}\n"
+        );
+        let findings = analyze_with_test(
+            "changed-continuation",
+            &source,
+            &test,
+            &[3],
+            vec![line(3, 3, "        \" the payload\"")],
+        )?;
+        let finding = findings
+            .into_iter()
+            .find(|f| {
+                f.source_currentness == SourceCurrentness::CandidateCurrent
+                    && f.probe.location.line == 3
+            })
+            .ok_or_else(|| format!("no candidate finding on line 3 of {source}"))?;
+        Ok::<_, String>((finding.probe.family, finding.class, finding.related_tests))
+    };
+    let returned = shape("return (", "    )\n", " the payload")?;
+    assert_eq!(returned.0, crate::domain::ProbeFamily::ReturnValue);
+    assert_eq!(shape("return\\", "", " the payload")?, returned);
+
+    assert!(
+        !returned.2.is_empty(),
+        "the control must select an assertion"
+    );
+    for first in ["if items: return \\", "marker = 1; return \\"] {
+        assert_eq!(shape(first, "", " the payload")?, returned);
+    }
+
+    // Both assignment spellings must report the suffix. Their right-hand
+    // sides go through the existing classifier for the enclosing statement.
+    for (first, close) in [
+        ("msg = \"Could not load\" \\", "    return msg\n"),
+        ("msg = (\"Could not load\"", "    )\n    return msg\n"),
+    ] {
+        shape(first, close, "Could not load the payload")?;
+    }
+    // A lambda colon still belongs to the expression producing the string.
+    shape("msg = lambda: \\", "    return msg()\n", " the payload")?;
+    Ok(())
+}
+
+#[test]
+fn deleted_string_after_explicit_join_is_base_side_evidence() -> Result<(), String> {
+    // The unchanged blank line ends the continued assignment after deletion.
+    let source = "def capped_total(items):\n    msg = \"Could not load\" \\\n\n    return msg\n";
+    let findings = analyze(
+        "explicit-deletion",
+        source,
+        &[],
+        vec![line(3, 3, "        \" the payload\"")],
+    )?;
+    assert_base_side_shape(&findings, "\" the payload\"")
+}
+
+#[test]
+fn explicit_join_lookalikes_and_standalone_strings_stay_quiet() -> Result<(), String> {
+    for preceding in [
+        "    # documentation \\",
+        "    value = 1  # documentation \\",
+        "    msg = \"literal \\\\\"",
+        "    \"first part\" \\",
+        "    value = 1; \"first part\" \\",
+        "    if items: \"first part\" \\",
+        "    if lambda: items: \"first part\" \\",
+    ] {
+        let source =
+            format!("def capped_total(items):\n{preceding}\n    \"new text\"\n    return items\n");
+        let findings = analyze(
+            "quiet-string",
+            &source,
+            &[3],
+            vec![line(3, 3, "    \"old text\"")],
+        )?;
+        assert!(findings.is_empty(), "{source}: {findings:?}");
+    }
+    Ok(())
+}

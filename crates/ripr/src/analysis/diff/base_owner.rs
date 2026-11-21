@@ -1076,14 +1076,14 @@ mod tests {
             // The drive letter is joined at run time so the source holds no
             // literal local path.
             let drive = format!("{}:/abs/x.rs", 'C');
-            for rooted in ["/abs/x.rs", drive.as_str()] {
+            for rooted in ["/abs/x.rs", drive.as_str(), "", "sub/"] {
                 assert!(
                     swapped(
                         &format!("#[path = \"{rooted}\"]\nmod x;\n"),
                         "src/shared.rs",
                         touched
                     )?,
-                    "a rooted literal {rooted} (touched {touched})"
+                    "an opaque literal {rooted:?} (touched {touched})"
                 );
             }
         }

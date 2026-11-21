@@ -324,6 +324,89 @@ const WEAK_ONLY: &[WeakOnly] = &[
 ];
 
 #[test]
+fn parenthesized_owner_calls_bind_only_the_whole_result() -> Result<(), String> {
+    for (source, prefix, value, exposed) in [
+        (CALC, "", "(discount(200))", true),
+        (
+            ASYNC_CALC,
+            "@pytest.mark.asyncio\nasync ",
+            "await(discount(200))",
+            true,
+        ),
+        (ASYNC_CALC, "", "(discount(200))", false),
+        (CALC, "", "((discount(200)))", true),
+        (CALC, "", "(discount(200),)", false),
+        (CALC, "", "(discount(200) or 190)", false),
+        (
+            CALC,
+            "@pytest.mark.asyncio\nasync ",
+            "await(discount(200))",
+            false,
+        ),
+    ] {
+        let test = format!(
+            "import pytest\nfrom src.calc import discount\n\n{prefix}def test_discount():\n    result = {value}\n    assert result == 190\n"
+        );
+        let finding = check_style(value, &[("src/calc.py", source)], CALC_EDIT, &test)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{value}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn conditional_fixture_reimport_requires_the_asyncio_provider() -> Result<(), String> {
+    let prefix = "import sys\nimport pytest\nfrom pytest_asyncio import fixture as fx\nfrom src.cart import Cart\n";
+    let test = "\n@fx\nasync def cart():\n    return Cart(200)\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert await cart.discounted() == 190\n";
+    let classify = |binding: &str| -> Result<ExposureClass, String> {
+        let finding = check_style(
+            "conditional fixture provider",
+            &[("src/cart.py", ASYNC_CART)],
+            CART_EDIT,
+            &format!("{prefix}{binding}{test}"),
+        )?;
+        assert!(
+            !finding.related_tests.is_empty(),
+            "{binding:?}: {finding:?}"
+        );
+        Ok(finding.class)
+    };
+    let plain = classify("from pytest import fixture as fx\n")?;
+    assert_ne!(plain, ExposureClass::Exposed);
+    for (binding, expected) in [
+        ("", &ExposureClass::Exposed),
+        ("if fx is None:\n    pass\n", &ExposureClass::Exposed),
+        (
+            "if 0:\n    from pytest import fixture as fx\n",
+            &ExposureClass::Exposed,
+        ),
+        ("if True:\n    from pytest import fixture as fx\n", &plain),
+        (
+            "try:\n    from pytest import fixture as fx\nexcept ImportError:\n    pass\n",
+            &plain,
+        ),
+        ("if sys.platform:\n    fx = pytest.fixture\n", &plain),
+        ("for fx in providers:\n    pass\n", &plain),
+        ("with provider() as fx:\n    pass\n", &plain),
+        ("del fx\n", &plain),
+        (
+            "if False:\n    pass\nelse:\n    from pytest import fixture as fx\n",
+            &plain,
+        ),
+        (
+            "if sys.platform == 'win32':\n    from pytest import fixture as fx\n",
+            &plain,
+        ),
+    ] {
+        assert_eq!(&classify(binding)?, expected, "{binding:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn python_test_styles_without_strong_credit_keep_weak_tests_out_of_exposed() -> Result<(), String> {
     // The supported styles' weak rows are held to `weakly_exposed` below.
     let mut failures = Vec::new();

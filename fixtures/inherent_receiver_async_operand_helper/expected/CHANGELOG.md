@@ -154,3 +154,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_async_operand_helper (14)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_operand_helper --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

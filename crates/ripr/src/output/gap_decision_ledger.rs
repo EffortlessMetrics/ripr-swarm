@@ -80,6 +80,11 @@ pub(crate) struct GapDecisionLedgerReport {
     /// complete run, independent of which records survive (#9599). Present
     /// only for a complete repo-exposure source.
     analysis_coverage: Option<Value>,
+    /// #14898: the source's `owner_opt_outs` disclosure (seams withheld by a
+    /// `#[mutants::skip]` owner), copied verbatim from a repo-exposure source
+    /// or an earlier ledger. The gate carries it into `analysis_scope` so a
+    /// baseline entry whose owner opted out never reads as resolved.
+    owner_opt_outs: Option<Value>,
     pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
@@ -720,6 +725,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut warnings = Vec::new();
     let mut analysis_outcome = None;
     let mut run_limitations = None;
+    let mut owner_opt_outs = None;
     let mut input_source_subject = None;
     let mut input_root = None;
     // #5264: "input parsed, zero records derived" is a different state from
@@ -755,6 +761,16 @@ pub(crate) fn build_gap_decision_ledger_report(
             run_limitations = source_value
                 .as_ref()
                 .and_then(|value| value.get("run_limitations").cloned());
+            // #14898: a withheld seam is absent from `seams`, so the
+            // disclosure is the only record that it was opted out rather
+            // than resolved. Copied verbatim; the consumer validates it.
+            owner_opt_outs = match input.source_kind {
+                GapDecisionLedgerSourceKind::RepoExposure
+                | GapDecisionLedgerSourceKind::Records => source_value
+                    .as_ref()
+                    .and_then(|value| value.get("owner_opt_outs").cloned()),
+                GapDecisionLedgerSourceKind::CheckOutput => None,
+            };
             // #4544: the ledger's stamp is derived from the stamp the analysis
             // output (or an earlier ledger) carries, never from the workspace
             // as it is when this ledger is written.
@@ -977,6 +993,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         source_subject: None,
         source_subject_unavailable: None,
         analysis_coverage,
+        owner_opt_outs,
         records,
         warnings,
         source_parse_error,
@@ -1022,6 +1039,8 @@ pub(crate) fn render_gap_decision_ledger_json(
         source_subject_unavailable: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_coverage: Option<&'a Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        owner_opt_outs: Option<&'a Value>,
         records: &'a [Value],
         warnings: &'a [String],
         limits: &'a [String],
@@ -1047,6 +1066,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         source_subject: report.source_subject.as_ref(),
         source_subject_unavailable: report.source_subject_unavailable,
         analysis_coverage: report.analysis_coverage.as_ref(),
+        owner_opt_outs: report.owner_opt_outs.as_ref(),
         records: &records,
         warnings: &report.warnings,
         limits: &report.limits,
@@ -5471,7 +5491,8 @@ mod tests {
                             return Err(format!("no-strong fixture denied: {name}"));
                         }
                     }
-                    (_, Some("no_family_relevant_assertion")) => {
+                    (_, Some("no_family_relevant_assertion"))
+                    | (Some("unknown"), Some("other_behavior_assertion_passed_over")) => {
                         family_selection += 1;
                         if eligible {
                             return Err(format!("no-family-relevant fixture eligible: {name}"));
@@ -5639,10 +5660,18 @@ mod tests {
         // the diff did not change (or could not establish) weakly exposed;
         // each weak finding carries one orthogonal card, fourteen more in
         // total.
+        // #15250: `assert check_balance(5) is False` is now a strong exact pin,
+        // which a logging-only edit passes over, so the
+        // `python_caplog_alias_in_literal` card moves from no-strong-oracle to
+        // the never-delegated family-selection bucket.
+        // #15287: `python_boundary_float_coercion` reads the off-boundary
+        // literal through a leading `float` coercion; its weak card names the
+        // `value == 0` discriminator, one more direct-aligned card. The
+        // star-args and named-row controls are weak without a card.
         // #15632: `python_membership_removed_member` keeps a removed
         // literal-collection member no row passes weakly exposed; its weak
         // finding names `val == "y"`, one more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (24, 37, 49, 1) {
+        if (direct, no_strong, orthogonal, family_selection) != (25, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

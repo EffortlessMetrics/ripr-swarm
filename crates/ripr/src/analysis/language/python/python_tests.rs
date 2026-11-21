@@ -2394,6 +2394,7 @@ fn same_stem_related_handles_missing_stems() {
     let test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4313,6 +4314,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4341,6 +4343,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let bare = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4367,6 +4370,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let clean = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5124,6 +5128,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5224,6 +5229,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         activation_controls: Vec::new(),
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5275,6 +5281,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),

@@ -4175,6 +4175,7 @@ weakly_gripped = "note"
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,

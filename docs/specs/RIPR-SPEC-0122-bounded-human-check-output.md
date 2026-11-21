@@ -126,7 +126,12 @@ to the preview-language note, which carries the `ripr.toml` recovery block
 (#10691). The pointer is printed only when such a note follows for that
 limitation: with no preview-language advisory, or for Rust switched off in
 `[languages]` (which has no such note), the line drops the pointer and a
-`Fix:` line carries the limitation's own recovery (#14152). The static-limited `State:` line reads `ripr cannot tell from reading
+`Fix:` line carries the limitation's own recovery (#14152). When the
+pointer names languages that are off, one line names each of them
+(`1 changed TypeScript file and 1 changed Python file`), and with more than one
+off language a single `[languages] enabled = [...]` block after all notes
+enables every one of them (#15288). A limitation from an enabled adapter
+whose run was unavailable or invalid keeps its own pointer line. The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
 effect)`). The canonical gap id is labelled `Gap ID (for scripts)`; because the id
@@ -152,6 +157,14 @@ available on the retention surfaces: `--format human-full` keeps the header,
 digest, limitation, and outcome schema forms it already rendered (the
 bounded-only triage sentence was never part of that surface), JSON is
 unchanged, and `ripr explain` keeps the exact schema tokens.
+
+`ripr explain`'s Evidence window skips a function-argument source-value row
+when a missing-discriminator reason already lists the same name and value in
+its `observed <name> values:` segment, since the Weakness line right below
+prints that fact (#15421). The skip applies only while the source-value window
+is untruncated, so a `showing N of M` row stays true, and a skipped row still
+counts as an added row, so the literal evidence fallback stays off.
+`human-full`, JSON and agent output keep every row.
 
 The trailing block is state-dependent, because a `Hidden:` heading over a
 literal `0 lower-priority finding(s) omitted` line claims a suppressed
@@ -495,10 +508,11 @@ limited to seams whose kind matches `--kind` (the one seam kind each of the
 four families names: `predicate` boundary, `return_value`, `error_path` error
 variant, `match_arm`), so a seam of another kind never answers for the
 finding. Two equally near seams of that kind whose source spans do not nest
-(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed, and
-the stub is placed inline (integration-file placement needs classified
-evidence and stays with `--seam-id`). The block is printed only when the
-resolver produces a stub. When it refuses, the block is replaced by one line,
+(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed.
+Concrete match arms use their parser ranges, so a long pattern cannot make
+its sibling arm on the same line appear nested. The stub is placed inline
+(integration-file placement needs classified evidence and stays with
+`--seam-id`). The block is printed only when the resolver produces a stub. When it refuses, the block is replaced by one line,
 `No test stub here: <reason>`, naming the producer's refusal. When that
 finding also prints no repair start, one further line follows (#10710):
 `Write this test by hand: <what to call and assert>. ripr has no repair
@@ -531,6 +545,10 @@ does a finding whose expression is not on disk in the function holding its
 line (a `--diff` patch that disagrees with the checkout, or a removed line). Only the
 default human format runs the resolver; JSON and `human-full` output are
 unchanged.
+
+A direct `ripr agent stub --at` value with two numeric suffixes
+(`src/lib.rs:12:4`) is refused with the `FILE:LINE` form and an example rather
+than read as a path ending in `:12` (#15259).
 
 When the file has seams but the function has none of the requested family,
 a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
@@ -803,7 +821,13 @@ consumers parse the old body. An old line with a second `=>` (two arms on one
 line, or a nested match in the body) is never cut: arm selection cannot tell
 which arm changed there and keeps that arm's selection unknown. A changed
 `match` scrutinee is cut the same way (`match kind` rather than
-`match kind {`). Otherwise `before` keeps the whole old line. The same
+`match kind {`). Otherwise `before` keeps the whole old line. Classifiers
+rebuild the old owner from `before`, so the producer never cuts it when the
+edit reaches past the shape. When a predicate's block body changed too
+(`if total >= 100 { total - 10 }` to `if total > 200 { total - 25 }`), the
+human `Changed` block prints the whole old line and the new condition, with a
+note that the after side is the condition only and where the new line is
+(#15420), the same way a head-only match arm row does (#9244). The same
 `before` reaches the MCP `changed_behavior.before` field and the LSP
 diagnostic witness; `ripr check --format json` never serializes
 `probe.before`, so it is unchanged.
@@ -812,7 +836,8 @@ diagnostic witness; `ripr check --format json` never serializes
 
 Repository text (assertion source, test names, observed values, paths) reaches
 the human reports verbatim. Every human report printed to a terminal (`check`
-default and `--format human-full`, `explain`) passes through one final escape:
+default and `--format human-full`, `explain`, the human `ripr diff` report and
+the `ripr pilot` terminal summary) passes through one final escape:
 control characters other than newline and tab, and the bidi
 formatting characters (U+061C, U+200E/F, U+202A-E, U+2066-9), print as `\u{XX}`.
 A repository therefore cannot clear the screen, retitle the window, overwrite a
