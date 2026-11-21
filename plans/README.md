@@ -103,6 +103,10 @@ The [product roadmap](../docs/ROADMAP.md) and
 
 ### Proposed Plans
 
+- [CI lifecycle rebuild](ci-lifecycle-rebuild/implementation-plan.md)
+  (RIPR-PLAN-0064; dependency sequence for existing #14500/#8198/#11566
+  owners, not a new scheduler or an activation/qualification claim)
+
 The use-case spec layer is retained below as superseded execution context;
 its proposed-era work-item statuses do not select new implementation work.
 
