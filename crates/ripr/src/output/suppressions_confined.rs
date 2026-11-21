@@ -115,6 +115,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const VALID_POLICY: &str = "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:inside\"\nreason = \"reviewed\"\nowner = \"team\"\n";
+    /// Only the unix-only symlink tests write this marker outside the root.
+    #[cfg(unix)]
     const OUTSIDE_SENTINEL: &str = "RIPR_OUTSIDE_SUPPRESSION_SENTINEL_14310";
 
     fn temp_root(name: &str) -> Result<PathBuf, String> {
