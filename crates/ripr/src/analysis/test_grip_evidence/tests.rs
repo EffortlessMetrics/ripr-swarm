@@ -31,6 +31,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+fn evidence_from_compact_test_context(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+) -> TestGripEvidence {
+    let related = find_related_tests_with_context(seam, context);
+    evidence_for_seam_with_context(seam, context, related)
+}
+
 #[test]
 fn suffixed_decimal_arguments_preserve_whole_literal_boundaries() {
     for (literal, expected) in [
@@ -24412,8 +24420,8 @@ fn boundary() {
         .ok_or("missing boundary seam")?;
     let partial = CompactGripContext::new(&index);
     let complete = CompactGripContext::new(&index);
-    let partial_evidence = evidence_for_seam_with_context(seam, &partial);
-    let complete_evidence = evidence_for_seam_with_context(seam, &complete);
+    let partial_evidence = evidence_from_compact_test_context(seam, &partial);
+    let complete_evidence = evidence_from_compact_test_context(seam, &complete);
     assert_eq!(
         partial_evidence.discriminate.state,
         StageState::Yes,
@@ -24480,7 +24488,7 @@ fn boundary() {
         "foreign import must not establish the owner edge"
     );
     assert_ne!(
-        evidence_for_seam_with_context(seam, &context)
+        evidence_from_compact_test_context(seam, &context)
             .discriminate
             .state,
         StageState::Yes
@@ -24594,7 +24602,7 @@ fn boundary_wrapper_pairing_refuses_unproven_edges_and_wrong_calls() -> Result<(
             .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
             .ok_or("boundary seam")?;
         let context = CompactGripContext::new(&index);
-        let evidence = evidence_for_seam_with_context(seam, &context);
+        let evidence = evidence_from_compact_test_context(seam, &context);
         assert_ne!(
             evidence.discriminate.state,
             StageState::Yes,
@@ -24900,7 +24908,7 @@ fn boundary_wrapper_branch_establishes_pin_and_pairing() -> Result<(), String> {
         "a mapped conditional needs the distinct branch proof"
     );
     assert_eq!(
-        evidence_for_seam_with_context(&seam, &context)
+        evidence_from_compact_test_context(&seam, &context)
             .discriminate
             .state,
         StageState::Yes
