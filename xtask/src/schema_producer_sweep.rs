@@ -105,6 +105,7 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         corpus: Corpus::FileName("check.json"),
         edge_fixtures: &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
+            "tests/fixtures/verification/ripr/check-empty-root-refusal.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
             // A bounded partial-scope run (RIPR-PROP-0019): a completed run

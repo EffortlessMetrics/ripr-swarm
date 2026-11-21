@@ -1985,6 +1985,8 @@ which completed with findings. The published schemas keep `status` and
 compatible for existing readers; ripr always writes both on a refusal, and the
 pairing becomes a schema rule at the next `schema_version` bump.
 
+An explicit empty `--root` is echoed as an empty string in the 0.2 refusal. The schema accepts that value only with both refusal fields. Completed and bounded partial reports require a nonempty root.
+
 ### `cli_refusal` (schema `0.1`, #11584)
 
 Argv usage errors and `context` selector misses stay exit `2` with the cause

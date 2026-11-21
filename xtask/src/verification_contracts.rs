@@ -4182,6 +4182,47 @@ mod tests {
     }
 
     #[test]
+    fn empty_check_root_requires_a_typed_refusal() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let directory = root.join("tests/fixtures/verification/ripr");
+        let check = |doc: &Value, expected: bool, label: &str| -> Result<(), String> {
+            let mut violations = Vec::new();
+            validate_value_against_schema(doc, &schema, &schema, label.into(), &mut violations);
+            if expected != violations.is_empty() {
+                return Err(format!(
+                    "{label}: expected valid={expected}, got {violations:?}"
+                ));
+            }
+            Ok(())
+        };
+        for name in [
+            "check-complete.valid.json",
+            "check-partial-scope.valid.json",
+            "check-empty-root-refusal.valid.json",
+        ] {
+            let mut doc = read_json(directory.join(name))?;
+            check(&doc, true, name)?;
+            let refused = doc.get("status") == Some(&serde_json::json!("refused"));
+            doc["root"] = serde_json::json!("");
+            check(&doc, refused, "empty root")?;
+            for key in ["status", "error"] {
+                let mut without = doc.clone();
+                without
+                    .as_object_mut()
+                    .ok_or("expected object")?
+                    .remove(key);
+                check(&without, false, key)?;
+            }
+            doc["root"] = serde_json::json!(false);
+            check(&doc, false, "non-string root")?;
+            doc.as_object_mut().ok_or("expected object")?.remove("root");
+            check(&doc, false, "missing required root")?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn check_schema_rejects_unknown_top_level_field() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
