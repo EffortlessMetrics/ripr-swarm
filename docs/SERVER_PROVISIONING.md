@@ -52,6 +52,16 @@ install receipt and its byte-integrity evidence. It does not attest producer
 provenance or use a private/experimental capability as the standard-LSP
 baseline.
 
+## Proxies
+
+The managed download runs inside the VS Code extension host, so it uses VS
+Code's own proxy support (#15317): `http.proxy`, or the `HTTPS_PROXY`
+environment variable when that is unset, with hosts in `http.noProxy` going
+direct. `http.proxySupport` must not be `off`. Proxy authentication, PAC files
+and system certificates follow VS Code's handling. The download still checks the
+redirect allowlist, size limits and the archive checksum. When no proxy works,
+set `ripr.server.path` to a local binary or install `ripr` on `PATH`.
+
 ## Downloaded Server Cache
 
 Downloaded servers are stored under the VS Code global storage directory:
