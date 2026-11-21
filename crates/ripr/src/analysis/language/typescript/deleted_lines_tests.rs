@@ -190,6 +190,72 @@ fn even_block_leaves_no_base_side_record() -> Result<(), String> {
     Ok(())
 }
 
+/// A statement replaced by an empty statement is removed all the same: the
+/// `;` carries no behavior, so it does not stand in for the old line, and
+/// the removal is a `base_deleted` record on the live function (#15335).
+#[test]
+fn statement_replaced_by_an_empty_statement_is_base_side_evidence() -> Result<(), String> {
+    let findings = analyze(
+        "empty-statement",
+        &[
+            " const CAP = 100;",
+            " ",
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, CAP);",
+            "+  ;",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(5, "cappedTotal")],
+        "{findings:?}"
+    );
+    let finding = findings
+        .iter()
+        .find(|finding| finding.source_currentness.is_base_side())
+        .ok_or("no base-side finding")?;
+    assert_eq!(
+        finding.probe.before.as_deref().map(str::trim),
+        Some("total = Math.min(total, CAP);")
+    );
+    assert!(!finding.is_candidate_actionable());
+    Ok(())
+}
+
+/// A replacement that still runs behavior keeps the pairing, and a removed
+/// comment replaced by `;` was never behavior: neither leaves a record.
+#[test]
+fn empty_statement_counterpart_needs_a_removed_behavior_line() -> Result<(), String> {
+    let behavior = analyze(
+        "behavior-replacement",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "+  total = Math.min(total, 100) + 0;",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&behavior), Vec::new(), "{behavior:?}");
+    let comment = analyze(
+        "comment-replacement",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  // clamp to the cap",
+            "+  ;",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&comment), Vec::new(), "{comment:?}");
+    Ok(())
+}
+
 /// A whole deleted function deletes its owner; its body is not given to the
 /// function that now stands where it was.
 #[test]

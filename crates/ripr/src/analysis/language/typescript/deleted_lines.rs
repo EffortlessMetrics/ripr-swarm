@@ -32,14 +32,26 @@ pub(super) fn deleted_line_findings(
     findings: &[Finding],
     mut classify: impl FnMut(usize, &str, &TypeScriptOwner) -> Option<Finding>,
 ) -> Vec<Finding> {
-    let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
-    let runs = removed_runs(changed, new_source);
-    let headers = removed_owner_headers(&runs);
     let added_text: BTreeMap<usize, &str> = changed
         .added_lines
         .iter()
         .map(|added| (added.line, added.text.as_str()))
         .collect();
+    // A removed line is read through its counterpart only when that added
+    // line carries behavior. A statement replaced by an empty statement
+    // (`queue.clear();` -> `;`), a blank line or a bare bracket is removed
+    // all the same, so it stays a base-side record (#15335).
+    let paired: BTreeSet<usize> = counterparts
+        .iter()
+        .filter(|(added_line, _)| {
+            added_text
+                .get(added_line)
+                .is_some_and(|text| !should_ignore_typescript_changed_line(text))
+        })
+        .map(|(_, removed)| removed.line)
+        .collect();
+    let runs = removed_runs(changed, new_source);
+    let headers = removed_owner_headers(&runs);
     // Removed headers an added header of the same name replaced: the owner
     // they open lives on. A header replaced by a differently named one is a
     // different owner, and its deleted body is not the new owner's. Added
