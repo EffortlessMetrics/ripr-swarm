@@ -373,6 +373,35 @@ disposition, verdict, outcome, file and line, so a located miss can be traced
 without re-running the join. A mutmut record with no diff has no location or
 JSONL row; its status is counted in `records_without_diff`.
 
+## Python: bounded in-repo real-mutant calibration
+
+`python-calibration.json` plus `run_python_calibration.py` is a bounded
+in-repo slice, distinct from the hosted cosmic-ray/mutmut lanes above: 20
+real mutant edits (comparison, arithmetic and constant operators) on three
+authored Python verdict-corpus subjects (`authored-py-pytest-pricing`,
+`authored-py-grid-arithmetic`, `authored-py-grid-boundary`). Each mutant is
+applied to a scratch copy of its subject, executed against the subject's own
+pytest suite (runtime outcome `caught`/`missed` only), and scored against
+`ripr check --diff` on a synthetic one-hunk diff of the same edit, using the
+same grip-class map as the synthetic-diff join. Weak, unknown, ambiguous and
+absent verdicts are `unscored` — never counted as successes, and a static
+classification is never rewritten as a runtime outcome.
+
+```bash
+cargo build -p ripr
+python benchmarks/mutation_spot_check/run_python_calibration.py \
+  --ripr target/debug/ripr --python python
+cargo test -p xtask python_calibration
+```
+
+The selected Python must provide pytest. The harness checks that
+prerequisite before writing either receipt and exits nonzero without
+replacing the committed receipts when it is missing.
+
+The committed receipt is `python-calibration-receipt.{json,md}`; the xtask
+tests re-derive its precision/recall from the per-mutant rows. It is an
+authored-subject calibration, not a population estimate or suite adequacy.
+
 ## Pilot top recommendations
 
 The receipt also runs `ripr pilot --max-seams 10` on each checkout and judges
