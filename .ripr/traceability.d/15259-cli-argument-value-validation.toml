@@ -1,0 +1,36 @@
+# Registers the CLI argument value validation refusals (#15259).
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/tests/cli_smoke/argument_value_validation.rs::init_value_flags_followed_by_a_flag_report_a_missing_value",
+  "crates/ripr/tests/cli_smoke/argument_value_validation.rs::init_refuses_a_directory_at_ripr_toml_without_suggesting_force",
+]
+code = ["crates/ripr/src/cli/commands/init.rs"]
+
+[[extend]]
+id = "RIPR-SPEC-0025"
+tests = [
+  "crates/ripr/tests/cli_smoke/argument_value_validation.rs::pr_comments_plan_validates_pull_request_and_conflicting_toggles",
+]
+code = ["crates/ripr/src/cli/commands.rs"]
+
+[[extend]]
+id = "RIPR-SPEC-0041"
+tests = [
+  "crates/ripr/tests/cli_smoke/argument_value_validation.rs::policy_history_pr_number_must_be_a_positive_integer",
+]
+code = ["crates/ripr/src/cli/commands/policy/parse.rs"]
+
+[[extend]]
+id = "RIPR-SPEC-0423"
+tests = [
+  "crates/ripr/tests/cli_smoke/argument_value_validation.rs::completions_suggest_a_shell_only_when_genuinely_close",
+]
+code = ["crates/ripr/src/cli/commands/completions.rs"]
+
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/cli_smoke/argument_value_validation.rs::agent_stub_at_with_two_line_suffixes_names_the_expected_form",
+]
+code = ["crates/ripr/src/app/test_stub.rs"]

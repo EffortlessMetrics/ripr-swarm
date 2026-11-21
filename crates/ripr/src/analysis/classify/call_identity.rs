@@ -1105,7 +1105,7 @@ impl OwnerCallIdentity {
                             Some((_, module)) if !module.is_empty() => {
                                 // An import does not rebind its own path prefix:
                                 // `use thr::thr` imports a value from crate `thr`.
-                                let mut import_scope = scope.clone();
+                                let mut import_scope = NameScope::clone(scope);
                                 import_scope.imports.retain(|import| {
                                     !matches!(&import.binding, UseBinding::Path(bound) if bound == path)
                                 });
@@ -2580,6 +2580,24 @@ pub(super) fn under_tests_dir(file: &Path) -> bool {
         && super::super::rust_index::is_test_file(file)
 }
 
+/// An integration-test crate root: a file under `tests/` ([`under_tests_dir`]),
+/// or the entry file of a `[[test]]` target whose manifest `path` puts it
+/// outside both `tests/` and `src/` (`checks/score.rs`, #15332), declared by
+/// the analysis root's own package (the one package whose path-shape key is
+/// `None`, like the file's). Only the declared entry file itself is
+/// admitted; a module it mounts keeps the path-shape reading. Without
+/// manifest authority the answer is the path-shape one.
+pub(super) fn integration_test_root(index: &RustIndex, file: &Path) -> bool {
+    if under_tests_dir(file) {
+        return true;
+    }
+    let normalized = super::related_tests::normalize_path(file);
+    !(normalized.contains("/src/") || normalized.starts_with("src/"))
+        && index
+            .member_crates
+            .is_declared_test_target_entry(file, true)
+}
+
 /// Module segments of a file below its crate root: `src/lib.rs` and
 /// `src/main.rs` are the root, `src/a/mod.rs` and `src/a.rs` are `a`.
 /// `None` for a file outside `src/` or `tests/`. A `#[path]` remap is not
@@ -2863,7 +2881,7 @@ fn own_crate_names_of(
     let test_package = package_key(&test.file);
     let same_package = test_package.as_deref() == owner_package;
     let mut names = BTreeSet::new();
-    if same_package && !under_tests_dir(&test.file) {
+    if same_package && !integration_test_root(index, &test.file) {
         return names;
     }
     // An integration test of the owner's own package names that package's
@@ -3487,6 +3505,37 @@ pub(super) fn boundary_owner_calls_resolve(
                             || identity.resolve_call(test, index, &segments) == CallTarget::Owner
                     })
                 })
+        })
+}
+
+/// Resolve a free call in rustdoc's separate example crate, including a
+/// library-qualified call into an out-of-line module.
+pub(super) fn doctest_calls_free_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    syntax: &super::owner_pin::OwnerPinSyntax,
+) -> bool {
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    let Some(path) = super::helper_transfer::public_path(index, owner) else {
+        return false;
+    };
+    !qualifiers.is_empty()
+        && qualifiers.into_iter().all(|qualifier| match qualifier {
+            None => false,
+            Some(segments) => match segments.split_first() {
+                None => super::owner_pin::targeted_free_call_reaches_owner(
+                    test, owner, None, index, syntax,
+                ),
+                Some((root, module)) => {
+                    path.modules == module
+                        && index
+                            .member_crates
+                            .import_names(&test.file, &path.root)
+                            .contains(root)
+                        && !super::owner_pin::test_crate_binds_root(test, root, index, syntax)
+                }
+            },
         })
 }
 

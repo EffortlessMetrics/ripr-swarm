@@ -814,7 +814,47 @@ fn check(work: &Path, bin: &Path, base: &str, base_ref: Option<&str>) -> TestRes
     if let Some(base_ref) = base_ref {
         env.push(("GITHUB_BASE_REF", base_ref));
     }
-    bash(&run_block("Run ripr check")?, work, bin, &env)
+    check_steps(work, bin, &env)
+}
+
+/// Runs the base step and then, as the runner does after a success, the
+/// check step with the picked base; the result carries both steps' text.
+fn check_steps(work: &Path, bin: &Path, env: &[(&str, &str)]) -> TestResult<Run> {
+    let picked = work.join("base-step-output.txt");
+    let picked_env = picked.to_str().ok_or("path")?.to_string();
+    let mut base_env: Vec<(&str, &str)> = env
+        .iter()
+        .copied()
+        .filter(|(key, _)| *key != "GITHUB_OUTPUT")
+        .collect();
+    base_env.push(("GITHUB_OUTPUT", &picked_env));
+    let first = bash(
+        &run_block("Pick the ripr check base")?,
+        work,
+        bin,
+        &base_env,
+    )?;
+    if !first.ok() {
+        return Ok(first);
+    }
+    let text = fs::read_to_string(&picked).unwrap_or_default();
+    fs::remove_file(&picked)?;
+    let base = text
+        .lines()
+        .find_map(|line| line.strip_prefix("base="))
+        .unwrap_or_default()
+        .to_string();
+    let mut check_env: Vec<(&str, &str)> = env.to_vec();
+    check_env.push(("RIPR_BASE", &base));
+    let second = bash(&run_block("Run ripr check")?, work, bin, &check_env)?;
+    let mut output = second.output;
+    let mut stdout = first.output.stdout;
+    stdout.extend_from_slice(&output.stdout);
+    output.stdout = stdout;
+    let mut stderr = first.output.stderr;
+    stderr.extend_from_slice(&output.stderr);
+    output.stderr = stderr;
+    Ok(Run { output })
 }
 
 fn recorded_argv(work: &Path) -> TestResult<String> {
@@ -1003,8 +1043,7 @@ fn check_with_files(work: &Path, bin: &Path) -> TestResult<(Run, String, String)
     let output = work.join("step-output.txt");
     let summary_env = summary.to_str().ok_or("path")?.to_string();
     let output_env = output.to_str().ok_or("path")?.to_string();
-    let run = bash(
-        &run_block("Run ripr check")?,
+    let run = check_steps(
         work,
         bin,
         &[
@@ -1195,7 +1234,7 @@ fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
         &work,
         &bin,
         &[
-            ("RIPR_INPUT_BASE", "origin/feature~1"),
+            ("RIPR_BASE", "origin/feature~1"),
             ("RIPR_INPUT_MODE", "draft"),
             ("RIPR_INPUT_FORMAT", "github"),
         ],
@@ -1241,5 +1280,270 @@ fn each_invocation_keeps_its_own_report() -> TestResult {
     assert_ne!(first, second);
     assert_eq!(fs::read_to_string(&first)?, "first check\n");
     assert_eq!(fs::read_to_string(&second)?, "second check\n");
+    Ok(())
+}
+
+/// Runs the check step with extra event variables, as a push or a pull
+/// request job sets them.
+fn check_event(work: &Path, bin: &Path, base: &str, event: &[(&str, &str)]) -> TestResult<Run> {
+    let mut env = vec![
+        ("RIPR_INPUT_BASE", base),
+        ("RIPR_INPUT_MODE", "draft"),
+        ("RIPR_INPUT_FORMAT", "human"),
+    ];
+    env.extend_from_slice(event);
+    check_steps(work, bin, &env)
+}
+
+fn origin_rev(root: &Path, rev: &str) -> TestResult<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(root.join("origin"))
+        .output()?;
+    assert!(out.status.success(), "rev-parse {rev}");
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[test]
+fn an_explicit_branch_base_on_a_shallow_checkout_is_fetched_and_deepened() -> TestResult {
+    // #15399: an explicit `base: origin/main` got no fetch and no deepen, so
+    // the default shallow checkout reported a missing merge base.
+    let root = scratch("explicit-shallow")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    let run = check(&work, &bin, "origin/main", None)?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_branch_base_the_checkout_lacks_is_fetched_as_its_remote_branch() -> TestResult {
+    let root = scratch("explicit-bare")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = single_branch_clone(&root)?;
+    let run = check(&work, &bin, "main", None)?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(git_succeeds(
+        &work,
+        &["rev-parse", "--verify", "--quiet", "origin/main^{commit}"]
+    )?);
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_base_that_is_no_remote_branch_reaches_ripr_unchanged() -> TestResult {
+    // A tag or other ref the checkout lacks is not renamed to `origin/<name>`,
+    // so ripr's missing-base message names what the workflow asked for.
+    let root = scratch("explicit-bare-missing")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = single_branch_clone(&root)?;
+    let run = check(&work, &bin, "v9.9.9", None)?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        run.text().contains("could not fetch the base 'v9.9.9'"),
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base v9.9.9"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_base_that_looks_like_an_option_is_refused_before_git_or_ripr_run() -> TestResult {
+    let root = scratch("dash-base")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    stand_in(&bin, "git", "echo \"$@\" >> \"$PWD/git.calls\"")?;
+    let work = root.join("work");
+    fs::create_dir_all(&work)?;
+    let run = check(&work, &bin, "--upload-pack=touch pwned", None)?;
+    assert_eq!(run.output.status.code(), Some(2), "{}", run.text());
+    assert!(
+        run.text().contains("::error title=ripr check input::"),
+        "{}",
+        run.text()
+    );
+    assert!(!work.join("ripr.argv").exists(), "ripr ran");
+    assert!(!work.join("git.calls").exists(), "git ran");
+    Ok(())
+}
+
+#[test]
+fn a_push_to_another_branch_compares_with_the_fetched_default_branch() -> TestResult {
+    let root = scratch("push-branch")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    let before = origin_rev(&root, "feature~1")?;
+    let run = check_event(
+        &work,
+        &bin,
+        "",
+        &[
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REF", "refs/heads/feature"),
+            ("RIPR_DEFAULT_BRANCH", "main"),
+            ("RIPR_EVENT_BEFORE", &before),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+/// A `--depth 1` clone of `main` after a push of two commits.
+fn shallow_default_clone(root: &Path) -> TestResult<PathBuf> {
+    let origin = root.join("origin");
+    fs::create_dir_all(&origin)?;
+    git(&origin, &["init", "-q", "-b", "main"])?;
+    for n in 0..4 {
+        fs::write(origin.join("a.txt"), format!("main {n}"))?;
+        git(&origin, &["add", "."])?;
+        git(&origin, &["commit", "-qm", "main"])?;
+    }
+    let work = root.join("work");
+    let url = format!("file://{}", origin.display());
+    git(
+        root,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            "--single-branch",
+            "--branch",
+            "main",
+            &url,
+            work.to_str().ok_or("path")?,
+        ],
+    )?;
+    Ok(work)
+}
+
+#[test]
+fn a_push_to_the_default_branch_compares_with_the_commit_before_the_push() -> TestResult {
+    // #15399: comparing the default branch with itself found nothing to check.
+    let root = scratch("push-default")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_default_clone(&root)?;
+    let before = origin_rev(&root, "main~2")?;
+    assert!(
+        !git_succeeds(&work, &["cat-file", "-e", &format!("{before}^{{commit}}")])?,
+        "fixture must start without the commit before the push"
+    );
+    let run = check_event(
+        &work,
+        &bin,
+        "",
+        &[
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REF", "refs/heads/main"),
+            ("RIPR_DEFAULT_BRANCH", "main"),
+            ("RIPR_EVENT_BEFORE", &before),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", &before])?,
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        format!("check --root . --mode draft --format human --base {before}")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_first_push_to_the_default_branch_leaves_the_base_to_ripr() -> TestResult {
+    let root = scratch("push-first")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_default_clone(&root)?;
+    let zero = "0".repeat(40);
+    let run = check_event(
+        &work,
+        &bin,
+        "",
+        &[
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REF", "refs/heads/main"),
+            ("RIPR_DEFAULT_BRANCH", "main"),
+            ("RIPR_EVENT_BEFORE", &zero),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_failure_reason_keeps_the_fix_hint_and_drops_progress_lines() -> TestResult {
+    let root = scratch("reason")?;
+    let bin = tool_dir(&root)?;
+    stand_in(
+        &bin,
+        "ripr",
+        "for n in 1 2 3; do echo \"ripr progress: analyzing $n\" >&2; done\n\
+         echo 'ripr could not read ripr.toml:' >&2\n\
+         echo '  unknown key `mdoe` at line 3' >&2\n\
+         echo '  did you mean `mode`?' >&2\n\
+         echo 'Fix: rename the key, then run ripr doctor' >&2\n\
+         exit 2",
+    )?;
+    let work = single_branch_clone(&root)?;
+    let (run, summary, _) = check_with_files(&work, &bin)?;
+    assert_eq!(run.output.status.code(), Some(2), "{}", run.text());
+    let error = run
+        .text()
+        .lines()
+        .find(|line| line.starts_with("::error title=ripr check exited 2::"))
+        .ok_or("no error annotation")?
+        .to_string();
+    assert!(error.contains("Fix: rename the key"), "{error}");
+    assert!(!error.contains("ripr progress:"), "{error}");
+    assert!(summary.contains("did you mean `mode`?"), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn the_action_silences_progress_without_a_flag_a_pinned_release_may_lack() -> TestResult {
+    // `--quiet` on `ripr check` is newer than the default pinned release, so
+    // the argv stays flag-free (the recorded-argv tests above) and the
+    // environment switch, ignored by releases that predate it, does the work.
+    assert!(ACTION.contains("RIPR_QUIET: '1'"));
+    assert!(ACTION.contains("'Analysis mode: instant, draft, fast, deep, or ready'"));
     Ok(())
 }

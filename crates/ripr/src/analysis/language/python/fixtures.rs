@@ -11,6 +11,7 @@
 
 use super::admission::PythonAssertionAdmission;
 use super::module_constants::mentions_identifier;
+use super::oracles::constant_truth;
 use super::owners_tests::{decorator_names, test_imports};
 use super::related_tests::{import_source_module_matches_owner, test_body_binds_local};
 use super::source_utils::{SourceText, text_for_range};
@@ -41,7 +42,7 @@ pub(super) fn collect_fixture_defs(
         // decorated def rebinds the name (#10473), and starts again when a
         // later pytest import binds it.
         update_aliases_for_binding(stmt, &mut aliases);
-        update_asyncio_aliases(stmt, &aliases, &mut asyncio_aliases);
+        update_asyncio_aliases(stmt, source, &aliases, &mut asyncio_aliases);
         let (name, decorators, body, range) = match stmt {
             Stmt::FunctionDef(function) => (
                 function.name.as_str(),
@@ -127,7 +128,46 @@ pub(super) fn collect_fixture_defs(
 /// `pytest_asyncio.fixture` at this point of the module
 /// (`from pytest_asyncio import fixture as afx`). Any other binding of the
 /// name, including `from pytest import fixture as afx`, ends it.
-fn update_asyncio_aliases(stmt: &Stmt, aliases: &[String], asyncio_aliases: &mut Vec<String>) {
+fn update_asyncio_aliases(
+    stmt: &Stmt,
+    source: &str,
+    aliases: &[String],
+    asyncio_aliases: &mut Vec<String>,
+) {
+    // A conditional re-import can revoke an existing provider. Keep it only
+    // when it survives every possible arm. A read of the alias binds nothing.
+    if let Stmt::If(branch) = stmt {
+        let condition = constant_truth(&branch.test);
+        for (suite, reachable) in [
+            (&branch.body, condition != Some(false)),
+            (&branch.orelse, condition != Some(true)),
+        ] {
+            if reachable && !suite.is_empty() && !asyncio_aliases.is_empty() {
+                let mut possible = asyncio_aliases.clone();
+                for child in suite {
+                    let mut child_aliases = aliases.to_vec();
+                    update_aliases_for_binding(child, &mut child_aliases);
+                    update_asyncio_aliases(child, source, &child_aliases, &mut possible);
+                }
+                asyncio_aliases.retain(|alias| possible.contains(alias));
+            }
+        }
+    }
+    if matches!(
+        stmt,
+        Stmt::Try(_)
+            | Stmt::TryStar(_)
+            | Stmt::For(_)
+            | Stmt::AsyncFor(_)
+            | Stmt::With(_)
+            | Stmt::AsyncWith(_)
+            | Stmt::While(_)
+            | Stmt::Match(_)
+            | Stmt::Delete(_)
+    ) {
+        let text = text_for_range(source, stmt.range());
+        asyncio_aliases.retain(|alias| !mentions_identifier(&text, alias));
+    }
     if let Stmt::ImportFrom(import) = stmt {
         let from_asyncio = import.level.is_none_or(|level| level.to_u32() == 0)
             && import

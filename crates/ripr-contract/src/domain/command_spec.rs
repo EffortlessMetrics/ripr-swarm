@@ -1068,4 +1068,50 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn pytest_display_admits_only_the_listed_interpreters() {
+        for interpreter in crate::domain::PYTEST_VERIFY_INTERPRETERS {
+            assert_eq!(
+                python_pytest_verify_display_for(interpreter, "t.py", "test_a", false),
+                Some(format!("{interpreter} -m pytest t.py::test_a"))
+            );
+        }
+        for refused in ["python3", "", "/usr/bin/python", "env/bin/python"] {
+            assert_eq!(
+                python_pytest_verify_display_for(refused, "t.py", "test_a", false),
+                None,
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unittest_module_accepts_either_separator_and_an_extensionless_path() {
+        for path in ["tests\\test_cart.py", "tests/test_cart"] {
+            assert_eq!(
+                python_unittest_verify_display(path, "TestCart.test_total", false),
+                Some("python -m unittest tests.test_cart.TestCart.test_total".to_string()),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_two_spec_sources_are_actionable_verify_provenance() {
+        assert!(actionable_verify_source_is_supported(
+            "canonical_item.verify_command"
+        ));
+        assert!(actionable_verify_source_is_supported(
+            "related_test_or_observer.name"
+        ));
+        for other in [
+            "",
+            "canonical_item",
+            "related_test_or_observer",
+            "verify_command",
+        ] {
+            assert!(!actionable_verify_source_is_supported(other), "{other:?}");
+        }
+    }
 }

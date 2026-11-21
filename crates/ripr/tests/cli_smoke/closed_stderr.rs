@@ -395,3 +395,37 @@ fn resolved_stub_json_refusal_exit_two_with_closed_stdout() -> TestResult {
     assert_eq!(std::fs::read_to_string(root.join("src/lib.rs"))?, source);
     Ok(())
 }
+
+/// A stdout that fails for a reason other than a closed pipe (here a full
+/// device) is the destination failing, not a ripr bug: `--version` and
+/// `help` print through `println!`, and their report must name the write
+/// failure without the internal-error wording or a backtrace, and keep 2.
+#[cfg(target_os = "linux")]
+#[test]
+fn full_stdout_reports_a_write_failure_not_an_internal_error() -> TestResult {
+    for args in [&["--version"][..], &["help"][..]] {
+        let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+        let full = std::fs::OpenOptions::new().write(true).open("/dev/full")?;
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(full)
+            .env("RUST_BACKTRACE", "1");
+        let output = command.output()?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            stderr.starts_with("ripr: write to stdout failed: No space left on device"),
+            "{args:?}: {stderr}"
+        );
+        assert!(
+            stderr.contains("check where ripr's output goes"),
+            "{args:?}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("internal error") && !stderr.contains("stack backtrace"),
+            "{args:?}: {stderr}"
+        );
+    }
+    Ok(())
+}

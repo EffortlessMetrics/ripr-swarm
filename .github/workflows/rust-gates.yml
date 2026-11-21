@@ -456,6 +456,9 @@ jobs:
 
       - name: Evidence promotion honesty
         id: promotion_honesty
+        env:
+          RIPR_HONESTY_PROFILE: ${{ inputs.proof-profile }}
+          RIPR_HONESTY_ADMITTED_BASE: ${{ steps.admitted.outputs.base }}
         run: cargo xtask check-evidence-promotion-honesty
 
       # Lint optional-feature code as well as type-checking it (#13152).
@@ -477,7 +480,7 @@ jobs:
       # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
       # `origin/$BASE_REF` for the goldens gate so stale-base golden drift fails PR
       # qualification instead of passing and ejecting in `merge_group` (#14999),
-      # then restore the admitted checkout so downstream steps keep `HEAD`.
+      # while downstream gates retain the admitted checkout and its binaries (#15792).
       - name: Prepare fresh base merge for goldens
         id: goldens_fresh_merge
         if: github.event_name == 'pull_request' && inputs.subject-sha == ''
@@ -509,9 +512,14 @@ jobs:
             echo "::warning title=Fresh base merge unavailable::git merge-tree exited $rc; running goldens on checkout."
             exit 0
           fi
-          git -c user.name=ci -c user.email=ci@invalid checkout --detach "$fresh_base"
-          git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
-          echo "switched=true" >> "$GITHUB_OUTPUT"
+          scratch_root="$(realpath -- "${TMPDIR:-$RUNNER_TEMP}")"
+          fresh_tree="$(mktemp -d "$scratch_root/ripr-goldens.XXXXXXXX")"
+          echo "worktree=$fresh_tree" >> "$GITHUB_OUTPUT"
+          git worktree add --detach "$fresh_tree" "$fresh_base"
+          git -C "$fresh_tree" -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
+          mkdir -p "$fresh_tree/target" "$GITHUB_WORKSPACE/target/ripr"
+          # Goldens and calibration publish the actual outputs at the usual report paths.
+          ln -s "$GITHUB_WORKSPACE/target/ripr" "$fresh_tree/target/ripr"
 
       # The gates below need only the `ripr` build, not the test run. They run before
       # the ~18-minute nextest step so a main-side drift (goldens, fixtures, capability
@@ -521,14 +529,41 @@ jobs:
       # One evaluation writes both reports and fails for either obligation.
       - name: Golden and fixture contracts
         id: goldens_fixtures
-        run: cargo xtask goldens check-with-fixtures
-
-      - name: Restore admitted checkout after goldens
-        id: goldens_restore_checkout
-        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'
         env:
+          FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}
+        run: |
+          if [ -n "$FRESH_TREE" ]; then
+            export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-${CARGO_TARGET_DIR:-$GITHUB_WORKSPACE/target}}"
+            export CARGO_TARGET_DIR="$FRESH_TREE/target"
+            # Cargo hashes the wrapper path. A unique directory isolates workspace
+            # artifacts while preserving the invocation name used by multicall tools.
+            wrapper="${RUSTC_WORKSPACE_WRAPPER:-${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER:-env}}"
+            wrapper_path="$(command -v "$wrapper")"
+            wrapper_dir="$FRESH_TREE/target/workspace-wrapper"
+            mkdir -p "$wrapper_dir"
+            ln -s "$(realpath "$wrapper_path")" "$wrapper_dir/${wrapper_path##*/}"
+            export RUSTC_WORKSPACE_WRAPPER="$wrapper_dir/${wrapper_path##*/}"
+            cd "$FRESH_TREE"
+          fi
+          cargo xtask goldens check-with-fixtures
+
+      - name: Remove fresh goldens worktree
+        id: goldens_cleanup
+        if: always() && steps.goldens_fresh_merge.outputs.worktree != ''
+        env:
+          FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}
           ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}
-        run: git checkout --detach "$ORIG_HEAD"
+        run: |
+          status=0
+          if git worktree list --porcelain | grep -Fx "worktree $FRESH_TREE" >/dev/null; then
+            git worktree remove --force "$FRESH_TREE" || status=1
+          elif [ -d "$FRESH_TREE" ]; then
+            rmdir "$FRESH_TREE" || status=1
+          fi
+          actual_head="$(git rev-parse HEAD)" || status=1
+          echo "Admitted checkout: expected=$ORIG_HEAD actual=$actual_head"
+          [ "$actual_head" = "$ORIG_HEAD" ] || status=1
+          exit "$status"
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.
@@ -605,6 +640,17 @@ jobs:
           fi
           echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
           exit 1
+
+      # #14263: the Rust-only build (`--no-default-features --features lang-rust`)
+      # is a supported configuration, and between Nov 11 and Nov 18 main added
+      # seven preview-only items that warned there because nothing failed. Lint
+      # its library here on routes that run tests in this job; with
+      # `test-shards: 2` shard 2 of rust-test-shards.yml runs the same command,
+      # off this job's critical path. Library only: test helpers still warn.
+      - name: Strict Rust-only ripr library Clippy
+        id: rust_only_clippy
+        if: inputs.test-shards == 1
+        run: cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings
 
       # Skipped only when the caller passes `test-shards: 2`; it then owns running
       # the same tests as two partitions in rust-test-shards.yml and must fail
