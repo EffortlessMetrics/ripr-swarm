@@ -664,12 +664,13 @@
       "owner_issue": 3920,
       "related_issues": [
         15839,
-        15842
+        15842,
+        15860
       ],
       "materiality": "release_required",
       "resolution": "pending",
       "candidate_effect": "Published-schema lanes for cache export, agent status and rerun are in main (#15453, #15640, #15855); the required Rust gate replays the schema-producer sweep on every protected merge. Open before the cut: empty-root refusal coverage (#15839, #15842; PRs #15838, #15845), the help schema (#15890), agent packet and agent brief, and the review-comments 0.1 compatibility repair carried by #13325.",
-      "next": "Land or disposition the open schema rows (#15838, #15845, #15890, agent packet, agent brief version decision, #13325 review-comments compatibility), then run the schema-producer sweep with live artifacts on the proposed cut and record the inventory and route dispositions on #3920. Owner: published-schema lane (#3920 comment 7068352513)."
+      "next": "Land or disposition the open schema rows (#15838, #15845, #15890, the command working-directory producer and schema discrepancy #15860 with its repair #15905, agent packet, agent brief version decision, #13325 review-comments compatibility), then run the schema-producer sweep with live artifacts on the proposed cut and record the inventory and route dispositions on #3920. Owner: published-schema lane (#3920 comment 7068352513)."
     },
     {
       "claim_id": "release-docs",
@@ -684,7 +685,7 @@
       "materiality": "release_required",
       "resolution": "pending",
       "candidate_effect": "Release notes, the 0.10 to 0.11 upgrade guide and the alpha adapter copy are in main (#15291, #15674) and the sync-runbook operator-authority citations landed (#13270). The changelog fold is in progress: changelog.d still holds unfolded fragments at this observation, and the combined release-cut check has not run. The candidate-bound remainder stays open.",
-      "next": "Finish the changelog fold batches and run the combined fold-changelog release-cut check; reconcile the docs audit (#11567), fragment inventory (#12862) and fold-tool defects (#15576, #15578, #15606). Then complete the pre-promotion packet work with the candidate-bound consumers: the #1609 manifest identity and the #2769 complete exact-candidate bundle acceptance precede source promotion (docs/RELEASE_TRANSACTION.md), followed by source replay (ripr#1466/#1472/#1473/#1484) and the populated public release copy. Owner: release-docs thread (#3921 comment 6543601274)."
+      "next": "Finish the changelog fold batches and run the combined fold-changelog release-cut check; reconcile the docs audit (#11567) and the fragment inventory (#12862, proposed entries in #15934). Fold-tool defects #15576 and #15578 are fixed by #15684; for #15606 the duplicate-bullet refusal landed in #15656 and #15920 owns the remaining check-before-write change. Then complete the pre-promotion packet work with the candidate-bound consumers: the #1609 manifest identity and the #2769 complete exact-candidate bundle acceptance precede source promotion (docs/RELEASE_TRANSACTION.md), followed by source replay (ripr#1466/#1472/#1473/#1484) and the populated public release copy. Owner: release-docs thread (#3921 comment 6543601274)."
     },
     {
       "claim_id": "verdict-corpus",
