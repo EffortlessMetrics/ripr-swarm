@@ -6,23 +6,41 @@ running `cargo install ripr` first.
 
 ## Resolution Order
 
-The VS Code/Open VSX extension resolves the server in this order:
+The VS Code/Open VSX extension resolves the server in this order, with the
+conditions noted; it is not a fixed ladder that runs every step:
 
 ```text
-1. ripr.server.path
-2. bundled server binary, if present
+1. ripr.server.path, when set (its success or failure is terminal)
+2. bundled server binary, if present — dormant by design (#2085): no
+   platform VSIX ships one today, so this candidate never exists on disk;
+   it is the planned first preference for future platform VSIXs
+   (#1443 / #1624), not a live step
 3. downloaded cached server binary
-4. ripr on PATH, when `ripr.server.version` is empty and its version is not older than the expected server version (checked before any download)
-5. verified first-run download from GitHub Releases
-6. ripr on PATH, when `ripr.server.version` is set or the download did not produce a server
+4. ripr on PATH, checked before any download only when
+   `ripr.server.autoDownload` is enabled and `ripr.server.version` is
+   empty, and used there only when its version is not older than the
+   expected server version; an older PATH result is held for step 6
+5. verified first-run download from GitHub Releases, only when
+   `ripr.server.autoDownload` is enabled
+6. ripr on PATH as fallback — when `ripr.server.version` is pinned, when
+   `ripr.server.autoDownload` is disabled (no early PATH check and no
+   download happen), when the download did not produce a server, or by
+   reusing the older early-PATH result from step 4
 7. actionable error
 ```
 
-An unpinned install therefore never makes a network call for a user who already
-installed a current `ripr` (cargo, binstall, a package manager); an older PATH
-`ripr` falls through to the download and stays the warned fallback (#13638). Setting
-`ripr.server.version` asks for that exact managed release, so the download keeps
-its place ahead of `PATH`.
+Steps 2–5 run only on a known prebuilt platform. On an unknown platform,
+resolution skips the bundled, cached, early-PATH, and download steps and
+goes straight to the PATH fallback in step 6.
+
+With `ripr.server.autoDownload` enabled, an unpinned install therefore
+never makes a network call for a user who already installed a current
+`ripr` (cargo, binstall, a package manager); an older PATH `ripr` falls
+through to the download and stays the warned fallback (#13638). Setting
+`ripr.server.version` asks for that exact managed release, so the download
+keeps its place ahead of `PATH`. When `ripr.server.autoDownload` is
+disabled, neither the early PATH check nor the download runs, and `PATH`
+is tried once as the step-6 fallback.
 
 `ripr.server.path` is an override for pinned or enterprise-managed binaries. The
 PATH fallback remains useful for local development and offline installs.
@@ -300,5 +318,7 @@ darwin-x64
 darwin-arm64
 ```
 
-When those exist, bundled binaries should remain ahead of downloaded binaries in
-the resolution order, with auto-download retained as fallback/update machinery.
+When those exist, bundled binaries should remain ahead of cached and
+downloaded binaries in the resolution order, with auto-download retained
+as fallback/update machinery. Until then, no VSIX ships a `server/`
+directory and the bundled step above stays dormant.

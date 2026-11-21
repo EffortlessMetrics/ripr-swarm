@@ -30,18 +30,18 @@ Static exposure
   weakly_exposed (warning, confidence 0.84)
 
 Evidence
-  - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
+  - reach yes: Related tests appear to reach mean_latency: mean_latency_smoke, mean_lies_between_min_and_max
   - infection weak: Related tests contain input values, but the equality-boundary check is missing
   - propagation yes: Changed behavior appears to influence returned value: 0
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)
   - local flow reaches returned value: 0 (line 19)
+  - related test src/lib.rs:83 mean_latency_smoke uses no oracle; misses: has no assertion
   - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0); misses: no established call path to the changed code; linked by file location only
   - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3); misses
   - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}"); misses: no established call path to the changed code; linked by file location only
-  - related test src/lib.rs:77 ratio_smoke uses no oracle; misses: has no assertion
-  - related test src/lib.rs:71 small_orders_get_no_discount uses strong exact value oracle: assert_eq!(discount(total), want, "total {total}"); misses: no test input reaches `samples.len() == 0`
-  - related tests (showing 5 of 6; more in --format json)
+  - related test src/lib.rs:77 ratio_smoke uses no oracle; misses: no established call path to the changed code; linked by file location only
+  - related tests (showing 5 of 7; more in --format json)
   - source assertion argument value 0 at line 44
   - source assertion argument value 2 at line 45
   - source assertion argument value 3 at line 45

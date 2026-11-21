@@ -903,7 +903,9 @@ pub(in crate::analysis::classify) fn call_count(text: &str, name: &str) -> usize
         .count()
 }
 
-/// The top-level argument texts of the first call of `name` in `text`.
+/// The top-level argument texts of the first call of `name` in `text`. A
+/// turbofish call (`name::<u8>(..)`) reads like the plain call (#15277), so
+/// an argument gate such as the empty-walk refusal still sees its arguments.
 pub(in crate::analysis::classify) fn call_argument_texts(
     text: &str,
     name: &str,
@@ -911,7 +913,10 @@ pub(in crate::analysis::classify) fn call_argument_texts(
     let masked = mask_comments_and_strings(text);
     let open = whole_word_offsets(&masked, name)
         .into_iter()
-        .map(|offset| offset + name.len())
+        .map(|offset| {
+            let end = offset + name.len();
+            end + crate::analysis::extract::turbofish_len(&masked[end..])
+        })
         .find(|end| masked[*end..].starts_with('('))?;
     let close = super::matching_close(&masked, open, b'(', b')')?;
     Some(split_top_level(&text[open + 1..close]))

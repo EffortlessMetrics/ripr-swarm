@@ -8,6 +8,7 @@
 //! comparison but changes one fact rustdoc or name resolution depends on,
 //! and must leave the return unpinned.
 
+use ripr::domain::{RelationReason, StageState};
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -321,6 +322,13 @@ fn claims_doc_example_admission_preserves_binding_and_manifest_refusals() -> Res
 
 fn assert_pinned(fence: &str, example: &[&str]) -> Result<(), String> {
     let finding = return_value(fence, example, "")?;
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall)),
+        "{finding:?}"
+    );
     assert_eq!(
         finding.class,
         ExposureClass::Exposed,
@@ -373,6 +381,19 @@ fn a_doc_example_bare_call_imported_from_the_crate_exposes_the_return() -> Resul
             "assert_eq!(read_u16(&[0x12, 0x34]), 0x1234);",
         ],
     )
+}
+
+#[test]
+fn an_unresolved_call_in_a_doc_example_does_not_reach_the_owner() -> Result<(), String> {
+    for example in [
+        "assert_eq!(unknown::read_u16(&[0x12, 0x34]), 0x1234);",
+        "assert_eq!(read_u16(&[0x12, 0x34]), 0x1234);",
+        "assert_eq!(crate::read_u16(&[0x12, 0x34]), 0x1234);",
+    ] {
+        let finding = return_value("", &[example], "")?;
+        assert_ne!(finding.ripr.reach.state, StageState::Yes, "{finding:?}");
+    }
+    Ok(())
 }
 
 #[test]
@@ -531,6 +552,7 @@ mod tests {{
     // In the example the receiver's type would be read from scopes that are
     // not the example's, so it is refused.
     let finding = the_return_value(&method_library(METHOD_PIN, ""), METHOD_PATCH, 11)?;
+    assert_ne!(finding.ripr.reach.state, StageState::Yes, "{finding:?}");
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

@@ -112,6 +112,7 @@ pub(crate) struct CreditFacts<'a> {
     /// case: no single changed field exists, but a read of a field the edit
     /// never touched still cannot witness the change.
     pub(crate) changed_fields: &'a [TypeScriptChangedField],
+    pub(crate) unchanged_shorthand: Option<&'a str>,
 }
 
 /// Shared inputs for row-local and aggregate changed-sink observation (#5528).
@@ -234,6 +235,7 @@ pub(crate) fn ts_candidate_changed_sink_observation(
         push_facts,
         changed_field,
         changed_fields,
+        unchanged_shorthand,
     } = credits;
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
@@ -419,6 +421,16 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     workspace_root,
                 )
             };
+            // #14857: only a direct read of the unchanged shorthand on a bare
+            // owner call can establish this mismatch. A whole or compound
+            // subject may also observe the edited explicit field.
+            if let Some(sibling) = unchanged_shorthand
+                && !owner_is_method
+                && ts_direct_owner_call_reads_shorthand(observed, sibling, &owner_names)
+            {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
             // #14814: a read of a SIBLING field of the returned literal
             // observes a different field, so it cannot witness this change.
             // `expect(f().verbose)` while the edit moves `retries` must not
@@ -430,6 +442,8 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     &owner_names,
                     owner_is_method,
                     &namespace_receivers,
+                    candidate.test,
+                    &changed_tokens,
                 )
             {
                 merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
@@ -446,6 +460,8 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     &owner_names,
                     owner_is_method,
                     &namespace_receivers,
+                    candidate.test,
+                    &changed_tokens,
                 )
             {
                 merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
@@ -762,6 +778,21 @@ fn ts_effect_observed_is_affirmatively_foreign(
     ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
 }
 
+pub(super) fn ts_direct_owner_call_reads_shorthand(
+    observed: &str,
+    sibling: &str,
+    owner_names: &[&str],
+) -> bool {
+    let Some((base, read)) = observed.trim().rsplit_once('.') else {
+        return false;
+    };
+    read.trim() == sibling
+        && base
+            .trim_end()
+            .strip_suffix("()")
+            .is_some_and(|callee| owner_names.contains(&callee.trim()))
+}
+
 /// #14814: whether `observed` reads a SIBLING field of the owner's returned
 /// literal: the outermost plain field read of an expression whose base is the
 /// owner call (or an admitted owner alias) names a field other than the
@@ -778,6 +809,8 @@ fn ts_value_observed_reads_sibling_field(
     owner_names: &[&str],
     owner_is_method: bool,
     namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
 ) -> bool {
     fn is_ident_char(ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_' || ch == '$'
@@ -821,7 +854,126 @@ fn ts_value_observed_reads_sibling_field(
     ) {
         return false;
     }
-    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+    // #14856: the same read through a one-hop local alias of the owner call
+    // (`const cfg = f(); cfg.verbose`) is a sibling read too. A path that
+    // reads THROUGH the changed field off the alias (`cfg.retries.n`) is a
+    // projection of the change, not a sibling.
+    if ts_masked_reads_key_as_alias_member(
+        &masked,
+        changed.key.as_str(),
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+        test,
+        changed_tokens,
+    ) {
+        return false;
+    }
+    ts_sibling_base_is_owner_result(
+        base,
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+        test,
+        changed_tokens,
+    )
+}
+
+/// Whether `base` (the expression a trailing field read hangs off) is the
+/// owner's result: either the owner call itself, or a plain member chain
+/// rooted at a one-hop local alias of that call (#14856, the same alias
+/// credit [`ts_observed_local_aliases_owner`] grants a bare local). A
+/// compound base, a foreign local and a mutated alias are not the owner's
+/// result, so a read off them is not claimed as a sibling read.
+fn ts_sibling_base_is_owner_result(
+    base: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
+) -> bool {
+    if ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers) {
+        return true;
+    }
+    if !ts_chain_is_plain_projection(base) {
+        return false;
+    }
+    let Some(root) = ts_chain_root_identifier(base) else {
+        return false;
+    };
+    ts_observed_local_aliases_owner(
+        root,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+    )
+}
+
+/// The root identifier of a plain member chain (`cfg?.nested` -> `cfg`),
+/// or `None` when the chain does not start with an identifier.
+fn ts_chain_root_identifier(base: &str) -> Option<&str> {
+    let base = base.trim();
+    let end = base.find(['.', '?', '!', '(', '[']).unwrap_or(base.len());
+    let root = base[..end].trim();
+    (!root.is_empty()).then_some(root)
+}
+
+/// Whether `masked` reads `key` as a member segment of a chain rooted at a
+/// one-hop local alias of the owner call (`cfg.retries.n` for alias `cfg`).
+/// The alias form of [`ts_masked_reads_changed_field_as_member`]: a bare
+/// local spelling the key is not a field read.
+fn ts_masked_reads_key_as_alias_member(
+    masked: &str,
+    key: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
+) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    // Split into identifier words rather than dot segments so a read of
+    // the key inside a computed index (`cfg.items[cfg.selectedIndex]`)
+    // or an unnormalized bracket form still counts as reading the key.
+    // The input is literal-masked, so words cannot leak from strings.
+    let mut words = masked
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+        .filter(|word| !word.is_empty());
+    let Some(root) = words.next() else {
+        return false;
+    };
+    if !ts_observed_local_aliases_owner(
+        root,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+    ) {
+        return false;
+    }
+    // A local bound to a projection of the owner result
+    // (`const retries = buildConfig(5).retries`) holds the changed field
+    // itself, so any read through that local reads through the change.
+    if let Some(initializer) = ts_effect_single_declaration_initializer(test, root) {
+        let normalized = ts_normalize_bracket_field_reads(initializer.trim());
+        let init_masked = ts_mask_literals_and_comments(&normalized);
+        if ts_masked_reads_changed_field_as_member(
+            &init_masked,
+            key,
+            owner_names,
+            owner_is_method,
+            namespace_receivers,
+        ) {
+            return true;
+        }
+    }
+    words.any(|word| word == key)
 }
 
 /// #14857: whether `observed` reads a field of the owner's returned literal
@@ -838,6 +990,8 @@ fn ts_value_observed_reads_untouched_field(
     owner_names: &[&str],
     owner_is_method: bool,
     namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
 ) -> bool {
     fn is_ident_char(ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_' || ch == '$'
@@ -877,6 +1031,21 @@ fn ts_value_observed_reads_untouched_field(
     }) {
         return false;
     }
+    // #14856: a path through a changed field off an alias local reads
+    // THROUGH the change too (`cfg.retries.n`), not an untouched field.
+    if changed.iter().any(|field| {
+        ts_masked_reads_key_as_alias_member(
+            &masked,
+            field.key.as_str(),
+            owner_names,
+            owner_is_method,
+            namespace_receivers,
+            test,
+            changed_tokens,
+        )
+    }) {
+        return false;
+    }
     let base = base.trim();
     if base.is_empty() {
         return false;
@@ -889,14 +1058,47 @@ fn ts_value_observed_reads_untouched_field(
     if !ts_chain_is_plain_projection(base) {
         return false;
     }
-    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+    ts_sibling_base_is_owner_result(
+        base,
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+        test,
+        changed_tokens,
+    )
 }
 
-/// #14857: whether `base` is a plain member-access chain (`f()`, `a.f()`,
-/// `this.g()`, `f()?.n`) rather than a compound expression. A top-level
-/// operator means the assertion subject is not the owner's field projection:
-/// `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
-fn ts_chain_is_plain_projection(base: &str) -> bool {
+/// #14857/#14928: whether `base` is a plain projection of a call or
+/// member-access chain rather than a compound expression. This is a grammar,
+/// not an operator blacklist, so every base that is genuinely the owner's
+/// result reaches the untouched-field guard:
+///
+/// ```text
+/// base    := prefix* primary postfix* "?"?
+/// prefix  := "!" | "await" | "new"
+/// primary := identifier | "(" balanced ")"
+/// postfix := "." identifier | "?." (identifier | call | index)
+///          | "!" | call | index | "<" type-arguments ">" call
+/// ```
+///
+/// `f()`, `a.f()`, `this.g()`, `f()?` (the split point of `f()?.field`),
+/// `f<string>()`, `f()!` and `!f()` qualify. A top-level operator, a bare
+/// comparison (`a < b`) and a type-argument list that does not open a call
+/// do not: `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
+pub(super) fn ts_chain_is_plain_projection(base: &str) -> bool {
+    // Review of #15607: the grammar alone would drop bases the earlier
+    // operator check already guarded (`void f()`, `~f()`, `delete f()`,
+    // `[f()][0]`, `this.#impl()`), turning their reads back into `exposed`.
+    // The guard is fail-closed, so a base qualifies when EITHER reading
+    // calls it plain; neither can grant credit.
+    ts_chain_has_no_top_level_operator(base) || ts_chain_matches_plain_grammar(base)
+}
+
+/// #14857: whether `base` holds no top-level operator, the original reading
+/// of a plain member-access chain (`f()`, `a.f()`, `this.g()`, `f()?.n`). A
+/// top-level operator means the assertion subject is not the owner's field
+/// projection: `f() ?? defaults`, `f() || fallback`, `cond ? a : b`, `a, b`.
+fn ts_chain_has_no_top_level_operator(base: &str) -> bool {
     let chars: Vec<char> = base.chars().collect();
     let mut depth = 0i32;
     for (i, ch) in chars.iter().copied().enumerate() {
@@ -920,6 +1122,176 @@ fn ts_chain_is_plain_projection(base: &str) -> bool {
         }
     }
     true
+}
+
+/// #14928: the plain-chain grammar that admits what the operator check
+/// refuses (see [`ts_chain_is_plain_projection`]).
+fn ts_chain_matches_plain_grammar(base: &str) -> bool {
+    fn is_ident_start(ch: char) -> bool {
+        ch.is_alphabetic() || ch == '_' || ch == '$'
+    }
+    fn is_ident_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '$'
+    }
+    fn skip_ws(chars: &[char], mut at: usize) -> usize {
+        while chars.get(at).is_some_and(|ch| ch.is_whitespace()) {
+            at += 1;
+        }
+        at
+    }
+    fn identifier_end(chars: &[char], at: usize) -> Option<usize> {
+        if !chars.get(at).copied().is_some_and(is_ident_start) {
+            return None;
+        }
+        let mut end = at + 1;
+        while chars.get(end).copied().is_some_and(is_ident_char) {
+            end += 1;
+        }
+        Some(end)
+    }
+    // The index just past the bracket that closes the one at `at`.
+    fn group_end(chars: &[char], at: usize) -> Option<usize> {
+        let mut depth = 0i32;
+        for (offset, ch) in chars.get(at..)?.iter().enumerate() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(at + offset + 1);
+                    }
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    // The index just past the `>` that closes the type-argument list opened
+    // at `at`. `=>` inside a function type does not close it, and a logical
+    // operator means the `<` was a comparison, not a type-argument list.
+    fn type_arguments_end(chars: &[char], at: usize) -> Option<usize> {
+        let mut angle = 0i32;
+        let mut depth = 0i32;
+        let mut i = at;
+        let mut previous: Option<char> = None;
+        while let Some(&ch) = chars.get(i) {
+            let next = chars.get(i + 1).copied();
+            match ch {
+                // A call inside the list (`limit < f() > (b)`) is a value
+                // expression, not a type: the `<` was a comparison.
+                '(' if previous.is_some_and(|p| is_ident_char(p) || p == ')' || p == ']') => {
+                    return None;
+                }
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                '<' => angle += 1,
+                '=' if next == Some('>') => i += 1,
+                '>' => {
+                    angle -= 1;
+                    if angle == 0 {
+                        return (depth == 0).then_some(i + 1);
+                    }
+                }
+                '|' if next == Some('|') => return None,
+                '&' if next == Some('&') => return None,
+                '=' | '+' | '-' | '*' | '/' | '%' | '!' if depth == 0 => return None,
+                _ => {}
+            }
+            if !ch.is_whitespace() {
+                previous = Some(ch);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    let chars: Vec<char> = base.trim().chars().collect();
+    let mut at = 0;
+    // prefix*
+    loop {
+        at = skip_ws(&chars, at);
+        if chars.get(at) == Some(&'!') && chars.get(at + 1) != Some(&'=') {
+            at += 1;
+            continue;
+        }
+        if let Some(end) = identifier_end(&chars, at) {
+            let word: String = chars[at..end].iter().collect();
+            if matches!(word.as_str(), "await" | "new")
+                && chars.get(end).is_some_and(|ch| ch.is_whitespace())
+            {
+                at = end;
+                continue;
+            }
+        }
+        break;
+    }
+    // primary
+    at = match chars.get(at) {
+        Some('(') => match group_end(&chars, at) {
+            Some(end) => end,
+            None => return false,
+        },
+        _ => match identifier_end(&chars, at) {
+            Some(end) => end,
+            None => return false,
+        },
+    };
+    // postfix*
+    loop {
+        at = skip_ws(&chars, at);
+        let Some(&ch) = chars.get(at) else {
+            return true;
+        };
+        let next = chars.get(at + 1).copied();
+        at = match ch {
+            '.' => match identifier_end(&chars, skip_ws(&chars, at + 1)) {
+                Some(end) => end,
+                None => return false,
+            },
+            '?' if next == Some('.') => {
+                let after = skip_ws(&chars, at + 2);
+                match chars.get(after) {
+                    Some('(' | '[') => after,
+                    _ => match identifier_end(&chars, after) {
+                        Some(end) => end,
+                        None => return false,
+                    },
+                }
+            }
+            // The split point of `f()?.field`: a trailing `?` is member access.
+            '?' if skip_ws(&chars, at + 1) == chars.len() => return true,
+            '!' if next != Some('=') => at + 1,
+            '(' | '[' => match group_end(&chars, at) {
+                Some(end) => end,
+                None => return false,
+            },
+            '<' => {
+                let Some(end) = type_arguments_end(&chars, at) else {
+                    return false;
+                };
+                // Type arguments only belong to the chain when they open a
+                // call: `f<string>()` or `f<string>?.()`.
+                let after = skip_ws(&chars, end);
+                let opens_call = chars.get(after) == Some(&'(')
+                    || (chars.get(after) == Some(&'?')
+                        && chars.get(after + 1) == Some(&'.')
+                        && chars.get(skip_ws(&chars, after + 2)) == Some(&'('));
+                if !opens_call {
+                    return false;
+                }
+                end
+            }
+            _ => return false,
+        };
+    }
 }
 
 /// #14814 round 3: whether `masked` reads `key` as a member segment of a chain
@@ -2323,6 +2695,577 @@ pub(crate) fn ts_returned_expression_unexercised(
     evaluated
 }
 
+// ── Input-class witness (#15285) ────────────────────────────────────────────
+//
+// Some edits differ only for one named input class: `??` -> `||` only for a
+// falsy non-nullish operand, a dropped `.trim()` only for whitespace-padded
+// input, and a changed destructured default only when the field is omitted.
+// An exact oracle on other inputs passes on both versions, so `Exposed`
+// requires a related strong assertion whose owner call supplies that class.
+// Anything unparseable keeps `witnessed == false` for a detected shape
+// (fail closed); undetected shapes keep the ladder result.
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TsInputClassKind {
+    FalsyNonNullish,
+    WhitespacePadded,
+    OmittedDestructuredField { field: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TsInputClassTarget {
+    /// Position of the call argument feeding the changed operand, when known.
+    index: Option<usize>,
+    /// Object field of that argument the operand reads, when it reads one.
+    field: Option<String>,
+    /// Array position of that argument the operand reads, when it reads one.
+    position: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TsInputClassChange {
+    kind: TsInputClassKind,
+    target: TsInputClassTarget,
+    /// The change removed `?.trim()`, whose semantics also differ for
+    /// `null`/`undefined` inputs (old result `undefined`, new result the
+    /// input itself), so those literals also witness it.
+    optional_trim: bool,
+}
+
+impl TsInputClassChange {
+    fn limitation(&self, owner_name: &str) -> String {
+        let (class, example) = match &self.kind {
+            TsInputClassKind::FalsyNonNullish => (
+                "a falsy non-nullish operand (\"\", 0, or false)",
+                "an empty string, 0, or false",
+            ),
+            TsInputClassKind::WhitespacePadded => (
+                "a whitespace-padded string",
+                "a string with leading or trailing whitespace",
+            ),
+            TsInputClassKind::OmittedDestructuredField { field } => {
+                return format!(
+                    "The change to `{owner_name}` only differs when the destructured field `{field}` is omitted, and no related test calls `{owner_name}` without supplying `{field}`; an exact assertion on a call that supplies it passes on both versions. Add a call that omits `{field}`."
+                );
+            }
+        };
+        format!(
+            "The change to `{owner_name}` only differs for {class}, and no related test calls `{owner_name}` with {example}; an exact assertion on the tested inputs passes on both versions. Add a call with {example}."
+        )
+    }
+
+    /// Whether one tested owner-call argument list supplies the input class.
+    fn supplied_by(&self, arguments: &[String]) -> bool {
+        let Some(index) = self.target.index else {
+            return false;
+        };
+        if let TsInputClassKind::OmittedDestructuredField { field } = &self.kind {
+            let Some(argument) = arguments.get(index) else {
+                return true;
+            };
+            let argument = argument.trim();
+            let Some(inner) = argument
+                .strip_prefix('{')
+                .and_then(|rest| rest.strip_suffix('}'))
+            else {
+                return false;
+            };
+            let Some(entries) = balanced_call_arguments(&format!("{inner})")) else {
+                return false;
+            };
+            return entries.iter().all(|entry| {
+                let head = entry.split_once(':').map_or(entry.as_str(), |(key, _)| key);
+                head.trim().trim_matches(['"', '\'']) != field.as_str()
+            }) || entries.iter().any(|entry| {
+                let Some((key, value)) = entry.split_once(':') else {
+                    return false;
+                };
+                key.trim().trim_matches(['"', '\'']) == field.as_str()
+                    && value.trim() == "undefined"
+            });
+        }
+        let Some(argument) = arguments.get(index) else {
+            return false;
+        };
+        let Some(value) = ts_input_class_nested_value(argument, &self.target) else {
+            return false;
+        };
+        match self.kind {
+            TsInputClassKind::FalsyNonNullish => ts_is_falsy_non_nullish_literal(&value),
+            TsInputClassKind::WhitespacePadded => {
+                ts_is_padded_string_literal(&value)
+                    || (self.optional_trim && matches!(value.trim(), "null" | "undefined"))
+            }
+            TsInputClassKind::OmittedDestructuredField { .. } => false,
+        }
+    }
+}
+
+/// The value of `argument` at the target's field/position, or the argument
+/// itself for a plain parameter read.
+fn ts_input_class_nested_value(argument: &str, target: &TsInputClassTarget) -> Option<String> {
+    let argument = argument.trim();
+    if let Some(field) = &target.field {
+        let inner = argument.strip_prefix('{')?.strip_suffix('}')?;
+        let entries = balanced_call_arguments(&format!("{inner})"))?;
+        // A spread entry can override the named field with an unreadable
+        // value; fail closed instead of reading the first entry.
+        if entries.iter().any(|entry| entry.trim().starts_with("...")) {
+            return None;
+        }
+        // Later entries override earlier ones in an object literal.
+        return entries.iter().rev().find_map(|entry| {
+            let (key, value) = entry.split_once(':')?;
+            (key.trim().trim_matches(['"', '\'']) == field.as_str())
+                .then(|| value.trim().to_string())
+        });
+    }
+    if let Some(position) = target.position {
+        let inner = argument.strip_prefix('[')?.strip_suffix(']')?;
+        let entries = balanced_call_arguments(&format!("{inner})"))?;
+        return entries.get(position).map(|value| value.trim().to_string());
+    }
+    Some(argument.to_string())
+}
+
+fn ts_is_falsy_non_nullish_literal(value: &str) -> bool {
+    let value = value.trim();
+    if matches!(value, "\"\"" | "''" | "``" | "false" | "NaN" | "0n") {
+        return true;
+    }
+    // A plain zero in any spelling (`0`, `-0`, `0.0`, `00`).
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    !digits.is_empty()
+        && digits.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+        && digits.chars().any(|ch| ch.is_ascii_digit())
+        && digits.replace('.', "").chars().all(|ch| ch == '0')
+}
+
+fn ts_is_padded_string_literal(value: &str) -> bool {
+    let value = value.trim();
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 {
+        return false;
+    }
+    let quote = bytes[0];
+    if !matches!(quote, b'"' | b'\'' | b'`') || bytes[bytes.len() - 1] != quote {
+        return false;
+    }
+    if quote == b'`' && value.contains("${") {
+        return false;
+    }
+    let inner = &value[1..value.len() - 1];
+    if inner.is_empty() {
+        return false;
+    }
+    // Whitespace written as an escape (`\t`, `\n`, `\r`, `\u0020`,
+    // `\x09`, ...) pads the value exactly like a literal space.
+    if inner.trim() != inner {
+        return true;
+    }
+    let decoded = ts_decode_simple_escapes(inner);
+    decoded.trim() != decoded
+}
+
+/// Decode simple whitespace escapes in a string-literal body; any other
+/// escape keeps its backslash so non-whitespace content is untouched.
+fn ts_decode_simple_escapes(inner: &str) -> String {
+    let bytes = inner.as_bytes();
+    let mut out = String::with_capacity(inner.len());
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if bytes[at] == b'\\' && at + 1 < bytes.len() {
+            match bytes[at + 1] {
+                b'\\' => {
+                    out.push('\\');
+                    at += 2;
+                    continue;
+                }
+                b't' => {
+                    out.push('\t');
+                    at += 2;
+                    continue;
+                }
+                b'n' => {
+                    out.push('\n');
+                    at += 2;
+                    continue;
+                }
+                b'r' => {
+                    out.push('\r');
+                    at += 2;
+                    continue;
+                }
+                b'u' | b'x' => {
+                    let digits = if bytes[at + 1] == b'u' { 4 } else { 2 };
+                    let hex = inner.get(at + 2..at + 2 + digits);
+                    if let Some(hex) = hex
+                        && let Ok(code) = u32::from_str_radix(hex, 16)
+                        && let Some(ch) = char::from_u32(code)
+                        && ch.is_whitespace()
+                    {
+                        out.push(ch);
+                        at += 2 + digits;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let ch_len = inner[at..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&inner[at..at + ch_len]);
+        at += ch_len;
+    }
+    out
+}
+
+/// The call-argument target read by the trailing operand of `text` (the
+/// expression before a changed operator or `.trim()`).
+fn ts_input_class_target(text: &str, owner: &TypeScriptOwner) -> Option<TsInputClassTarget> {
+    // Find the cut on the masked text so punctuation inside literals or
+    // comments cannot become the cut point; indices are length-preserving.
+    let masked = ts_mask_literals_and_comments(text);
+    let cut = masked.rfind(['(', ',', ';']).map_or(0, |at| at + 1);
+    let mut tail = text[cut..].trim();
+    for keyword in ["return ", "await ", "typeof ", "yield "] {
+        if let Some(rest) = tail.strip_prefix(keyword) {
+            tail = rest.trim_start();
+        }
+    }
+    tail = tail.trim_start_matches(['(', '!']);
+    // A trailing operand after a binary `+` is the operand the changed
+    // operator or `.trim()` reads (`a.trim() + text.trim()` reads `text`).
+    if let Some(plus) = tail.rfind(" + ") {
+        let after = &tail[plus + 3..];
+        if !after.contains('(') {
+            tail = after.trim_start();
+        }
+    }
+    let base_end = tail
+        .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+        .unwrap_or(tail.len());
+    let base = &tail[..base_end];
+    if base.is_empty()
+        || !base.starts_with(|ch: char| ch.is_alphabetic() || matches!(ch, '_' | '$'))
+    {
+        return None;
+    }
+    let mut field = None;
+    let mut position = None;
+    let rest = tail[base_end..].trim_start();
+    if let Some(after_dot) = rest.strip_prefix('.').or_else(|| rest.strip_prefix("?.")) {
+        let prop_end = after_dot
+            .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+            .unwrap_or(after_dot.len());
+        if prop_end > 0 {
+            field = Some(after_dot[..prop_end].to_string());
+        }
+    } else if let Some(after_close) = rest
+        .strip_prefix('[')
+        .and_then(|after_open| after_open.strip_suffix(']'))
+    {
+        let key = after_close.trim();
+        if let Ok(at) = key.parse::<usize>() {
+            position = Some(at);
+        } else {
+            field = Some(key.trim_matches(['"', '\'']).to_string());
+        }
+    }
+    let mut index = owner.params.iter().position(|param| param == base);
+    if index.is_none()
+        && owner.params.is_empty()
+        && field.is_none()
+        && position.is_none()
+        && rest.is_empty()
+    {
+        // A bare non-parameter name with no recorded parameters is a
+        // destructured field of the first argument (`{ sep }` style owners).
+        index = Some(0);
+        field = Some(base.to_string());
+    }
+    Some(TsInputClassTarget {
+        index,
+        field,
+        position,
+    })
+}
+
+/// Replace the characters at char position `at` (length `len`) in `text`.
+fn ts_replace_char_span(text: &str, at: usize, len: usize, replacement: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    for (index, ch) in text.chars().enumerate() {
+        if index < at || index >= at + len {
+            out.push(ch);
+        } else if index == at {
+            out.push_str(replacement);
+        }
+    }
+    Some(out)
+}
+
+/// Remove the characters at char position `at` (length `len`) in `text`.
+fn ts_remove_char_span(text: &str, at: usize, len: usize) -> Option<String> {
+    ts_replace_char_span(text, at, len, "")
+}
+
+/// Char position of `needle` in `masked` (literals blanked) at or after
+/// `char_from`, mapped back to the original text by char count, so
+/// operators inside strings never match.
+fn ts_masked_find_from(masked: &str, needle: &str, char_from: usize) -> Option<usize> {
+    let tail: String = masked.chars().skip(char_from).collect();
+    tail.find(needle)
+        .map(|byte_at| char_from + tail[..byte_at].chars().count())
+}
+
+/// Detect the #15285 input-class shapes `old_line` -> `new_line`.
+fn ts_input_class_change(
+    old_line: &str,
+    new_line: &str,
+    owner: &TypeScriptOwner,
+) -> Option<TsInputClassChange> {
+    let (old_trim, new_trim) = (old_line.trim(), new_line.trim());
+    // `??` <-> `||` as the only change. Every occurrence is tried: an
+    // unchanged operator earlier in the line must not hide the edited one.
+    for (from, to) in [("??", "||"), ("||", "??")] {
+        let masked = ts_mask_literals_and_comments(old_trim);
+        let mut search_from = 0usize;
+        while let Some(at) = ts_masked_find_from(&masked, from, search_from) {
+            if ts_replace_char_span(old_trim, at, from.len(), to).as_deref() == Some(new_trim) {
+                let operand_end = old_trim
+                    .char_indices()
+                    .nth(at)
+                    .map_or(old_trim.len(), |(byte_at, _)| byte_at);
+                return ts_input_class_target(&old_trim[..operand_end], owner).map(|target| {
+                    TsInputClassChange {
+                        kind: TsInputClassKind::FalsyNonNullish,
+                        target,
+                        optional_trim: false,
+                    }
+                });
+            }
+            search_from = at + from.len();
+        }
+    }
+    // A dropped (or added) `.trim()` as the only change (all occurrences).
+    for (with_trim, without_trim) in [(old_trim, new_trim), (new_trim, old_trim)] {
+        let masked = ts_mask_literals_and_comments(with_trim);
+        for needle in [".trim()", "?.trim()"] {
+            let mut search_from = 0usize;
+            while let Some(at) = ts_masked_find_from(&masked, needle, search_from) {
+                if ts_remove_char_span(with_trim, at, needle.len()).as_deref() == Some(without_trim)
+                {
+                    let receiver_end = with_trim
+                        .char_indices()
+                        .nth(at)
+                        .map_or(with_trim.len(), |(byte_at, _)| byte_at);
+                    return ts_input_class_target(&with_trim[..receiver_end], owner).map(
+                        |target| TsInputClassChange {
+                            kind: TsInputClassKind::WhitespacePadded,
+                            target,
+                            optional_trim: needle.starts_with('?'),
+                        },
+                    );
+                }
+                search_from = at + needle.len();
+            }
+        }
+    }
+    // A changed destructured default as the only change.
+    ts_destructured_default_change(old_trim, new_trim, owner)
+}
+
+/// The destructured-default shape: both lines share one `{ ... }` pattern
+/// whose entries differ only in one entry's default value.
+fn ts_destructured_default_change(
+    old_line: &str,
+    new_line: &str,
+    owner: &TypeScriptOwner,
+) -> Option<TsInputClassChange> {
+    let parse = |line: &str| -> Option<(usize, usize, Vec<String>)> {
+        // Brace matching on the masked line: braces inside literals or
+        // comments (e.g. a `"}"` default) must not move the close.
+        let masked = ts_mask_literals_and_comments(line);
+        let open = masked.find('{')?;
+        let mut depth = 0usize;
+        let mut close = None;
+        for (index, ch) in masked.char_indices().skip_while(|(at, _)| *at < open) {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close = close?;
+        let entries = balanced_call_arguments(&format!("{})", &line[open + 1..close]))?;
+        Some((open, close, entries))
+    };
+    let (old_open, old_close, old_entries) = parse(old_line)?;
+    let (new_open, new_close, new_entries) = parse(new_line)?;
+    if old_entries.len() != new_entries.len()
+        || old_line[..old_open] != new_line[..new_open]
+        || old_line[old_close..] != new_line[new_close..]
+    {
+        return None;
+    }
+    let mut differing = old_entries
+        .iter()
+        .zip(&new_entries)
+        .filter(|(old, new)| old != new);
+    let (old_entry, new_entry) = differing.next()?;
+    if differing.next().is_some() {
+        return None;
+    }
+    let head = |entry: &str| -> String {
+        let head = entry.split_once('=').map_or(entry, |(head, _)| head);
+        let head = head.split_once(':').map_or(head, |(head, _)| head);
+        head.trim().trim_start_matches("...").trim().to_string()
+    };
+    let field = head(old_entry);
+    if field.is_empty()
+        || field != head(new_entry)
+        || !(old_entry.contains('=') || new_entry.contains('='))
+        || !field
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
+    {
+        return None;
+    }
+    // The destructured source: `... } = source` (a body destructure or a
+    // parenthesised assignment), else the destructured parameter itself.
+    let after = old_line[old_close + 1..].trim_start();
+    let source = after
+        .strip_prefix('=')
+        .map(str::trim_start)
+        .and_then(|rest| {
+            let end = rest
+                .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
+                .unwrap_or(rest.len());
+            (end > 0).then(|| rest[..end].to_string())
+        });
+    let index = match &source {
+        Some(source) => owner.params.iter().position(|param| param == source),
+        None => {
+            let prefix = &old_line[..old_open];
+            let open_paren = prefix.rfind('(')?;
+            let between = &prefix[open_paren + 1..];
+            Some(between.matches(',').count())
+        }
+    };
+    // Only a destructuring position counts: a declaration/parameter
+    // pattern (`const { ... } = ...`, `{ ... } = ...`, or a parameter
+    // list). An object-literal comparison elsewhere is not a default.
+    let trimmed_start = old_line.trim_start();
+    let destructure_context = old_line.contains("} =")
+        || trimmed_start.starts_with("const ")
+        || trimmed_start.starts_with("let ")
+        || trimmed_start.starts_with("var ")
+        || (trimmed_start.starts_with('(') && old_line.contains('{'));
+    if !destructure_context {
+        return None;
+    }
+    Some(TsInputClassChange {
+        kind: TsInputClassKind::OmittedDestructuredField { field },
+        target: TsInputClassTarget {
+            index,
+            field: None,
+            position: None,
+        },
+        optional_trim: false,
+    })
+}
+
+/// Arguments of an instance-method owner call in `observed`
+/// (`receiver.method(...)`) where `receiver` is bound in the test body to
+/// `new <owner class>(...)`. Method owners are called through instances,
+/// not namespaces, so the namespace-receiver path cannot see them
+/// (typescript_same_method_owner_identity_positive).
+fn ts_instance_owner_call_arguments(
+    test: &TypeScriptTest,
+    observed: &str,
+    owner: &TypeScriptOwner,
+) -> Option<Vec<String>> {
+    let class_name = owner.class_name.as_deref()?;
+    let observed = observed.trim();
+    for receiver in instance_call_receivers(observed, &owner.name) {
+        let needle = format!("{receiver} = new {class_name}(");
+        let alt = format!("{receiver} = new {class_name} (");
+        if !test.body_text.contains(&needle) && !test.body_text.contains(&alt) {
+            continue;
+        }
+        let rest = observed.strip_prefix(&receiver)?.trim_start();
+        let rest = rest.strip_prefix('.')?.trim_start();
+        let rest = rest.strip_prefix(owner.name.as_str())?.trim_start();
+        if ts_is_one_argument_list(rest) {
+            return balanced_call_arguments(&rest[1..]).map(positional_prefix);
+        }
+    }
+    None
+}
+
+/// Whether some strong, pinned assertion of an oracle relation calls the
+/// owner with an argument supplying the changed input class (#15285).
+fn ts_input_class_witnessed(
+    change: &TsInputClassChange,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        let test = candidate.test;
+        if !candidate.relation.uses_oracle()
+            || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        {
+            return false;
+        }
+        let receivers =
+            unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        test.assertions.iter().any(|assertion| {
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !assertion_expected_side_is_pinned(assertion)
+            {
+                return false;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                return false;
+            };
+            if assertion_is_self_comparing(assertion, observed) {
+                return false;
+            }
+            let Some(arguments) =
+                ts_observed_owner_call_arguments(test, assertion, &names, owner, &receivers)
+                    .or_else(|| ts_instance_owner_call_arguments(test, observed, owner))
+            else {
+                return false;
+            };
+            let arguments =
+                substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+            change.supplied_by(&arguments)
+        })
+    })
+}
+
+/// The detected input-class change, when no related call supplies its class.
+fn ts_unwitnessed_input_class_change(
+    old_line_text: Option<&str>,
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<TsInputClassChange> {
+    let change = ts_input_class_change(old_line_text?, line_text, owner)?;
+    (!ts_input_class_witnessed(&change, owner, candidates, alias_map, workspace_root))
+        .then_some(change)
+}
+
 /// Whether the line opens a method-shaped block (`name(args) {`) that is not
 /// a control-flow head.
 fn nested_method_head(line: &str) -> bool {
@@ -2640,13 +3583,17 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 !is_boundary_literal(&effective_left)
                     && nullish_argument_reaches_read_argument(&arguments, &effective_left, owner)
             } else if literals.is_empty() {
-                call_has_identical_arguments(&arguments, &owner.params)
-                    || object_argument_pins_operands_equal(
-                        &arguments,
-                        &effective_left,
-                        &effective_right,
-                        &owner.params,
-                    )
+                call_has_identical_arguments(
+                    &arguments,
+                    &owner.params,
+                    &effective_left,
+                    &effective_right,
+                ) || object_argument_pins_operands_equal(
+                    &arguments,
+                    &effective_left,
+                    &effective_right,
+                    &owner.params,
+                )
             } else {
                 literals.iter().any(|literal| {
                     boundary_literal_reaches_read_argument(
@@ -3867,6 +4814,9 @@ fn nullish_argument_reaches_read_argument(
     left: &str,
     owner: &TypeScriptOwner,
 ) -> bool {
+    if !can_read_positional_argument(left, owner) {
+        return false;
+    }
     let position = comparison_read_position(left, owner);
     let readable = |idx: usize| match position {
         ReadPosition::Index(read) => idx == read,
@@ -3878,6 +4828,13 @@ fn nullish_argument_reaches_read_argument(
         .iter()
         .enumerate()
         .any(|(idx, argument)| readable(idx) && matches!(argument.trim(), "null" | "undefined"))
+}
+
+/// A member or expression does not read a whole argument. The parser's
+/// binding names include Unicode parameters outside the ASCII alias reader.
+fn can_read_positional_argument(operand: &str, owner: &TypeScriptOwner) -> bool {
+    let operand = operand.trim();
+    is_bare_identifier(operand) || owner.params.iter().any(|name| name == operand)
 }
 
 /// The operand text a changed comparison reads, with constant-shaped operands
@@ -5524,10 +6481,10 @@ pub(crate) fn owner_call_arguments(
         {
             continue;
         }
-        let Some(inner) = observed
-            .get(idx + owner_name.len()..)
-            .and_then(|rest| rest.trim_start().strip_prefix('('))
-        else {
+        let suffix = observed[idx + owner_name.len()..].trim_start();
+        let Some(inner) = suffix.strip_prefix('(').or_else(|| {
+            generic_owner_argument_list(&observed[idx..], owner_name)?.strip_prefix('(')
+        }) else {
             continue;
         };
         if let Some(arguments) = balanced_call_arguments(inner) {
@@ -5535,6 +6492,27 @@ pub(crate) fn owner_call_arguments(
         }
     }
     calls
+}
+
+/// For an observed `owner<T>(...)`, read the argument list after the
+/// parser-confirmed type arguments. A relational expression has no such list.
+pub(super) fn generic_owner_argument_list<'a>(observed: &'a str, name: &str) -> Option<&'a str> {
+    let observed = observed.trim();
+    if !observed.strip_prefix(name)?.trim_start().starts_with('<') {
+        return None;
+    }
+    let allocator = Allocator::default();
+    let Expression::CallExpression(call) = Parser::new(&allocator, observed, SourceType::ts())
+        .parse_expression()
+        .ok()?
+    else {
+        return None;
+    };
+    if !matches!(&call.callee, Expression::Identifier(id) if id.name == name) {
+        return None;
+    }
+    let types = call.type_arguments.as_ref()?;
+    Some(observed.get(types.span.end as usize..)?.trim_start())
 }
 
 /// Parameter positions a spread call keeps marked unreadable.
@@ -5634,28 +6612,21 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
     None
 }
 
-/// `true` when an argument at `position` can be read by the owner. With no
-/// parameter facts every position is live (previous behaviour); with facts,
-/// positions at or beyond the declared arity are dead — extra call arguments
-/// a fixed-signature owner never reads.
-fn argument_position_is_live(position: usize, params: &[String]) -> bool {
-    params.is_empty() || position < params.len()
-}
-
-/// `true` when two LIVE arguments of one observed owner call are identical
-/// (`isAllowed(5, 5)` witnesses `count <= limit`). Arguments in dead
-/// positions (past the owner's declared arity) are ignored — a duplicated
-/// literal parked in an unread argument cannot witness (#4102 shape 1).
-pub(crate) fn call_has_identical_arguments(arguments: &[String], params: &[String]) -> bool {
-    let live: Vec<&String> = arguments
-        .iter()
-        .enumerate()
-        .filter(|(idx, _)| argument_position_is_live(*idx, params))
-        .map(|(_, argument)| argument)
-        .collect();
-    live.iter().enumerate().any(|(idx, left)| {
-        !left.is_empty() && live.iter().skip(idx + 1).any(|right| *right == *left)
-    })
+/// Both comparison operands must read the positions holding the equal values.
+pub(crate) fn call_has_identical_arguments(
+    arguments: &[String],
+    params: &[String],
+    left: &str,
+    right: &str,
+) -> bool {
+    let read = |operand: &str| {
+        params
+            .iter()
+            .position(|name| name == operand)
+            .and_then(|position| arguments.get(position))
+    };
+    left != right
+        && matches!((read(left), read(right)), (Some(a), Some(b)) if !a.is_empty() && a == b)
 }
 
 /// `true` when an object-literal argument binds both comparison operands
@@ -5674,7 +6645,14 @@ fn object_argument_pins_operands_equal(
         return false;
     }
     arguments.iter().enumerate().any(|(position, argument)| {
-        if !argument_position_is_live(position, params) {
+        let reads_field = |operand: &str| match operand.split_once('.') {
+            Some((base, field)) => {
+                params.get(position).is_some_and(|param| param == base)
+                    && oxc_syntax::identifier::is_identifier_name(field)
+            }
+            None => params.is_empty() && is_bare_identifier(operand),
+        };
+        if !reads_field(left) || !reads_field(right) {
             return false;
         }
         let Some(body) = argument
@@ -5995,6 +6973,29 @@ fn boundary_literal_reaches_read_argument(
     } else {
         right
     };
+    if let Some((base, field)) = operand.split_once('.') {
+        // A single static member can read an object pin at its base
+        // parameter's position. A standalone scalar cannot pin that field.
+        return oxc_syntax::identifier::is_identifier_name(field)
+            && owner
+                .params
+                .iter()
+                .position(|name| name == base)
+                .and_then(|index| arguments.get(index))
+                .is_some_and(|argument| {
+                    object_argument_pins_literal(argument, field, literal)
+                        || (field == "length"
+                            && numeric_literal_value(literal).as_deref() == Some("0")
+                            && argument
+                                .trim()
+                                .strip_prefix('[')
+                                .and_then(|rest| rest.strip_suffix(']'))
+                                .is_some_and(|body| body.trim().is_empty()))
+                });
+    }
+    if !can_read_positional_argument(operand, owner) {
+        return false;
+    }
     let position = comparison_read_position(operand, owner);
     let readable = |idx: usize| match position {
         ReadPosition::Index(read) => idx == read,
@@ -8072,6 +9073,7 @@ pub(crate) fn classify_resolved_owner(
     // RIPR-SPEC-0243 rule 4: an error payload that passes on both versions
     // of the changed line reads `broad_error` / weak for this change.
     let changed_fields = ts_changed_object_fields(old_line_text, line_text);
+    let unchanged_shorthand = ts_unchanged_shorthand_sibling(old_line_text, line_text);
     let changed_field = changed_fields
         .as_ref()
         .and_then(|fields| (fields.len() == 1).then(|| fields[0].clone()));
@@ -8320,10 +9322,25 @@ pub(crate) fn classify_resolved_owner(
             workspace_root,
             !pin_facts.is_empty() || lookup_change.is_some(),
         );
+    // #15285: a change that only differs for a named input class is not
+    // observed unless a related call supplies that class.
+    let unwitnessed_input_class = if strong_oracle_present {
+        ts_unwitnessed_input_class_change(
+            old_line_text,
+            line_text,
+            owner,
+            related_candidates,
+            alias_map,
+            workspace_root,
+        )
+    } else {
+        None
+    };
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
         && lookup_witnessed
         && !returned_expression_unexercised
+        && unwitnessed_input_class.is_none()
         && (field_update_witnessed
             || ts_changed_value_is_observed(
                 &probe_shape,
@@ -8338,6 +9355,7 @@ pub(crate) fn classify_resolved_owner(
                     push_facts: &push_facts,
                     changed_field: changed_field.as_ref(),
                     changed_fields: changed_fields.as_deref().unwrap_or(&[]),
+                    unchanged_shorthand,
                 },
             ));
 
@@ -8397,10 +9415,17 @@ pub(crate) fn classify_resolved_owner(
             StageState::Weak,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
-                owner.name
-            )],
+            vec![if owner.owner_kind == OwnerKind::Component {
+                format!(
+                    "Only heuristic TypeScript test links were found for the component `{}`; verify the suggested test location or render `<{} .../>` in a Jest/Vitest test with an exact-value assertion on the rendered output.",
+                    owner.name, owner.name
+                )
+            } else {
+                format!(
+                    "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
+                    owner.name
+                )
+            }],
         )
     } else if only_conditionally_registered_tests(related_candidates) {
         // #10438: every oracle-eligible related test is registered under a
@@ -8474,9 +9499,9 @@ pub(crate) fn classify_resolved_owner(
         // Strong oracle exists but observation guard failed: downgrade to
         // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
         // predicate boundary is not witnessed (RIPR-SPEC-0027).
-        let named_limitation = if let Some(change) =
-            lookup_change.as_ref().filter(|_| !lookup_witnessed)
-        {
+        let named_limitation = if let Some(change) = &unwitnessed_input_class {
+            change.limitation(&owner.name)
+        } else if let Some(change) = lookup_change.as_ref().filter(|_| !lookup_witnessed) {
             format!(
                 "The change to `{}` only moves the lookup-table value for {}, and no strong assertion calls `{}` with a changed key; an exact assertion on another key passes on both versions. Add a case that looks up a changed key.",
                 owner.name,
@@ -8591,6 +9616,7 @@ pub(crate) fn classify_resolved_owner(
         && !fan_in_limited_unknown
         && only_conditionally_registered_tests(related_candidates);
     let post_ladder_context = TsPostLadderContext {
+        single_line_replacement: context.single_line_replacement,
         all_tests,
         line,
         probe_shape: &probe_shape,
@@ -8607,6 +9633,7 @@ pub(crate) fn classify_resolved_owner(
             push_facts: &push_facts,
             changed_field: changed_field.as_ref(),
             changed_fields: changed_fields.as_deref().unwrap_or(&[]),
+            unchanged_shorthand,
         },
         mock_paths: &context.mock_paths,
         alias_map,
@@ -8879,6 +9906,7 @@ pub(crate) fn classify_resolved_owner(
                 push_facts: &push_facts,
                 changed_field: changed_field.as_ref(),
                 changed_fields: changed_fields.as_deref().unwrap_or(&[]),
+                unchanged_shorthand,
             },
             boundary_fact: missing_discriminators.first(),
         },
@@ -9089,6 +10117,9 @@ pub(crate) fn classify_resolved_owner(
                 mock_payload_oracle.as_deref(),
             )
         }
+        _ if !has_oracle_eligible_relation && owner.owner_kind == OwnerKind::Component => {
+            "TypeScript preview advisory: related-test proximity is heuristic only; render the component in a test with an input at the changed boundary before treating this as an actionable repair target.".to_string()
+        }
         _ if !has_oracle_eligible_relation => {
             "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
         }
@@ -9108,7 +10139,11 @@ pub(crate) fn classify_resolved_owner(
             && !input_free_field_update
             && !removed_call_change =>
         {
-            crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
+            if old_line_text.is_some_and(|old| ts_comparison_edit(old, line_text).is_some()) {
+                crate::domain::TERNARY_COMPARISON_NEXT_STEP.to_string()
+            } else {
+                crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
+            }
         }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()
@@ -9365,6 +10400,7 @@ struct TsLadderVerdict {
 
 /// What the post-ladder rules read besides the verdict.
 struct TsPostLadderContext<'a> {
+    single_line_replacement: bool,
     /// Every parsed test, so a file-level reader can blank its test bodies.
     all_tests: &'a [TypeScriptTest],
     /// The changed line's number in the owner's file.
@@ -9712,8 +10748,29 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
     if context.candidates.is_empty() {
         return None;
     }
-    let conditions =
-        enclosing_conditions(source, owner.start_line, context.line, context.line_text)?;
+    let enclosing = enclosing_conditions(source, owner.start_line, context.line, context.line_text);
+    let after_nonzero_return = enclosing.is_none();
+    let conditions = enclosing.or_else(|| {
+        let error = context.ladder.error_facts;
+        if !context.single_line_replacement
+            || !matches!(context.probe_shape.family, ProbeFamily::ErrorPath)
+            || !error.sole_throw_site
+            || !error.message_only
+            || error.old_message.is_none()
+            || error.new_message.is_none()
+        {
+            return None;
+        }
+        super::guard_entry_guard::isolated_throw_after_return(
+            source,
+            owner.start_line,
+            context.line,
+            context.line_text,
+            &owner.name,
+            &owner.params,
+        )
+        .map(|condition| vec![condition])
+    })?;
     // A destructured options parameter leaves `owner.params` empty (arity is
     // unknown); read the signature itself for it.
     let (params, defaults, options) = if owner.params.is_empty() {
@@ -9805,6 +10862,13 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
                 return None;
             }
             for arguments in owner_call_arguments(callback, name, &receivers) {
+                // An actual argument named `undefined` may also bind a local value.
+                // The early-return witness only admits a direct numeric literal.
+                if after_nonzero_return
+                    && !matches!(arguments.as_slice(), [arg] if signed_numeric_expected_value(arg).is_some())
+                {
+                    return None;
+                }
                 calls += 1;
                 let inputs = CallInputs {
                     owner_source: source,
@@ -11480,6 +12544,7 @@ struct Rule8LadderFacts<'a> {
     push_facts: &'a super::push_argument_guard::PushArgumentFacts,
     changed_field: Option<&'a TypeScriptChangedField>,
     changed_fields: &'a [TypeScriptChangedField],
+    unchanged_shorthand: Option<&'a str>,
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -11509,6 +12574,7 @@ fn ts_rule8_mocked_changed_callee(
         push_facts,
         changed_field,
         changed_fields,
+        unchanged_shorthand,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -11566,6 +12632,7 @@ fn ts_rule8_mocked_changed_callee(
                     push_facts,
                     changed_field,
                     changed_fields,
+                    unchanged_shorthand,
                 },
             )
         {

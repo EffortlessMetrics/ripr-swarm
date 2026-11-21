@@ -1758,8 +1758,8 @@ fn equality_assertion_shape_uncached(oracle_text: &str) -> Option<(bool, Vec<Str
 /// qualified paths stay not evaluable.
 fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
     let trimmed = operand.trim();
-    let open = super::named_call_open_paren_index(trimmed, owner_name)?;
-    let before = trimmed[..open - owner_name.len()].trim_end();
+    let (name_start, open) = super::named_call_span(trimmed, owner_name)?;
+    let before = trimmed[..name_start].trim_end();
     // A bare name only: a method receiver names a different entity than the
     // free function the seam owns, and a qualified path cannot be resolved
     // to the owner's module from the assertion alone, so both stay not
@@ -1994,6 +1994,8 @@ impl FoldPlan {
 }
 
 mod branch_index;
+mod tuple_guard;
+pub(in crate::analysis) use tuple_guard::tuple_branch_reached;
 
 #[cfg(test)]
 mod fold_plan;
@@ -2001,7 +2003,7 @@ mod fold_plan;
 #[cfg(test)]
 thread_local! {
     /// How many function texts this thread has read for the fold.
-    static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::analysis::test_grip_evidence) static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// #14419: an owner whose whole body is one range-shaped tail the token fold
@@ -3761,6 +3763,31 @@ pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64
                 evaluated: 3_500,
             }
         );
+        Ok(())
+    }
+
+    /// #15277 review: a turbofish call is the same owner call, so a wrong
+    /// literal through it is contradicted, not left not evaluable (which
+    /// kept a statically wrong pin at full strength).
+    #[test]
+    fn wrongval_assertion_through_a_turbofish_call_is_contradicted() -> Result<(), String> {
+        let generic_owner = BOUNDARY_OWNER.replace("discounted_total(", "discounted_total<T>(");
+        let verdict = verdict_for_owner(
+            &generic_owner,
+            "assert_eq!(discounted_total::<u8>(5_000, 5_000), 5_000);",
+        );
+        assert_eq!(
+            verdict?,
+            ExactValueVerdict::Contradicted {
+                expected: "5_000".to_string(),
+                evaluated: 3_500,
+            }
+        );
+        let consistent = verdict_for_owner(
+            &generic_owner,
+            "assert_eq!(discounted_total::<u8>(5_000, 5_000), 3_500);",
+        );
+        assert_eq!(consistent?, ExactValueVerdict::Consistent);
         Ok(())
     }
 

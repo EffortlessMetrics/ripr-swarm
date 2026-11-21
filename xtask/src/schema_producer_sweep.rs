@@ -121,6 +121,9 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             // --root fixtures/helper_chain_controls/input --diff
             // fixtures/helper_chain_controls/diff.patch --format json` (#11584).
             "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
+            // A `--format check-findings-json` capture (#15376): the check
+            // document with its leading `artifact` envelope.
+            "tests/fixtures/verification/ripr/check-findings.valid.json",
             // Retained captures of past `ripr check` runs inside real-repo eval
             // fixtures. They validate against the schema, but they are not
             // bytes the candidate's build produced, so they stay edge fixtures.
@@ -159,6 +162,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "editors/vscode/test-fixtures/attempt-status/inventory.json",
             "hand-written VS Code extension stimulus for parseAttemptInventory, trimmed to the fields the extension reads; not ripr output",
         )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/rerun.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: rerun_json_conforms_for_every_selector_and_option in crates/ripr/tests/rerun_json_schema.rs validates the real CLI bytes for eighteen runs (one over the TypeScript preview fixture) across both selectors, --before movement and --check-parity, and published_rerun_schema_rejects_documents_it_forbids is the negative experiment; the report carries host paths and input hashes, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/rerun.valid.json"],
+        excluded: &[],
     },
     Binding {
         schema_path: "schemas/ripr/cache-export.schema.json",

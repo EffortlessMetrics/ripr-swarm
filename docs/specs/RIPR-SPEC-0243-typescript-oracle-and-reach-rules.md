@@ -367,6 +367,23 @@ Evaluated inline ordinary
 function constructors and tags retain body registration notices; their parameter
 shadows and uncalled function values remain separate from runner registrations.
 
+Deno registrations (#15622). `Deno.test(name, fn)`, `Deno.test(name, options,
+fn)`, `Deno.test({ name, fn })` (with `fn` a method, arrow or function value),
+`Deno.test(options, fn)`, `Deno.test(function named() {})` and `Deno.test.only`
+each register one test. An options object whose `ignore` is anything but a
+literal `false`, or that has a spread or computed key, registers nothing, and
+so does `Deno.test.ignore`. A declaration, import or registration-scope name
+`Deno` shadows the runtime namespace, so its `.test` calls register nothing.
+Assertion collection and the unused-closure reach mask read the same resolved
+callback. Deno's standard assertions bind only from `@std/assert`,
+`jsr:@std/assert[@range][/subpath]` or `https://deno.land/std[@version]/...`
+(`/assert/` or `/testing/asserts.ts`): `assertEquals` reads as
+`deepStrictEqual`, `assertStrictEquals` as `strictEqual`, `assert` as the
+truthy `ok` call (it has no node-style members), and `assertThrows` /
+`assertRejects` as the broad `throws` / `rejects`. Other exports, namespace
+imports, look-alike specifiers and same-named local helpers stay unbound.
+`t.step` bodies are not walked for assertions.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,
@@ -577,12 +594,21 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | Matcher | Kind / strength |
 | --- | --- |
 | `toBe`, `toEqual`, `toStrictEqual` | `exact_value` / strong |
+| Jasmine `toBeTrue()`, `toBeFalse()` (no argument; expected value `true` / `false`, as `toBe(true)` / `toBe(false)`) | `exact_value` / strong |
 | `toThrow`, `toThrowError` without an exact payload | `broad_error` / weak |
 | `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium (strong for a literal inline snapshot, RIPR-SPEC-0247 rule 3, or a named committed entry, RIPR-SPEC-0258) |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
-| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
+| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, Jasmine `toHaveSize`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` (a same-file strict-equality `expect.extend` matcher reads `exact_value` / strong, RIPR-SPEC-0262) |
+
+Jasmine-only names are also common names for home-grown matchers, so
+`toBeTrue`, `toBeFalse` and `toHaveSize` read `unknown` / unknown in a file
+that mentions `extend` or `addMatchers`, with `.rejects`, or (for the
+boolean pair) with an argument (#15627). Negated, they cap like `.not.toBe`. The
+mention check is textual (comments and strings count, which only refuses
+more); a registration in another file, such as a setup or helper file, is
+not seen, the same limit `toBe` has.
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
@@ -1122,6 +1148,20 @@ file-level code included), so an alias (`const m = local.name`), a reassignment,
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
+
+JSX render reach (#15295): in a `.tsx` or `.jsx` test, a JSX element
+`<Local .../>` or `<Local>` whose tag is a capitalized bare import local
+counts as a call of that import for `ImportedOwnerCall`, through the same
+import-source, shadow and mock guards as `Local(`. Intrinsic tags (`<div>`),
+member tags (`<Ns.Item>`), type arguments (`Array<Local>`, `useState<Local>`),
+type parameter lists (`<Local extends X>`, `<Local = X>`), comments and
+same-line strings do not count. A render proves reach only; oracle strength
+still comes from the test's assertions, and a render beside an unrelated
+assertion is not `exposed`. Known limits, all fail-closed: same-file
+components, re-export chains, member tags, explicit type arguments on the tag
+(`<Local<T> />`) and a tag directly after JSX text (`Count<Local />`) are not
+credited. A component owner with only heuristic links is advised to render
+`<Local .../>`, not to add a direct owner call.
 
 ### Observation guard
 
@@ -1751,13 +1791,33 @@ unconfirmed, not `exposed`. A read that names either changed field
 (`f().retries`, `f().verbose`), a path that reads through a changed field
 (`f().retries.n`) and a whole-result assertion (`expect(f()).toEqual(...)`)
 keep the existing credit. This is the two-value shape; the single-field
-sibling rule (#14814) covers exactly one changed value. A compound assertion
+sibling rule (#14814) covers exactly one changed value. Both rules read the
+field off the owner's result directly (`f().timeout`) or through a one-hop
+local alias of the owner call (`const cfg = f(); cfg.timeout`, #14856): the
+alias form is affirmatively not observing, not merely unconfirmed. A
+whole-result assertion on the alias and the changed field through the alias
+(`cfg.retries`) keep their credit; a foreign or mutated local is not the
+owner's result. A compound assertion
 subject is not a field projection of the owner's result: in
 `expect(f() ?? defaults.config)` the trailing `config` belongs to the
 fallback while the assertion receives the whole object `f()` returns, so it
-keeps its credit. A key-list change, a
+keeps its credit. A plain projection is a base with no top-level operator,
+or a call or member-access chain that a small grammar accepts (#14928): a
+postfix non-null assertion (`f()!.timeout`), optional chaining, a prefix
+negation (`!f().enabled`) and a balanced generic call (`f<string>()`) are all
+projections of the owner's result, so an untouched field read through any of
+them drops to `weakly_exposed` too (a generic call is not yet resolved as an
+owner call, so it already reads `weakly_exposed`). A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
-fields are not this shape and keep their old reading.
+fields are outside this multi-value rule.
+
+For the two-member form `return { retries: 5, verbose };`, a change between
+decimal integer literals on the explicit field cannot change the unchanged
+shorthand binding. A direct assertion on `config().verbose` therefore reads
+`weakly_exposed`, while `config().retries` keeps its exact-field credit. This
+case requires the same two distinct names in the same positions and a bare
+zero-argument owner call. An expression that could write to `verbose` while
+building the object remains outside this rule.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -2486,6 +2546,14 @@ keys); do not take the next number.
 
 ## Test Mapping
 
+- #15622 (Deno registrations and `@std/assert`):
+  `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs` pins
+  each registration shape, the ignored/spread/unreadable refusals, the
+  shadowed-namespace refusal, the unused-closure reach mask for every callback
+  position, the std assertion grades and the look-alike, namespace, local and
+  member-call refusals; `crates/ripr/tests/typescript_no_config_detection.rs`
+  pins a zero-config `deno.json` run linking the `Deno.test`.
+
 - #13592 (module-level `const` reached through a reader): `tests/module_value_read_tests.rs`
   pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
   assigned and module-mutated refusals, the unused and uncalled-reader controls
@@ -2642,6 +2710,13 @@ keys); do not take the next number.
   reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
   rebound parameter, helper or member call, file-level call, CRLF, deleted
   line) keeps the ladder verdict.
+  For a single literal message edit in a final `throw new Error(...)`, a
+  one-parameter function can also exclude the throw with a preceding
+  `if (b !== 0) return b;`. When every related call supplies a numeric
+  literal that takes that return, the finding is `reachable_unrevealed` with
+  infection `no`. The adapter test `isolated_throw_message_after_a_nonzero_return`
+  pairs this case with a zero input checking the message and a zero input
+  checking only that an error is thrown.
   The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
   `comments_before_if_do_not_shift_the_condition_text`,
   `mock_module_loaders_and_call_result_chains_are_unreadable`,

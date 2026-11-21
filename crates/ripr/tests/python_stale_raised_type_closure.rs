@@ -254,10 +254,11 @@ fn new_type_forms_close_the_gap() -> Result<(), String> {
     Ok(())
 }
 
-/// `QtyError(ValueError)`: the old-type assertion still passes against the
-/// new raise, so it is closure evidence.
+/// `QtyError(ValueError)`: the old-type assertion passes against the old and
+/// the new raise alike, so it is no stale pin, and it does not close the gap
+/// either: it cannot tell the two raises apart (#15356).
 #[test]
-fn old_type_assertion_closes_when_the_new_type_subclasses_it() -> Result<(), String> {
+fn old_type_assertion_of_a_subclass_raise_is_not_stale_and_does_not_close() -> Result<(), String> {
     let base = format!("class QtyError(ValueError):\n    pass\n\n\n{BASE_SOURCE}");
     let head = format!(
         "class QtyError(ValueError):\n    pass\n\n\n{}",
@@ -268,14 +269,16 @@ fn old_type_assertion_closes_when_the_new_type_subclasses_it() -> Result<(), Str
     commit_test(&root, STALE_TEST, "old-type test of a subclass raise")?;
     let after = continue_attempt(&root, &attempt)?;
     let text = combined(&after);
-    if !after.status.success() || text.contains("pins the old raised type") {
-        return Err(format!("a subclass raise must close:\n{text}"));
+    if after.status.code() != Some(3)
+        || text.contains("pins the old raised type")
+        || text.contains("closed: weakly_exposed -> exposed")
+    {
+        return Err(format!(
+            "a base-class test of a subclass raise must leave the gap open, got {:?}:\n{text}",
+            after.status.code()
+        ));
     }
-    need(
-        &text,
-        "closed: weakly_exposed -> exposed",
-        "subclass closes",
-    )
+    need(&text, "pytest.raises(QtyError)", "names the new class")
 }
 
 /// Review follow-up: a message built with an f-string does not change which
@@ -314,8 +317,9 @@ fn stale_old_type_test_is_refused_when_the_raise_message_is_an_f_string() -> Res
 }
 
 /// #13753: the `expected_exception=` keyword and a tuple of the old class are
-/// the same stale old-type pin; a tuple that also names the new class or a
-/// broader class still passes against the new raise and closes.
+/// the same stale old-type pin. A tuple that also names the new class or a
+/// broader class passes against the old and the new raise alike, so it is no
+/// stale pin and does not close the gap either (#15356).
 #[test]
 fn keyword_and_tuple_old_type_tests_are_refused_unless_the_tuple_names_the_new_type()
 -> Result<(), String> {
@@ -344,13 +348,18 @@ fn keyword_and_tuple_old_type_tests_are_refused_unless_the_tuple_names_the_new_t
             ));
         }
         if !refused {
-            if !after.status.success() || stale {
+            // Not a stale pin, but the gap stays open: the tuple accepts
+            // the old and the new raise alike.
+            if after.status.code() != Some(3)
+                || stale
+                || text.contains("closed: weakly_exposed -> exposed")
+            {
                 return Err(format!(
-                    "{label}: must close, got {:?}:\n{text}",
+                    "{label}: must leave the gap open without a stale pin, got {:?}:\n{text}",
                     after.status.code()
                 ));
             }
-            need(&text, "closed: weakly_exposed -> exposed", label)?;
+            need(&text, "still reads `weakly_exposed`", label)?;
         }
     }
     Ok(())

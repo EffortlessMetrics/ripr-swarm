@@ -37,11 +37,16 @@ struct RerunOptions {
     check_parity: bool,
 }
 
+/// The `ripr rerun --json` report version, published as
+/// `schemas/ripr/rerun.schema.json` and pinned there by the output-contract
+/// version gate (#3920).
+const TARGETED_RERUN_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
+
 /// The `ripr rerun --json` refusal envelope keys its document with the
-/// targeted rerun report's schema version (#7331). Owner: the
-/// `TargetedRerunReport.schema_version` literal in the report construction
-/// (pinned by the output-contract version gate), mirrored here because the
-/// report value exists only on the success path.
+/// targeted rerun report's schema version (#7331). The version gate checks
+/// this constant and `TARGETED_RERUN_SCHEMA_VERSION` each against its own
+/// published schema and documentation row; it does not compare the two, so a
+/// report-only version bump must update this mirror by hand.
 const TARGETED_RERUN_REFUSAL_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1420,7 +1425,7 @@ fn report(
     scope_limitations: Vec<TargetedRerunScopeLimitation>,
 ) -> TargetedRerunReport {
     TargetedRerunReport {
-        schema_version: "ripr-targeted-rerun-v1",
+        schema_version: TARGETED_RERUN_SCHEMA_VERSION,
         state,
         selector,
         cache,
@@ -4028,6 +4033,7 @@ mod tests {
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "rejects_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 4,

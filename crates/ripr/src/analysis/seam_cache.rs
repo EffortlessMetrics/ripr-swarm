@@ -750,7 +750,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.200`: include every directly asserted same-line owner input in classified seams.
 /// `1.201`: refuse old gap evidence for calls erased by test-local empty macros.
 /// `1.202`: remove return-value seams for unit-tail statement blocks (#15459).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.202";
+/// `1.203`: compose with protected main through its `1.185` generation: typed
+/// boundary-input summaries, invocation-scope refusal, success-only failure
+/// seams, module-const readers and gated doctest limits (#12757, #12852,
+/// #13592, #14951, #15846). Main reused `1.162`..`1.185` with other meanings.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.203";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -991,7 +995,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.202";
 /// `0.202`: match full `1.200` for same-line owner inputs.
 /// `0.203`: match full `1.201` for test-local empty macros.
 /// `0.204`: match full `1.202` for unit-tail statement blocks.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.204";
+/// `0.205`: match full `1.203` for the protected-main composition.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.205";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1233,7 +1238,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.204";
 /// `0.202`: match full `1.200` for same-line owner inputs.
 /// `0.203`: match full `1.201` for test-local empty macros.
 /// `0.204`: match full `1.202` for unit-tail statement blocks.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.204";
+/// `0.205`: match full `1.203` for the protected-main composition.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.205";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1455,9 +1461,12 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and need a re-serialization of every entry to verify, so they are not read.
 /// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
+/// `1.64`: `env` and `option_env` join the trusted macro names, so the
+/// stored binding candidates may name them (#14116); `1.63` candidates
+/// cannot, and would hide a `macro_rules! env` from the binding scan.
 /// `1.63`: a unit owner's tail block of `;`-terminated statements is not
 /// probed as `return_value` (#15459); `1.62` facts still carry that shape.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.63";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.64";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5582,7 +5591,8 @@ mod tests {
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
         // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.63");
+        // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.64");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5776,7 +5786,7 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.202");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.203");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5922,8 +5932,8 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.204");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.204");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.205");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.205");
     }
 
     #[test]
@@ -6436,6 +6446,10 @@ mod tests {
             ("pre-test-local-empty-macro", "1.200", "0.202"),
             ("pre-same-line-owner-inputs", "1.199", "0.201"),
             ("pre-selected-cargo-target", "1.198", "0.200"),
+            // Protected main's last generation before this composition, and
+            // the import line's own predecessor.
+            ("protected-main-selected-cargo-target", "1.185", "0.187"),
+            ("pre-protected-main-composition", "1.202", "0.204"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {

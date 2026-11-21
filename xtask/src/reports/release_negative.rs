@@ -1525,6 +1525,10 @@ fn case_artifact_commitment_missing(env: &CaseEnv) -> Result<CaseExecution, Stri
     Ok(execution)
 }
 
+const DUPLICATE_COMMITMENT_REASON: &str = "artifact contains duplicate content_sha256 commitments";
+const FOREIGN_PRODUCER_DRIFT_REASON: &str =
+    "was produced by RIPR 0.0.0-corpus, but this consumer is RIPR";
+
 fn case_artifact_commitment_duplicate(env: &CaseEnv) -> Result<CaseExecution, String> {
     let mut execution = verify_case_execution(
         env,
@@ -1541,9 +1545,7 @@ fn case_artifact_commitment_duplicate(env: &CaseEnv) -> Result<CaseExecution, St
     fs::write(&path, mutated)
         .map_err(|err| format!("write mutated after artifact failed: {err}"))?;
     execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
-    execution.expected = Expectation::reject(
-        "is not a canonical repo-exposure artifact: duplicate field `content_sha256`",
-    );
+    execution.expected = Expectation::reject(DUPLICATE_COMMITMENT_REASON);
     execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
     Ok(execution)
 }
@@ -1654,7 +1656,10 @@ fn case_pair_producer_version_drift(env: &CaseEnv) -> Result<CaseExecution, Stri
         set_json_string(value, "/artifact/producer/version", "0.0.0-corpus")
     })?;
     execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
-    execution.expected = Expectation::reject("producer versions differ");
+    // #9632 fails closed on any foreign producer.version at single-artifact load
+    // time before pair comparison, so shifting after to 0.0.0-corpus is refused
+    // by the stronger foreign-producer gate.
+    execution.expected = Expectation::reject(FOREIGN_PRODUCER_DRIFT_REASON);
     execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
     Ok(execution)
 }
@@ -1941,6 +1946,34 @@ fn build_two_seam_commits_with_execution(
     Ok((before_two_seam, after_two_seam))
 }
 
+fn select_retained_loyalty_boundary_seam(verify_value: &Value) -> Result<&Value, String> {
+    let unchanged = verify_value
+        .get("unchanged_seams")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "verify document unchanged_seams is missing".to_string())?;
+    let unchanged_boundaries: Vec<&Value> = unchanged
+        .iter()
+        .filter(|seam| seam.get("seam_kind").and_then(Value::as_str) == Some("predicate_boundary"))
+        .collect();
+    if unchanged_boundaries.len() != 1 {
+        return Err(format!(
+            "two-seam control failed: expected exactly one retained predicate_boundary seam, got {}",
+            unchanged_boundaries.len()
+        ));
+    }
+    let retained = unchanged_boundaries[0];
+    if retained.get("seam_id").and_then(Value::as_str) == Some(BOUNDARY_GAP_SEAM_ID)
+        || retained.get("file").and_then(Value::as_str) != Some("src/lib.rs")
+        || retained.get("before").and_then(Value::as_str) != Some("weakly_gripped")
+        || retained.get("after").and_then(Value::as_str) != Some("weakly_gripped")
+    {
+        return Err(format!(
+            "two-seam control failed: the retained seam is not the unchanged loyalty seam: {retained}"
+        ));
+    }
+    Ok(retained)
+}
+
 fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, String> {
     // The receipt for the retained target must issue but stay `unchanged` —
     // movement on seam Y can never strengthen seam X.
@@ -1954,8 +1987,8 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
     )?;
     // Grip the producer output itself (#2824 review): the moved seam must be
     // the discounted_total boundary seam this fixture family pins, and the
-    // retained target must be the loyalty seam this case constructed — never
-    // `unchanged_seams.first()` on faith.
+    // retained target must be the loyalty boundary seam this case constructed —
+    // never `unchanged_seams.first()` on faith.
     let verify_value = read_json_value(&env.root.join(VERIFY_JSON))?;
     let changed = verify_value
         .get("changed_seams")
@@ -1976,26 +2009,7 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
             "two-seam control failed: the moved seam is not the discounted_total boundary seam: {moved}"
         ));
     }
-    let unchanged = verify_value
-        .get("unchanged_seams")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "verify document unchanged_seams is missing".to_string())?;
-    if unchanged.len() != 1 {
-        return Err(format!(
-            "two-seam control failed: expected exactly one retained seam, got {}",
-            unchanged.len()
-        ));
-    }
-    let retained = &unchanged[0];
-    if retained.get("seam_id").and_then(Value::as_str) == Some(BOUNDARY_GAP_SEAM_ID)
-        || retained.get("file").and_then(Value::as_str) != Some("src/lib.rs")
-        || retained.get("before").and_then(Value::as_str) != Some("weakly_gripped")
-        || retained.get("after").and_then(Value::as_str) != Some("weakly_gripped")
-    {
-        return Err(format!(
-            "two-seam control failed: the retained seam is not the unchanged loyalty seam: {retained}"
-        ));
-    }
+    let retained = select_retained_loyalty_boundary_seam(&verify_value)?;
     let retained_id = retained
         .get("seam_id")
         .and_then(Value::as_str)
@@ -3752,6 +3766,115 @@ mod tests {
                 return Err("qualified report still advertises stale legacy retention".to_string());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn retained_loyalty_boundary_selector_tolerates_unchanged_return_value_seams_and_rejects_ambiguity()
+    -> Result<(), String> {
+        let valid = json!({
+            "unchanged_seams": [
+                {
+                    "seam_id": "87947eedfbf6f795",
+                    "seam_kind": "return_value",
+                    "file": "src/lib.rs",
+                    "before": "strongly_gripped",
+                    "after": "strongly_gripped"
+                },
+                {
+                    "seam_id": "loyalty_boundary_seam",
+                    "seam_kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped"
+                },
+                {
+                    "seam_id": "loyalty_return_seam",
+                    "seam_kind": "return_value",
+                    "file": "src/lib.rs",
+                    "before": "strongly_gripped",
+                    "after": "strongly_gripped"
+                }
+            ]
+        });
+        let selected = select_retained_loyalty_boundary_seam(&valid)?;
+        assert_eq!(
+            selected.get("seam_id").and_then(Value::as_str),
+            Some("loyalty_boundary_seam")
+        );
+
+        // Negative control: two unchanged predicate_boundary seams must fail closed.
+        let ambiguous = json!({
+            "unchanged_seams": [
+                {
+                    "seam_id": "loyalty_boundary_seam",
+                    "seam_kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped"
+                },
+                {
+                    "seam_id": "second_boundary_seam",
+                    "seam_kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "before": "weakly_gripped",
+                    "after": "weakly_gripped"
+                }
+            ]
+        });
+        let Err(err) = select_retained_loyalty_boundary_seam(&ambiguous) else {
+            return Err("two unchanged predicate_boundary seams must fail closed".to_string());
+        };
+        assert!(
+            err.contains("expected exactly one retained predicate_boundary seam, got 2"),
+            "{err}"
+        );
+
+        // Negative control: moving the retained seam out of weakly_gripped must fail closed.
+        let strengthened = json!({
+            "unchanged_seams": [
+                {
+                    "seam_id": "loyalty_boundary_seam",
+                    "seam_kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "before": "strongly_gripped",
+                    "after": "strongly_gripped"
+                }
+            ]
+        });
+        let Err(err) = select_retained_loyalty_boundary_seam(&strengthened) else {
+            return Err("strongly_gripped retained seam must fail closed".to_string());
+        };
+        assert!(
+            err.contains("the retained seam is not the unchanged loyalty seam"),
+            "{err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_commitment_and_producer_drift_tokens_match_ripr_artifact_gate()
+    -> Result<(), String> {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no parent".to_string())?;
+        let artifact_src =
+            crate::read_text_lossy(&repo_root.join("crates/ripr/src/agent/artifact.rs"))?;
+        assert!(
+            artifact_src.contains(DUPLICATE_COMMITMENT_REASON),
+            "DUPLICATE_COMMITMENT_REASON must match ripr's ContentCommitmentRejection::Duplicate message"
+        );
+        assert!(
+            artifact_src.contains(
+                "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}"
+            ),
+            "FOREIGN_PRODUCER_DRIFT_REASON must match ripr's foreign_producer_refusal_with_schema format"
+        );
+        assert_eq!(
+            FOREIGN_PRODUCER_DRIFT_REASON,
+            "was produced by RIPR 0.0.0-corpus, but this consumer is RIPR",
+            "FOREIGN_PRODUCER_DRIFT_REASON must match the exact version-independent prefix for 0.0.0-corpus"
+        );
         Ok(())
     }
 }

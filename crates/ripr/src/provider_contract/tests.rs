@@ -933,6 +933,50 @@ fn diagnostics_require_identity_and_a_coherent_source_position() {
 }
 
 #[test]
+fn guarded_result_report_oracle_validates_only_at_its_canonical_spelling() {
+    use crate::domain::{OracleKind, TestEvidenceEntry, TestEvidenceSummary};
+
+    let report = TestEvidenceSummary::from_parts(
+        "seam-1",
+        vec![TestEvidenceEntry {
+            test_name: "rejects_unready_kind_with_exact_error_routing".into(),
+            file: "tests/messages.rs".into(),
+            line: 4,
+            oracle_kind: OracleKind::GuardedResultMatch.as_str().into(),
+            oracle_strength: "strong".into(),
+            relation_reason: "direct_owner_call".into(),
+            has_test_target: false,
+        }],
+        &[],
+    );
+    let mut summary = summary();
+    summary.related_tests = report.related_tests.into_iter().map(Into::into).collect();
+    summary.fingerprint = report.fingerprint;
+    summary.strongest_oracle = report.strongest_oracle;
+    let row = &summary.related_tests[0];
+    assert_eq!(
+        row.test_name,
+        "rejects_unready_kind_with_exact_error_routing"
+    );
+    assert_eq!(row.file, "tests/messages.rs");
+    assert_eq!(row.line, 4);
+    assert_eq!(row.oracle_kind, "guarded_result_match");
+    assert_eq!(row.oracle_strength, "strong");
+    assert_eq!(row.relation_reason, "direct_owner_call");
+    assert!(!row.has_test_target);
+    let mut captured = receipt();
+    captured.summary = Some(summary.clone());
+    assert_eq!(captured.validate(), Ok(()));
+
+    summary.related_tests[0].oracle_kind.push('s');
+    captured.summary = Some(summary);
+    assert_eq!(
+        error_code(captured.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+}
+
+#[test]
 fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
     let mut invalid_kind = receipt();
     if let Some(summary) = invalid_kind.summary.as_mut()

@@ -13533,6 +13533,27 @@ fn walked_parameter_refuses_an_empty_literal_argument() {
     }
 }
 
+/// #15277 review: a turbofish call reads its arguments like a plain call, so
+/// the empty-walk refusal still sees an empty literal through `count::<u8>`.
+#[test]
+fn walked_parameter_refuses_an_empty_literal_through_a_turbofish() {
+    let tail = "xs.iter().count()";
+    let lib = format!(
+        "pub fn count<T>(xs: &[T]) -> usize {{\n    {tail}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{}\n}}\n",
+        adaptor_test(
+            "        assert_eq!(count::<u8>(&[]), 0);\n        assert_eq!(count::<u8>(&[3, 4]), 2);"
+        )
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "count", tail);
+    assert!(pin.is_some(), "the turbofish walk must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(count::<u8>(&[3, 4]), 2);".to_string()]
+    );
+}
+
 /// #9444 review: the refusal also reads a call wrapped in a rendered or
 /// indexed comparison, a spaced method call, and leaves a field receiver
 /// or a rebound parameter alone.
@@ -14415,6 +14436,173 @@ fn prelude_rebound(refusal: Option<AssertionRefusal>) -> bool {
             AssertionContextRefusal::MacroBinding(_)
         ))
     )
+}
+
+/// #14116: an audited pass-through wrapper (`proptest!` through the audited
+/// prelude glob or its qualified path) pastes its arguments only into
+/// generated function bodies, so a trusted name its arguments mention is
+/// confined to the call's own text and no longer refuses a test elsewhere.
+/// Every other spelling, version, argument shape and local redefinition keeps
+/// the workspace-wide site.
+#[test]
+fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result<(), String> {
+    let proptest = "proptest = \"1\"\n";
+    let audited = lock_of(&[("proptest", "1.12.0", REGISTRY)]);
+    let at = |label: &str, lock: &str, sibling: &str| {
+        prelude_refusal(
+            &format!("pass-through-{label}"),
+            proptest,
+            Some(lock),
+            sibling,
+        )
+    };
+    let body = "#[test]\n    fn p(v in prop::collection::vec(0u8..3, 1..4)) {\n        prop_assert!(!v.is_empty());\n        assert_eq!(v.len(), v.len());\n    }";
+    let bare = format!("proptest! {{\n    {body}\n}}\n");
+    let glob = "use proptest::prelude::*;\n";
+    // Fixture premise: the qualified call mentions `assert_eq`, which
+    // refuses without the audited lock.
+    let qualified = format!("proptest::proptest! {{\n    {body}\n}}\n");
+    // Without the prelude glob, a qualified call names its nested wrapper by
+    // path too.
+    let qualified_body = body.replace("prop_assert!", "proptest::prop_assert!");
+    assert!(prelude_rebound(at(
+        "premise",
+        &lock_of(&[("proptest", "1.11.0", REGISTRY)]),
+        &qualified
+    )?));
+    for (label, sibling) in [
+        ("bare", format!("{glob}{bare}")),
+        (
+            "qualified",
+            format!("proptest::proptest! {{\n    {qualified_body}\n}}\n"),
+        ),
+        (
+            "external",
+            format!("::proptest::proptest! {{\n    {qualified_body}\n}}\n"),
+        ),
+        (
+            "no-op-redefinition",
+            format!(
+                "macro_rules! proptest {{ ($($t:tt)*) => {{}} }}\nproptest::proptest! {{\n    {qualified_body}\n}}\n"
+            ),
+        ),
+        ("container-glob", format!("{glob}use super::*;\n{bare}")),
+        ("qualified-with-prelude", format!("{glob}{qualified}")),
+        (
+            "inert-attributes",
+            format!(
+                "{glob}proptest! {{\n    #![proptest_config(ProptestConfig::with_cases(8))]\n    #[doc(hidden)]\n    {body}\n}}\n"
+            ),
+        ),
+        // Trusted calls nested in the confined arguments rebind nothing, so
+        // the fixpoint must not reopen what their own arguments mention.
+        (
+            "nested-trusted-calls",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(v in 0u8..3) {{ assert_eq!(vec![v], vec![v]); let _ = vec![assert_eq!(v, v)]; let _ = format!(\"{{}}\", matches!(v, 0)); prop_assert!(matches!(vec![assert_eq!(v, v)].len(), 1)); }} }}\n"
+            ),
+        ),
+    ] {
+        assert_eq!(at(label, &audited, &sibling)?, None, "{sibling}");
+    }
+    for (label, sibling) in [
+        ("no-glob", bare.clone()),
+        (
+            "definition-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ macro_rules! assert_eq {{ () => {{}} }} }} }}\n"
+            ),
+        ),
+        (
+            "module-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ mod m {{ pub use other::assert_eq; }} }} }}\n"
+            ),
+        ),
+        (
+            "nested-wrapper",
+            format!("{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ define!(assert_eq); }} }}\n"),
+        ),
+        (
+            "plain-import",
+            format!("use other::prop_assert;\n{glob}{bare}"),
+        ),
+        (
+            "local-redefinition",
+            format!("{glob}macro_rules! prop_assert {{ ($($t:tt)*) => {{ $($t)* }} }}\n{bare}"),
+        ),
+        ("inline-module", format!("{glob}mod inner {{\n{bare}}}\n")),
+        (
+            "block-glob",
+            format!("{glob}fn f() {{\n    use other::*;\n    {bare}}}\n"),
+        ),
+        ("item-macro", format!("{glob}make_imports!();\n{bare}")),
+        (
+            "pasting-redefinition",
+            "macro_rules! proptest { ($($t:tt)*) => { $($t)* } }\n".to_string(),
+        ),
+        (
+            "other-wrapper",
+            format!("other::proptest! {{\n    {body}\n}}\n"),
+        ),
+        // A renamed import binds `prop_assert` to another macro, which can
+        // paste its argument into an exported definition.
+        (
+            "aliased-wrapper",
+            format!(
+                "use other::helper as prop_assert;\n{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "aliased-wrapper-qualified-call",
+            "use other::helper as prop_assert;\nproptest::proptest! { #[test] fn p(x in 0u8..3) { prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        // A qualified outer call establishes nothing about a bare nested
+        // `prop_assert!` without the audited prelude glob.
+        (
+            "qualified-call-nested-wrapper-without-prelude",
+            "proptest::proptest! { #[test] fn p(x in 0u8..3) { prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        (
+            "foreign-nested-path",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ other::prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "use-in-arguments",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use other::helper as prop_assert; prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        // Procedural attributes may emit an exported definition beside the
+        // item they decorate.
+        (
+            "opaque-attribute",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ #[dep::define(assert_eq)] struct Marker; }} }}\n"
+            ),
+        ),
+        (
+            "derive-attribute",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ #[derive(Debug)] struct Marker; assert_eq!(x, x); }} }}\n"
+            ),
+        ),
+        (
+            "conditional-attribute",
+            format!(
+                "{glob}proptest! {{ #[cfg_attr(test, dep::define)] #[test] fn p(x in 0u8..3) {{ assert_eq!(x, x); }} }}\n"
+            ),
+        ),
+        ("imported-attribute", format!("use other::test;\n{glob}{bare}")),
+    ] {
+        assert!(
+            prelude_rebound(at(label, &audited, &sibling)?),
+            "{label}: {sibling}"
+        );
+    }
+    Ok(())
 }
 
 /// RIPR-SPEC-0369 (audited versions only): the glob keeps assertion credit
@@ -15591,6 +15779,46 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     assert_eq!(proofs(), before + 1, "a read-time proof is not repeated");
     let matches = StdRootedCalls::of(sources[3]);
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
+}
+
+/// #15277: a turbofish names the same function, so `doubled::<u8>(5)` and
+/// `s.apply::<u8>(4)` are the owner calls their plain spellings are. An
+/// unclosed turbofish, a path value without a call, anything chained after
+/// the call, a turbofish this reading refuses (fn-pointer or const-block
+/// arguments) and a turbofish call that mentions the name again in its
+/// arguments are no owner call.
+#[test]
+fn a_turbofish_call_has_the_plain_call_shape() {
+    assert!(matches!(
+        owner_call_shape("doubled::<u8>(5)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("doubled::<Vec<u8>>(v)", "doubled"),
+        Some(CallShape::Bare)
+    ));
+    assert!(matches!(
+        owner_call_shape("s.apply::<u8>(4)", "apply"),
+        Some(CallShape::Method("s"))
+    ));
+    for operand in [
+        "doubled::<u8(5)",
+        "doubled::<u8>",
+        "doubled::<u8>(5).min(3)",
+        "doubled::<u8> (5)",
+        "doubled::other(5)",
+        "doubled::<fn(u8) -> u8>(f)",
+        "doubled::<{ N + 1 }>(5)",
+        "doubled::<u8>(doubled(5))",
+    ] {
+        assert!(owner_call_shape(operand, "doubled").is_none(), "{operand}");
+    }
+    assert_eq!(
+        crate::analysis::extract::turbofish_len("::<u8>(5)"),
+        "::<u8>".len()
+    );
+    assert_eq!(crate::analysis::extract::turbofish_len("(5)"), 0);
+    assert_eq!(crate::analysis::extract::turbofish_len("::<u8(5)"), 0);
 }
 
 /// #15263: a test module that imports a standard macro at its own path

@@ -1393,9 +1393,9 @@ pub(super) mod tests {
         );
     }
 
-    // #7532: withholding as `static_unknown` reports the misses `reveal`
-    // recorded, not the `no_call_path` the `no_static_path` annotation wrote,
-    // and not none.
+    // The two parse functions leave both callers' paths to op unresolved.
+    // Withholding clears the file-only no_call_path, including for the
+    // assertion-free caller (#7532, #14808).
     #[test]
     fn given_withheld_helper_uniqueness_finding_then_rows_keep_reveal_misses() {
         let unasserted = test_calling("src/op.rs", "accepts_wildcard", "parse", "parse(\">=1.0\")");
@@ -1426,11 +1426,7 @@ pub(super) mod tests {
             rows,
             vec![
                 ("accepts_caret", Some(RelationReason::SameTestFile), None),
-                (
-                    "accepts_wildcard",
-                    Some(RelationReason::SameTestFile),
-                    Some(RelatedTestMiss::NoAssertion)
-                ),
+                ("accepts_wildcard", Some(RelationReason::SameTestFile), None),
             ]
         );
     }

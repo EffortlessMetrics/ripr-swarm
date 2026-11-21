@@ -12,6 +12,7 @@
 //! then stable file/name/line tie-breakers.
 
 mod boolean_boundary_pin;
+mod both_diff_versions;
 mod boundary_oracle_pairing;
 mod call_budget;
 mod claims_payload_pin;
@@ -29,6 +30,9 @@ pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
+pub(in crate::analysis) use both_diff_versions::{
+    baseline_owner, test_fails_on_both_diff_versions,
+};
 use local_operand_alias::boundary_local_operand_parameter_index;
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
@@ -39,7 +43,7 @@ pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
     change_is_invisible_to_every_assertion, every_owner_call_separates, fold_boolean_owner_call,
     fold_owner_body_at, owner_change_visibility, range_change_visibility,
-    return_seam_tail_reached_by_call,
+    return_seam_tail_reached_by_call, tuple_branch_reached,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -128,6 +132,9 @@ impl TestGripEvidence {
             crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved
                 | crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved
         ) {
+            if let Some(kind) = self.discriminate.static_limit_kind {
+                return kind == limit;
+            }
             return self
                 .discriminate
                 .summary
@@ -142,7 +149,12 @@ impl TestGripEvidence {
             &self.discriminate,
         ]
         .iter()
-        .any(|stage| stage.summary.contains(limit.as_str()))
+        .any(|stage| {
+            stage.static_limit_kind.map_or_else(
+                || stage.summary.contains(limit.as_str()),
+                |kind| kind == limit,
+            )
+        })
     }
 
     /// #11402: whether the changed push is followed only to a local the
@@ -164,6 +176,10 @@ const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 /// Per-related-test grip facts attached to a `TestGripEvidence`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RelatedTestGrip {
+    /// The full evidence pass confirmed this assertion-target relation belongs
+    /// to an indexed, non-function owner. Older records lack that authority.
+    #[serde(skip)]
+    pub(crate) assertion_targets_non_function: Option<bool>,
     pub(crate) test_name: String,
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
@@ -1270,6 +1286,9 @@ fn evidence_for_seam_with_context<'a>(
     // One admission per test file for this seam: the verdict depends only on
     // the (test file, seam file) pair, and a file's tests share it (#5361).
     let mut validated_targets: HashMap<&Path, bool> = HashMap::new();
+    let indexed_non_function_owner = owner_fn.is_none()
+        && super::rust_index::find_file_facts(context.index, seam.file())
+            .is_some_and(|facts| !facts.used_lexical_fallback);
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
         .zip(best_oracles)
@@ -1278,6 +1297,7 @@ fn evidence_for_seam_with_context<'a>(
                 seam,
                 indexed.test,
                 *reason,
+                indexed_non_function_owner,
                 context,
                 oracle,
                 &mut validated_targets,
@@ -3509,7 +3529,8 @@ fn activate_evidence(
         // call that hides the activation, or an integration test.
         StageState::Unknown
     };
-    let stage = StageEvidence::new(
+    let mut static_limit_kind = None;
+    let mut stage = StageEvidence::new(
         state,
         if !boundary_constant_unresolved
             && !boundary_local_unresolved
@@ -3540,6 +3561,7 @@ fn activate_evidence(
                 constant.1
             )
         } else if boundary_local_unresolved && !related.is_empty() {
+            static_limit_kind = Some(BOUNDARY_INPUT_LIMIT);
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if let Some(guards) = boundary_guard_unheld
             .as_ref()
@@ -3586,6 +3608,7 @@ fn activate_evidence(
                     .unwrap_or(seam.expression())
             )
         } else if boundary_activation_operands_unresolved && !related.is_empty() {
+            static_limit_kind = Some(BOUNDARY_INPUT_LIMIT);
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if withheld_activation_tests > 0 {
             // Every credited activation path is empty while at least one
@@ -3616,6 +3639,7 @@ fn activate_evidence(
             )
         },
     );
+    stage.static_limit_kind = static_limit_kind;
     missing.extend(owner_result_binding::missing_field_value_facts(
         seam,
         related,
@@ -5559,8 +5583,8 @@ fn discriminate_evidence(
             // credit, exactly as `best_oracle` grades it. Ranking the raw
             // strength here let a Strong oracle that misses the branch set
             // `best`, so the stage answered `Yes` while the record published
-            // `Weak` â€” the disagreement this PR exists to remove.
-            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
+            // `Weak` — the disagreement this PR exists to remove.
+            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn, index);
             let graded = if branch_withheld
                 && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             {
@@ -5719,94 +5743,6 @@ pub(in crate::analysis) fn test_has_contradicted_assertion(
     })
 }
 
-/// Reconstruct an owner only when the changed expression occurs exactly once.
-pub(in crate::analysis) fn baseline_owner(
-    owner: &FunctionSummary,
-    before: Option<&str>,
-    after: Option<&str>,
-) -> Option<FunctionSummary> {
-    let (Some(before), Some(after)) = (before, after) else {
-        return None;
-    };
-    if before == after || owner.body.matches(after).count() != 1 {
-        return None;
-    }
-    let mut baseline_owner = owner.clone();
-    baseline_owner.body =
-        crate::analysis::facts::SourceText::from(owner.body.as_str().replacen(after, before, 1));
-    Some(baseline_owner)
-}
-
-/// The diff-mode whole-test contradiction (#10980). A related test carries
-/// the diff surface's credit only when it passes SOMEWHERE: it is withheld
-/// when it fails on BOTH versions â€” some assertion row contradicts the
-/// candidate body's fold and some row contradicts the baseline body â€” so
-/// the test passes on neither version and cannot notice the change. A row
-/// written for the baseline that the candidate breaks is the discriminator
-/// itself (the exact-boundary witness of the agentic b4 journey), and a
-/// row the candidate satisfies is the change's own credit; neither
-/// withholds. The baseline body is the owner's current body with the
-/// probe's `after` expression replaced by `before` exactly once (the
-/// #8659/#10916 reconstruction); a probe without a baseline expression or
-/// a body that does not reconstruct keeps the test's credit â€” the fold
-/// can only withhold. The repo-seam rule above stays current-fold-only:
-/// there the current body is the shipped code and a contradicted row is
-/// a wrong-way discriminator, while on the diff surface the current body
-/// is the candidate under review.
-pub(in crate::analysis) fn test_fails_on_both_diff_versions(
-    test: &TestSummary,
-    owner: &FunctionSummary,
-    probe: &crate::domain::Probe,
-    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
-    workspace_complete: bool,
-    index: &RustIndex,
-) -> bool {
-    let Some(baseline_owner) =
-        baseline_owner(owner, probe.before.as_deref(), probe.after.as_deref())
-    else {
-        return false;
-    };
-    let mut fails_on_candidate = false;
-    let mut fails_on_base = false;
-    for oracle in &test.assertions {
-        if workspace_complete
-            && matches!(probe.family, crate::domain::ProbeFamily::Predicate)
-            && let Some((before, after)) =
-                crate::analysis::classify::boolean_projection_matches_versions(
-                    owner,
-                    &baseline_owner,
-                    test,
-                    oracle,
-                    index,
-                    pin_syntax,
-                )
-        {
-            fails_on_base |= !before;
-            fails_on_candidate |= !after;
-        }
-        if !fails_on_candidate
-            && matches!(
-                assertion_verdict_for_test(Some(owner), &oracle.text, test, index),
-                ExactValueVerdict::Contradicted { .. }
-            )
-        {
-            fails_on_candidate = true;
-        }
-        if !fails_on_base
-            && matches!(
-                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test, index),
-                ExactValueVerdict::Contradicted { .. }
-            )
-        {
-            fails_on_base = true;
-        }
-        if fails_on_candidate && fails_on_base {
-            return true;
-        }
-    }
-    false
-}
-
 /// Whether the whole-test contradiction has an established reading. The
 /// fold's premise is the written assertion's plain macro semantics, so a
 /// row the owner pin's reading refuses (a binding that may rebind the
@@ -5900,7 +5836,7 @@ fn oracle_discriminates_seam_in_test(
     // of the owner's result from a call that takes the other branch observes a
     // different value, so it is not strong grip for this seam. `None` (a shape
     // the fold cannot read) keeps today's credit.
-    if branch_gate_withholds(seam, oracle, test, owner) {
+    if branch_gate_withholds(seam, oracle, test, owner, index) {
         return false;
     }
     oracle_discriminates_seam(seam, oracle)
@@ -5930,6 +5866,7 @@ fn branch_gate_withholds(
     oracle: &OracleFact,
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
+    index: &RustIndex,
 ) -> bool {
     seam.kind() == SeamKind::ReturnValue
         && owner.is_some_and(|owner| {
@@ -5939,7 +5876,17 @@ fn branch_gate_withholds(
                 seam.display_line(),
                 &oracle.text,
                 test,
-            ) == Some(false)
+            )
+            .or_else(|| {
+                tuple_branch_reached(
+                    owner,
+                    seam.expression(),
+                    seam.display_line(),
+                    test,
+                    index,
+                    false,
+                )
+            }) == Some(false)
         })
 }
 
@@ -6783,6 +6730,7 @@ fn related_test_grip<'a>(
     seam: &RepoSeam,
     test: &'a TestSummary,
     reason: RelationReason,
+    indexed_non_function_owner: bool,
     context: &CompactGripContext<'_>,
     (kind, strength, contradiction): related_tests::BestOracle,
     validated_targets: &mut HashMap<&'a Path, bool>,
@@ -6810,6 +6758,8 @@ fn related_test_grip<'a>(
     };
     let confidence = reason.confidence();
     RelatedTestGrip {
+        assertion_targets_non_function: (reason == RelationReason::AssertionTargetAffinity)
+            .then_some(indexed_non_function_owner),
         test_name: test.name.clone(),
         file: test.file.clone(),
         line: test.start_line,
@@ -6931,7 +6881,7 @@ fn best_oracle(
         // return-value seam the branch gate refuses, or the record and the
         // discriminate stage disagree about the same assertion.
         let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
-            && branch_gate_withholds(seam, oracle, test, owner_fn)
+            && branch_gate_withholds(seam, oracle, test, owner_fn, index)
         {
             OracleStrength::Weak
         } else {
@@ -6984,14 +6934,22 @@ fn call_arguments(text: &str, callee: &str) -> Option<Vec<String>> {
 }
 
 fn named_call_open_paren_index(text: &str, callee: &str) -> Option<usize> {
+    named_call_span(text, callee).map(|(_, open)| open)
+}
+
+/// The byte offsets of the callee's name and of its call's `(` for the first
+/// call of `callee` in `text`. A turbofish call (`callee::<u8>(..)`) is the
+/// same call (#15277), so value and visibility gates read it like the plain
+/// spelling instead of leaving it not evaluable.
+fn named_call_span(text: &str, callee: &str) -> Option<(usize, usize)> {
     text.match_indices(callee).find_map(|(start, _)| {
         let before = text[..start].chars().next_back();
         if before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
             return None;
         }
-        let after_start = start + callee.len();
-        let after = &text[after_start..];
-        after.starts_with('(').then_some(after_start)
+        let after_name = start + callee.len();
+        let open = after_name + crate::analysis::extract::turbofish_len(&text[after_name..]);
+        text[open..].starts_with('(').then_some((start, open))
     })
 }
 

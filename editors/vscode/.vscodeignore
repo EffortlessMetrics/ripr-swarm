@@ -1,3 +1,7 @@
+# No server/** entry: no bundled server directory ships today, so the
+# current VSIX contains no server binary. The resolver's bundled path
+# (server/<target>/) is dormant (#2085); if future platform VSIXs ship
+# one (#1443 / #1624), that tree must stay packaged, not ignored.
 src/**
 test/**
 scripts/**

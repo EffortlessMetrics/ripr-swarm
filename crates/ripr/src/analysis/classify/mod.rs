@@ -31,6 +31,7 @@ mod field_reach;
 mod flow;
 mod framework_oracle;
 mod gap_admission;
+mod gated_doctest;
 mod helper_transfer;
 mod hop_polling;
 mod implicit_effect;
@@ -147,7 +148,7 @@ pub(in crate::analysis) use effect_carrier::{
     successful_push_call,
 };
 pub(in crate::analysis) use element_field_pin::{
-    drop_is_plain_in_closed_sources, observes_returned_array_value,
+    drop_is_plain, drop_is_plain_in_closed_sources, observes_returned_array_value,
     observes_returned_element_field, returned_array_construction_plain,
     workspace_has_visible_non_plain_drop,
 };
@@ -177,6 +178,7 @@ pub(in crate::analysis) use gap_admission::{
 pub(in crate::analysis) use gap_admission::{
     withhold_read_limited_workspace_gap, withhold_truncated_discovery_gap,
 };
+pub(in crate::analysis) use gated_doctest::withhold_gated_doctest_gap;
 pub(in crate::analysis) use helper_transfer::{
     ARITHMETIC_FIELD_LIMIT_PREFIX, FieldProjectionReceipt, field_projection_receipt,
     transformed_field_arithmetic_limitation,
@@ -189,7 +191,7 @@ pub(in crate::analysis) use helper_transfer::{
     free_mapped_entry_result_identity, helper_only_reach, hop_reach_keeps_weak_oracle_gap,
     method_entry_result_identity, receivers_are_entry_type, resolve_chain,
     resolve_repo_boundary_chain, returned_ledger, returned_ledger_caller_is_observed,
-    selected_inherent_calls,
+    selected_inherent_calls, single_tuple_field_type,
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
@@ -221,12 +223,14 @@ pub(in crate::analysis) use owner_pin::{
     assertion_has_independent_record_collection, boolean_projection_matches_versions,
     claims_payload_eq_candidates, current_unwrapped_error_binding, direct_call_name,
     equality_condition_operands, expected_operand_value, function_declaration_is_async,
-    helper_pins_owner_call, mapped_boolean_assertion, owner_builds_declared_error_variant,
-    pin_scope_needs, primitive_bool_projected_result_identity, returned_closure_pin_required,
-    selected_unit_error_return, targeted_free_call_reaches_owner, targeted_name_is_alias,
-    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    helper_pins_owner_call, mapped_boolean_assertion, matches_owner_ok,
+    owner_builds_declared_error_variant, pin_scope_needs, primitive_bool_projected_result_identity,
+    returned_closure_pin_required, selected_unit_error_return, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
-pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
+pub(in crate::analysis) use owner_pin::{
+    FallibleCheckReceipt, derived_fields_compare_by_value, fallible_check_receipt,
+};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use owner_value_sink::{
     bool_field_assertion, owner_record_read_masked_anywhere, use_may_rebind_owner,

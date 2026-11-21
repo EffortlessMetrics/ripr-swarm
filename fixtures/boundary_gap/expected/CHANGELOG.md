@@ -14,6 +14,11 @@ Calls erased by test-local empty macros yield no observed input. The editor reje
 a portable gap ledger that predates this distinction.
 The unchanged-attempt fixture retains its weak grip. Its portable reports and
 dependent verification and receipt hashes were regenerated from the 1.201 producer.
+## Pending — explicit Cargo harness path identity (#15846)
+
+Classified cache generation 1.185 binds a harness flag to the selected Cargo
+target. The portable unchanged-attempt pair and its verification and receipt
+commitments were refreshed. The pair retains its original seam classifications.
 
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 

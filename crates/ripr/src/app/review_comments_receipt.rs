@@ -179,7 +179,7 @@ impl ReviewCommentsReceiptRun {
         }
     }
 
-    pub fn failed(&mut self, active_phase: &str, error: &str) {
+    pub fn failed(&mut self, active_phase: &str, category: &str, error: &str) {
         self.receipt.status = "failed";
         self.receipt.active_phase = Some(active_phase.to_string());
         let repair_route = if error.trim().is_empty() {
@@ -190,7 +190,7 @@ impl ReviewCommentsReceiptRun {
         self.receipt
             .limitations
             .push(ReviewCommentsReceiptLimitation {
-                category: "analysis_failed".to_string(),
+                category: category.to_string(),
                 repair_route,
             });
         self.terminalize_non_claims();
@@ -485,7 +485,7 @@ mod tests {
         // A failure in the same phase is not a timeout.
         let mut failed = sample_receipt();
         failed.phase("language_facts", "canonical_analysis");
-        failed.failed("canonical_analysis", "read failed");
+        failed.failed("canonical_analysis", "analysis_failed", "read failed");
         assert!(
             !failed
                 .non_claims
@@ -662,7 +662,11 @@ mod tests {
 
         let failure_path = dir.join("failed.json");
         let mut failure = sample_receipt();
-        failure.failed("canonical_comparison", "canonical comparison failed");
+        failure.failed(
+            "canonical_comparison",
+            "analysis_failed",
+            "canonical comparison failed",
+        );
         assert_eq!(failure.status, "failed");
         assert_eq!(
             failure.active_phase.as_deref(),

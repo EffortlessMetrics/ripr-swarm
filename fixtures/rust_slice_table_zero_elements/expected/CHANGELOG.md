@@ -352,6 +352,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0224: report no established path for an assertion-free file-proximity row (#14808).
 
 Command:
 `cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`

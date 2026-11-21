@@ -209,6 +209,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0159 The test calls the sibling module entry. Neither the predicate nor its returned comparison has a resolved owner argument.
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`

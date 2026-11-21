@@ -4282,6 +4282,36 @@ mod tests {
     }
 
     #[test]
+    fn bless_copies_a_sarif_only_change() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("bless-sarif-only")?;
+        let unchanged = ["check.json", "human.txt", "human-full.txt", "github.txt"];
+        let read = |surface: &str| fs::read(expected.join(surface)).map_err(|err| err.to_string());
+        let before = unchanged
+            .iter()
+            .map(|name| read(name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sarif = br#"{"version":"2.1.0","runs":[]}"#;
+        fs::write(run.actual_dir.join("sarif.json"), sarif).map_err(|err| err.to_string())?;
+
+        let applied =
+            apply_bless_outputs_for_host(&expected, &run, &run.name, "SARIF change", false)?;
+        assert_eq!(read("sarif.json")?, sarif);
+        assert_eq!(applied.changed, [expected.join("sarif.json")]);
+        for (surface, original) in unchanged.iter().zip(before) {
+            assert_eq!(read(surface)?, original, "{surface}");
+        }
+        let changelog = fs::read_to_string(&applied.changelog).map_err(|err| err.to_string())?;
+        assert_eq!(changelog.matches("## Pending").count(), 1, "{changelog}");
+        assert_eq!(
+            changelog.split_once("\nUpdated:\n").map(|(_, files)| files),
+            Some("- `expected/sarif.json`\n")
+        );
+        let report = bless_report_body(&dir, "SARIF change", &run, &applied);
+        assert!(!report.contains("No change:"), "{report}");
+        fs::remove_dir_all(dir).map_err(|err| err.to_string())
+    }
+
+    #[test]
     fn bless_gate_equivalent_windows_output_preserves_canonical_bytes() -> Result<(), String> {
         let (dir, expected, run) = parity_bless_fixture("parity-windows-noop")?;
         let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";

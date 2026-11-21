@@ -1546,7 +1546,25 @@ fn run_pipeline_for_diff_text_with_language_config(
             .sample
             .push(file.path.to_string_lossy().replace('\\', "/"));
     }
-    if out_of_scope.count > 0 && changed_files.is_empty() {
+    // #15268: a scoped path the parser refused (edited in two sections of a
+    // patch series) did match the scope; its located limitation, not a
+    // "matched nothing" error, is the answer.
+    // #15268: the parser read the input as a diff and refused named files
+    // (in any language), so an empty result is never the garbage reading.
+    let parser_refused_named_files = parsed_diff
+        .limitations
+        .iter()
+        .any(names_parsed_file_limitation);
+    let refused_in_scope = parsed_diff.limitations.iter().any(|limitation| {
+        names_parsed_file_limitation(limitation)
+            && limitation.path.as_deref().is_some_and(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path)
+                    && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+                    && diff_limitation_in_scope(limitation, languages)
+            })
+    });
+    if out_of_scope.count > 0 && changed_files.is_empty() && !refused_in_scope {
         return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
     }
     // #10796: the scoped intake completed — publish the adapter-facing scoped
@@ -1558,12 +1576,13 @@ fn run_pipeline_for_diff_text_with_language_config(
         .into_iter()
         .filter(|limitation| diff_limitation_in_scope(limitation, languages))
         // A per-file parser limitation (combined hunk, conflict markers) on a
-        // file the operator scoped out must not invalidate the files kept.
+        // file the operator scoped out must not invalidate the files kept,
+        // and one on ripr's own artifacts (#7663) is not user scope either.
         .filter(|limitation| {
-            limitation
-                .path
-                .as_deref()
-                .is_none_or(|path| diff_scope.admits(std::path::Path::new(path)))
+            limitation.path.as_deref().is_none_or(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path) && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+            })
         })
         .collect::<Vec<_>>();
     if out_of_scope.count > 0 {
@@ -2273,6 +2292,10 @@ fn run_pipeline_for_diff_text_with_language_config(
             .iter()
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
+        // A parser limitation that names a file (#15268: a path edited in
+        // two sections of a patch series) already says why nothing was read;
+        // the generic "verify the diff is valid" guess would contradict it.
+        && !parser_refused_named_files
     {
         disclose!(
             "{}",
@@ -2307,6 +2330,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         && deleted_file_count == 0
         && submodule_file_count == 0
         && limitations.len() == supplied_evidence_limitations
+        && !parser_refused_named_files
     {
         // The schema token stays `malformed_diff` (a new limitation kind is a
         // schema change); a well-formed diff with only binary or mode changes
@@ -3726,6 +3750,12 @@ fn is_binary_sentinel(line: &str) -> bool {
     };
     rest.match_indices(" and ")
         .any(|(at, sep)| at > 0 && at + sep.len() < rest.len())
+}
+
+/// A diff-parse limitation located at a file: the parser read the input as
+/// a diff and refused named content, so the input is not garbage.
+pub(crate) fn names_parsed_file_limitation(limitation: &AnalysisLimitation) -> bool {
+    limitation.producer_stage == AnalysisStage::DiffParse && limitation.path.is_some()
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
@@ -9755,6 +9785,85 @@ index 0000000..1111111 100644
             detail.contains(&format!("and {} more", FLOODED_VENDOR_FILES - 3)),
             "{detail}"
         );
+        Ok(())
+    }
+
+    /// #15268: `src/lib.rs` edited in two sections of a series, `src/big.rs` once.
+    fn repeated_lib_series() -> String {
+        let edit = |hunk: &str| {
+            format!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n{hunk}"
+            )
+        };
+        // `git log -p` output: a commit header separates the two edits.
+        format!(
+            "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -1 +1 @@\n-pub fn big_0() -> u32 {{ 1 }}\n+pub fn big_0() -> u32 {{ 0 }}\n",
+            edit(
+                "@@ -1 +1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n"
+            ),
+            edit("@@ -0,0 +1 @@\n+// added later\n"),
+        )
+    }
+
+    #[test]
+    fn a_scope_keeping_only_a_refused_series_file_reports_its_limitation() -> Result<(), String> {
+        let result = run_scoped("series-scope", &["src/lib.rs"], &[], &repeated_lib_series())?
+            .map_err(|error| {
+                format!("a matched but refused path must not read as no match: {error}")
+            })?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{outcome:?}");
+        let refused = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                    && limitation.recovery.kind == AnalysisRecoveryKind::UseTwoWayDiff
+            })
+            .ok_or("the refused series file must be named")?;
+        assert_eq!(refused.path.as_deref(), Some("src/lib.rs"));
+        // Control: a scope that truly matches nothing is still refused.
+        let refusal = run_scoped(
+            "series-scope-miss",
+            &["nowhere"],
+            &[],
+            &repeated_lib_series(),
+        )?
+        .err()
+        .ok_or("a scope matching nothing must be refused")?;
+        assert!(
+            refusal.starts_with("scope_filter_matched_nothing:"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_series_editing_artifacts_or_docs_twice_is_not_a_limitation() -> Result<(), String> {
+        // #15268 review: only an analyzed-language path is refused. ripr's own
+        // reports (#7663) and a README edited in two commits stay out of scope.
+        for path in ["target/ripr/pilot/pilot-summary.md", "README.md"] {
+            let section = |hunk: &str| {
+                format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}")
+            };
+            let diff = format!(
+                "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}",
+                section("@@ -1 +1 @@\n-old\n+new\n"),
+                section("@@ -0,0 +1 @@\n+added\n")
+            );
+            let result = run_scoped("series-nonsource", &[], &[], &diff)?
+                .map_err(|error| format!("{path}: {error}"))?;
+            let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+            assert!(outcome.kind.is_complete(), "{path}: {outcome:?}");
+            assert!(
+                !outcome
+                    .limitations
+                    .iter()
+                    .any(|limitation| limitation.recovery.kind
+                        == AnalysisRecoveryKind::UseTwoWayDiff),
+                "{path}: {outcome:?}"
+            );
+        }
         Ok(())
     }
 

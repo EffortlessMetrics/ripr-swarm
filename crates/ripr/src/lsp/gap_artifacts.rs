@@ -2499,7 +2499,9 @@ fn test_runner_arguments<'a>(words: &'a [&'a str]) -> Option<&'a [&'a str]> {
         | ["pnpm", "exec", binary @ ..]
         | ["bun", "run", binary @ ..]
         | ["yarn", binary @ ..] => match binary {
-            ["jest" | "ava", arguments @ ..] | ["vitest", "run", arguments @ ..] => Some(arguments),
+            ["jest" | "ava" | "mocha", arguments @ ..] | ["vitest", "run", arguments @ ..] => {
+                Some(arguments)
+            }
             _ => None,
         },
         _ => None,
@@ -2609,6 +2611,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::TypescriptWorkspaceReadLimited,
         StaticLimitKind::RustFutureNeverPolled,
         StaticLimitKind::ActivationBoundaryInputUnresolved,
+        StaticLimitKind::RustGatedDoctestUnread,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -4641,6 +4644,8 @@ mod tests {
             "pnpm exec vitest run src/util.test.ts",
             "yarn jest tests/math.test.ts",
             "yarn ava tests/math.test.ts",
+            "npx --no-install mocha test/age.spec.js",
+            "yarn mocha test/age.spec.js",
             "bun run vitest run src/foo.test.ts",
             "bun test tests/math.test.ts",
             "node --test tests/math.test.ts",

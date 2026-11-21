@@ -30,7 +30,7 @@ pub(crate) fn extract_assertions_in(
     // #14810: a local the body binds only to an unfilled placeholder macro
     // (`let expected: i32 = todo!(..)`) pins no expected value, so an
     // assertion compared with it earns no strong credit.
-    let placeholder_vars = placeholder_bound_variables(body);
+    let scope = super::PlaceholderScope::from_body(body);
     // #3709: the dedicated guarded-Result-match scanner owns every recognized
     // `match <direct-call> { Ok.. Err.. }` statement. Skipping its start lines
     // keeps the generic statement joiner from swallowing the whole match block
@@ -63,7 +63,7 @@ pub(crate) fn extract_assertions_in(
                 &trimmed,
                 lines.clone(),
                 start_line + offset,
-                &placeholder_vars,
+                &scope.on_line(body, offset, &trimmed),
             )
         {
             out.push(oracle);
@@ -133,8 +133,11 @@ pub(crate) fn extract_assertions_in(
                 classification.kind = OracleKind::ExactErrorVariant;
                 classification.strength = OracleStrength::Strong;
             }
-            let classification =
-                without_unfilled_expected(classification, &trimmed, &placeholder_vars);
+            let classification = without_unfilled_expected(
+                classification,
+                &trimmed,
+                &scope.on_line(body, fact_offset + preceding_lines, &trimmed),
+            );
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
                 line: start_line + fact_offset + preceding_lines,
@@ -161,7 +164,7 @@ pub(crate) fn extract_assertions_in(
 pub(crate) fn err_return_guard_oracles(
     body: &str,
     start_line: usize,
-    placeholders: &std::collections::BTreeSet<String>,
+    scope: &super::PlaceholderScope,
 ) -> Vec<OracleFact> {
     let mut out = Vec::new();
     let mut lines = body.lines().enumerate().peekable();
@@ -169,8 +172,12 @@ pub(crate) fn err_return_guard_oracles(
         let mut trimmed = line.trim().to_string();
         let guard_line = trimmed.starts_with("if ") || trimmed.starts_with("if(");
         if guard_line
-            && let Some(oracle) =
-                err_return_guard_oracle(&mut trimmed, &mut lines, start_line + offset, placeholders)
+            && let Some(oracle) = err_return_guard_oracle(
+                &mut trimmed,
+                &mut lines,
+                start_line + offset,
+                &scope.on_line(body, offset, line.trim()),
+            )
         {
             out.push(oracle);
         }
@@ -3692,17 +3699,39 @@ mod spec_0106_scan_tests {
     }
 
     #[test]
-    fn unwrap_err_binding_survives_a_bracket_inside_a_string() {
-        // #14810 round 3: a `(` or `)` inside a string literal must not raise
-        // the depth and swallow the assertion that follows the `;`.
-        for arg in [r#""(""#, r#"")""#] {
-            let body = format!(
-                "\n            let err = parse({arg}).unwrap_err();\n            assert_eq!(err, E::Unclosed);\n        "
-            );
+    fn unwrap_err_binding_survives_brackets_in_strings_and_comments() {
+        for receiver in [
+            r#"parse("(")"#,
+            r#"parse(")")"#,
+            r#"parse("{")"#,
+            r#"parse("}")"#,
+            r#"parse("x") /* ( */ "#,
+            r#"parse("x")"#,
+        ] {
+            let body = format!("let err = {receiver}.unwrap_err(); assert_eq!(err, E::Unclosed);");
             let vars = unwrap_err_bound_variables(&body);
             assert!(
                 vars.contains("err"),
-                "a bracket inside a string argument must not hide the unwrap_err binding: {vars:?}"
+                "expected an unwrap_err binding for {receiver}: {vars:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unwrap_err_binding_distinguishes_square_brackets_in_strings_from_syntax() {
+        for (quoted, bare) in [(r#""[""#, "["), (r#""]""#, "]")] {
+            let body =
+                |arg| format!("let err = parse({arg}).unwrap_err(); assert_eq!(err, E::Unclosed);");
+            let quoted_vars = unwrap_err_bound_variables(&body(quoted));
+            assert!(
+                quoted_vars.contains("err"),
+                "a square bracket in the string argument {quoted} must preserve the binding: {quoted_vars:?}"
+            );
+
+            let bare_vars = unwrap_err_bound_variables(&body(bare));
+            assert!(
+                bare_vars.is_empty(),
+                "unmatched square bracket syntax {bare} must leave the binding unrecognized: {bare_vars:?}"
             );
         }
     }
@@ -3719,13 +3748,17 @@ mod spec_0106_scan_tests {
             assert_eq!(err, E::Unclosed);
         "#;
         let facts = extract_assertions(body, 1);
-        let got = facts.iter().find(|f| f.text.contains("assert_eq!"));
-        assert!(got.is_some(), "must find the assert_eq! fact");
+        let actual: Vec<_> = facts
+            .iter()
+            .map(|fact| (fact.line, fact.text.as_str(), &fact.kind))
+            .collect();
         assert_eq!(
-            got.map(|f| f.kind.clone()),
-            Some(OracleKind::ExactErrorVariant),
-            "assert_eq!(err, E::Unclosed) on an unwrap_err binding must be \
-             ExactErrorVariant even when an argument holds an unmatched bracket"
+            actual,
+            [(
+                3,
+                "assert_eq!(err, E::Unclosed);",
+                &OracleKind::ExactErrorVariant
+            )]
         );
     }
 
@@ -6157,6 +6190,56 @@ fn price_boundary_discriminator() {
     }
 
     #[test]
+    fn raw_literal_braces_only_read_in_format_arguments() -> Result<(), String> {
+        for (operand, reads) in [
+            (r##"r#"{"expected":1}"#"##, false),
+            (r#"r"{expected}""#, false),
+            (r#"format!("{expected}")"#, true),
+            (r#"format!("{{expected}}")"#, false),
+            (r#"format!(r"{expected}")"#, true),
+            (r#"format!("{}", r"{expected}")"#, false),
+            (r#"format!("{}", expected)"#, true),
+        ] {
+            let body = format!(
+                "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
+            );
+            let fact = only_fact(&body)?;
+            if reads {
+                assert_eq!(
+                    (fact.kind, fact.strength),
+                    (OracleKind::Unknown, OracleStrength::Unknown),
+                    "{operand}"
+                );
+            } else {
+                assert_eq!(fact.strength, OracleStrength::Strong, "{operand}");
+                if operand.starts_with('r') {
+                    assert_eq!(fact.kind, OracleKind::ExactValue, "{operand}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn macro_operands_read_templates_and_evaluated_values() {
+        let placeholders = std::collections::BTreeSet::from([String::from("expected")]);
+        for (operand, reads) in [
+            (r#"write!(sink(), r"{expected}")"#, true),
+            (r#"write!(sink(), "{}", r"{expected}")"#, false),
+            (r#"write!(sink(), "{}", expected)"#, true),
+            (r#"concat!(r"{expected}")"#, false),
+            (r#"render!("{expected}")"#, true),
+        ] {
+            let assertion = format!("assert_eq!(result(), {operand})");
+            assert_eq!(
+                super::super::classify::assertion_reads_placeholder(&assertion, &placeholders),
+                reads,
+                "{operand}"
+            );
+        }
+    }
+
+    #[test]
     fn a_placeholder_read_through_a_format_interpolation_still_lowers() -> Result<(), String> {
         // #14810 round 3: `format!("{expected}")` reads the placeholder, so
         // masking the literal must not hide it.
@@ -6512,7 +6595,8 @@ fn boundary() -> Result<(), String> {{
 
     fn guard_readings(body: &str) -> Result<[(OracleKind, OracleStrength); 2], String> {
         let lexical = only_fact(body)?;
-        let parser = err_return_guard_oracles(body, 1, &placeholder_bound_variables(body));
+        let parser =
+            err_return_guard_oracles(body, 1, &super::super::PlaceholderScope::from_body(body));
         let [parser] = parser.as_slice() else {
             return Err(format!(
                 "expected one parser-path guard oracle, got {parser:?}"
@@ -6615,7 +6699,11 @@ fn t() {
                 "fn t() -> Result<(), String> {{\n    let expected: i32 = todo!(\"x\");\n    {statement}\n    Ok(())\n}}\n"
             );
             let lexical = only_fact(&body)?;
-            let parser = err_return_guard_oracles(&body, 1, &placeholder_bound_variables(&body));
+            let parser = err_return_guard_oracles(
+                &body,
+                1,
+                &super::super::PlaceholderScope::from_body(&body),
+            );
             if statement.starts_with("if ") {
                 let [parser] = parser.as_slice() else {
                     return Err(format!(

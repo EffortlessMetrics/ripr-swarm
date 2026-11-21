@@ -157,7 +157,9 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      a non-string `state`, `confidence` or `summary`) is a violation rather than
      an empty read that compares equal on both sides. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
-     regenerable subject fails (#12144).
+     regenerable subject fails (#12144). A committed capture selected for
+     regeneration must carry `source_subject.corpus.cache_schema_version` so
+     the gate can decide whether to judge its summaries (#14765).
      Every committed report under `reports/` that carries
      `source_subject.corpus.cache_schema_version` must record the analyzer's
      current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
@@ -661,6 +663,16 @@ ripr check --perl-facts fixtures/evidence-promotion-honesty-corpus/perl-packets/
 Run it in a checkout whose diff against `origin/main` is non-empty. On a
 clean checkout the command exits 2 with "analysis outcome NoScope requires
 every count to be zero". This note stands until that defect is fixed.
+
+The `perl_return_without_concrete_discriminator` case uses the existing
+`fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json`
+packet with `patches/14842-perl-return.diff`. Its report retains the return
+finding and advisory guidance. Capture it with the Perl-enabled command above
+using `--diff` for that patch, then make the checkout paths in navigation
+commands repository-relative. The companion fixture test
+`perl_actionability_proptest_fixture_is_actionable` exercises the same
+unmodified packet in the private strict mapper and checks both concrete
+discriminator channels as positive controls.
 
 The packet is the input (the tempting wrong relation or boundary is encoded
 there); the report is the byte-pinned consumer output the gate enforces.

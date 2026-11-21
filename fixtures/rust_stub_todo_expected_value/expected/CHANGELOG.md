@@ -51,9 +51,13 @@ Updated:
 
 Reason:
 RIPR-SPEC-0231 For rust_stub_todo_expected_value, keep the repair advice aligned with the observed seam, owner and boundary.
+RIPR-SPEC-0231 rule 11: raw format capture at the boundary reads the unfilled expected local (#14897).
 
 Command:
 `cargo xtask goldens bless rust_stub_todo_expected_value --reason "..."`
 
 Updated:
 - `expected/human.txt`
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

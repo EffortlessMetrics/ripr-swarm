@@ -2425,7 +2425,17 @@ pub(crate) fn owner_call_relation(
     if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return None;
     }
-    if contains_call_name(&test.body_text, &owner.name)
+    let observes_generic_call = || {
+        test.assertions.iter().any(|assertion| {
+            assertion
+                .observed_expression
+                .as_deref()
+                .is_some_and(|observed| {
+                    super::classifier::generic_owner_argument_list(observed, &owner.name).is_some()
+                })
+        })
+    };
+    if (contains_call_name(&test.body_text, &owner.name) || observes_generic_call())
         && !owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root)
         // Shadow guard (#4102): a test body that declares its own
         // `function <owner>(...)` / `const <owner> = ...` (or a destructured
@@ -5261,6 +5271,12 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     })
 }
 
+/// Call or JSX render of a bare identifier from the test's own file.
+fn contains_call_or_jsx_name(test: &TypeScriptTest, name: &str) -> bool {
+    contains_call_name(&test.body_text, name)
+        || super::jsx_render::contains_jsx_element_name(&test.file, &test.body_text, name)
+}
+
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
     let prefix = &body_text[..idx];
     let Some(ch) = prefix.chars().next_back() else {
@@ -5492,7 +5508,7 @@ fn import_references_owner_call(
             || (imported == "default"
                 && owner.exported_as_default
                 && !owner.commonjs_whole_function)
-    }) && contains_call_name(body_text, &import.local)
+    }) && contains_call_or_jsx_name(test, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the
         // shadow, not the owner.

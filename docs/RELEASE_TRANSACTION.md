@@ -30,6 +30,37 @@ source merge or accepted RC placement syntax establishes none of the later
 states. The dated observation is not an activation packet; re-read the live
 #2379/#1606 rulings and exact public ref/release inventory before proceeding.
 
+## Canonical `#2379` public → swarm → public order
+
+For `0.11.0`, `#2379` establishes the **public → swarm → public** release order
+(detailed per-stage ownership lives in
+[the 0.11.0 cut checklist](releases/0.11.0-cut-checklist.md#02-phase-vocabulary)):
+
+1. **Inbound public → swarm integration** (`ripr#1627` →
+   `ripr#1768`/`#1769`/`#1770`, reconciled by `ripr#1762`): admit an executable
+   history-preserving route, preserve public `P` in `ripr-swarm`, and land
+   integration repairs before final swarm convergence. The older sequence that
+   postponed the entire source sync until after the swarm cut is historical.
+2. **Pre-cut product convergence, freeze, audit/denominator, pin, and
+   qualification** in `ripr-swarm` (sections 1–3 below): finish selected
+   product work (`#2766`), freeze the combined cut (`#5114`/`#5391`), complete
+   pre-pin evidence (`#3807` → `#2766`/`#2768`), push the immutable swarm pin
+   (`#1609`), and qualify that exact candidate (`#2769`).
+3. **Qualification admission and guarded public return** (section 4 below):
+   `ripr#1771` admits the exact qualification and `ripr#1772`/`#1773` construct
+   and merge the guarded return to `EffortlessMetrics/ripr`.
+4. **Final source release tail and ship packet** (sections 5–6 below):
+   `ripr#1466`/`#1467` → `#1578`/`#1468`/`#1469` establish the integrated
+   source artifacts and immutable ship-or-hold packet.
+5. **Public RC and stable publication** (section 6 below):
+   `ripr#1632`–`#1637` govern the exact authorized GitHub-only RC, independent
+   verification/cohort, and `stable_ready_same_candidate` decision; separate
+   per-channel `#1470` authorization governs stable publication
+   (`ripr#1479`/`#1480`) and independent public verification (`ripr#1481`).
+6. **Post-release back-sync `K` and rolling restoration** (sections 7–8 below):
+   `#3419` → `#3313` → `#3420` run only after terminal `#1481` public
+   verification.
+
 ## Authority and command labels
 
 `EffortlessMetrics/ripr-swarm` is development authority and preserves every
@@ -181,6 +212,13 @@ restated here only as pointers; their semantics stay with their owners:
 
 ## 1. Reset truth and pre-cut queue observations
 
+Confirm that inbound public → swarm integration (`ripr#1627` →
+`ripr#1768`/`#1769`/`#1770`, reconciled by `ripr#1762`) has already landed in
+`ripr-swarm` before finalizing the pre-cut denominator and advancing to
+section 2 (`W` / `#1609`). If public `P` advances before the guarded return in
+section 4, import the new public head into `ripr-swarm`, review the effects,
+and renew affected proof before pinning or returning.
+
 Use fresh checkouts. Ordinary source-repository development PRs are drift:
 redirect them to swarm or classify them as release/security work before the
 source hold. Record each remaining PR as included, deferred, superseded, or
@@ -231,7 +269,7 @@ set -euo pipefail
 # [READ-ONLY] repo=packet+source+swarm; load pins and reject drift
 SOURCE_OBSERVED_HEAD="$(tr -d '\r\n' < "$PACKET_ROOT/source-observed-head")"
 SWARM_PARENT="$(tr -d '\r\n' < "$PACKET_ROOT/SWARM_PARENT")"
-# SOURCE_OBSERVED_HEAD is observation only; source #1769 binds SOURCE_PARENT later.
+# SOURCE_OBSERVED_HEAD is observation only; public-return admission (ripr#1771 under ripr#1627/#1889) binds SOURCE_PARENT after swarm qualification.
 test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$SWARM_PARENT"
 ```
 
@@ -258,11 +296,16 @@ gh pr list --repo EffortlessMetrics/ripr --state open --limit 100 --json number,
 jq -n --arg observed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg source_observed_head "$SOURCE_OBSERVED_HEAD" --arg swarm_parent "$SWARM_PARENT" --slurpfile swarm "$PACKET_ROOT/swarm-open-prs.json" --slurpfile source "$PACKET_ROOT/source-open-prs.json" '{schema_version: 1, kind: "precut_queue_observation", observed_at_utc: $observed_at, source_observed_head: $source_observed_head, swarm_parent: $swarm_parent, queues: {swarm: $swarm[0], source: $source[0]}, claim: "observation only; not a candidate manifest or source hold"}' > "$PACKET_ROOT/precut-queue-observation.json"
 ```
 
-Before W, swarm movement extends the denominator and requires a new current
-#2766/#2768/#3807 handoff. Source observations may change during this stage;
-source #1769 does not select or hold SOURCE_PARENT until swarm qualification.
-After that later source hold, movement invalidates the corresponding source
-transaction. Never update only a SHA in an existing immutable receipt.
+Before W, inbound public → swarm integration (`ripr#1627` →
+`ripr#1768`/`#1769`/`#1770`, tracked in `ripr-swarm#13325`) must already be
+merged into `ripr-swarm`, and swarm movement extends the denominator and
+requires a new current #2766/#2768/#3807 handoff. Source observations may
+change during this stage; public-return admission (`ripr#1771` under
+`ripr#1627`/`#1889`) re-reads public `main`, confirms public `P` is still
+current and an ancestor of `SWARM_PARENT`, and binds `SOURCE_PARENT` only
+after swarm qualification (`#2769`). After that source hold, movement
+invalidates the corresponding source transaction. Never update only a SHA in
+an existing immutable receipt.
 
 ## 2. Guarded swarm pin
 
@@ -451,8 +494,10 @@ QUALIFICATION_BUNDLE="${QUALIFICATION_BUNDLE:?controller-relative accepted compl
 A missing, timed-out, or differently headed hosted result is unavailable, not
 a pass. A generic successful CI run is never the #2769 acceptance record.
 The native decision and bundle field contract is in
-[SOURCE_PROMOTION_PREFLIGHT.md](SOURCE_PROMOTION_PREFLIGHT.md#native-selection-and-complete-qualification-admission). After #2769 accepts the complete exact-candidate bundle, source #1769
-rereads and dispositions the source queue, then binds the source parent:
+[SOURCE_PROMOTION_PREFLIGHT.md](SOURCE_PROMOTION_PREFLIGHT.md#native-selection-and-complete-qualification-admission). After #2769 accepts the complete exact-candidate bundle, public-return admission
+(`ripr#1771` under `ripr#1627`/`#1889`/`#1762`) rereads and dispositions the
+source queue, confirms public `P` has not moved and is an ancestor of
+`SWARM_PARENT`, and binds `SOURCE_PARENT`:
 
 ```bash
 set -euo pipefail
@@ -491,114 +536,74 @@ PREFLIGHT_JSON="$PACKET_ROOT/source-promotion/source-promotion-preflight.json"
 test "$(jq -r '.dry_merge.reviewed_resolved_tree // empty' "$PREFLIGHT_JSON")" = "$JOIN_TREE"
 ```
 
-The v2 receipt cannot be supplied to source main
-`82b2d7c262d229d5244263d458d10cd0189cb966`'s v1-only verifier. The transaction
-remains held until [ripr#1769](https://github.com/EffortlessMetrics/ripr/issues/1769)
-delivers coordinated v2 acceptance consumption; no v1 fallback waives it.
+The v2 receipt cannot be supplied to a v1-only source verifier. Public-return
+admission remains held until
+[ripr#1627](https://github.com/EffortlessMetrics/ripr/issues/1627) /
+[ripr#1889](https://github.com/EffortlessMetrics/ripr/pull/1889) and
+[ripr#1771](https://github.com/EffortlessMetrics/ripr/issues/1771) deliver
+trusted v2 qualification admission and guarded merge-composition verification;
+no v1 fallback waives it.
 
 Review every conflict path, survivor, swarm exclusion, authority candidate,
 and separately reviewed `JOIN_TREE`; record a resolution manifest. A clean
 textual merge is not semantic approval. Parent, ref, identity, ancestry,
 digest, conflict, or tree changes invalidate the receipt.
 
-## 4. Construct and prove J in source
+## 4. Guarded public return (`ripr#1771` → `ripr#1772`/`#1773`)
 
-J is the source-promotion join:
+Do **not** construct or merge `J` with raw `git merge`, a direct
+`promote/${VERSION}-swarm` branch push, or a manual `gh pr merge` command.
+Under `#2379`, `ripr#1627`/`#1889`, and `ripr#1771`–`#1773`, raw `git merge`
+construction is rejected, and a manual merge PR creates an unintended
+double-merge instead of the guarded return composition.
+
+For `0.11.0`, the source repository's trusted/guarded constructor and merge
+route owns this step:
+
+1. **`ripr#1771` (qualification admission):** verifies the `#2769` qualification
+   receipt against the exact pinned `SWARM_PARENT` and confirms public
+   `SOURCE_PARENT` (`P`) has not moved and is an ancestor of `SWARM_PARENT`.
+2. **`ripr#1772` (guarded construction):** builds and publishes the reviewed
+   return candidate via the source repository's guarded constructor
+   (`source-promotion admit-resolved-tree`, `construct-exact-join`,
+   `publish-candidate-ref`; see `EffortlessMetrics/ripr`
+   `docs/SOURCE_PROMOTION.md` and
+   [`swarm-development.md`](swarm-development.md#resolving-the-join)).
+3. **`ripr#1773` (guarded merge and proof):** merges the exact reviewed return
+   under expected-head and expected-base guards, preserving both histories and
+   the reviewed tree `JOIN_TREE` (`T`).
+
+Required graph invariants for the guarded return (replacing the historical
+direct-`J` shell blocks):
 
 ```text
 J.parent[0] = SOURCE_PARENT
 J.parent[1] = SWARM_PARENT
+J^{tree}    = JOIN_TREE
 ```
 
-The exact-J verifier is the separate source contract from
-[#1493](https://github.com/EffortlessMetrics/ripr/issues/1493), merged at
-[`9c53b12b`](https://github.com/EffortlessMetrics/ripr/commit/9c53b12b73aa5a11c198f8c5265902127a6d7dff).
-Use its verifier and receipt; this runbook does not duplicate its semantics.
+The exact-J verifier contract originates from
+[#1493](https://github.com/EffortlessMetrics/ripr/issues/1493) (merged at
+[`9c53b12b`](https://github.com/EffortlessMetrics/ripr/commit/9c53b12b73aa5a11c198f8c5265902127a6d7dff))
+and is bound to trusted public-return admission under
+[ripr#1627](https://github.com/EffortlessMetrics/ripr/issues/1627) /
+[ripr#1889](https://github.com/EffortlessMetrics/ripr/pull/1889). Never append
+a repair commit; squash, rebase, cherry-pick, and tree-equivalent
+reconstruction fail the contract. Rebuild through `ripr#1772` from the held
+exact pair after any changed resolution or receipt.
 
-> **Do not run the construction and publication blocks below for 0.11.0.**
-> They state the required graph only. ripr#1772 rejects a `J` built with raw
-> `git merge` and pushed as a branch. For 0.11.0, ripr#1772 builds and
-> publishes `J` with the source repository's guarded constructor
-> (`source-promotion admit-resolved-tree`, `construct-exact-join`,
-> `publish-candidate-ref`; see ripr `docs/SOURCE_PROMOTION.md`), and ripr#1773
-> merges it with a guarded expected-head and expected-base merge commit.
-> Conflict dispositions, the trial join, and tree qualification are described
-> in [`swarm-development.md`](swarm-development.md#resolving-the-join).
+After `ripr#1773` completes and lands on `EffortlessMetrics/ripr` `main`,
+bind and verify the resulting `SOURCE_JOIN_HEAD` (read-only):
 
 ```bash
 set -euo pipefail
-# [LOCAL-MUTATING] repo=source promotion checkout; construct reviewed J
-assert_live_pin_guard
-git -C "$SOURCE_ROOT" fetch "$SWARM_ORIGIN" "$SWARM_PARENT"
-test "$(git -C "$SOURCE_ROOT" rev-parse "$SWARM_PARENT^{commit}")" = "$SWARM_PARENT"
-git -C "$SOURCE_ROOT" switch -c "promote/${VERSION}-swarm" "$SOURCE_PARENT"
-git -C "$SOURCE_ROOT" merge --no-ff --no-commit "$SWARM_PARENT"
-# Resolve only paths named by the reviewed preflight manifest.
-git -C "$SOURCE_ROOT" commit -m "promote: join frozen ripr-swarm candidate for ${VERSION}"
-J="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
-```
-
-```bash
-set -euo pipefail
-# [EXTERNAL-PUBLISHING] repo=source; publish the reviewed promotion branch
-git -C "$SOURCE_ROOT" push origin "promote/${VERSION}-swarm:refs/heads/promote/${VERSION}-swarm"
-REMOTE_PROMOTION_HEAD="$(git -C "$SOURCE_ROOT" ls-remote origin "refs/heads/promote/${VERSION}-swarm" | awk '{print $1}')"
-test "$REMOTE_PROMOTION_HEAD" = "$J"
-SOURCE_PROMOTION_PR_URL="$(gh pr create --repo EffortlessMetrics/ripr --head "promote/${VERSION}-swarm" --base main --title "promote: join frozen swarm ${VERSION}" --body "Review exact J=${J}; parents are SOURCE_PARENT=${SOURCE_PARENT} and SWARM_PARENT=${SWARM_PARENT}. Ref #1493.")"
-SOURCE_PROMOTION_PR="${SOURCE_PROMOTION_PR_URL##*/}"
-test -n "$SOURCE_PROMOTION_PR"
-```
-
-```bash
-set -euo pipefail
-# [READ-ONLY] repo=source; bind exactly one reviewed promotion PR
-SOURCE_PROMOTION_PR="$(gh pr list --repo EffortlessMetrics/ripr --head "$(git -C "$SOURCE_ROOT" branch --show-current)" --state open --json number --jq 'if length == 1 then .[0].number else empty end')"
-test -n "$SOURCE_PROMOTION_PR"
-```
-
-```bash
-set -euo pipefail
-# [READ-ONLY] repo=source promotion checkout; exact J shape/tree/ancestry
-assert_live_pin_guard
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print NF}')" -eq 2
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $1}')" = "$SOURCE_PARENT"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $2}')" = "$SWARM_PARENT"
-git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SOURCE_PARENT" "$J"
-git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SWARM_PARENT" "$J"
-test "$(git -C "$SOURCE_ROOT" rev-parse "$J^{tree}")" = "$JOIN_TREE"
-```
-
-Never append a repair commit; squash, rebase, cherry-pick, and tree-equivalent
-reconstruction fail the contract. Rebuild J from the held exact pair after a
-changed resolution or receipt.
-
-```bash
-set -euo pipefail
-# [LOCAL-MUTATING] repo=source remote; fetch and guard expected head before J transport
-git -C "$SOURCE_ROOT" fetch origin main
-test "$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)" = "$SOURCE_PARENT"
-```
-
-```bash
-set -euo pipefail
-# [EXTERNAL-PUBLISHING] repo=source PR; merge only reviewed J with expected head
-assert_live_pin_guard
-gh pr merge "$SOURCE_PROMOTION_PR" --repo EffortlessMetrics/ripr --merge --match-head-commit "$J"
-```
-
-```bash
-set -euo pipefail
-# [LOCAL-MUTATING] repo=source remote; fetch and bind source main to the new merge result
+# [READ-ONLY] repo=source remote; verify guarded public-return result after ripr#1773
 assert_live_pin_guard
 git -C "$SOURCE_ROOT" fetch origin main
 SOURCE_JOIN_HEAD="$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)"
-test "$SOURCE_JOIN_HEAD" != "$J"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print NF}')" -eq 2
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print $1}')" = "$SOURCE_PARENT"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print $2}')" = "$J"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print NF}')" -eq 2
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $1}')" = "$SOURCE_PARENT"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $2}')" = "$SWARM_PARENT"
+git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SOURCE_PARENT" "$SOURCE_JOIN_HEAD"
+git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SWARM_PARENT" "$SOURCE_JOIN_HEAD"
+test "$(git -C "$SOURCE_ROOT" rev-parse "$SOURCE_JOIN_HEAD^{tree}")" = "$JOIN_TREE"
 ```
 
 ## 5. Metadata and source artifact qualification
@@ -729,27 +734,85 @@ test "$(git -C "$SOURCE_ROOT" rev-parse HEAD)" = "$SOURCE_RELEASE_HEAD"
 PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
 test "$(git -C "$PUBLISH_STAGE" rev-parse HEAD)" = "$SOURCE_RELEASE_HEAD"
 test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
+PUBLISH_RECEIPT="$PACKET_ROOT/publish-receipt.json"
+cp "$SOURCE_ROOT/target/package/publish-receipt.json" "$PUBLISH_RECEIPT"
+verify_publish_receipt() {
+  cmp "$PUBLISH_RECEIPT" "$SOURCE_ROOT/target/package/publish-receipt.json" &&
+    jq -es --arg v "$VERSION" --arg h "$SOURCE_RELEASE_HEAD" '
+      length == 1 and (.[0] | .version == $v and .source_commit == $h and .stage_commit == $h and
+        .source_dirty == false and .verification == "packaged-check-passed" and
+        (.contract_sha256 | test("^[0-9a-f]{64}$")) and (.ripr_sha256 | test("^[0-9a-f]{64}$")))
+    ' "$PUBLISH_RECEIPT" >/dev/null
+}
+verify_publish_receipt
+```
+
+Use the following steps for a fresh publication. If either version already exists,
+or a previous upload has an uncertain outcome, start with
+[partial-publication recovery](RELEASE.md#partial-publication-recovery). Retain
+each registry response in the packet. Poll a missing version for up to six
+attempts, then stop. A returned version with different metadata stops immediately.
+When resuming in a fresh shell, restore the pinned paths and helper functions,
+set `PUBLISH_RECEIPT="$PACKET_ROOT/publish-receipt.json"`, and use the retained
+receipt and stage. Re-running the rehearsal would replace the evidence for an
+upload that already happened.
+
+```bash
+set -euo pipefail
+# [LOCAL-MUTATING] repo=packet; record a read-only crates.io version query
+verify_registry_response() {
+  jq -es --arg crate "$1" --arg v "$VERSION" --arg sha "$2" '
+    length == 1 and (.[0].version |
+      .crate == $crate and .num == $v and .checksum == $sha and .yanked == false)
+  ' "$3" >/dev/null
+}
+record_crate_version() {
+  local crate="$1" expected_sha="$2" response status attempt
+  response="$(mktemp "$PACKET_ROOT/registry-${crate}-${VERSION}.XXXXXX")" || return 1
+  for attempt in 1 2 3 4 5 6; do
+    status="$(curl -sS --max-time 10 -o "$response" -w '%{http_code}' \
+      -A "ripr-release-transaction/${VERSION} (+https://github.com/EffortlessMetrics/ripr)" \
+      "https://crates.io/api/v1/crates/${crate}/${VERSION}")" || return 1
+    case "$status" in
+      200)
+        if ! verify_registry_response "$crate" "$expected_sha" "$response"; then
+          echo "Registry identity mismatch for $crate $VERSION. Expected SHA-256 $expected_sha. Inspect $response." >&2
+          return 1
+        fi
+        mv "$response" "$PACKET_ROOT/registry-${crate}-${VERSION}.json" || return 1
+        return 0 ;;
+      404) if [ "$attempt" -lt 6 ]; then sleep 5; fi ;;
+      *) echo "crates.io returned HTTP $status for $crate $VERSION" >&2; return 1 ;;
+    esac
+  done
+  echo "crates.io has not reported $crate $VERSION after six attempts" >&2
+  return 1
+}
 ```
 
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source publish stage; explicit #1470 crate authorization only
-PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
+assert_live_pin_guard
+verify_publish_receipt
 test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
 (cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr-contract)
-(cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr)
-```
+record_crate_version ripr-contract "$(jq -er .contract_sha256 "$PUBLISH_RECEIPT")"
 
-```bash
-set -euo pipefail
-# [READ-ONLY] repo=source/public; receipt crate publication before next channel
-curl -fsSL -A "ripr-release-transaction/${VERSION} (+https://github.com/EffortlessMetrics/ripr)" "https://crates.io/api/v1/crates/ripr/${VERSION}" | jq -e --arg version "$VERSION" '.version == $version' >/dev/null
+assert_live_pin_guard
+verify_publish_receipt
+(cd "$SOURCE_ROOT" && cargo xtask publish-precheck)
+(cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr)
+record_crate_version ripr "$(jq -er .ripr_sha256 "$PUBLISH_RECEIPT")"
 ```
 
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 GitHub-release authorization only
 assert_live_pin_guard
+verify_publish_receipt
+verify_registry_response ripr-contract "$(jq -er .contract_sha256 "$PUBLISH_RECEIPT")" "$PACKET_ROOT/registry-ripr-contract-${VERSION}.json"
+verify_registry_response ripr "$(jq -er .ripr_sha256 "$PUBLISH_RECEIPT")" "$PACKET_ROOT/registry-ripr-${VERSION}.json"
 gh release create "v${VERSION}" --repo EffortlessMetrics/ripr --target "$SOURCE_RELEASE_HEAD" --title "ripr ${VERSION}" --notes-file "$RELEASE_NOTES"
 ```
 
@@ -1157,7 +1220,6 @@ git -C "$SWARM_ROOT" worktree remove "$QUAL_ROOT"
 git -C "$SWARM_ROOT" switch --detach "$K"
 git -C "$SWARM_ROOT" branch -d "back-sync/${VERSION}"
 git -C "$SOURCE_ROOT" switch --detach "$SOURCE_RELEASE_HEAD"
-git -C "$SOURCE_ROOT" branch -d "promote/${VERSION}-swarm"
 git -C "$SOURCE_ROOT" branch -d "release/${VERSION}" 2>/dev/null || true
 ```
 
