@@ -3357,6 +3357,17 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
     let status_doc: serde_json::Value =
         serde_json::from_str(&status).map_err(|error| format!("status json: {error}\n{status}"))?;
     let attempt_view = &status_doc["repair_attempts"][0];
+    assert_eq!(attempt_view["attempt_id"], attempt.attempt_id);
+    assert_eq!(attempt_view["head_current"], true);
+    assert_eq!(status_doc["status"], "complete");
+    assert_eq!(status_doc["test_run"]["status"], "not_recorded");
+    let (ok, human) = ripr(
+        &attempt.decoy,
+        &["agent", "status", "--root", &attempt.root_arg],
+    )?;
+    expect_exit(ok, true, "human status after a gap-bound finish")?;
+    need(&human, "Status: complete\n", "aggregate completion")?;
+    need(&human, "Test run: none recorded", "test-run disclosure")?;
     if attempt_view["receipt"]["issued_for_attempt"] != true
         || attempt_view["receipt"]["shows_gap_closed"] != true
         || attempt_view["receipt"]["status"] != "advisory"

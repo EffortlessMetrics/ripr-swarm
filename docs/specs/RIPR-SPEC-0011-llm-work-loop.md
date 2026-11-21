@@ -883,6 +883,14 @@ separate: the receipt's `verification.status` remains `verification_not_run`
 found, so a reported failure can sit beside `improved`. The receipt-owned
 `next:` line is unchanged. MCP documents do not project the record yet.
 
+## Aggregate status for gap-bound repairs (#10984)
+
+The human and JSON reports can ignore missing legacy workflow artifacts when
+the inventory contains at least one attempt and every attempt is a current,
+finished, non-legacy gap repair with its own retained receipt showing closure.
+If one member is stale, the missing artifacts count toward `incomplete` in
+either inventory order. The receipt's test-run disclosure remains independent.
+
 ## Amendment (#14146): the aggregate test-run reading names its attempt
 
 Aggregate `ripr status` and `ripr agent status` (and the after-phase `--json`
@@ -1241,6 +1249,7 @@ is not decided here.
 - `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
 - `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
 - `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)
+- `crates/ripr/src/app/agent_status.rs::tests::finished_gap_attempt_is_not_incomplete_for_absent_legacy_artifacts` (#10984)
 - `crates/ripr/src/app/agent_status.rs::tests::aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure` (#14146)
 - `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)

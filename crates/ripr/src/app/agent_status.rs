@@ -364,15 +364,11 @@ impl AgentStatusReport {
         self.unrun_test_receipts().into_iter().next()
     }
 
-    /// #10984: a current gap-bound attempt that finished with its own retained
-    /// receipt showing the gap closed. A gap-bound route never writes the
-    /// legacy seam workflow files, so their absence says nothing about it.
-    /// Only a non-legacy gap binding, a `finished` disposition at a current
-    /// head and a receipt issued from retained terminal evidence qualify;
-    /// every pending, refused, stale, unconfirmed or unavailable attempt
-    /// keeps absent legacy artifacts counted.
-    fn has_current_finished_gap_attempt(&self) -> bool {
-        self.repair_attempts.iter().any(|attempt| {
+    /// Only a nonempty inventory made entirely of current, finished gap-bound
+    /// attempts with retained evidence of closure can ignore absent legacy
+    /// artifacts (#10984). One such receipt speaks only for its own attempt.
+    fn only_current_finished_gap_attempts(&self) -> bool {
+        !self.repair_attempts.is_empty() && self.repair_attempts.iter().all(|attempt| {
             attempt.gap_base.is_some()
                 && !attempt.legacy_gap_binding
                 && attempt.disposition == "finished"
@@ -386,7 +382,7 @@ impl AgentStatusReport {
 
     pub(crate) fn status(&self) -> &'static str {
         let artifact_absent = self.artifacts.iter().any(|artifact| !artifact.present)
-            && !self.has_current_finished_gap_attempt();
+            && !self.only_current_finished_gap_attempts();
         if self.next_command.is_some() || artifact_absent {
             "incomplete"
         } else if self.warnings.is_empty() {
@@ -8268,6 +8264,20 @@ mod tests {
             warnings: Vec::new(),
         };
         assert_eq!(report(finished()).status(), "complete");
+
+        let mut aggregate = report(finished());
+        let mut second = finished();
+        second.attempt_id = "repair-attempt-000000000000000000000002".to_string();
+        aggregate.repair_attempts.push(second);
+        assert_eq!(aggregate.status(), "complete");
+
+        aggregate.repair_attempts[1].head_current = Some(false);
+        assert_eq!(aggregate.status(), "incomplete");
+        aggregate.repair_attempts.reverse();
+        assert_eq!(aggregate.status(), "incomplete");
+
+        aggregate.repair_attempts.clear();
+        assert_eq!(aggregate.status(), "incomplete");
 
         let mut seam_bound = finished();
         seam_bound.gap_base = None;
