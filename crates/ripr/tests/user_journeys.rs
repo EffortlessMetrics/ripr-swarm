@@ -549,9 +549,31 @@ fn rust_repo(root: &Path) -> Result<(), String> {
 const RUST_GAP_ID: &str =
     "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold";
 
+/// The same crate with its library at `src/100%.rs`: a literal `%` in a
+/// source file name. Paths in ripr's identities spell it `%25`.
+fn rust_percent_repo(root: &Path) -> Result<(), String> {
+    branch_repo(
+        root,
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"journey\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/100%.rs\"\n\n[workspace]\n",
+            ),
+            (".gitignore", "/target/\n"),
+            ("src/100%.rs", RUST_LIB),
+            ("tests/pricing.rs", RUST_TESTS),
+        ],
+        "src/100%.rs",
+        "amount > discount_threshold",
+        "amount >= discount_threshold",
+    )
+}
+
+const RUST_PERCENT_GAP_ID: &str = "gap:rust:src/100%25.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold";
+
 /// The first check on the Rust change names the right gap and the right
 /// missing case. Wrong advice (another predicate, another case) fails here.
-fn assert_rust_first_check(check: &str) -> Result<(), String> {
+fn assert_rust_first_check(check: &str, gap_id: &str) -> Result<(), String> {
     need(
         check,
         "State: a test gap to inspect or repair",
@@ -567,7 +589,7 @@ fn assert_rust_first_check(check: &str) -> Result<(), String> {
         "Missing check: amount == discount_threshold",
         "first check",
     )?;
-    need(check, RUST_GAP_ID, "first check")
+    need(check, gap_id, "first check")
 }
 
 fn assert_rust_closed(check: &str, step: &str) -> Result<(), String> {
@@ -587,7 +609,7 @@ fn rust_check_explain_stub_run_recheck_reaches_noticed() -> Result<(), String> {
     rust_repo(&root)?;
 
     let check = bare_check(&root)?;
-    assert_rust_first_check(&check)?;
+    assert_rust_first_check(&check, RUST_GAP_ID)?;
 
     // The printed `explain` names the same gap and the same weak evidence.
     let explain_line = line_after(&check, "(finding id, for explain/context)")
@@ -676,10 +698,10 @@ struct RustRepairStart {
     continue_line: String,
 }
 
-fn start_rust_repair(scratch: &Scratch) -> Result<RustRepairStart, String> {
+fn start_rust_repair(scratch: &Scratch, gap_id: &str) -> Result<RustRepairStart, String> {
     let root = scratch.repo();
     let check = bare_check(&root)?;
-    assert_rust_first_check(&check)?;
+    assert_rust_first_check(&check, gap_id)?;
     let repair_line = line_after(&check, "(spot id, for repair)")
         .ok_or_else(|| format!("dead end: no repair start printed\n{check}"))?;
     if !repair_line.starts_with("ripr repair ") {
@@ -725,7 +747,7 @@ fn rust_repair_test_continue_status_reaches_closed() -> Result<(), String> {
     let scratch = Scratch::new("rust-repair")?;
     let root = scratch.repo();
     rust_repo(&root)?;
-    let start = start_rust_repair(&scratch)?;
+    let start = start_rust_repair(&scratch, RUST_GAP_ID)?;
 
     append(
         &start.test_file,
@@ -750,12 +772,45 @@ fn rust_repair_test_continue_status_reaches_closed() -> Result<(), String> {
     assert_rust_closed(&bare_check(&root)?, "recheck after the repair")
 }
 
+/// A `%` in the changed file's name: the check screen offers the repair
+/// start (it used to refuse with "classifying the finding's spots failed",
+/// because the classifier opened `src/100%25.rs`), and the loop closes.
+#[test]
+fn rust_repair_closes_when_the_source_file_name_has_a_percent() -> Result<(), String> {
+    let scratch = Scratch::new("rust-repair-percent")?;
+    let root = scratch.repo();
+    rust_percent_repo(&root)?;
+    let start = start_rust_repair(&scratch, RUST_PERCENT_GAP_ID)?;
+
+    append(
+        &start.test_file,
+        &format!(
+            "\n#[test]\nfn {}() {{\n    assert_eq!(discounted_total(100, 100), {RUST_EQUAL_CASE_EXPECTED});\n}}\n",
+            start.test_name
+        ),
+    )?;
+    exactly_one_passed(
+        &run_printed(&start.run_line, &scratch)?,
+        "printed test command",
+    )?;
+    let finished = both(&follow(&start.continue_line, &scratch)?);
+    need(&finished, "weak -> exposed", "continue")?;
+
+    let check = bare_check(&root)?;
+    need(
+        &check,
+        "State: no test gap found",
+        "recheck after the repair",
+    )?;
+    need(&check, RUST_PERCENT_GAP_ID, "recheck after the repair")
+}
+
 #[test]
 fn rust_repair_with_a_test_off_the_boundary_does_not_close() -> Result<(), String> {
     let scratch = Scratch::new("rust-repair-neg")?;
     let root = scratch.repo();
     rust_repo(&root)?;
-    let start = start_rust_repair(&scratch)?;
+    let start = start_rust_repair(&scratch, RUST_GAP_ID)?;
 
     // Passes on both `>` and `>=`: it cannot tell them apart.
     append(

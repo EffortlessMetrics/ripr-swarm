@@ -94,6 +94,25 @@ pub(super) fn parse_git_old_path(raw: &str) -> Option<PathBuf> {
     confine_to_relative_path(&path)
 }
 
+/// #15665: the path of a `--no-prefix` binary section. Its header repeats one
+/// token (`diff --git src/x.rs src/x.rs`) and its sentinel repeats the same
+/// token on both sides; only that exact agreement is read, so a prefixed,
+/// mnemonic or custom-prefix section is never respelled here. The token is
+/// decoded and confined like every other diff path.
+pub(super) fn parse_prefixless_binary_path(header: &str, sentinel: &str) -> Option<PathBuf> {
+    let marker = header.trim_end_matches('\r').strip_prefix("diff --git ")?;
+    let middle = marker.len() / 2;
+    if marker.len() % 2 == 0 || marker.as_bytes().get(middle) != Some(&b' ') {
+        return None;
+    }
+    let (old, new) = (marker.get(..middle)?, marker.get(middle + 1..)?);
+    let sentinel = sentinel.trim_end_matches('\r');
+    if old != new || sentinel != format!("Binary files {old} and {new} differ") {
+        return None;
+    }
+    confine_to_relative_path(&parse_diff_path_token(old)?)
+}
+
 /// Check both identities against the complete header, using rename metadata to
 /// locate the boundary when unquoted filenames themselves contain ` b/`.
 pub(super) fn git_header_matches_rename(raw: &str, old: &Path, new: &Path) -> bool {
@@ -1408,6 +1427,61 @@ mod tests {
     #[test]
     fn parse_new_path_marker_returns_none_for_dev_null() {
         assert_eq!(parse_new_path_marker("+++ /dev/null"), None);
+    }
+
+    #[test]
+    fn prefixless_binary_sections_read_only_on_exact_agreement() {
+        let read = |header: &str, sentinel: &str| parse_prefixless_binary_path(header, sentinel);
+        assert_eq!(
+            read(
+                "diff --git src/tax.rs src/tax.rs",
+                "Binary files src/tax.rs and src/tax.rs differ"
+            ),
+            Some(PathBuf::from("src/tax.rs"))
+        );
+        assert_eq!(
+            read(
+                "diff --git tax.rs tax.rs",
+                "Binary files tax.rs and tax.rs differ"
+            ),
+            Some(PathBuf::from("tax.rs"))
+        );
+        assert_eq!(
+            read(
+                "diff --git \"src/caf\\303\\251.rs\" \"src/caf\\303\\251.rs\"",
+                "Binary files \"src/caf\\303\\251.rs\" and \"src/caf\\303\\251.rs\" differ"
+            ),
+            Some(PathBuf::from("src/café.rs"))
+        );
+        // Prefixed sides, a rename, a deletion and traversal are not read.
+        assert_eq!(
+            read(
+                "diff --git a/src/x.rs b/src/x.rs",
+                "Binary files a/src/x.rs and b/src/x.rs differ"
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                "diff --git src/a.rs src/b.rs",
+                "Binary files src/a.rs and src/b.rs differ"
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                "diff --git src/x.rs src/x.rs",
+                "Binary files src/x.rs and /dev/null differ"
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                "diff --git ../x.rs ../x.rs",
+                "Binary files ../x.rs and ../x.rs differ"
+            ),
+            None
+        );
     }
 
     #[test]

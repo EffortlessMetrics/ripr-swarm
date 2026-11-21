@@ -1105,7 +1105,7 @@ impl OwnerCallIdentity {
                             Some((_, module)) if !module.is_empty() => {
                                 // An import does not rebind its own path prefix:
                                 // `use thr::thr` imports a value from crate `thr`.
-                                let mut import_scope = scope.clone();
+                                let mut import_scope = NameScope::clone(scope);
                                 import_scope.imports.retain(|import| {
                                     !matches!(&import.binding, UseBinding::Path(bound) if bound == path)
                                 });
@@ -3505,6 +3505,37 @@ pub(super) fn boundary_owner_calls_resolve(
                             || identity.resolve_call(test, index, &segments) == CallTarget::Owner
                     })
                 })
+        })
+}
+
+/// Resolve a free call in rustdoc's separate example crate, including a
+/// library-qualified call into an out-of-line module.
+pub(super) fn doctest_calls_free_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    syntax: &super::owner_pin::OwnerPinSyntax,
+) -> bool {
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    let Some(path) = super::helper_transfer::public_path(index, owner) else {
+        return false;
+    };
+    !qualifiers.is_empty()
+        && qualifiers.into_iter().all(|qualifier| match qualifier {
+            None => false,
+            Some(segments) => match segments.split_first() {
+                None => super::owner_pin::targeted_free_call_reaches_owner(
+                    test, owner, None, index, syntax,
+                ),
+                Some((root, module)) => {
+                    path.modules == module
+                        && index
+                            .member_crates
+                            .import_names(&test.file, &path.root)
+                            .contains(root)
+                        && !super::owner_pin::test_crate_binds_root(test, root, index, syntax)
+                }
+            },
         })
 }
 
@@ -7509,5 +7540,70 @@ mod plain_path_to_raw_module {
             assert_eq!(settle(&index, a, test), Some(on_a), "{test} against a");
             assert_eq!(settle(&index, b, test), Some(on_b), "{test} against b");
         }
+    }
+
+    /// #12857: an attribute macro on a generated test can rewrite its body,
+    /// including adding a rebinding `use`, so the test must not borrow the
+    /// invocation-site scopes. Known harness and body-preserving attributes
+    /// keep the credit.
+    #[test]
+    fn attribute_macro_on_a_generated_test_takes_no_invocation_scopes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-attr-identity-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(root.join("src/lib.rs"), "pub mod a;\npub mod b;\n")?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n",
+        )?;
+        std::fs::write(
+            root.join("tests/gen.rs"),
+            "macro_rules! harness {\n    ($name:ident) => {\n        #[test]\n        #[ignore]\n        #[allow(unused)]\n        #[doc = \"Checks an opening ( token\"]\n        #[must_use = \"x\"]\n        #[doc = \"x\"]\n        #[deprecated = \"x\"]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! injected {\n    ($name:ident) => {\n        #[test]\n        #[helpers::inject]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    harness!(harness_case);\n    injected!(injected_case);\n}\n",
+        )?;
+        let index = crate::analysis::facts::build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("tests/gen.rs"),
+            ],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        // Positive control: `#[ignore]`, `#[allow]` and `#[doc]` do not rewrite
+        // a body, even when a doc string holds an unmatched `(`.
+        assert_eq!(
+            settle(&index, "/a.rs::render", "harness_case"),
+            Some(CallTarget::Owner)
+        );
+        // The unknown attribute macro must be indexed, or the negative below
+        // is vacuous.
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "injected_case"),
+            "the attribute-macro case must be indexed"
+        );
+        assert_ne!(
+            settle(&index, "/a.rs::render", "injected_case"),
+            Some(CallTarget::Owner)
+        );
+        Ok(())
     }
 }

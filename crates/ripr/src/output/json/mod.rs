@@ -526,9 +526,13 @@ mod tests {
             scope["continuation"].as_str(),
             Some(
                 "partial result: raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 110, then re-run; \
-                 named partition continuation is not available"
+                 named partition continuation is not available. The whole diff exceeds the \
+                 current analysis-cost limits, so each raise selects only one more part of it: \
+                 to analyze every changed file, narrow the diff with a PATH argument (`ripr \
+                 check <path>...`) or a nearer `--base`"
             ),
-            "continuation must lead with the budget that stopped selection: {scope}"
+            "continuation must lead with the budget that stopped selection and, with no \
+             whole-diff budget (#15484), name the narrowing route: {scope}"
         );
         Ok(())
     }

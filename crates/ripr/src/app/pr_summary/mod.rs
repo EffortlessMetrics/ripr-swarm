@@ -17,6 +17,7 @@ mod util;
 
 use io::load_json;
 pub use json::{build_pr_evidence_summary, render_pr_evidence_summary_json};
+use model::InputState;
 pub use model::PrEvidenceSummaryJson;
 pub use render::render_evidence_summary_md;
 use render::{SummaryRenderInput, render_pr_evidence_summary};
@@ -64,6 +65,23 @@ pub(crate) fn execute_pr_summary(options: SummaryOptions) -> Result<(), String> 
             "pr-summary root {} is not a directory; pass `--root` naming an existing repository directory",
             options.root.display()
         ));
+    }
+    // A baseline the caller named that cannot be used must not silently drop
+    // the delta (honest-baseline rule): refuse before anything is written.
+    if let Some(baseline) = options.baseline.as_deref() {
+        match load_json(&repo, baseline).state {
+            InputState::Present => {}
+            InputState::Missing => {
+                return Err(format!(
+                    "pr-summary --baseline {baseline} is missing or unreadable; pass --baseline naming a before-snapshot JSON that exists, or omit it for a summary without gap deltas"
+                ));
+            }
+            InputState::Invalid(reason) => {
+                return Err(format!(
+                    "pr-summary --baseline {baseline} is not valid JSON ({reason}); pass --baseline naming a before-snapshot JSON written by the command that produced it, or omit it for a summary without gap deltas"
+                ));
+            }
+        }
     }
     let summary = summary_text(&repo);
     let path = repo.join(PR_SUMMARY_MD);
@@ -512,16 +530,23 @@ mod tests {
     }
 
     #[test]
-    fn unusable_baseline_degrades_to_no_baseline() -> Result<(), String> {
+    fn unusable_baseline_is_refused_without_changing_the_summary() -> Result<(), String> {
         let root = fixture_root("baseline")?;
         run_pr_summary(&args_for(&root, &[]))?;
         let without = read(&root, PR_EVIDENCE_SUMMARY_JSON)?;
         fs::write(root.join("before.json"), "{ not json")
             .map_err(|error| format!("write baseline: {error}"))?;
-        run_pr_summary(&args_for(&root, &["--baseline", "before.json"]))?;
-        run_pr_summary(&args_for(&root, &["--baseline", "absent.json"]))?;
+        for (name, fragment) in [
+            ("before.json", "is not valid JSON"),
+            ("absent.json", "is missing or unreadable"),
+        ] {
+            match run_pr_summary(&args_for(&root, &["--baseline", name])) {
+                Err(error) if error.contains(fragment) && error.contains("pass --baseline") => {}
+                other => return Err(format!("{name}: expected refusal, got {other:?}")),
+            }
+        }
         if read(&root, PR_EVIDENCE_SUMMARY_JSON)? != without {
-            return Err("unusable baseline changed the v1 JSON".to_string());
+            return Err("refused baseline changed the v1 JSON".to_string());
         }
         Ok(())
     }

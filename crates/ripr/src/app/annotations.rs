@@ -24,6 +24,9 @@ pub(crate) struct AnnotationOptions {
     pub(crate) comments: String,
     pub(crate) out: String,
     pub(crate) check: bool,
+    /// `--comments` was passed: a missing file is then a typo, not the
+    /// optional default-path skip.
+    pub(crate) comments_explicit: bool,
 }
 
 impl Default for AnnotationOptions {
@@ -32,6 +35,7 @@ impl Default for AnnotationOptions {
             comments: DEFAULT_COMMENTS_JSON.to_string(),
             out: DEFAULT_ANNOTATIONS_TXT.to_string(),
             check: false,
+            comments_explicit: false,
         }
     }
 }
@@ -72,6 +76,12 @@ fn render_annotations(
     // denied, directory input, invalid UTF-8) stays an explicit error.
     let text = match crate::bounded_input::read_to_string(&comments_path) {
         Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && options.comments_explicit => {
+            return Err(format!(
+                "annotations --comments {} does not exist; pass --comments naming a comments.json written by `ripr review-comments`, or omit it to use {DEFAULT_COMMENTS_JSON}",
+                options.comments
+            ));
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AnnotationOutput {
                 text: String::new(),
@@ -261,6 +271,7 @@ mod tests {
             comments: "comments.json".to_string(),
             out: "annotations.txt".to_string(),
             check: false,
+            comments_explicit: false,
         }
     }
 

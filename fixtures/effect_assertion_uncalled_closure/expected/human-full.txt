@@ -31,7 +31,7 @@ Changed
   before: notifier.send("static_msg")
   after:  notifier.send(order_id)
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::process_order

@@ -57,3 +57,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_stub_todo_expected_value (6)
+
+Reason:
+RIPR-SPEC-0231 rule 11: raw format capture at the boundary reads the unfilled expected local (#14897).
+
+Command:
+`cargo xtask goldens bless rust_stub_todo_expected_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

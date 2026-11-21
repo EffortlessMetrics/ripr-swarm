@@ -16,7 +16,8 @@ use model::*;
 pub(crate) use model::{GateEvaluateInput, GateMode};
 pub(crate) use presentation::{
     gate_decision_inline_detail, gate_decision_should_fail, gate_decision_status,
-    markdown_path_for, render_gate_decision_json, render_gate_decision_markdown,
+    gate_decision_unavailable_inputs, markdown_path_for, render_gate_decision_json,
+    render_gate_decision_markdown,
 };
 use repair_route::{
     GateRouteSource, build_gate_repair_route, gate_repair_route_is_complete, normalize_route_source,
@@ -145,12 +146,14 @@ pub(crate) fn build_gate_decision_report(
     };
     let mut gap_ledger_coverage = None;
     let mut gap_ledger_refusal: Vec<String> = Vec::new();
+    let mut gap_ledger_owner_opt_outs = None;
     let gap_ledger = read_gap_ledger(
         input,
         &mut config_errors,
         &mut consumed,
         &mut gap_ledger_coverage,
         &mut gap_ledger_refusal,
+        &mut gap_ledger_owner_opt_outs,
     );
     warn_for_optional_json(
         &input.root,
@@ -293,6 +296,7 @@ pub(crate) fn build_gate_decision_report(
                     records,
                     gap_ledger_coverage.as_ref(),
                     &gap_ledger_refusal,
+                    gap_ledger_owner_opt_outs.as_ref(),
                 ),
             ),
             None => {
@@ -617,8 +621,16 @@ fn read_gap_ledger(
     consumed: &mut input::ConsumedInputHashes,
     coverage: &mut Option<Value>,
     refusal: &mut Vec<String>,
+    owner_opt_outs: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
-    input::read_gap_ledger_impl(input, config_errors, consumed, coverage, refusal)
+    input::read_gap_ledger_impl(
+        input,
+        config_errors,
+        consumed,
+        coverage,
+        refusal,
+        owner_opt_outs,
+    )
 }
 
 fn read_recommendation_calibration(

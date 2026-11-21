@@ -389,6 +389,14 @@ pub(crate) fn any_snapshot_input_differs(root: &Path) -> bool {
 /// `None` means "unknown", and the caller keeps the working-tree read it
 /// always did.
 pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
+    tracked_files_matching(root, |path| path.ends_with(".snap"))
+}
+
+/// Select tracked paths under this workspace using the same repository identity checks.
+pub(crate) fn tracked_files_matching(
+    root: &Path,
+    keep: impl Fn(&str) -> bool,
+) -> Option<HashSet<String>> {
     // An inherited repository selector would make `ls-files` answer for
     // another repository, and a `.git` entry that git does not accept as this
     // directory's own (a stub, a damaged one) would make it answer for a
@@ -430,7 +438,7 @@ pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
     Some(
         tracked
             .into_iter()
-            .filter(|path| path.ends_with(".snap"))
+            .filter(|path| keep(path))
             .map(str::to_string)
             .collect(),
     )
