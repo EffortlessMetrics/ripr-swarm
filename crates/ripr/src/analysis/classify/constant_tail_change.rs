@@ -440,9 +440,19 @@ fn guard_prelude_identity(source: &str, line: usize, owner: &str) -> bool {
     };
     !parsed.tree().syntax().descendants().any(|node| {
         ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_none())
-            || ast::Attr::can_cast(node.kind())
-            || ast::MacroCall::cast(node)
-                .is_some_and(|call| call.path().is_none_or(|path| path.syntax().text() != "vec"))
+            || ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let target = attr.syntax().parent().map(|parent| parent.kind());
+                match compact(&attr.syntax().text().to_string()).as_str() {
+                    "#[cfg(test)]" => !target.is_some_and(ast::Module::can_cast),
+                    "#[test]" => !target.is_some_and(ast::Fn::can_cast),
+                    _ => true,
+                }
+            })
+            || ast::MacroCall::cast(node).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    !TRUSTED_MACROS.contains(&path.syntax().text().to_string().as_str())
+                })
+            })
     })
 }
 
@@ -1798,6 +1808,10 @@ mod tests {
                 true,
             ),
             ("use std::fmt::Debug;", true),
+            (
+                "#[cfg(test)] mod tests { use super::*; #[test] fn run() { assert_eq!(pick(0), vec![9]); } }",
+                true,
+            ),
             ("use std::vec::Vec;", true),
             (
                 "mod std { pub mod vec { pub struct Vec; } } use std::vec::Vec;",
