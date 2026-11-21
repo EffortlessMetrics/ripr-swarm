@@ -3622,6 +3622,9 @@ fn classify_seams_retaining(
 ) -> Vec<ClassifiedSeam> {
     let classified = seam_classification::classify_seams(seams, evidence);
     super::witness::retain_classified_seams(&classified, input);
+    for seam in &classified {
+        super::verification_plan::retain_classified_seam_plan_projection(seam, input);
+    }
     classified
 }
 
@@ -3632,6 +3635,9 @@ fn classify_seams_owned_retaining(
 ) -> Vec<ClassifiedSeam> {
     let classified = seam_classification::classify_seams_owned(seams, evidence);
     super::witness::retain_classified_seams(&classified, input);
+    for seam in &classified {
+        super::verification_plan::retain_classified_seam_plan_projection(seam, input);
+    }
     classified
 }
 
