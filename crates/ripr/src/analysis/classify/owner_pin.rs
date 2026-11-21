@@ -5935,7 +5935,7 @@ impl OwnerReturnPin {
     ) -> bool {
         exit_record_types::exit_record_types(owner.body.as_str())
             .as_ref()
-            .as_ref()
+            .as_deref()
             .is_some_and(|types| {
                 types.iter().all(|name| {
                     name.as_deref()

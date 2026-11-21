@@ -121,3 +121,36 @@ fn an_owner_text_is_parsed_once_per_scope_however_many_pins_ask() -> Result<(), 
     assert_eq!(reads() - start, 2);
     Ok(())
 }
+
+#[test]
+fn the_workspace_drop_answer_is_asked_per_index_not_kept_with_the_text() -> Result<(), String> {
+    // The same owner text in two workspaces: one gives `Cfg` a non-plain
+    // `Drop`, the other none. The memo keeps only the text's record names,
+    // so one scope must still answer each workspace its own way.
+    let body = "pub fn make(x: u32) -> Cfg {\n    Cfg { n: x * 3 }\n}\n";
+    let with_drop = index(&format!("{HEADER}{body}"));
+    let without_drop = index(&format!(
+        "#[derive(Debug, PartialEq)]\npub struct Cfg {{\n    pub n: u32,\n}}\n\n{body}"
+    ));
+    let owner_with = make(&with_drop).ok_or("fixture lost `make`")?;
+    let owner_without = make(&without_drop).ok_or("fixture lost `make`")?;
+    assert_eq!(
+        owner_with.body.as_str(),
+        owner_without.body.as_str(),
+        "premise: one owner text"
+    );
+    let reads = || EXIT_RECORD_READS.with(std::cell::Cell::get);
+    let _scope = run_memo::enter();
+    let start = reads();
+    for _ in 0..3 {
+        assert!(!OwnerReturnPin::returned_types_drop_plain(
+            owner_with, &with_drop
+        ));
+        assert!(OwnerReturnPin::returned_types_drop_plain(
+            owner_without,
+            &without_drop
+        ));
+    }
+    assert_eq!(reads() - start, 1, "one text, one parse, two answers");
+    Ok(())
+}
