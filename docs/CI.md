@@ -3317,8 +3317,9 @@ Advance folds use fold-and-delete batches (`--write --limit 149` so each batch
 PR touches at most 150 changed files including `CHANGELOG.md`);
 `--keep-fragments` is for local inspection only because
 `check-changelog-fragments` rejects fragments duplicating `Unreleased` entries.
-It reuses the `check-changelog-fragments` validator, refuses malformed
-fragments by file name and is not part of `precommit`. `changelog.d/README.md`
+It runs the whole `check-changelog-fragments` check before it folds and
+refuses with nothing written when that fails, refuses malformed fragments by
+file name and is not part of `precommit`. `changelog.d/README.md`
 has the batch procedure.
 
 ## Install Receipt
