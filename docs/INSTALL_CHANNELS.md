@@ -111,7 +111,7 @@ ripr receipt check --path PATH
 `ripr receipt check --gap <canonical_gap_id>` finds a 0.10 receipt only when
 the gap id contains no path separator. Every Rust gap whose file sits in a
 directory has one, and for those `--gap` reports the receipt as not found.
-The rejection (exit `2`) prints the `ripr receipt write` command, with the gap
+The `--path` rejection (exit `2`) prints the `ripr receipt write` command, with the gap
 id, verify command and output path filled in, that writes a current receipt.
 Rerun the verify command, then run that printed command with the status you
 observed.
