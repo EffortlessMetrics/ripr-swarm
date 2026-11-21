@@ -19,7 +19,7 @@ pub(super) use context::{CompactTest, call_text_contains_named_call};
 /// satisfies. The two-step "match then rank" replaces the old binary
 /// `calls_owner || same_file_or_named` check from earlier campaigns.
 ///
-/// Detection per reason â€” strict ordering: the first reason that fires
+/// Detection per reason — strict ordering: the first reason that fires
 /// wins, so e.g. a test that both `calls owner` and `is in same file`
 /// carries `direct_owner_call`, never `same_test_file`.
 pub(super) fn find_related_tests_with_context<'context, 'index>(
@@ -1061,8 +1061,8 @@ pub(super) fn same_test_file(test_file: &Path, owner_stem: &str) -> bool {
 /// `src/` or `tests/`, joined by `/`, dropping the file extension.
 /// Returns `None` for files that do not sit under one of those roots.
 /// Examples (Unix-style after normalize):
-/// - `crates/ripr/src/auth/login.rs` â†’ `auth/login`
-/// - `tests/cli_smoke.rs`            â†’ `cli_smoke`
+/// - `crates/ripr/src/auth/login.rs` → `auth/login`
+/// - `tests/cli_smoke.rs`            → `cli_smoke`
 pub(super) fn module_path_for(file: &Path) -> Option<String> {
     let normalized = normalize_path(file);
     let body = normalized
@@ -1143,7 +1143,7 @@ pub(super) fn same_module(owner_module: &str, test_module: &str) -> bool {
 }
 
 /// Body mentions the owner via an explicit qualified-path or `use`
-/// shape â€” without calling it. The direct-call check has already
+/// shape — without calling it. The direct-call check has already
 /// excluded callers, so this fires for tests that import the symbol
 /// (or qualify it via a path) but route through some wrapper (common
 /// in integration tests).
@@ -1156,7 +1156,7 @@ pub(super) fn same_module(owner_module: &str, test_module: &str) -> bool {
 /// 1. a `module::owner_name` qualified path anywhere in the body
 ///    (catches `crate::pricing::discounted_total`,
 ///    `super::pricing::discounted_total`, `pricing::discounted_total`
-///    â€” they all contain `::owner_name`); or
+///    — they all contain `::owner_name`); or
 /// 2. an inline `use ... owner_name` line in the test body. File-
 ///    scope `use` lines are not in `test.body` so this only covers
 ///    in-function imports.
@@ -1205,7 +1205,7 @@ pub(super) fn import_affinity_tokens(code_lines: &[String]) -> BTreeSet<String> 
 /// Drop everything after a `//` line comment and replace string-literal
 /// contents with empty strings. v1 best-effort: handles `"..."` with
 /// `\\` and `\"` escapes; raw strings (`r#"..."#`), char literals
-/// (`'a'`), and block comments (`/* ... */`) are out of scope â€” those
+/// (`'a'`), and block comments (`/* ... */`) are out of scope — those
 /// shapes are rare inside test bodies and treating them as code is a
 /// safe over-match (the previous helper accepted them all).
 pub(super) fn strip_comments_and_strings(line: &str) -> String {

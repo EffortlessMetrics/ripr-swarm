@@ -3525,7 +3525,7 @@ fn activate_evidence(
     {
         StageState::Yes
     } else {
-        // Reach exists but no concrete value seen â€” most often a helper
+        // Reach exists but no concrete value seen — most often a helper
         // call that hides the activation, or an integration test.
         StageState::Unknown
     };
@@ -5598,7 +5598,7 @@ fn discriminate_evidence(
                 best_branch_withheld = branch_withheld;
             }
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
-            // is necessary but not sufficient â€” the oracle must also structurally pin
+            // is necessary but not sufficient — the oracle must also structurally pin
             // the seam's specific variant. oracle_discriminates_seam checks both.
             if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
                 && strength.rank() > best_matching.rank()
@@ -5696,7 +5696,7 @@ fn effective_oracle_strength(
 /// shape. Each entry point stays fail-closed, and the boolean fold is only
 /// consulted where the equality reading was not evaluable, so the extension
 /// can withhold credit or state a contradiction the equality fold could not
-/// see â€” it never upgrades an oracle the equality fold already graded.
+/// see — it never upgrades an oracle the equality fold already graded.
 fn assertion_verdict_for_test(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
@@ -6031,7 +6031,7 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     }
     if matches!(oracle.kind, OracleKind::GuardedResultMatch) {
         // #3731 review: a guarded Result match discriminates only when its
-        // exact pin names the seam's changed variant â€” the same rule as the
+        // exact pin names the seam's changed variant — the same rule as the
         // reveal-side confirmation gate. A sibling-variant or type-only pin
         // never discriminates. The fact's Ok-arm observation decision rides
         // along for success-payload return-value seams (RIPR-SPEC-0175).
@@ -6064,7 +6064,7 @@ fn collection_state_write_oracle_kind(kind: &OracleKind) -> bool {
 /// the diff-path bare-only rule). A qualified scrutinee
 /// (`other_crate::parse`) shares its terminal segment with any same-named
 /// owner, so reducing the path to that segment would bind a different
-/// entity by token coincidence â€” qualified scrutinees do not discriminate,
+/// entity by token coincidence — qualified scrutinees do not discriminate,
 /// and `None` fails closed. `None` also when the text does not embed a
 /// recognizable plain-path scrutinee (#3731 review round 4).
 fn guarded_oracle_scrutinee_callee(oracle_text: &str) -> Option<&str> {
@@ -6087,8 +6087,8 @@ fn guarded_oracle_scrutinee_callee(oracle_text: &str) -> Option<&str> {
 
 /// The variant pin carried by a synthesized guarded-Result-match oracle
 /// text (`... Err(..) => Some(ParseError::InvalidData { .. }) }`): the
-/// slice after the `Err(..) =>` template marker â€” cut before the
-/// catch-all template tail when the routing form appended one â€” reduced
+/// slice after the `Err(..) =>` template marker — cut before the
+/// catch-all template tail when the routing form appended one — reduced
 /// to qualified variant paths. Empty when the pin names no variant (a
 /// type-only pin), so exact-variant seams fail closed.
 fn guarded_oracle_variant_pins(oracle_text: &str) -> Vec<String> {
@@ -6113,7 +6113,7 @@ fn guarded_oracle_variant_pins(oracle_text: &str) -> Vec<String> {
 /// synthesized text embeds the scrutinee path after `match `, and a
 /// guarded match over a DIFFERENT callee observes someone else's result no
 /// matter which variant it pins. The scrutinee must be BARE and exactly
-/// equal to the seam's owner terminal name â€” a qualified scrutinee whose
+/// equal to the seam's owner terminal name — a qualified scrutinee whose
 /// terminal segment matches (`other_crate::parse` over an owner named
 /// `parse`) is the token-coincidence family and never discriminates, the
 /// same bare-only rule the reveal side applies; an unrecognizable or
@@ -6131,7 +6131,7 @@ fn guarded_oracle_variant_pins(oracle_text: &str) -> Vec<String> {
 ///   arm) and a payload-ignoring `Ok(_) => ..` arm never observe a changed
 ///   Ok value, so they do not discriminate (fail closed, under-credit).
 ///   The error-side comparisons (an `ErrorVariant` seam, and a
-///   `ReturnValue` seam on an exact Err construction) are unchanged â€” the
+///   `ReturnValue` seam on an exact Err construction) are unchanged — the
 ///   Err guard is the discriminator there.
 fn guarded_result_oracle_matches_seam_variant(
     seam: &RepoSeam,
@@ -6176,7 +6176,7 @@ fn guarded_result_oracle_matches_seam_variant(
                     && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
             }
             // The seam's changed value is the SUCCESS payload: the oracle
-            // must report an observing Ok arm (RIPR-SPEC-0175) â€” `None`
+            // must report an observing Ok arm (RIPR-SPEC-0175) — `None`
             // (not a guarded fact) and `Some(false)` both fail closed.
             None => ok_value_observed == Some(true),
         },
@@ -6307,7 +6307,7 @@ fn error_variant_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str)
     // constructs the variant with string-literal payloads, the oracle must
     // construct the same path with the same literals. Naming the variant
     // while observing a different payload is identity coincidence, not
-    // discrimination â€” the token-coincidence over-credit family. Seams whose
+    // discrimination — the token-coincidence over-credit family. Seams whose
     // payloads carry no string literals stay identity-creditable: there is
     // nothing statically observable to compare.
     tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
@@ -6555,7 +6555,7 @@ fn substantial_literal_fragment(fragment: &str) -> bool {
 /// This is the single source of truth for the kind-matching rule used by both
 /// the grader (via `oracle_kind_matches_seam`) and the exemplar selector in
 /// `output::agent_seam_packets::nearest_strong_test_to_imitate`.
-/// Do not duplicate this rule â€” call this function instead.
+/// Do not duplicate this rule — call this function instead.
 pub(crate) fn oracle_kind_matches_seam_kind(seam_kind: SeamKind, oracle_kind: &OracleKind) -> bool {
     match seam_kind {
         SeamKind::PredicateBoundary | SeamKind::MatchArm | SeamKind::FieldConstruction => matches!(
@@ -6566,7 +6566,7 @@ pub(crate) fn oracle_kind_matches_seam_kind(seam_kind: SeamKind, oracle_kind: &O
                 | OracleKind::RelationalCheck
         ),
         // #3731 review: a guarded Result match observes the owner's
-        // returned `Result` â€” the sink a return-value seam changes through.
+        // returned `Result` — the sink a return-value seam changes through.
         // Kind matching admits it; `oracle_discriminates_seam` applies the
         // exact-variant comparison where the seam carries one.
         SeamKind::ReturnValue => matches!(
@@ -6602,7 +6602,7 @@ pub(crate) fn oracle_semantics_for(
 ) -> OracleSemantics {
     let semantics = oracle_semantics_by_kind(kind, strength, seam_kind);
     // #3731 review (coderabbit): an upgrade suggestion contradicts the
-    // strength it accompanies â€” a STRONG oracle already discriminates, so
+    // strength it accompanies — a STRONG oracle already discriminates, so
     // suggesting an upgrade would tell the reader the evidence is weaker
     // than the field just stated. Medium-or-below keeps the suggestion.
     if matches!(strength, OracleStrength::Strong) {
