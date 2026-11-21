@@ -34,7 +34,13 @@
 //!   Zero or >1 matches → `None`.
 //! - Exact keys win; otherwise the longest matching prefix before `*` wins.
 //! - Tied longest prefixes and unsupported winning templates → `None`.
-//! - Multi-entry value arrays (more than one candidate template) → `None`.
+//! - A value array is a fallback list, tried in order as `tsc` does: the
+//!   first template whose candidate is exactly one workspace file wins. A
+//!   later template is reached only when every earlier candidate is PROVABLY
+//!   absent (no file with that stem under any extension and no directory of
+//!   that name, so nothing `tsc` could resolve there). An earlier candidate
+//!   that is ambiguous, unsupported, unsafe, or present in a form this map
+//!   does not model → `None`, never a later entry. An empty array → `None`.
 //! - Multi-`*` glob patterns → `None`.
 //! - Any parse error, or a chain with neither `baseUrl` nor `paths` → `None`.
 //! - Candidates or `baseUrl` containing `..` segments, rooted components,
@@ -91,9 +97,10 @@ where
 
 /// Compiled alias map derived from `tsconfig.json` / `jsconfig.json`.
 ///
-/// Retains literal and single-`*` keys even when their templates are unsupported.
-/// Selection precedes file lookup: an unsupported winning key must block a
-/// broader match rather than lend its import to a different source file.
+/// Retains every literal and single-`*` key, whatever its templates.
+/// Selection precedes file lookup: a winning key whose templates cannot be
+/// resolved must block a broader match rather than lend its import to a
+/// different source file.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct TsAliasMap {
     /// Workspace root so that `resolve` can check file existence.
@@ -106,13 +113,18 @@ pub(crate) struct TsAliasMap {
     /// slash into a wrong in-root path. Callers surface this as the named
     /// limitation `typescript_base_url_absolute_unsupported`.
     base_url_absolute: bool,
-    /// Literal entries: key → supported template, or `None` to block resolution.
-    literal_entries: HashMap<String, Option<String>>,
-    /// Glob entries: (prefix, suffix) → supported template or blocker.
+    /// Literal entries: key → its templates in declaration order (`tsc`'s
+    /// fallback list). An empty list blocks resolution.
+    literal_entries: HashMap<String, Vec<String>>,
+    /// Glob entries: (prefix, suffix) → templates in declaration order.
     ///
-    /// The template may itself contain a `*`; the captured group from the
+    /// A template may itself contain a `*`; the captured group from the
     /// specifier replaces that `*` in the template.
     glob_entries: Vec<GlobEntry>,
+    /// `true` when no `baseUrl` is in effect: `tsc` then rejects a template
+    /// that is not `./`- or `../`-relative (TS5090), so reaching one ends
+    /// the fallback walk unresolved (#12760).
+    templates_must_be_relative: bool,
     /// `true` when the entries above came from a loaded tsconfig/jsconfig.
     /// A map built only to carry `packages` has no tsconfig, so its
     /// unresolved advice stays the flag-off / load-gap advice.
@@ -152,8 +164,9 @@ struct GlobEntry {
     prefix: String,
     /// Part of the pattern key after the `*` (may be empty).
     suffix: String,
-    /// The single supported template; `None` retains an unsupported key.
-    template: Option<String>,
+    /// The fallback list in declaration order; an empty list retains the
+    /// key as a blocker.
+    templates: Vec<String>,
 }
 
 /// Typed fail-closed cause for a specifier the alias map did not resolve.
@@ -321,9 +334,10 @@ impl TsAliasMap {
         self.base_url.hash(&mut first);
         self.base_url_absolute.hash(&mut first);
         self.tsconfig_loaded.hash(&mut first);
+        self.templates_must_be_relative.hash(&mut first);
         self.config_dir.hash(&mut first);
         self.nested_configs.hash(&mut first);
-        let mut literals: Vec<(&String, &Option<String>)> = self.literal_entries.iter().collect();
+        let mut literals: Vec<(&String, &Vec<String>)> = self.literal_entries.iter().collect();
         literals.sort();
         for (key, value) in literals {
             key.hash(&mut first);
@@ -344,13 +358,14 @@ impl TsAliasMap {
         for glob in &self.glob_entries {
             format!("{glob:?}").hash(&mut second);
         }
-        let mut literals: Vec<(&String, &Option<String>)> = self.literal_entries.iter().collect();
+        let mut literals: Vec<(&String, &Vec<String>)> = self.literal_entries.iter().collect();
         literals.sort();
         for (key, value) in literals {
             key.hash(&mut second);
             value.hash(&mut second);
         }
         self.tsconfig_loaded.hash(&mut second);
+        self.templates_must_be_relative.hash(&mut second);
         self.base_url_absolute.hash(&mut second);
         self.base_url.hash(&mut second);
         self.root.hash(&mut second);
@@ -493,9 +508,10 @@ impl TsAliasMap {
     /// 1. `specifier` is non-relative (not `.` / `..` and does not start
     ///    with `./` or `../`).
     /// 2. An exact key or a unique longest-prefix single-`*` key matches.
-    /// 3. The matched value array has exactly one entry.
-    /// 4. The value template has at most one `*`.
-    /// 5. After substituting the captured `*`, the candidate path resolves to
+    /// 3. Walking the matched value array in order, every template before
+    ///    the winning one names a location where provably nothing exists.
+    /// 4. The winning template has at most one `*`.
+    /// 5. After substituting the captured `*`, its candidate path resolves to
     ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
     ///    .mjs/.cjs).
     ///
@@ -503,8 +519,8 @@ impl TsAliasMap {
     /// package name (`workspace_packages.rs`, #4554), as the compiler falls
     /// back to module resolution. A specifier a key does match never falls
     /// back: the compiler uses that key's substitutions, so when this map
-    /// cannot pick one (several entries, a tie, two files) the import stays
-    /// unresolved rather than crediting the package's own entry.
+    /// cannot pick one (an unprovable fallback, a tie, two files) the import
+    /// stays unresolved rather than crediting the package's own entry.
     pub(crate) fn resolve(&self, specifier: &str) -> Option<PathBuf> {
         if super::paths::is_relative_specifier(specifier) {
             return None; // relative paths are handled by the normal resolver
@@ -533,9 +549,8 @@ impl TsAliasMap {
         }
 
         // 1. Try literal match first.
-        if let Some(template) = self.literal_entries.get(specifier) {
-            let candidate_str = strip_ts_ext(template.as_deref()?);
-            return self.unique_file_for(&candidate_str);
+        if let Some(templates) = self.literal_entries.get(specifier) {
+            return self.first_existing(templates, None);
         }
 
         // 2. Select by TypeScript's longest-prefix rule, not HashMap order or
@@ -562,8 +577,83 @@ impl TsAliasMap {
             return None;
         }
         let (entry, captured) = best?;
-        let expanded = entry.template.as_deref()?.replace('*', &captured);
-        self.unique_file_for(&strip_ts_ext(&expanded))
+        self.first_existing(&entry.templates, Some(&captured))
+    }
+
+    /// Walk a `paths` fallback list as `tsc` does: the first substitution
+    /// that resolves wins. The next template is tried only after this one's
+    /// candidate is provably absent; anything less certain ends the walk
+    /// unresolved, because `tsc` may have stopped there on a file this map
+    /// does not model.
+    fn first_existing(&self, templates: &[String], captured: Option<&str>) -> Option<PathBuf> {
+        let mut remaining = templates.iter();
+        while let Some(template) = remaining.next() {
+            if template.chars().filter(|&c| c == '*').count() > 1
+                || (self.templates_must_be_relative && !is_dot_relative(template))
+            {
+                return None;
+            }
+            let expanded = match captured {
+                Some(captured) => template.replace('*', captured),
+                None => template.clone(),
+            };
+            let candidate_base = strip_ts_ext(&expanded);
+            if let Some(found) = self.unique_file_for(&candidate_base) {
+                return Some(found);
+            }
+            // The directory listing is only paid for when a fallback exists.
+            if remaining.len() == 0 || !self.provably_absent(&candidate_base) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// `true` only when nothing `tsc` could resolve sits at `candidate_base`:
+    /// its directory holds no entry named `<stem>` or `<stem>.<anything>`.
+    /// That rules out the routed source files, a declaration file, any other
+    /// extension `tsc` can be configured to load, and a directory it would
+    /// search for an index or a `package.json`. An unsafe candidate, or a
+    /// directory that cannot be listed, proves nothing.
+    fn provably_absent(&self, candidate_base: &str) -> bool {
+        if self.base_url_absolute
+            || !is_safe_relative(Path::new(candidate_base))
+            || !is_safe_relative(Path::new(&self.base_url))
+        {
+            return false;
+        }
+        let candidate = self
+            .root
+            .join(&self.config_dir)
+            .join(self.base_url.trim_matches('/'))
+            .join(candidate_base);
+        let (Some(parent), Some(stem)) = (candidate.parent(), candidate.file_name()) else {
+            return false;
+        };
+        let stem = stem.to_string_lossy();
+        let entries = match std::fs::read_dir(parent) {
+            Ok(entries) => entries,
+            // No such directory: nothing can be in it. Any other failure
+            // (a file in the way, permissions) leaves the question open.
+            Err(err) => {
+                return err.kind() == std::io::ErrorKind::NotFound
+                    && std::fs::symlink_metadata(parent).is_err();
+            }
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return false;
+            };
+            let name = entry.file_name();
+            if name
+                .to_string_lossy()
+                .strip_prefix(stem.as_ref())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// Given a base candidate string (extension-stripped, slash-separated),
@@ -1027,32 +1117,25 @@ fn parse_alias_map(
         None => (config_dir_relative(root, config_path), raw_base_url),
     };
 
-    let mut literal_entries: HashMap<String, Option<String>> = HashMap::new();
+    let mut literal_entries: HashMap<String, Vec<String>> = HashMap::new();
     let mut glob_entries: Vec<GlobEntry> = Vec::new();
 
     for (key, values) in &paths {
-        // Retain unsupported keys as blockers. Dropping a more-specific key
+        // Every key is retained with its templates in declaration order.
+        // Dropping a more-specific key whose templates turn out unusable
         // would let a broader alias claim an import that it does not own.
-        let template = match values.as_slice() {
-            [template] if template.chars().filter(|&c| c == '*').count() <= 1 => {
-                Some(template.clone())
-            }
-            _ => None,
-        }
-        .filter(|template| !templates_must_be_relative || is_dot_relative(template));
-
         // Determine if key is literal or single-`*` glob.
         let star_count = key.chars().filter(|&c| c == '*').count();
         if star_count == 0 {
             // Literal key.
-            literal_entries.insert(key.clone(), template.clone());
+            literal_entries.insert(key.clone(), values.clone());
         } else if star_count == 1 {
             // Single-`*` glob: split into prefix/suffix.
             if let Some(star_pos) = key.find('*') {
                 glob_entries.push(GlobEntry {
                     prefix: key[..star_pos].to_string(),
                     suffix: key[star_pos + 1..].to_string(),
-                    template: template.clone(),
+                    templates: values.clone(),
                 });
             }
         }
@@ -1065,6 +1148,7 @@ fn parse_alias_map(
         base_url_absolute,
         literal_entries,
         glob_entries,
+        templates_must_be_relative,
         tsconfig_loaded: true,
         packages: Default::default(),
         digest: Default::default(),
@@ -2295,19 +2379,104 @@ mod tests {
         Ok(())
     }
 
+    /// A root config whose only alias is `@/*` with `value` as its target
+    /// list, anchored by `baseUrl: "."`.
+    fn fallback_map(root: &Path, value: &str) -> Result<TsAliasMap, String> {
+        write(
+            root,
+            "tsconfig.json",
+            &format!(r#"{{"compilerOptions":{{"baseUrl":".","paths":{{"@/*":{value}}}}}}}"#),
+        );
+        load_alias_map(root).ok_or_else(|| "the fallback config must load".to_string())
+    }
+
     #[test]
-    fn multi_entry_value_fails_closed() -> Result<(), String> {
-        let root = temp_dir("multi-entry");
+    fn fallback_array_resolves_the_first_existing_target_in_order() -> Result<(), String> {
+        let root = temp_dir("fallback-order");
+        write(&root, "src/owner.ts", "export function owner() {}");
+        // An unrelated neighbour whose name merely starts with the stem.
+        write(&root, "generated/ownership.ts", "export {}");
+        let map = fallback_map(&root, r#"["generated/*","src/*"]"#)?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        // A missing first directory is also provably absent.
+        let map = fallback_map(&root, r#"["nowhere/deep/*","src/*"]"#)?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        // Once the earlier target exists, `tsc` stops there: the later
+        // same-named file is not what the import names.
+        write(&root, "generated/owner.ts", "export function owner() {}");
+        let map = fallback_map(&root, r#"["generated/*","src/*"]"#)?;
+        assert_eq!(
+            resolved(&map, "@/owner").as_deref(),
+            Some("generated/owner.ts")
+        );
+        // No target exists: unresolved, and the key still owns the import.
+        assert_eq!(resolved(&map, "@/missing"), None);
+        assert!(map.paths_key_matches("@/missing"));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn fallback_stops_at_an_earlier_target_it_cannot_rule_out() -> Result<(), String> {
+        // Each earlier target is something `tsc` may resolve but this map
+        // does not model. Falling through to `src/owner.ts` would credit a
+        // file the import does not name.
+        for (label, earlier, file) in [
+            ("declaration", "generated/*", Some("generated/owner.d.ts")),
+            (
+                "directory-manifest",
+                "generated/*",
+                Some("generated/owner/package.json"),
+            ),
+            (
+                "other-extension",
+                "generated/*",
+                Some("generated/owner.vue"),
+            ),
+            ("json-module", "generated/*", Some("generated/owner.json")),
+            ("multi-star", "generated/*/*", None),
+            ("parent-escape", "../generated/*", None),
+            ("absolute", "/generated/*", None),
+        ] {
+            let root = temp_dir(&format!("fallback-unknown-{label}"));
+            write(&root, "src/owner.ts", "export function owner() {}");
+            if let Some(file) = file {
+                write(&root, file, "export {}");
+            }
+            let map = fallback_map(&root, &format!(r#"["{earlier}","src/*"]"#))?;
+            assert_eq!(resolved(&map, "@/owner"), None, "{label}");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        // Two routed files at the earlier target are ambiguous, not absent.
+        let root = temp_dir("fallback-unknown-ambiguous");
+        write(&root, "src/owner.ts", "export function owner() {}");
+        write(&root, "generated/owner.ts", "export {}");
+        write(&root, "generated/owner.js", "export {}");
+        let map = fallback_map(&root, r#"["generated/*","src/*"]"#)?;
+        assert_eq!(resolved(&map, "@/owner"), None);
+        // An empty list has no target at all.
+        let map = fallback_map(&root, "[]")?;
+        assert_eq!(resolved(&map, "@/owner"), None);
+        assert!(map.paths_key_matches("@/owner"));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn literal_key_fallback_and_no_base_url_follow_the_same_walk() -> Result<(), String> {
+        let root = temp_dir("fallback-literal");
+        write(&root, "src/owner.ts", "export function owner() {}");
         write(
             &root,
             "tsconfig.json",
-            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*","lib/*"]}}}"#,
+            r#"{"compilerOptions":{"paths":{"owner":["./generated/owner.ts","./src/owner.ts"],"bad":["generated/owner.ts","./src/owner.ts"]}}}"#,
         );
-        write(&root, "src/owner.ts", "export function owner() {}");
-        // Even if one path would resolve, multi-entry value → None
-        let map = load_alias_map(&root).ok_or("should parse")?;
-        // The key is retained as a blocker, so resolution returns None
-        assert!(map.resolve("@/owner").is_none());
+        let map = load_alias_map(&root).ok_or("the no-baseUrl config must load")?;
+        assert_eq!(resolved(&map, "owner").as_deref(), Some("src/owner.ts"));
+        // Without `baseUrl`, `tsc` rejects the non-relative first target
+        // (TS5090); the walk ends there instead of skipping it.
+        assert_eq!(resolved(&map, "bad"), None);
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 

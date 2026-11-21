@@ -14377,8 +14377,10 @@ fn constructor_callback_owner_gets_its_own_no_static_path_wording() {
 }
 
 /// RIPR-SPEC-0099 test 3 — AMBIGUOUS FAIL-CLOSED (flag ON):
-/// paths value `["src/*","lib/*"]` (multi-entry) → excluded from alias map
-/// → uncredited, stays `no_static_path`, disclosure limitation IS emitted.
+/// paths value `["gen/*","src/*"]` whose first target is a directory `tsc`
+/// may resolve through an index file this map does not model → the fallback
+/// walk stops there → uncredited, stays `no_static_path`, disclosure
+/// limitation IS emitted.
 #[test]
 fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), String> {
     use std::fs;
@@ -14389,10 +14391,12 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         .unwrap_or(0);
     let root = std::env::temp_dir().join(format!("ripr-tscfg-amb-{stamp}"));
     fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
-    // multi-entry value array → fail-closed, entry excluded from alias map
+    // The first target exists as a directory: it cannot be ruled out, so the
+    // later `src/*` target is never reached.
+    fs::create_dir_all(root.join("gen").join("owner")).map_err(|e| e.to_string())?;
     fs::write(
         root.join("tsconfig.json"),
-        r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*","lib/*"]}}}"#,
+        r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["gen/*","src/*"]}}}"#,
     )
     .map_err(|e| e.to_string())?;
     fs::write(
@@ -14401,7 +14405,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
     )
     .map_err(|e| e.to_string())?;
 
-    // The map parses (baseUrl is present) but the multi-entry key is excluded.
+    // The map parses and keeps the key; its fallback walk is what fails closed.
     let alias_map =
         load_alias_map(&root).ok_or_else(|| "tsconfig.json should parse".to_string())?;
 
@@ -14461,7 +14465,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
     let all_owners = [owner];
     let all_tests = [test];
 
-    // Flag ON but multi-entry value → alias map has no entry for @/* → fail-closed.
+    // Flag ON but the first fallback target is indeterminate → fail-closed.
     let finding = classify_change(
         Path::new("src/owner.ts"),
         1,
