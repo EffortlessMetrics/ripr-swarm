@@ -51,11 +51,12 @@ use related_tests::{
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assertion_pins_pushed_collection_count, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, is_ignored, owner_call_text,
-    predicate_line_arms_all_agree, predicate_line_bool_guards,
-    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
-    relation_establishes_reach, test_calls_free_function, test_count_pins_pushed_collection,
-    test_counts_pushed_collection_argument, whole_signature_parameters,
+    direct_collection_mutation_receiver, is_ignored, observed_owner_call_rows_on_line,
+    owner_call_text, predicate_line_arms_all_agree, predicate_line_bool_guards,
+    qualified_owner_calls_resolve, reach_evidence as classify_reach_evidence,
+    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
+    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
+    whole_signature_parameters,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -333,6 +334,7 @@ pub(crate) fn evidence_for_seams_reporting_failure(
 > {
     let pass = EvidencePass::new(index);
     let evidence = pass.evidence_for(seams);
+    cancellation::checkpoint()?;
     let limitations = pass.limitations()?;
     Ok((evidence, limitations))
 }
@@ -869,7 +871,10 @@ impl<'index> EvidencePass<'index> {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
                         let seam_started = cost_trace.as_ref().map(|_| Instant::now());
-                        let evidence = evidence_for_seam_with_context(seam, context);
+                        let related = find_related_tests_with_context(seam, context);
+                        cancellation::checkpoint().ok()?;
+                        let evidence = evidence_for_seam_with_context(seam, context, related);
+                        cancellation::checkpoint().ok()?;
                         if let (Some(trace), Some(started)) = (&cost_trace, seam_started) {
                             trace.record(
                                 seam.id().as_str(),
@@ -978,7 +983,8 @@ impl<'index> EvidencePass<'index> {
 #[cfg(test)]
 pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripEvidence {
     let context = CompactGripContext::new(index);
-    evidence_for_seam_with_context(seam, &context)
+    let related = find_related_tests_with_context(seam, &context);
+    evidence_for_seam_with_context(seam, &context, related)
 }
 
 /// Whether a test that pins another function lends this seam no oracle
@@ -1126,11 +1132,11 @@ fn estimated_seam_cost(seam: &RepoSeam, context: &CompactGripContext<'_>) -> (us
     (candidate_tests, line_span)
 }
 
-fn evidence_for_seam_with_context(
+fn evidence_for_seam_with_context<'a>(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
+    mut related_with_reason: Vec<(&'a CompactTest<'a>, RelationReason)>,
 ) -> TestGripEvidence {
-    let mut related_with_reason = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
     let best_oracles =
         sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
@@ -3570,16 +3576,22 @@ fn observed_value_facts_for_test(
     // all owner calls in this test. Per `analysis/value-extraction-v2`.
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
+    let mut expanded_lines: Vec<usize> = Vec::new();
     for call in indexed.test.body_calls() {
-        if call.name != owner_name {
+        if call.name != owner_name || expanded_lines.contains(&call.line) {
             continue;
         }
-        let Some(args) =
-            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))
+        let Some(argument_rows) = owner_call_rows_for_seam(call, indexed.test, context, owner_fn)
         else {
             continue;
         };
-        for (arg_index, arg) in args.into_iter().enumerate() {
+        if argument_rows.len() > 1 {
+            expanded_lines.push(call.line);
+        }
+        let arguments = argument_rows
+            .into_iter()
+            .flat_map(|row| row.into_iter().enumerate());
+        for (arg_index, arg) in arguments {
             let argument_operand = match observed_argument_selection {
                 ObservedArgumentSelection::ArgumentOperands(operands) => operands
                     .iter()
@@ -3645,6 +3657,91 @@ fn observed_value_facts_for_test(
         fact.file = Some(indexed.test.file.clone());
     }
     observed
+}
+
+/// The owner-call argument rows one captured call line contributes to the
+/// seam's observed activation values. The line's first owner call keeps its
+/// historic reading. When the line calls a free owner more than once
+/// (`assert_eq!(ok(12), true); assert_eq!(ok(11), false);`), each further
+/// call whose result an assertion on that line directly observes adds its
+/// row, the pairing the diff-scoped probe path requires before it credits a
+/// same-line boundary input (#13373). Without this the seam saw only the
+/// first input and named the second as a missing discriminator while
+/// `ripr check` read the change exposed (#14487). Fail-closed: a call under
+/// an operator, nested in another call's arguments or outside any assertion
+/// adds nothing, and a line whose calls do not all resolve to the owner keeps
+/// the first-call reading.
+fn owner_call_rows_for_seam(
+    call: &CallFact,
+    test: &TestSummary,
+    context: &CompactGripContext<'_>,
+    owner_fn: &FunctionSummary,
+) -> Option<Vec<Vec<String>>> {
+    let owner_name = owner_fn.name.as_str();
+    let first =
+        owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))?;
+    let mut rows = vec![first];
+    if owner_fn.impl_context != FunctionImplContext::Free
+        || call.text.matches(owner_name).count() < 2
+    {
+        return Some(rows);
+    }
+    let same_row = |left: &[String], right: &[String]| {
+        left.len() == right.len() && left.iter().zip(right).all(|(l, r)| l.trim() == r.trim())
+    };
+    if !line_admits_extra_owner_rows(&call.text) {
+        return Some(rows);
+    }
+    // Only plain literal arguments: a field, local or expression argument
+    // would be resolved at the line, not at this call's position, and could
+    // borrow a value the line assigns between the calls.
+    let observed: Vec<Vec<String>> =
+        observed_owner_call_rows_on_line(test, call.line, &call.text, owner_fn, context.index)
+            .into_iter()
+            .filter(|row| !row.is_empty() && row.iter().all(|arg| is_plain_literal_pattern(arg)))
+            .filter(|row| !rows.iter().any(|kept| same_row(kept, row)))
+            .collect();
+    if observed.is_empty()
+        || !qualified_owner_calls_resolve(context.index, owner_fn, test, &call.text, call.line)
+    {
+        return Some(rows);
+    }
+    for row in observed {
+        if !rows.iter().any(|kept| same_row(kept, &row)) {
+            rows.push(row);
+        }
+    }
+    Some(rows)
+}
+
+/// Whether a captured test line is straight-line code, so every assertion on
+/// it runs whenever the line runs. Any branch, loop, closure, early exit or
+/// `?` on the line could leave a later assertion unexecuted (`if false {
+/// assert_eq!(ok(11), false); }`, `let f = || assert_eq!(ok(11), false);`),
+/// so such a line keeps the first-call reading (#14487).
+fn line_admits_extra_owner_rows(line: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(line);
+    if masked.contains(['|', '?']) || masked.contains("=>") {
+        return false;
+    }
+    !masked
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|word| {
+            matches!(
+                word,
+                "if" | "else"
+                    | "match"
+                    | "loop"
+                    | "while"
+                    | "for"
+                    | "return"
+                    | "break"
+                    | "continue"
+                    | "async"
+                    | "move"
+                    | "macro_rules"
+            )
+        })
 }
 
 fn field_assignment_value_unresolved_for_test(

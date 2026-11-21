@@ -3806,6 +3806,9 @@ id = "RIPR-SPEC-0026"
 name = "Language adapter contract"
 spec = "docs/specs/RIPR-SPEC-0026-language-adapter-contract.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/property_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/tests/classification_property_tests.rs",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::rust_gating_projection_and_modeled_oracle_upgrade",
   "xtask/src/policy/capability_producers/tests.rs::minimal_and_individual_builds_require_exact_producer_presence",
   "xtask/src/policy/capability_producers/tests.rs::selected_features_and_manifest_defaults_match_cargo_arguments",
   "xtask/src/policy/capability_producers/tests.rs::compiled_producers_fail_closed_on_missing_or_non_boolean_availability",
@@ -17394,6 +17397,7 @@ id = "RIPR-SPEC-0245"
 name = "Per-language labeled verdict corpora"
 spec = "docs/specs/RIPR-SPEC-0245-per-language-verdict-corpora.md"
 tests = [
+  "xtask/src/reports/verdict_corpus_stage_axes_tests.rs::stage_axes_match_pinned_classes_and_partial_runtime_truth",
   "xtask/src/reports/verdict_corpus_tests.rs::language_names_its_own_corpus_directory_and_nothing_else",
   "xtask/src/reports/verdict_corpus_tests.rs::language_refuses_a_symlinked_corpus_directory",
   "xtask/src/reports/verdict_corpus_tests.rs::language_option_parses_in_any_position_and_refuses_misuse",
