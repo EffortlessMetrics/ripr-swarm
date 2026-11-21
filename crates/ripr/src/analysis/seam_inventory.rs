@@ -6851,7 +6851,7 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
             inventory_seams_from_index_checked_with_context(&[path], &index)?;
         assert!(!seams.is_empty(), "the weakly read field write is admitted");
         let shared_context =
-            shared_context.expect("field admission builds its grip context on first need");
+            shared_context.ok_or("field admission builds its grip context on first need")?;
         let (shared_evidence, shared_limitations) =
             test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
                 &seams,

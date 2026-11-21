@@ -587,10 +587,7 @@ impl<'index> EvidencePass<'index> {
     ) -> Self {
         let context_started = Instant::now();
         trace_latency_phase("evidence_context", "start", Duration::ZERO);
-        let context = match shared_context {
-            Some(context) => Some(context),
-            None => CompactGripContext::try_new(index).ok(),
-        };
+        let context = shared_context.or_else(|| CompactGripContext::try_new(index).ok());
         trace_latency_phase(
             "evidence_context",
             &format!(
