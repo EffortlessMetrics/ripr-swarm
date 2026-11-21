@@ -17,7 +17,7 @@ pub(super) fn removal_only_safe_action_line(omitted: &[&Finding]) -> Option<Stri
         return None;
     }
     Some(format!(
-        "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: {}. Rerun with --format human-full to read whether a test would notice the removal\n",
+        "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: {}. Rerun with --format human-full for the evidence on each removed line\n",
         removed_class_counts(omitted)
     ))
 }
@@ -89,7 +89,7 @@ mod tests {
         assert_eq!(
             line.as_deref(),
             Some(
-                "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 partly noticed, 1 no test path, 2 unclear. Rerun with --format human-full to read whether a test would notice the removal\n"
+                "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 partly noticed, 1 no test path, 2 unclear. Rerun with --format human-full for the evidence on each removed line\n"
             )
         );
     }

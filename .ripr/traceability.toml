@@ -11909,6 +11909,7 @@ code = [
   "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/output/human.rs",
   "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/output/human/triage/removal_action.rs",
   "crates/ripr/src/output/render.rs",
   "crates/ripr/src/analysis/test_stub.rs",
   "crates/ripr/src/analysis/test_stub/receiver.rs",

@@ -999,7 +999,8 @@ nothing is selected for repair. It then gives the static evidence on the
 removed code as class counts in the Summary line's plain words and order
 (`appear noticed by tests`, `partly noticed`, `reached but not noticed`,
 `no test path`, `unclear`), leaving out zero counts, and points to
-`--format human-full` to read whether a test would notice the removal. It
+`--format human-full` for the evidence on each removed line. That rerun
+expands the same evidence; it does not settle an unclear class. It
 does not say "before treating this run as actionable", which read as
 "nothing to look at" for a removal that tests reach.
 
