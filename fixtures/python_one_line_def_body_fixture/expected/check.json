@@ -48,7 +48,7 @@
       "flow_sinks": [
       ],
       "evidence": ["owner: bulk_discount", "owner_kind: function", "static_limit unresolved_pytest_fixture: related test uses fixture-sourced values", "test_framework: pytest (test_bulk_discount_at_threshold)", "test_fixtures: quantity (test_bulk_discount_at_threshold)", "unresolved_fixtures: quantity (test_bulk_discount_at_threshold)", "test_verify_command: python -m pytest tests/test_discount.py::test_bulk_discount_at_threshold (test_bulk_discount_at_threshold)", "related_test_relation: syntactic_call (test_bulk_discount_at_threshold)", "test_oracle: exact_value strong (test_bulk_discount_at_threshold)"],
-      "missing": ["Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value."],
+      "missing": ["Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture, and static analysis cannot tell whether it supplies an input that exercises the change or the value the test expects."],
       "assertion_texts": {
       },
       "activation": {

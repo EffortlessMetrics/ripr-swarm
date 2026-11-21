@@ -90,6 +90,7 @@ jobs:
           path: |
             target/ripr/reports/mutation-spot-check.json
             target/ripr/reports/mutation-spot-check.md
+            target/ripr/reports/mutation-spot-check-records.jsonl
             target/ripr/reports/typescript-stryker-status.tsv
             target/ripr/reports/stryker/*.json
           if-no-files-found: error

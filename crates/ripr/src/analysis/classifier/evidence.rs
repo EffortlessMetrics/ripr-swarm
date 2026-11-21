@@ -25,7 +25,7 @@ use crate::analysis::classify::{
     unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
-    assertion_reads_placeholder, mask_comments_and_strings, placeholder_bound_variables,
+    PlaceholderScope, assertion_reads_placeholder, mask_comments_and_strings,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
@@ -645,6 +645,7 @@ impl ClassifiedProbeEvidence {
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
                 unary_tail: context.unary_tail.as_ref(),
+                literal_condition: context.literal_condition.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -673,6 +674,46 @@ impl ClassifiedProbeEvidence {
             }
             _ => infect,
         };
+        // #15770: every related call must skip this exact edit. Confirm that
+        // replacing the expression did not also move the guard.
+        let infect = if infect.state == StageState::Yes
+            && context.probe.family == ProbeFamily::ReturnValue
+            && context.workspace_complete
+            && !owner_has_other_callers
+            && !assertion_macros_rebound
+            && let Some(owner) = context.owner_fn
+            && let Some(old) = context.owner_sole_change.as_deref()
+            && !old.contains(['{', '}', ';'])
+            && context.probe.before.as_deref().map(str::trim) == Some(old.trim())
+            && context
+                .probe
+                .location
+                .line
+                .checked_sub(owner.start_line)
+                .and_then(|line| owner.body.lines().nth(line))
+                .map(str::trim)
+                == Some(context.probe.expression.trim())
+            && !context.related_tests.is_empty()
+            && context.related_tests.iter().all(|(test, reason)| {
+                *reason == RelationReason::DirectOwnerCall
+                    && crate::analysis::test_grip_evidence::tuple_branch_reached(
+                        owner,
+                        &context.probe.expression,
+                        context.probe.location.line,
+                        test,
+                        context.index,
+                        true,
+                    ) == Some(false)
+            }) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Every related test selects the other branch of the tuple-field guard",
+            )
+        } else {
+            infect
+        };
+
         // #10980: when the whole-test contradiction withheld EVERY credited
         // activation path that establishes reach (#7007), the stage
         // discloses the withholding instead of reading the withheld tests'
@@ -1347,20 +1388,28 @@ impl ClassifiedProbeEvidence {
         // A file that rebinds a primitive type name (`type i32 = u8;`, or a
         // `use` naming one) can change the width a primitive-spelled type in
         // the owner has, which the fold cannot see (#14950 review).
-        let owner_types_are_primitive = context.owner_fn.is_some_and(|owner| {
-            owner_constants.as_deref().is_some_and(|source| {
-                owner
-                    .start_line
-                    .checked_sub(1)
-                    .and_then(|index| source.lines().nth(index))
-                    .is_some_and(|line| !line.starts_with(char::is_whitespace))
-                    && !file_may_rebind_primitive_type(source)
+        // The scan reads the whole file, so it runs at most once per probe
+        // and only for a probe the pin can admit: asked eagerly, every
+        // probe of a file read the file again (#15621).
+        let owner_types_are_primitive = std::cell::OnceCell::new();
+        let owner_types_are_primitive = || {
+            *owner_types_are_primitive.get_or_init(|| {
+                context.owner_fn.is_some_and(|owner| {
+                    owner_constants.as_deref().is_some_and(|source| {
+                        owner
+                            .start_line
+                            .checked_sub(1)
+                            .and_then(|index| source.lines().nth(index))
+                            .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                            && !file_may_rebind_primitive_type(source)
+                    })
+                })
             })
-        });
+        };
         let reached_tail_pin = |test: &TestSummary, assertion: &OracleFact| {
             matches!(context.probe.family, ProbeFamily::ReturnValue)
                 && owner_name_unique
-                && owner_types_are_primitive
+                && owner_types_are_primitive()
                 && bool_field_pin_admitted(test, assertion)
                 && context.owner_fn.is_some_and(|owner| {
                     crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
@@ -2372,15 +2421,19 @@ impl ClassifiedProbeEvidence {
         // assertion earns nothing instead of reading "no assertion".
         if assertion_refusal.is_none() && discriminate.state != StageState::Yes {
             for (test, _) in &context.related_tests {
-                let placeholders = placeholder_bound_variables(test.body.as_str());
-                if placeholders.is_empty() {
-                    continue;
-                }
+                let scope = PlaceholderScope::from_body(test.body.as_str());
                 // #14883: the same read test the lowering uses, so a message
                 // word or a string literal naming the placeholder is not a read.
                 let Some(assertion) = test.assertions.iter().find(|assertion| {
                     assertion.strength == OracleStrength::Unknown
-                        && assertion_reads_placeholder(&assertion.text, &placeholders)
+                        && assertion_reads_placeholder(
+                            &assertion.text,
+                            &scope.on_line(
+                                test.body.as_str(),
+                                assertion.line.saturating_sub(test.start_line),
+                                &assertion.text,
+                            ),
+                        )
                 }) else {
                     continue;
                 };
@@ -2518,6 +2571,19 @@ impl ClassifiedProbeEvidence {
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
 
+        // A file or module link can hide a real call through an entry point.
+        // Report only that reach was not established for this assertion-free row.
+        for test in &mut related_tests {
+            if test.miss == Some(RelatedTestMiss::NoAssertion)
+                && matches!(
+                    test.relation_reason,
+                    Some(RelationReason::SameTestFile | RelationReason::SameModule)
+                )
+                && !implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+            {
+                test.miss = Some(RelatedTestMiss::NoCallPath);
+            }
+        }
         super::super::classify::split_assertion_not_credited_misses(
             context,
             pin_syntax,

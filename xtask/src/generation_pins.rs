@@ -129,6 +129,8 @@ const CONSUMER_CHECKLIST: &[&str] = &[
     "  xtask/src/tests/rust_corpus_projection.rs and",
     "  crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
     "- docs/OUTPUT_SCHEMA.md worked examples carrying the current value",
+    "- file_fact_cache: the `repo-file-facts/<version>` blocker paths in",
+    "  crates/ripr/tests/cache_clear_safety.rs (a stale path stops blocking the layer)",
     "- boundary_gap expected JSON fixtures carrying the current value",
     "  (fixtures/boundary_gap/expected/**); historical fixture values are never bumped",
     "Then run `cargo xtask check-generation-pins`; the hosted rust-gates lane enforces the",
@@ -1578,7 +1580,8 @@ mod tests {
         assert!(
             checklist.contains("xtask/src/tests/rust_corpus_projection.rs")
                 && checklist.contains("crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs")
-                && checklist.contains("docs/OUTPUT_SCHEMA.md"),
+                && checklist.contains("docs/OUTPUT_SCHEMA.md")
+                && checklist.contains("crates/ripr/tests/cache_clear_safety.rs"),
             "the checklist must name the two independent literal copies and the schema doc"
         );
     }

@@ -133,7 +133,7 @@ pub(crate) enum CoverageEnumeration {
 
 /// Disclosure row published in place of coverage observations when the
 /// enumeration is skipped. It must never read as an enumerated selector.
-const COVERAGE_NOT_ENUMERATED_DISCLOSURE: &str = "not_enumerated; the local change set touches no Rust source, manifest, workspace-wide Rust control file or `policy/` path, so no test-valued selector was built or listed in this run. Hosted qualification and `cargo xtask check-file-policy` enumerate every applicable selector.";
+const COVERAGE_NOT_ENUMERATED_DISCLOSURE: &str = "not_enumerated; the local change set touches no Rust source, manifest, workspace-wide Rust control file or `policy/` path, so no test-valued selector was built or listed in this run. Hosted qualification and `cargo xtask check-file-policy` enumerate every applicable selector after source validation succeeds.";
 
 pub(crate) fn check_file_policy() -> Result<(), String> {
     check_file_policy_with(CoverageEnumeration::Enumerate)
@@ -141,12 +141,23 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
 
 pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
-    let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    let enumerated = coverage_for(
-        enumeration,
-        read_file_policy_test_commands(policy_path),
-        |commands| {
+    let report_input_error = |phase: &str, error: &str| {
+        file_policy_failure_report(phase, error, &[], |body| {
+            crate::write_report("file-policy.md", body)
+        })
+    };
+    let allowlist = match read_file_policy_allowlist(policy_path) {
+        Ok(allowlist) => allowlist,
+        Err(error) => return report_input_error("policy declarations", &error),
+    };
+    let violations = match file_policy_path_violations(&allowlist) {
+        Ok(violations) => violations,
+        Err(error) => return report_input_error("file enumeration", &error),
+    };
+    let commands = read_file_policy_test_commands(policy_path);
+    let enumerated = if violations.is_empty() {
+        coverage_for(enumeration, commands, |commands| {
             let in_source =
                 |command: &str| super::library_selector::resolve_in_source(Path::new("."), command);
             validate_test_covered_by_recorded(
@@ -156,8 +167,10 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
                 (enumeration == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource)
                     .then_some(&in_source),
             )
-        },
-    );
+        })
+    } else {
+        commands.map(|_| None)
+    };
     let coverage = match enumerated {
         Ok(coverage) => coverage,
         Err(error) => {
@@ -169,39 +182,6 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
             );
         }
     };
-    let mut violations = Vec::new();
-
-    let files = match collect_files(Path::new(".")) {
-        Ok(files) => files,
-        Err(error) => {
-            return file_policy_failure_report("file enumeration", &error, &diagnostics, |body| {
-                crate::write_report("file-policy.md", body)
-            });
-        }
-    };
-    for path in files {
-        let normalized = normalize_path(&path);
-        if !is_file_policy_candidate(&normalized) {
-            continue;
-        }
-        if normalized.ends_with(".rs") {
-            continue;
-        }
-        if !matches_any_glob(&allowlist, &normalized) {
-            violations.push(format!(
-                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
-            ));
-            continue;
-        }
-        if is_non_rust_programming_candidate(&normalized)
-            && non_rust_programming_retention_reason(&normalized).is_none()
-        {
-            violations.push(format!(
-                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
-            ));
-        }
-    }
-
     let result = finish_policy_report_with_disclosures(
         PolicyReportSpec {
             report_file: "file-policy.md",
@@ -221,7 +201,11 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
         &[PolicyDisclosure {
             heading: "Test-valued coverage applicability".to_string(),
             intro: "Applicable selectors must enumerate nonzero tests. Enumeration is not test execution. Host-inapplicable selectors are not enumerated and confer no coverage on this host.".to_string(),
-            items: coverage_disclosure_items(coverage.as_deref()),
+            items: if violations.is_empty() {
+                coverage_disclosure_items(coverage.as_deref())
+            } else {
+                vec!["not_enumerated; source paths violate file policy. No covered_by build or listing ran.".to_string()]
+            },
         }, PolicyDisclosure {
             heading: "Cargo child command diagnostics".to_string(),
             intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
@@ -241,6 +225,34 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
         super::file_policy_retained_evidence::remove_retained_subject();
     }
     result
+}
+
+fn file_policy_path_violations(allowlist: &[crate::GlobAllow]) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    let files = collect_files(Path::new("."))?;
+    for path in files {
+        let normalized = normalize_path(&path);
+        if !is_file_policy_candidate(&normalized) {
+            continue;
+        }
+        if normalized.ends_with(".rs") {
+            continue;
+        }
+        if !matches_any_glob(allowlist, &normalized) {
+            violations.push(format!(
+                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
+            ));
+            continue;
+        }
+        if is_non_rust_programming_candidate(&normalized)
+            && non_rust_programming_retention_reason(&normalized).is_none()
+        {
+            violations.push(format!(
+                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
+            ));
+        }
+    }
+    Ok(violations)
 }
 
 fn file_policy_failure_report(

@@ -1,0 +1,1 @@
+crates/ripr/tests/rerun_json_schema.rs|Command::new|1|cli-tests|#3920: the rerun schema tests run the worktree-built binary (CARGO_BIN_EXE_ripr) with `rerun --json` and `agent packet --json` against an isolated temporary fixture repository; no shell, network or mutation outside those temporary paths.

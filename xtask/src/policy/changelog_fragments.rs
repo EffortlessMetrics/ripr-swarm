@@ -400,7 +400,7 @@ fn opens_with_maintainer_path(text: &str) -> bool {
 /// The entries of a bullet list, each as one whitespace-normalized string:
 /// a `- ` line at column 0 opens an entry and indented lines continue it.
 /// Headings, blank lines and comments are not entries.
-fn bullet_entries<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+pub(super) fn bullet_entries<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     let mut entries: Vec<Vec<&str>> = Vec::new();
     for line in lines {
         if line.trim().is_empty() || line.trim_start().starts_with("<!--") {
@@ -431,7 +431,7 @@ fn bullet_entries<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
 /// section line) and for the Unreleased block, in the order the fold applies
 /// them. Only normalized-equal entries fail; near duplicates and superseded
 /// claims remain a reviewer judgment, so a gate never fails on taste.
-fn duplicate_entry_violations(sources: &[(String, Vec<String>)]) -> Vec<String> {
+pub(super) fn duplicate_entry_violations(sources: &[(String, Vec<String>)]) -> Vec<String> {
     let mut first_seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
     let mut violations = Vec::new();
     for (location, entries) in sources {

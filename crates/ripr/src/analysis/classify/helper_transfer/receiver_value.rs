@@ -262,6 +262,15 @@ fn tuple_struct(index: &RustIndex, name: &str) -> Option<TupleStruct> {
     })
 }
 
+/// The declared primitive type of the only field of an unambiguous newtype.
+pub(in crate::analysis) fn single_tuple_field_type(
+    index: &RustIndex,
+    name: &str,
+) -> Option<String> {
+    let tuple = tuple_struct(index, name)?;
+    (tuple.arity == 1).then_some(tuple.field_type)
+}
+
 fn strip_visibility(field: &str) -> &str {
     let Some(rest) = field.strip_prefix("pub") else {
         return field;

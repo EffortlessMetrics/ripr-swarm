@@ -257,3 +257,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_pushed_element_last (20)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_pushed_element_last --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

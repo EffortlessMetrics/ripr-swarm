@@ -8,9 +8,11 @@ pub mod admission_incident_route;
 pub mod agent_skills;
 pub mod ci_scratch;
 pub mod coverage_diagnostics;
+pub mod doc_roles;
 pub mod docs_gate;
 pub mod executable_files;
 mod identity;
+pub mod markdown_headings;
 pub mod python_wheel;
 // Keep the shared matcher at its historical path for trusted-base compatibility.
 // Its bytes are included in source_identity.rs and the build-script watch set.

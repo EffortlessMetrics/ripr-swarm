@@ -36,7 +36,8 @@ Verdicts:
 - **false gap**: `no_static_path` although the test calls the changed code.
 
 Measured 2026-11-15 on main `60114de3`; the two Rust unary rows were
-re-measured 2026-11-16 with the #14815 change.
+re-measured 2026-11-16 with the #14815 change, and the Rust forced-condition
+row was re-measured 2026-11-20 with the #14816 change.
 Python tests import names explicitly (`from fx.core import f`). ripr's probe
 family is in parentheses.
 
@@ -66,7 +67,7 @@ family is in parentheses.
 | Call statement deleted (`v.push(x + 1);` removed) | FnValue on the callee³ | none | BlockStatement³ | yes (call_deletion) | partial (side_effect) | yes (side_effect) |
 | Method swapped (`min` → `max`) | none | none | MethodExpression | yes (return_value) | yes (return_value) | yes (return_value) |
 | Call argument changed (`scale(x, 2)` → `scale(x, 3)`) | none | argument mutation | none | yes (return_value) | yes (return_value) | yes (return_value) |
-| Condition forced true (`if x > 0` → `if true`) | none | none | ConditionalExpression | unknown | yes (predicate) | partial (predicate) |
+| Condition forced true (`if x > 0` → `if true`) | none | none | ConditionalExpression | partial⁹ (predicate) | yes (predicate) | partial (predicate) |
 | Ternary or `if` branch value (`else 2` → `else 3`) | none | number +1 | none | partial (predicate) | partial (predicate) | partial (predicate) |
 | Guard clause deleted (`if x < 0 { return 0 }` removed) | none | none | ConditionalExpression | partial (return_value) | yes (return_value) | yes (return_value) |
 | `break` → `continue` | none | `continue` → `break`, `break` → `return` | none | unknown | yes (predicate) | partial (predicate) |
@@ -103,6 +104,16 @@ and the two constants fold to different values. A named, computed or
 early-returned body on either side, or constants that fold equal (`false` →
 `!true`), stays unknown
 ([#14852](https://github.com/EffortlessMetrics/ripr-swarm/issues/14852)).
+⁹ When the diff changes only that one single-line `if` (or `else if`)
+condition in a free function. ripr runs the old and new function on the
+tests' literal calls: a pin at an input that took the other branch on the
+old side gets credit for reaching the change, but still reads
+`weakly_exposed`, because the predicate's assertion pairing (`reveal`) is not
+confirmed for a literal condition. A pin only at inputs already on the forced
+branch reads a weak infection. An argument ripr cannot fold, an `if let`, a
+condition that spans lines, a line changed beyond its condition, or a name
+another function may answer stays `infection_unknown`
+([#14816](https://github.com/EffortlessMetrics/ripr-swarm/issues/14816)).
 
 Operator names: cargo-mutants genres from its
 [mutation patterns](https://mutants.rs/mutants.html); Stryker mutator names
@@ -125,12 +136,15 @@ the mutmut 3.3.1 source (`mutmut/node_mutation.py`).
 ([#6485](https://github.com/EffortlessMetrics/ripr-swarm/issues/6485),
 [#10412](https://github.com/EffortlessMetrics/ripr-swarm/issues/10412),
 [#12770](https://github.com/EffortlessMetrics/ripr-swarm/issues/12770)).
-Loop range bounds ([#11972](https://github.com/EffortlessMetrics/ripr-swarm/issues/11972)),
-`break`/`continue` and forced conditions
+Loop range bounds ([#11972](https://github.com/EffortlessMetrics/ripr-swarm/issues/11972))
+and `break`/`continue`
 ([#14816](https://github.com/EffortlessMetrics/ripr-swarm/issues/14816)) are also
 unknown, as are module constants, a returned `a && b` flipped to `a || b`, and
 bitwise edits on a returned name. Unary `-`/`!` edits are read only on a
 one-line whole-body tail (#14815).
+A condition forced to `true`/`false` gets credit for reaching the change only
+when its single-line `if` condition is the owner's sole edit, and an exact
+pin there still reads `weakly_exposed` (#14816).
 
 **Python.** A changed module constant reads `static_unknown` with the
 `missing_import_graph` limit even though the test calls the function that
