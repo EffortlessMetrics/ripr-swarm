@@ -1,20 +1,22 @@
 //! Kani proofs for the self-computed oracle strength cap.
-//! Compiled only under `cfg(kani)`.
+//! Compiled only under `cfg(kani)`. These scalar proofs call production code;
+//! they do not prove the source detector or the surrounding reveal pipeline.
+//! The cap and constructor selection have no loops or recursion.
 
+use super::cap_contract::{any_strength, cover_inputs, expected_cap};
 use super::self_computed_cap;
 use crate::domain::OracleStrength;
 
-fn any_strength() -> OracleStrength {
-    let tag: u8 = kani::any();
-    kani::assume(tag < 6);
-    match tag {
-        0 => OracleStrength::Strong,
-        1 => OracleStrength::Medium,
-        2 => OracleStrength::Weak,
-        3 => OracleStrength::Smoke,
-        4 => OracleStrength::None,
-        _ => OracleStrength::Unknown,
-    }
+/// Every strength/Boolean pair has its exact independently specified result.
+/// In particular, dropping every self-computed strength to `None` is wrong even
+/// though it satisfies the two rank properties below. Every input is covered.
+#[kani::proof]
+fn self_computed_cap_matches_exact_mapping() {
+    let strength = any_strength();
+    let self_computed: bool = kani::any();
+    cover_inputs(&strength, self_computed);
+    let expected = expected_cap(&strength, self_computed);
+    assert!(self_computed_cap(strength, self_computed) == expected);
 }
 
 /// The cap never raises a strength; a self-computed assertion ends at most

@@ -3924,6 +3924,9 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
     names
 }
 
+#[cfg(any(test, kani))]
+mod cap_contract;
+
 #[cfg(kani)]
 mod kani_proofs;
 
@@ -6649,6 +6652,8 @@ pub(in crate::analysis) fn is_inline_expect_snapshot(assertion: &OracleFact) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod self_computed_cap;
 
     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
     /// call on the same, unrebound binding; comments and strings never call.

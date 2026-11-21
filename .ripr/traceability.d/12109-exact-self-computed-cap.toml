@@ -1,0 +1,26 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  "crates/ripr/src/analysis/classify/reveal.rs::self_computed_cap",
+  "crates/ripr/src/analysis/classify/reveal/cap_contract.rs",
+  "crates/ripr/src/analysis/classify/reveal/kani_proofs.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/classify/reveal/kani_proofs.rs::self_computed_cap_matches_exact_mapping",
+  "crates/ripr/src/analysis/classify/reveal/kani_proofs.rs::self_computed_cap_never_raises_and_bounds_at_weak",
+  "crates/ripr/src/analysis/classify/reveal/kani_proofs.rs::self_computed_cap_is_monotone",
+  "crates/ripr/src/analysis/classify/reveal/cap_contract.rs::tests::self_computed_cap_matches_every_literal_case",
+  "crates/ripr/src/analysis/classify/reveal/cap_contract.rs::tests::self_computed_none_mutant_passes_rank_laws_but_fails_exact_contract",
+  "crates/ripr/src/analysis/classify/reveal/tests/self_computed_cap.rs::self_computed_reveal_uses_exact_cap_for_credited_and_uncredited_rows",
+  "crates/ripr/src/analysis/classify/reveal/tests/self_computed_cap.rs::self_computed_detection_does_not_confuse_text_or_independent_values_with_owner_calls",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0035"
+code = ["crates/ripr/src/analysis/classify/reveal.rs"]
+tests = [
+  "crates/ripr/src/analysis/classify/reveal/cap_contract.rs::tests::self_computed_cap_matches_every_literal_case",
+  "crates/ripr/src/analysis/classify/reveal/cap_contract.rs::tests::self_computed_none_mutant_passes_rank_laws_but_fails_exact_contract",
+  "crates/ripr/src/analysis/classify/reveal/tests/self_computed_cap.rs::self_computed_reveal_uses_exact_cap_for_credited_and_uncredited_rows",
+  "crates/ripr/src/analysis/classify/reveal/tests/self_computed_cap.rs::self_computed_detection_does_not_confuse_text_or_independent_values_with_owner_calls",
+]
