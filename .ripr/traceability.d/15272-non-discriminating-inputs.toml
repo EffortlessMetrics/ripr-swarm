@@ -1,0 +1,25 @@
+# Receiver-field, tuple and equal-argument inputs that agree on both versions
+# are not a discriminator (#15272).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/invisible_change.rs::a_zero_receiver_field_does_not_expose_a_changed_multiplier",
+  "crates/ripr/tests/invisible_change.rs::a_zero_receiver_field_does_not_expose_a_one_line_method",
+  "crates/ripr/tests/invisible_change.rs::a_nonzero_receiver_field_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_receiver_the_assertion_does_not_spell_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_record_literal_of_another_type_is_not_read_as_the_receiver",
+  "crates/ripr/tests/invisible_change.rs::equal_arguments_do_not_expose_swapped_arms",
+  "crates/ripr/tests/invisible_change.rs::unequal_arguments_are_not_read_as_agreeing",
+  "crates/ripr/tests/invisible_change.rs::an_owner_another_function_calls_is_not_read_as_agreeing",
+  "crates/ripr/tests/invisible_change.rs::a_rebound_assert_eq_is_not_read_as_agreeing",
+  "crates/ripr/tests/invisible_change.rs::a_tuple_both_versions_build_alike_does_not_expose_a_changed_component",
+  "crates/ripr/tests/invisible_change.rs::a_tuple_the_versions_build_differently_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::an_equivalent_boundary_rewrite_is_not_sent_after_a_missing_input",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_method_folds_through_the_receiver_fields_it_reads",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_method_that_reads_no_field_drops_the_receiver",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_free_function_takes_no_receiver",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_receiver_used_as_more_than_a_field_base_is_not_read",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_tuple_tail_folds_one_component_at_a_time",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::a_tail_that_is_not_a_declared_tuple_has_no_components",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/owner_fold.rs::only_a_record_literal_of_the_self_type_is_a_read_receiver",
+]
