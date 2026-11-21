@@ -1766,6 +1766,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         string_at(finding, &["oracle_alignment"]),
         string_at(finding, &["alignment_reason"]),
         python_card_unread_owner_result_field(finding, card),
+        python_card_len_only_append_effect(finding, card),
     );
     insert_projection(
         &mut projection_eligibility,
@@ -1848,6 +1849,26 @@ fn python_card_unread_owner_result_field(finding: &Value, card: &Value) -> bool 
     .is_some()
 }
 
+/// Whether the card's selected test observes the mutated container only
+/// through `len(...)` while the changed effect appends to that container:
+/// the producer selected the exact test (a direct syntactic call), named
+/// the appended-contents discriminator, and the observed sink is a pure
+/// length aggregate. Every other orthogonal finding stays denied.
+fn python_card_len_only_append_effect(finding: &Value, card: &Value) -> bool {
+    let (Some(test_name), Some(missing_discriminator)) = (
+        string_at(card, &["suggested_location", "test_name"]),
+        string_at(card, &["missing_discriminator"]),
+    ) else {
+        return false;
+    };
+    missing_discriminator.contains(" contents == [")
+        && string_at(finding, &["observed_sink"]).is_some_and(|sink| sink.contains("len("))
+        && string_at(finding, &["probe", "family"]) == Some("side_effect")
+        && string_array_at(finding, &["evidence"])
+            .iter()
+            .any(|line| line == &format!("related_test_relation: syntactic_call ({test_name})"))
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "each input is an independent fail-closed eligibility condition"
@@ -1861,6 +1882,7 @@ fn python_agent_packet_eligibility(
     oracle_alignment: Option<&str>,
     alignment_reason: Option<&str>,
     unread_owner_result_field: bool,
+    len_only_append_effect: bool,
 ) -> (bool, &'static str) {
     let ordinary_requirements = repairability == "repairable"
         && has_repair_route
@@ -1900,6 +1922,18 @@ fn python_agent_packet_eligibility(
             (
                 true,
                 "python_unread_owner_result_field_with_bounded_repair_route",
+            )
+        }
+        // The selected test reaches the owner directly and observes the
+        // mutated container only through its length, while the card names
+        // the appended contents as the missing check: strengthening that
+        // one test to assert the contents is a bounded route.
+        (Some("orthogonal"), Some("strong_oracle_observes_different_sink"))
+            if len_only_append_effect =>
+        {
+            (
+                true,
+                "python_len_only_append_effect_with_bounded_repair_route",
             )
         }
         _ => (false, "python_oracle_alignment_pair_not_delegatable"),
@@ -5315,6 +5349,7 @@ mod tests {
                 Some(alignment),
                 Some(reason),
                 false,
+                false,
             )
             .0
             {
@@ -5336,11 +5371,30 @@ mod tests {
             orthogonal.0,
             orthogonal.1,
             true,
+            false,
         ) != (
             true,
             "python_unread_owner_result_field_with_bounded_repair_route",
         ) {
             return Err("orthogonal pair with the unread fact must be accepted".to_string());
+        }
+        if python_agent_packet_eligibility(
+            "repairable",
+            true,
+            true,
+            true,
+            "actionable",
+            orthogonal.0,
+            orthogonal.1,
+            false,
+            true,
+        ) != (
+            true,
+            "python_len_only_append_effect_with_bounded_repair_route",
+        ) {
+            return Err(
+                "orthogonal pair with the len-only append fact must be accepted".to_string(),
+            );
         }
         let denied = [
             orthogonal,
@@ -5373,6 +5427,7 @@ mod tests {
                     alignment,
                     reason,
                     unread,
+                    false,
                 )
                 .0
                 {
@@ -5402,6 +5457,7 @@ mod tests {
                     Some(alignment),
                     Some(reason),
                     unread,
+                    true,
                 )
                 .0
                 {

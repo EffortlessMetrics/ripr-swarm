@@ -867,6 +867,24 @@ fn cli_output_discriminators_cover_echo_streams_and_exit_codes() {
 }
 
 #[test]
+fn appended_value_discriminator_names_contents_not_length() {
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(msg.upper())").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("self.buf.append(msg)").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(python_output_or_call_discriminator("buf.append()"), None);
+    // A literal argument keeps the literal-based shapes below it.
+    assert_eq!(
+        python_output_or_call_discriminator("print(\"queued\")").as_deref(),
+        Some("output contains \"queued\"")
+    );
+}
+
+#[test]
 fn extract_tests_records_vararg_and_kwarg_pytest_fixtures() -> Result<(), String> {
     let tests = extract_tests(
         Path::new("tests/test_fixtures.py"),
