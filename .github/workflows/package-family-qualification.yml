@@ -184,6 +184,13 @@ jobs:
           name: ripr-platform-packages
           path: ${{ runner.temp }}/packages
 
+      # The journey takes under a minute on every target. Twice on
+      # aarch64-apple-darwin it printed every check and this step then sat until
+      # the 20-minute job timeout with a node process left behind. The step
+      # fails at five minutes with the process table (and a stack sample on
+      # macOS) so the next occurrence names what is alive. The table after a
+      # normal exit covers the other case: a descendant holding the step's
+      # output open after the journey itself has gone.
       - name: Install from the isolated registry and run the journey
         env:
           VERSION: ${{ inputs.version }}
@@ -193,11 +200,27 @@ jobs:
           set -euo pipefail
           version="${VERSION#v}"
           mkdir -p "$RUNNER_TEMP/journey"
+          processes() { ps -axo pid,ppid,pgid,stat,etime,command 2>/dev/null || ps -W 2>/dev/null || ps; }
           node packaging/npm/qualification/bin/journey.cjs \
             --packages "$RUNNER_TEMP/packages/npm" --target "$TARGET" --version "$version" \
             --receipt "$RUNNER_TEMP/journey/receipt.json" --log "$RUNNER_TEMP/journey/log.json" \
             --source-commit "$CANDIDATE_SHA" --source-tree "$(git rev-parse 'HEAD^{tree}')" \
-            --expected-version-line "ripr $version ($CANDIDATE_SHA)"
+            --expected-version-line "ripr $version ($CANDIDATE_SHA)" &
+          journey=$!
+          while kill -0 "$journey" 2>/dev/null; do
+            if (( SECONDS >= 300 )); then
+              echo "::error::npm journey process $journey is still alive ${SECONDS}s after the step started"
+              processes || true
+              if command -v sample >/dev/null 2>&1; then sample "$journey" 5 -mayDie || true; fi
+              kill -9 "$journey" 2>/dev/null || true; exit 1
+            fi
+            sleep 2
+          done
+          status=0; wait "$journey" || status=$?
+          echo "::group::processes after the journey exited with $status"
+          processes || true
+          echo "::endgroup::"
+          exit "$status"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
