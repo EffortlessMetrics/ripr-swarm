@@ -1,118 +1,204 @@
-# Current formal-verification work items
+# Current formal-verification delivery state
 
-This is the current execution index for the architecture in this directory.
-It points to existing owners and the three newly split infrastructure leaves.
-It is not a second programme or claim registry.
+This is the executable delivery index for the architecture in this directory.
+It records the current authoritative owners, dependency order, qualification
+boundary, and remaining work. It is not a second claim registry and it does not
+turn a passing verifier process into assurance.
 
-## Immediate dependency order
+Last reconciled against `main` on 2026-11-17.
 
-| Claim | Prerequisite or composition | Result |
-| --- | --- | --- |
-| #12579 / #12581 | Preserve delivered attribution and process-completion owners | Bounded, diagnosable version preflight |
-| #14460 / #14469 | Independent collector repair; retain native controls | Complete positive cover evidence |
-| #14472 / #12470 | Compose the two runner repairs and reuse #14478 admission predicates | Native JSON/Markdown, raw custody and exact inventory |
-| #14473 | Consume current #14472 results | Stable critical claims and assurance scoreboard |
-| #14474 | Consume #14473; retain #6452/#6456 protection | Conservative affected plan on admitted qualification subject |
-| #10686 / #11517 | Separate #10745 product track | Declared Kani context/source/cache/public inventory |
-| #12596 and product successors | Consume #11517 without crediting it as self-proof | Exact owner/domain/observable and public native correlation |
+## Status vocabulary
 
-Verification-authority transition work (#6452 then #6456/#5224) must complete
-before any required-check promotion under #12904.
+Use these states consistently:
 
-## Active candidates to finish, not replace
+- **LANDED** — source is on `main`; this says nothing beyond the landed change's
+  documented scope.
+- **QUALIFIED / UNLANDED** — exact source has focused positive and negative
+  evidence, but it is not repository authority until it lands through the
+  protected route.
+- **DRAFT** — implementation exists but one or more source-review,
+  qualification, composition, or admission requirements remain.
+- **BLOCKED** — the next transition depends on another owner or an unresolved
+  current-base conflict.
+- **NOT ESTABLISHED** — the formal proposition is not currently established.
+  This is the required default for missing, stale, ambiguous, supplied-only, or
+  incompletely bound evidence.
 
-| Owner | Current result | Required next transition |
-| --- | --- | --- |
-| #12579 / PR #12581 | Bounded preflight implementation; current repair requires distinct sanitized failure classes and an independent test deadline | Resolve actual conflicts, preserve native process controls, qualify the repaired head and its integration |
-| #14460 / PR #14469 | Positive-cover admission; historical hosted run reported 73 VERIFIED rows and 29,346 complete workspace test subjects; the candidate now includes the missing provenance-fixture policy entry | Retain exact historical source identities and qualify the repaired integration; registered/advisory cover policy belongs to #14472/#14473 |
-| #14472 / PR #14478 | Native-tested offline document auditor; exit zero means consistent documents and always retains native assurance as not assessed | Reuse its DTO/admission owner in the native producer; source/configuration/custody must be measured, not declared into existence |
-| #10686 / draft PR #11517 | Large context/source/cache/public-inventory candidate | Keep owner/domain semantics out; split producer/context and projections if needed; qualify current head instead of recreating work |
+## Landed foundation
 
-## Newly split infrastructure leaves
+| Owner | State | Landed result | Remaining boundary |
+| --- | --- | --- | --- |
+| PR #14471 | LANDED | Maintained claim/result/CI/maintenance contracts under `docs/formal-verification/` | Documentation is policy and design authority; it does not execute a verifier or establish a claim. |
+| PR #14469 | LANDED | Existing Kani lane requires complete positive cover evidence and keeps missing or ambiguous cover evidence fail-closed | The source census is not a registered assurance denominator. |
+| PR #14545 / #14472 | LANDED | Run-owned `ripr.kani-observation.v1` JSON/Markdown Journal with exact selected-source inventory and explicit non-promotion | The producer intentionally emits observations, not registered claim assurance. Its current output has no authority to mint `ESTABLISHED`. |
 
-### #14472 — machine native Kani results
+These three results are the current `main` authority. All downstream work must
+extend them rather than reintroducing a second Kani executor, parser, registry,
+or report owner.
 
-Produces versioned JSON plus Markdown from one DTO, with exact run, process,
-inventory, cover, currentness, and raw-artifact identity.
+## Active delivery chain
 
-It consumes the delivered runner-integrity fixes and composes with #12581 and
-#14469. It does not add a proof, semantic relation, or required check.
+The chain below is dependency ordered. A downstream candidate may be locally
+composed for review, but it must not be described as landed or authoritative
+while an ancestor is open.
 
-### #14473 — stable claims and assurance scoreboard
+| Order | Owner | Current state | Required next transition |
+| ---: | --- | --- | --- |
+| 1 | #12579 / PR #12581 | BLOCKED: the bounded `cargo kani --version` probe was qualified at its historical head, but the PR is now conflict-dirty against current `main` | Reconcile only the unique typed-capture and bounded-probe behavior with the landed observation producer; preserve current process-owner and Journal changes; rerun focused mutation/restoration controls and current native qualification. |
+| 2 | PR #14602 | DRAFT; depends on #12581 and the shared process owner | Land a private, non-deserializable live byte-capture capability that settles owned descendants and refuses incomplete capture. Passive files must not be able to impersonate this capability. |
+| 3 | PR #14478 | DRAFT | Land the offline evidence/document auditor and its fail-closed admission predicates. An auditor success means the documents are internally consistent, not that the verifier ran. |
+| 4 | PR #14542 | DRAFT atop #14478 | Land the critical-claim planner and its refusal for plans with no critical claim or incomplete dependencies. |
+| 5 | PR #14556 / issue #14473 | DRAFT | Land the governed claim registry, generation transitions, index, and scoreboard. Keep every missing/stale/unestablished claim visible and keep the Kani source census separate. |
+| 6 | PR #14549 | DRAFT | Land the versioned native-execution declaration and exact provider/profile/tool/configuration contract. |
+| 7 | PR #14551 and PR #14575 | DRAFT stack | Land one native Kani result interpreter with unambiguous result-block attribution, exact cover admission, and schema-valid machine output. Do not retain two parser authorities. |
+| 8 | PR #14577 | DRAFT | Land passive source-input closure with exact file-set equality, duplicate rejection, supported include discovery, and fail-closed handling of unsupported nested input forms. |
+| 9 | PR #14588 and PR #14597 | DRAFT | Land command-error and selector-domain repairs so enum/domain drift is a compile-time or explicit coverage failure rather than a silent reduction of the proof domain. |
+| 10 | #14473 integration | NOT YET AUTHORITATIVE | Join the landed observation producer, live capture, declaration, source/configuration commitments, registry identity, parser result, required covers, and negative-control state into a local result. Replayed or supplied evidence alone must leave claims `NOT_ESTABLISHED`. |
+| 11 | #6452, #6456, #5224 | NOT IMPLEMENTED | Compare base/head verification authority and preserve applicable base protection until a typed replacement or retirement is accepted. |
+| 12 | #14474 / #12904 | DEFERRED | Add conservative affected-critical selection and advisory CI; required-check admission is a separate measured decision after authority-transition protection. |
 
-Registers the first critical self-assurance propositions and joins them to
-#14472 results. It keeps the existing source census separate and refuses to
-report syntax count as established assurance.
+## Qualified composition checkpoint
 
-The first claim families are:
+The contribution branch
+`contrib/14473-native-producer-prerequisites` at
+`cd0531ae2838e8a17779bb2f8cde434ffac8fa2d` is the current integration
+checkpoint for the unlanded prerequisite stack. Retained qualification records
+show focused canonical-library and process/Journal test graphs plus mutation
+controls.
 
-1. classification/actionability;
-2. gate/exit/result aggregation;
-3. currentness/identity/causal comparison;
-4. resource/budget safety;
-5. edit/repair final disposition.
+This branch is **not** repository authority and must not be merged wholesale
+onto a newer `main`. It contains a useful exact composition, but current-base
+adoption must:
 
-### #14474 — affected critical selection
+1. preserve all later `main` changes;
+2. carry only unique source from each owning PR;
+3. resolve duplicate or superseded implementations at their original owner;
+4. re-run qualification on the exact composed head;
+5. use the protected landing route.
 
-Plans and executes an advisory `kani-critical` route from registered semantic
-claims. Unknown or partial impact falls back to all critical claims, never no
-work.
+Historical proof results for a different claim ID, generation, source closure,
+profile, toolchain, or configuration are evidence about that historical
+subject only.
 
-It remains advisory until #12904's measured admission criteria and
-#6452/#6456 transition protection are satisfied.
+## Native join contract
 
-## First product path
+The first maintained native join must be one execution path, not a collection
+of mutually trusting reports:
 
-The first installed user-facing formal-verification result remains Kani-first:
+```text
+landed Kani request
++ private live-capture capability
++ exact program/argv/cwd/environment commitment
++ tool and provider profile
++ exact selected source closure
++ claim ID, generation and registry digest
++ unambiguous native result and all required covers
++ negative-control identity
++ bounded process, output, time, memory and artifact state
+= local claim result
+```
 
-1. land/split #11517 as context/source inventory;
+The result remains non-canonical unless the admitted execution environment and
+protected provenance contract authorize promotion. The following are never
+sufficient by themselves:
+
+- a successful exit status;
+- schema-valid JSON;
+- a replayed transcript;
+- matching hashes supplied by the same untrusted input;
+- a source census;
+- a passing unit test;
+- a verifier success for a different profile or generation.
+
+## Required discriminating controls for the join
+
+Before the join can leave Draft, retain controls that demonstrate all of the
+following failures are detected:
+
+1. supplied/replayed evidence cannot mint live origin;
+2. a stale claim generation or registry digest is rejected;
+3. wrong source closure, subject, provider, profile, tool, configuration, cwd,
+   argv, or environment is rejected;
+4. duplicate, missing, ambiguous, or unmatched result blocks are rejected;
+5. a required cover that is absent, unreachable, undetermined, or merely
+   claimed in a forged transcript is rejected;
+6. abnormal exit, timeout, incomplete pipe drain, unsettled descendant, or
+   missing exit status remains `NOT_ESTABLISHED`;
+7. artifact-count, byte, invocation, time, memory, and disk caps include early
+   failure paths;
+8. configuration values and dynamic names are committed without leaking their
+   raw values into retained reports;
+9. JSON and Markdown are projections of one DTO and agree on identity and
+   status;
+10. removing each material guard makes the intended control fail, and exact
+    restoration passes;
+11. one real bounded native run succeeds on the exact reviewed source; and
+12. the same source cannot be promoted by passive replay outside the admitted
+    execution path.
+
+## Schema and report maintenance
+
+Formal schemas, examples, rejection fixtures, registry documents, replay
+reports, and emitted native reports need one maintained repository command.
+That command must:
+
+- use the repository's existing Rust schema evaluator;
+- reject duplicate JSON keys, unknown local references, unsupported keywords,
+  invalid recursion/depth, and schema/runtime drift;
+- validate real emitted reports in addition to hand-written examples;
+- remain separate from evidence authenticity and claim admission;
+- have mutation/restoration controls for its material guards.
+
+Schema validity means only that bytes satisfy the declared shape.
+
+## Documentation required at each landed transition
+
+Every integration slice updates, in the same protected change:
+
+- the owning issue and PR with exact source and qualification identity;
+- `RIPR-SPEC-0371` when lane behavior changes;
+- claim generation and registry/index/scoreboard outputs when decision-bearing
+  semantics change;
+- machine schemas, examples, rejection fixtures, and runbook commands;
+- this work index, moving the owner to LANDED and naming the next successor;
+- explicit nonclaims, trust assumptions, bounds, rollback, and retained failed
+  or superseded evidence.
+
+Do not delete historical failed or stale evidence merely because a successor
+passes. Preserve enough identity to explain why it no longer applies.
+
+## Separate user-facing product track
+
+The #10745 product programme is not cross-credited as ripr self-assurance. Its
+first Kani path remains:
+
+1. qualify or split #11517 for context/source/cache/public inventory;
 2. implement #12596 exact owner/domain/observable relation;
-3. implement #12512/#10749 guard-only transitions;
+3. preserve proof-only and guard-only transitions through #12512/#10749;
 4. implement #10687 bounded static weakness findings;
-5. implement #12597/#10689 exact native observation correlation;
-6. execute #12598 stages B/C;
-7. qualify through #10746's adversarial corpus.
+5. correlate exact native observations through #12597/#10689;
+6. complete #12598 native and installed-command stages; and
+7. qualify user-facing claims through #10746's adversarial corpus.
 
-Static guard facts, native result, adequacy experiment, and trusted execution
-remain separate axes.
+Static guard facts, native execution, specification adequacy, and trusted
+execution remain separate axes.
 
-## Next assurance layers
+## Completion boundary
 
-### TLA+ repair-lifecycle pilot
+The first maintained self-assurance milestone is complete only when:
 
-The pilot at `30ec9ac187025985314858ff9ba9d72bf1ad02e9` has a
-[positive native TLC observation and three expected counterexamples](https://github.com/EffortlessMetrics/ripr-swarm/issues/12109#issuecomment-6813436649).
-It still requires Rust adapter compilation/tests, typed raw-artifact custody,
-state/action-to-Rust mapping, six-case bounded conformance, refusal controls
-and current-main integration. Retain the one-attempt/two-finisher finite scope
-and abstract atomic-commit assumption.
+- the executable chain above is landed on one current source lineage;
+- critical claim families have stable IDs, complete source closure, explicit
+  domains/nonclaims/bounds/covers, current native results, and retained
+  behavioral negative controls;
+- live origin and passive replay are structurally distinct;
+- every missing, stale, failed, unsupported, or not-proven obligation remains
+  visible;
+- base/head verification authority cannot be weakened by the changing PR;
+- the assurance scoreboard is generated from the governed denominator;
+- advisory selection is conservative and measured; and
+- any required status is separately admitted under #12904.
 
-Model safety does not establish Rust implementation conformance by itself.
-
-### Verification-authority transition
-
-Implement #6452 and #6456/#5224 so a PR cannot use its own weaker proof,
-model, bound, assumption, provider, or CI policy to erase applicable base
-protection.
-
-### Verus and later providers
-
-After the Kani path is end-to-end:
-
-- complete Verus body-level trust facts;
-- implement #10748 native result adapter;
-- execute #10753 adequacy experiment;
-- exercise one same-behavior Kani/Verus journey without equivalence claims;
-- admit Miri, Loom/Shuttle, fuzz, mutation, or coverage providers only through
-  #6381/#6385/#6390 with an exact proposition, denominator, provider contract,
-  negative corpus, and cost boundary.
-
-## Maintenance rule
-
-When an owner lands, update this file in the same integration slice:
-
-- move delivered work out of “active candidates”;
-- record the accepted commit and exact remaining successor;
-- preserve failed, stale, or superseded evidence rather than deleting it;
-- do not mark a downstream claim complete merely because a prerequisite
-  merged.
+Until then, the accurate repository-level statement is: ripr has bounded,
+falsifiable formal claims and qualified infrastructure in progress; ripr is
+not "formally verified" as a whole.
