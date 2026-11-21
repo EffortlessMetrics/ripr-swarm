@@ -193,6 +193,18 @@ fn an_undefined_return_is_refused_only_with_a_proven_binding() {
         ),
         None
     );
+    // A catch parameter named `undefined` binds inside the catch block, so a
+    // `return undefined` there reads it rather than the global.
+    let caught = "export function dir(n: number): unknown {\n  try {\n    if (n === 1) {\n      return 7;\n    }\n  } catch (undefined) {\n    return undefined;\n  }\n  return 2;\n}\n";
+    assert_eq!(
+        literal_arm_return(
+            &owner(caught),
+            13,
+            "      return 7;",
+            Some("      return 5;")
+        ),
+        None
+    );
     // Numeric control: the same shape with numbers still locates the arm.
     let numeric = "export function dir(n: number): number {\n  if (n === 1) {\n    return 7;\n  }\n  return 2;\n}\n";
     assert!(

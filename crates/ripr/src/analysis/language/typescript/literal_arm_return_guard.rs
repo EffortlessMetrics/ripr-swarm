@@ -445,6 +445,13 @@ impl ReturnCollector<'_> {
                     self.binds_undefined = true;
                 }
             }
+            AstKind::CatchClause(catch) => {
+                if let Some(param) = &catch.param
+                    && pattern_binds_undefined(&param.pattern)
+                {
+                    self.binds_undefined = true;
+                }
+            }
             AstKind::ImportDeclaration(import) => {
                 for specifier in import.specifiers.iter().flatten() {
                     let local = match specifier {
