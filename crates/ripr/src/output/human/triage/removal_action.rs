@@ -22,6 +22,70 @@ pub(super) fn removal_only_safe_action_line(omitted: &[&Finding]) -> Option<Stri
     ))
 }
 
+/// How many removed lines the `Removed code` block lists before it points
+/// at the Hidden list for the rest.
+const REMOVED_ROW_LIMIT: usize = 3;
+
+/// #15617: the lines under `Safe next action` for a removal-only run. Each
+/// row names one removed line, the code that stood there, and what the
+/// static evidence on that old line shows, so the default view answers
+/// "what was removed, and do tests appear to check it" without a rerun.
+/// `None` for any mix `removal_only_safe_action_line` also declines.
+///
+/// The rows restate each finding's class in removal words. They add no
+/// verdict, select nothing for repair and claim no runtime outcome.
+pub(super) fn removal_only_rows(root: &std::path::Path, omitted: &[&Finding]) -> Option<String> {
+    removal_only_safe_action_line(omitted)?;
+    let mut rows: Vec<String> = Vec::new();
+    for finding in omitted {
+        let code = super::super::sections::one_line(&finding.probe.expression);
+        let subject = if code.is_empty() {
+            String::new()
+        } else {
+            format!(" `{}`", code.replace('`', "'"))
+        };
+        let row = format!(
+            "    - {}:{}{}: {}\n",
+            crate::analysis::finding_location_text(root, &finding.probe.location.file),
+            finding.probe.location.line,
+            subject,
+            removed_class_words(&finding.class)
+        );
+        if !rows.contains(&row) {
+            rows.push(row);
+        }
+    }
+    let mut out =
+        String::from("  Removed code (static evidence on the old lines, not a test result):\n");
+    for row in rows.iter().take(REMOVED_ROW_LIMIT) {
+        out.push_str(row);
+    }
+    if rows.len() > REMOVED_ROW_LIMIT {
+        out.push_str(&format!(
+            "    - {} more listed under Hidden\n",
+            rows.len() - REMOVED_ROW_LIMIT
+        ));
+    }
+    Some(out)
+}
+
+/// What a class says about a removed line. The class was computed for the
+/// old code against the current tests, so it reads as whether a test
+/// appears to check the behavior that is now gone.
+fn removed_class_words(class: &ExposureClass) -> &'static str {
+    match class {
+        ExposureClass::Exposed => "a related test appears to check this behavior",
+        ExposureClass::WeaklyExposed => "tests reach it but check it only loosely",
+        ExposureClass::ReachableUnrevealed => "tests reach it but none appears to check it",
+        ExposureClass::NoStaticPath => "no test path was found",
+        ExposureClass::InfectionUnknown
+        | ExposureClass::PropagationUnknown
+        | ExposureClass::StaticUnknown => {
+            "ripr could not tell whether a test checks it (analysis limited, not a verdict)"
+        }
+    }
+}
+
 /// The class counts in the Summary line's plain words, in its order, with
 /// zero counts left out.
 fn removed_class_counts(omitted: &[&Finding]) -> String {
@@ -70,7 +134,7 @@ fn removed_class_counts(omitted: &[&Finding]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::removal_only_safe_action_line;
+    use super::{removal_only_rows, removal_only_safe_action_line};
     use crate::domain::{ExposureClass, Finding, SourceCurrentness};
 
     fn removed(class: ExposureClass) -> Finding {
@@ -108,5 +172,62 @@ mod tests {
         unresolved.source_currentness = SourceCurrentness::UnresolvedSubject;
         assert_eq!(removal_only_safe_action_line(&[&unresolved]), None);
         assert_eq!(removal_only_safe_action_line(&[]), None);
+    }
+
+    fn removed_at(line: usize, code: &str, class: ExposureClass) -> Finding {
+        let mut finding = removed(class);
+        finding.probe.location.line = line;
+        finding.probe.expression = code.to_string();
+        finding
+    }
+
+    #[test]
+    fn removed_rows_name_the_code_and_what_tests_show() {
+        let guard = removed_at(2, "if percent < 0:", ExposureClass::WeaklyExposed);
+        let raise = removed_at(
+            3,
+            "raise ValueError(\"negative\")",
+            ExposureClass::ReachableUnrevealed,
+        );
+        let unclear = removed_at(9, "", ExposureClass::StaticUnknown);
+        let rows = removal_only_rows(std::path::Path::new("."), &[&guard, &raise, &unclear]);
+        assert_eq!(
+            rows.as_deref(),
+            Some(
+                "  Removed code (static evidence on the old lines, not a test result):\n    - src/lib.rs:2 `if percent < 0:`: tests reach it but check it only loosely\n    - src/lib.rs:3 `raise ValueError(\"negative\")`: tests reach it but none appears to check it\n    - src/lib.rs:9: ripr could not tell whether a test checks it (analysis limited, not a verdict)\n"
+            )
+        );
+    }
+
+    #[test]
+    fn removed_rows_are_bounded_and_drop_repeats() {
+        let findings: Vec<Finding> = (1..=5)
+            .map(|line| removed_at(line, "total = 0", ExposureClass::NoStaticPath))
+            .collect();
+        let mut refs: Vec<&Finding> = findings.iter().collect();
+        // The same line, code and class twice is one row.
+        refs.extend(findings.first());
+        let rows = removal_only_rows(std::path::Path::new("."), &refs).unwrap_or_default();
+        assert_eq!(
+            rows.matches("`total = 0`: no test path was found").count(),
+            3
+        );
+        assert!(
+            rows.ends_with("    - 2 more listed under Hidden\n"),
+            "{rows}"
+        );
+    }
+
+    #[test]
+    fn rows_are_withheld_from_every_mix_that_is_not_removal_only() {
+        let weak = removed(ExposureClass::WeaklyExposed);
+        let mut moved = removed(ExposureClass::NoStaticPath);
+        moved.source_currentness = SourceCurrentness::MovedOrRenamed;
+        let mut unresolved = removed(ExposureClass::Exposed);
+        unresolved.source_currentness = SourceCurrentness::UnresolvedSubject;
+        let root = std::path::Path::new(".");
+        assert_eq!(removal_only_rows(root, &[&weak, &moved]), None);
+        assert_eq!(removal_only_rows(root, &[&unresolved]), None);
+        assert_eq!(removal_only_rows(root, &[]), None);
     }
 }

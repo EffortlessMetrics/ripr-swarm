@@ -408,6 +408,10 @@ pub(crate) fn render_human_triage(
             // currentness distinction — `unresolved_subject` is the
             // explicit unknown, not base-side evidence.
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
+            // #15617: a removal-only run also lists what was removed.
+            if let Some(rows) = removal_action::removal_only_rows(&output.root, &triage.omitted) {
+                out.push_str(&rows);
+            }
         }
         NextActionCheckCase::SuppressedByPolicy => {
             // #13819: a run whose findings an owner opt-out withheld names

@@ -10,6 +10,10 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: no gap selected for repair
   Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 no test path, 2 unclear. Rerun with --format human-full for the evidence on each removed line
+  Removed code (static evidence on the old lines, not a test result):
+    - ./src/lib.rs:13 `if cost > 0 { cost } else { 0 }`: no test path was found
+    - ./src/lib.rs:13 `fn retired_helper() -> i32 {`: ripr could not tell whether a test checks it (analysis limited, not a verdict)
+    - ./src/lib.rs:13 `let cost = 5;`: ripr could not tell whether a test checks it (analysis limited, not a verdict)
 
 Hidden:
   All 3 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.

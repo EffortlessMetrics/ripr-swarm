@@ -1009,10 +1009,22 @@ expands the same evidence; it does not settle an unclear class. It
 does not say "before treating this run as actionable", which read as
 "nothing to look at" for a removal that tests reach.
 
+Under that line the run lists what was removed (#15617). A
+`Removed code (static evidence on the old lines, not a test result):` heading
+is followed by one row per removed line: its location, the code that stood
+there in a code span, and what the finding's class says about the old line
+(`a related test appears to check this behavior`, `tests reach it but check it
+only loosely`, `tests reach it but none appears to check it`, `no test path
+was found`, or `ripr could not tell whether a test checks it (analysis limited,
+not a verdict)`). At most three rows are listed; identical rows print once,
+and a final `N more listed under Hidden` row counts the rest. The rows
+restate classes the findings already carry. They select nothing for repair
+and add no verdict.
+
 Any other no-selection mix (a moved or renamed line, unresolved currentness,
 or a mix of those) keeps the earlier wording. The State id
 (`no_actionable_gap`), the Hidden list, the counts, repair routing and every
-machine format are unchanged; the line claims no runtime outcome.
+machine format are unchanged; the line and the rows claim no runtime outcome.
 
 ## Non-Claims
 

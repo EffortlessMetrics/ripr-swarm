@@ -371,3 +371,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (29)
+
+Reason:
+RIPR-SPEC-0122: a removal-only run lists the removed lines and what the static evidence on each shows under Safe next action (#15617)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`

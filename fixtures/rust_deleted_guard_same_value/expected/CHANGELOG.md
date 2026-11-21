@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (3)
+
+Reason:
+RIPR-SPEC-0122: a removal-only run lists the removed lines and what the static evidence on each shows under Safe next action (#15617)
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
