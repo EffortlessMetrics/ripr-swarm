@@ -645,6 +645,7 @@ impl ClassifiedProbeEvidence {
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
                 unary_tail: context.unary_tail.as_ref(),
+                literal_condition: context.literal_condition.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,

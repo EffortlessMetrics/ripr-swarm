@@ -221,7 +221,9 @@ Test discovery:
   With no project venv the command keeps PATH `python` at its existing
   confidence: a static producer cannot know whether system Python has pytest,
   and a runtime probe would make reports and goldens host-dependent, so
-  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  `ripr doctor` checks PATH `python -m pytest` instead when there is no
+  project venv; with a venv, doctor reads the same static venv facts
+  (RIPR-SPEC-0007). The
   unittest route is unchanged. JSON (`evidence`, `repair_placement`,
   `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
   carry this one decision; renderers never read the filesystem, and the
@@ -323,8 +325,9 @@ mock expectations, and custom `assert_*` helpers.
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
 - `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
-  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
-  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `assert f(..) is True|False` (one `is`, either operand order) is an exact
+  identity pin for any owner and arguments (#15250), like `== True|False`.
+  Bool-owner exception (#13620): `self.assertTrue(f(lit, ..))`,
   `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
   are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
   unique function owner that provably returns a `bool` (annotated `-> bool`,

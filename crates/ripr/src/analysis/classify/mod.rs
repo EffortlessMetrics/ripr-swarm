@@ -44,6 +44,7 @@ mod indirect_owner;
 mod infection;
 mod literal_assertion;
 pub(in crate::analysis) use literal_assertion::asserts_only_dropped_literals;
+mod literal_condition;
 mod literal_length_boundary;
 mod macro_item_names;
 mod mask_pin;
@@ -99,7 +100,8 @@ pub(in crate::analysis) use binding_return_flow::{
 };
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
-    same_test_pairing_missing_summary, wrapper_return_boundary_pinned,
+    observed_owner_call_rows_on_line, same_test_pairing_missing_summary,
+    wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
@@ -180,6 +182,7 @@ pub(in crate::analysis) use indirect_owner::{
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
+pub(in crate::analysis) use literal_condition::{LiteralConditionChange, literal_condition_change};
 pub(in crate::analysis) use literal_length_boundary::refine_literal_length_boundary;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};

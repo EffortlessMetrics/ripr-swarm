@@ -91,6 +91,8 @@ mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
+#[path = "cli_smoke/json_refusal_next_steps.rs"]
+mod json_refusal_next_steps;
 #[path = "cli_smoke/leftover_check_honesty.rs"]
 mod leftover_check_honesty;
 #[path = "cli_smoke/leftover_hints.rs"]
@@ -130,6 +132,8 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
+#[path = "cli_smoke/root_default_outputs.rs"]
+mod root_default_outputs;
 // Unix only: the test installs a `#!/bin/sh` git shim with `PermissionsExt`.
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
@@ -4860,14 +4864,23 @@ fn context_selector_miss_emits_cli_refusal_only_for_json_request() -> Result<(),
     ]);
     let value = assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
     // `next` is never lifted from the miss prose, which embeds the selector:
-    // a selector shaped like a runnable command stays `null`.
-    assert_eq!(value["error"]["next"], serde_json::Value::Null);
+    // it is the listing command the owner composed from the typed run
+    // (#15260), and a selector shaped like a runnable command never reaches it.
+    let next = value["error"]["next"]["command"]
+        .as_str()
+        .ok_or("the selector miss must carry the owner's listing command")?
+        .to_string();
+    assert!(next.starts_with("ripr check --root "), "{next}");
+    assert!(next.ends_with(" --json"), "{next}");
+    assert_eq!(value["error"]["next"]["purpose"], "follow_stated_step");
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains(&format!("`{next}`")), "{message}");
     let hostile = "`ripr check --json` probe:nope.rs:1:absent-6834";
     let hostile_out = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", hostile, "--json",
     ]);
     let hostile_value = assert_cli_refusal(&hostile_out, "selector_miss", hostile, "")?;
-    assert_eq!(hostile_value["error"]["next"], serde_json::Value::Null);
+    assert_eq!(hostile_value["error"]["next"]["command"], next.as_str());
     let plain = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector,
     ]);
@@ -27525,10 +27538,12 @@ fn receipt_check_rejects_present_invalid_canonical_gap_id() -> Result<(), Box<dy
         write(identity)?;
         let bad = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
         assert_eq!(bad.status.code(), Some(2), "{label}: should exit 2");
-        assert!(
-            bad.stdout.is_empty(),
-            "{label}: stdout must be empty, got {}",
-            String::from_utf8_lossy(&bad.stdout)
+        // #15260: under `--json` the refusal is the shared document on stdout.
+        let refusal: serde_json::Value = serde_json::from_slice(&bad.stdout)?;
+        assert_eq!(refusal["status"], "refused", "{label}: {refusal:#}");
+        assert_eq!(
+            refusal["error"]["code"], "input_unusable",
+            "{label}: {refusal:#}"
         );
         let stderr = String::from_utf8_lossy(&bad.stderr);
         assert!(
@@ -38683,4 +38698,107 @@ fn tree_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
         }
     }
     Ok(found)
+}
+
+/// #15326: a clean checkout of any default branch whose base resolves to the
+/// remote-tracking ref (`origin/<name>`) is on the comparison base, in the same
+/// words the bare-name `main` case gets; no `--worktree` advice applies to a
+/// clean tree. A feature branch with an empty diff keeps its own wording.
+#[test]
+fn check_clean_default_branch_with_remote_base_says_comparison_base() -> Result<(), String> {
+    for name in ["master", "trunk"] {
+        let up = unique_temp_workspace(&format!("remote-base-up-{name}"));
+        std::fs::create_dir_all(up.join("src")).map_err(|e| format!("create src: {e}"))?;
+        run_git(&up, &["init", "-b", name])?;
+        run_git(&up, &["config", "user.email", "test@test.com"])?;
+        run_git(&up, &["config", "user.name", "Test"])?;
+        std::fs::write(
+            up.join("src/lib.rs"),
+            "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+        )
+        .map_err(|e| format!("write lib.rs: {e}"))?;
+        std::fs::write(
+            up.join("Cargo.toml"),
+            "[package]\nname = \"remote-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|e| format!("write Cargo.toml: {e}"))?;
+        run_git(&up, &["add", "."])?;
+        run_git(&up, &["commit", "-m", "initial"])?;
+        run_git(&up, &["commit", "--allow-empty", "-m", "second"])?;
+        let up_str = up.to_string_lossy().into_owned();
+        let cl = unique_temp_workspace(&format!("remote-base-cl-{name}"));
+        let cl_str = cl.to_string_lossy().into_owned();
+        run_git(&up, &["clone", "-q", &up_str, &cl_str])?;
+        let output = run_ripr(&["check", "--root", &cl_str]);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let on_base = format!("you are on `origin/{name}`, which is the comparison base");
+        if !stdout.contains(&on_base) || stdout.contains("--worktree") {
+            return Err(format!(
+                "{name}: clean default branch must say it is on the comparison base without --worktree; got:\n{stdout}"
+            ));
+        }
+        // Discriminating negative: a feature branch at the same commit is not
+        // the base branch, so the on-base wording must not appear.
+        run_git(&cl, &["checkout", "-q", "-b", "feature"])?;
+        let feature = run_ripr(&["check", "--root", &cl_str]);
+        assert_success(&feature);
+        let feature_out = String::from_utf8_lossy(&feature.stdout).into_owned();
+        if feature_out.contains("which is the comparison base") {
+            return Err(format!(
+                "{name}: a feature branch must not claim to be the comparison base; got:\n{feature_out}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #15326 / #7644: a feature-branch clone whose `origin/HEAD` tracks the
+/// feature branch resolves the base to `origin/feature` at HEAD's commit, the
+/// same shape as a default-branch clone, but the real base is elsewhere. It
+/// must keep the probed `--base` advice, not claim to be on the comparison base.
+#[test]
+fn check_feature_branch_clone_with_remote_base_keeps_base_candidate_advice() -> Result<(), String> {
+    let up = unique_temp_workspace("remote-base-up-feature-clone");
+    std::fs::create_dir_all(up.join("src")).map_err(|e| format!("create src: {e}"))?;
+    run_git(&up, &["init", "-b", "trunk"])?;
+    run_git(&up, &["config", "user.email", "test@test.com"])?;
+    run_git(&up, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        up.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|e| format!("write lib.rs: {e}"))?;
+    std::fs::write(
+        up.join("Cargo.toml"),
+        "[package]\nname = \"remote-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    run_git(&up, &["add", "."])?;
+    run_git(&up, &["commit", "-m", "initial"])?;
+    run_git(&up, &["checkout", "-q", "-b", "feature"])?;
+    std::fs::write(
+        up.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a - b }\n",
+    )
+    .map_err(|e| format!("write lib.rs: {e}"))?;
+    run_git(&up, &["commit", "-am", "feature change"])?;
+    let up_str = up.to_string_lossy().into_owned();
+    let cl = unique_temp_workspace("remote-base-cl-feature-clone");
+    let cl_str = cl.to_string_lossy().into_owned();
+    run_git(&up, &["clone", "-q", &up_str, &cl_str])?;
+    let output = run_ripr(&["check", "--root", &cl_str]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !stdout.contains("`origin/feature`") {
+        return Err(format!(
+            "fixture precondition: the default base must resolve to origin/feature; got:\n{stdout}"
+        ));
+    }
+    if stdout.contains("which is the comparison base") || !stdout.contains("--base origin/trunk") {
+        return Err(format!(
+            "a feature-branch clone must keep the probed --base advice; got:\n{stdout}"
+        ));
+    }
+    Ok(())
 }

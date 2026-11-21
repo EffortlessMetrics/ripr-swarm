@@ -194,10 +194,12 @@ pub(super) struct Backend {
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
-    /// Recovery id of the pre-snapshot pull marker last served to the pull
-    /// client (#14447 review): an attempt transition that leaves the served
-    /// route unchanged sends no `workspace/diagnostic/refresh`.
-    pending_pull_marker_served_recovery: Mutex<Option<&'static str>>,
+    /// Payload identity of the pre-snapshot pull marker last served to the
+    /// pull client (#14447 review): an attempt transition that leaves the
+    /// served marker unchanged sends no `workspace/diagnostic/refresh`. It
+    /// folds the failure digest, so a different recorded failure re-pulls
+    /// (#15461 review).
+    pending_pull_marker_served_recovery: Mutex<Option<String>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -1648,19 +1650,15 @@ impl Backend {
         if failure.is_none() && has_snapshot {
             return;
         }
-        let recovery = match self.analysis_pending_recovery() {
-            AnalysisPendingRecovery::SaveOrRefresh if analysis_starting => {
-                AnalysisPendingRecovery::AnalysisRunning
-            }
-            recovery => recovery,
-        };
+        let recovery =
+            Self::push_marker_recovery(self.analysis_pending_recovery(), analysis_starting);
         let withdrawn = has_snapshot;
+        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let items = if withdrawn {
             analysis_pending_withdrawal_diagnostics(recovery)
         } else {
             analysis_pending_diagnostics(recovery)
         };
-        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let uris = self
             .quarantine
             .documents
@@ -1706,11 +1704,11 @@ impl Backend {
         if !(self.pull_diagnostics_enabled() && self.diagnostic_refresh_support_enabled()) {
             return;
         }
-        let recovery_id = self.analysis_pending_recovery().recovery_id();
+        let identity = self.analysis_pending_recovery().payload_identity();
         let route_unchanged = self
             .pending_pull_marker_served_recovery
             .lock()
-            .is_ok_and(|served| *served == Some(recovery_id));
+            .is_ok_and(|served| served.as_deref() == Some(identity.as_str()));
         if route_unchanged {
             return;
         }
@@ -1730,7 +1728,7 @@ impl Backend {
     /// Record the pre-snapshot pull marker route just served (#14447 review).
     fn note_pending_pull_marker_served(&self, recovery: &AnalysisPendingRecovery) {
         if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
-            *served = Some(recovery.recovery_id());
+            *served = Some(recovery.payload_identity());
         }
     }
 
@@ -1750,6 +1748,25 @@ impl Backend {
             .unwrap_or_default()
     }
 
+    /// The route a push marker serves when the caller knows an attempt is
+    /// starting: the cold-start route and a recorded failure's route both
+    /// give way to "running" (#14447; #15461 review), so a save that retries
+    /// a failed attempt never re-sends "fix that cause". Blocked routes win.
+    pub(super) fn push_marker_recovery(
+        recovery: AnalysisPendingRecovery,
+        analysis_starting: bool,
+    ) -> AnalysisPendingRecovery {
+        match recovery {
+            AnalysisPendingRecovery::SaveOrRefresh
+            | AnalysisPendingRecovery::AnalysisFailed { .. }
+                if analysis_starting =>
+            {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        }
+    }
+
     /// Signature of the marker payload a pending URI currently carries
     /// (#8732 review): session restore and repeated blocked-state refreshes
     /// can call the publisher back-to-back for the same URI, and republishing
@@ -1761,7 +1778,7 @@ impl Backend {
         recovery: &AnalysisPendingRecovery,
         withdrawn: bool,
     ) -> String {
-        format!("{}:{withdrawn}", recovery.recovery_id())
+        format!("{}:{withdrawn}", recovery.payload_identity())
     }
 
     #[cfg(test)]
@@ -2272,6 +2289,22 @@ impl Backend {
             health.state = state;
             health.snapshot_id = Some("snapshot:test".to_string());
             health.last_success_snapshot_id = Some("snapshot:test".to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_analysis_attempt_failure_for_test(
+        &self,
+        kind: AnalysisFailureKind,
+        message: &str,
+    ) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.attempt_id = Some(2);
+            health.state = AnalysisAttemptState::Failed;
+            health.failure = Some(AnalysisFailure {
+                kind,
+                message: bounded_failure_message(message),
+            });
         }
     }
 
@@ -3409,8 +3442,30 @@ impl Backend {
             AnalysisPendingRecovery::SaveOrRefresh if self.analysis_attempt_active() => {
                 AnalysisPendingRecovery::AnalysisRunning
             }
+            // A failed attempt with no snapshot: a bare retry fails the same
+            // way, so name the recorded failure rather than the start route.
+            AnalysisPendingRecovery::SaveOrRefresh => self.latest_attempt_failure().map_or(
+                AnalysisPendingRecovery::SaveOrRefresh,
+                |failure| AnalysisPendingRecovery::AnalysisFailed {
+                    kind: failure.kind,
+                    detail: failure.message,
+                },
+            ),
             recovery => recovery,
         }
+    }
+
+    /// The bounded failure the latest attempt recorded, only while that
+    /// attempt's state is `failed` (a later success, cancel or new attempt
+    /// clears the claim).
+    fn latest_attempt_failure(&self) -> Option<AnalysisFailure> {
+        self.analysis_health.lock().ok().and_then(|health| {
+            if health.state == AnalysisAttemptState::Failed {
+                health.failure.clone()
+            } else {
+                None
+            }
+        })
     }
 
     /// Whether an analysis attempt is queued or running right now.
@@ -5960,7 +6015,11 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
 /// The fact content and the recovery route are shared across surfaces; the
 /// LSP names its own configuration surface rather than MCP's `ripr_refresh`
 /// arguments.
-pub(super) const EMPTY_SCOPE_LSP_RETRY_ROUTE: &str = "Set the analysis base to the revision your change branches from (the `baseRef` session option or `[lsp] base_ref` in `ripr.toml`) and run ripr.refresh to re-analyze.";
+///
+/// The base is a session setting only: `ripr.toml` has no base key (its
+/// `[lsp]` table rejects `base_ref`, and a rejected `ripr.toml` pauses all
+/// analysis), so the route must not name one.
+pub(super) const EMPTY_SCOPE_LSP_RETRY_ROUTE: &str = "Set the analysis base to the revision your change branches from (the `baseRef` initialization option; in VS Code, the `ripr.baseRef` setting) and run ripr.refresh to re-analyze.";
 
 /// #12416: the not-all-clear scope sentence for an empty-scope snapshot,
 /// `Some` exactly under the MCP `empty_scope_hint` gate: an empty-scope
@@ -9106,7 +9165,7 @@ fn quarantined_document_result_id(base: &str, reason: DocumentStalenessReason) -
 /// produces a fresh identity — the client re-renders the marker instead of
 /// holding a stale route behind `unchanged`.
 fn analysis_pending_result_id(recovery: &AnalysisPendingRecovery) -> String {
-    format!("ripr:analysis-pending:{}", recovery.recovery_id())
+    format!("ripr:analysis-pending:{}", recovery.payload_identity())
 }
 
 /// The withdrawal variant identity (#8731 review): the pre-analysis marker
@@ -13368,6 +13427,39 @@ mod work_done_progress_guard_tests {
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod empty_scope_retry_route_tests {
+    use super::*;
+
+    /// The route must name only base settings the server accepts: the
+    /// `baseRef` session option (VS Code `ripr.baseRef`). Following a route
+    /// to a `ripr.toml` key the config owner rejects would pause analysis.
+    #[test]
+    fn empty_scope_retry_route_names_only_accepted_base_settings() -> Result<(), String> {
+        let rejected = crate::config::parse_config_diagnostic("[lsp]\nbase_ref = \"main\"\n");
+        if rejected.is_ok() {
+            return Err("ripr.toml now accepts [lsp] base_ref; revisit the route".to_string());
+        }
+        let route = EMPTY_SCOPE_LSP_RETRY_ROUTE;
+        if route.contains("base_ref") || route.contains("ripr.toml") {
+            return Err(format!("route names a rejected ripr.toml key: {route}"));
+        }
+        if !route.contains("`baseRef`") || !route.contains("`ripr.baseRef`") {
+            return Err(format!(
+                "route must name the accepted base settings: {route}"
+            ));
+        }
+        let mut options = serde_json::Map::new();
+        options.insert("baseRef".to_string(), serde_json::json!("origin/release"));
+        let mut config = LspAnalysisConfig::default();
+        super::super::config::apply_session_options(&mut config, &options)?;
+        if config.base_ref.as_deref() != Some("origin/release") {
+            return Err(format!("baseRef must set the base: {:?}", config.base_ref));
+        }
+        Ok(())
     }
 }
 

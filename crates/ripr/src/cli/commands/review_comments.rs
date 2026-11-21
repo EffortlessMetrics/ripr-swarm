@@ -1161,7 +1161,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
     let mut gap_ledger = None;
     let mut check_output = None;
     let mut suppression_policy = None;
-    let mut out = PathBuf::from("target/ripr/review/comments.json");
+    let mut out = None;
     let mut timeout_ms = DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS;
 
     let mut i = 0usize;
@@ -1242,7 +1242,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                         "review-comments --out requires a non-empty path",
                     ));
                 }
-                out = PathBuf::from(value);
+                out = Some(PathBuf::from(value));
             }
             "--timeout-ms" => {
                 i += 1;
@@ -1254,6 +1254,11 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
         i += 1;
     }
 
+    // #15378: the default guidance lands under --root, where the gate,
+    // `reports ci-summary --root` and the report hints read it.
+    let out = out.unwrap_or_else(|| {
+        crate::cli::parse::default_output_under_root(&root, "target/ripr/review/comments.json")
+    });
     Ok(ReviewCommentsOptions {
         root,
         base: base.ok_or_else(|| crate::cli::usage_refusal::missing_required("--base", "review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`"))?,
@@ -4337,6 +4342,19 @@ mod tests {
         );
         assert_eq!(
             with(&["--out", "elsewhere/c.json"])?.out,
+            PathBuf::from("elsewhere/c.json")
+        );
+        // #15378: the default follows a named root; an explicit --out does not.
+        assert_eq!(
+            with(&["--root", "crates/itoa"])?.out,
+            PathBuf::from("crates/itoa/target/ripr/review/comments.json")
+        );
+        assert_eq!(
+            with(&[])?.out,
+            PathBuf::from("target/ripr/review/comments.json")
+        );
+        assert_eq!(
+            with(&["--root", "crates/itoa", "--out", "elsewhere/c.json"])?.out,
             PathBuf::from("elsewhere/c.json")
         );
         Ok(())
