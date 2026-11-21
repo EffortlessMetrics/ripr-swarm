@@ -2808,6 +2808,80 @@ fn rebound_parameter_keeps_oracle_credit() -> Result<(), String> {
     Ok(())
 }
 
+// #15292: a multi-line `def` header is not part of the body. Its parameters
+// are not rebindings before the guard and its closing `) -> T:` line is not
+// an unreadable dedent, so the dead-arm reading holds exactly as it does for
+// a one-line header. Each shape goes through a different reader: the
+// comparison guard, the `else` chain, the `is None` guard atom and the
+// `match` arm.
+const MULTI_LINE_HEADER_ARMS: [(&str, &str, &str, usize); 4] = [
+    (
+        "def quote(\n    total: float = 0.0,\n    rate: float = 1.0,\n) -> float:\n{rebind}    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        "        return round(total * 1.02, 2)",
+        6,
+    ),
+    (
+        "def quote(\n    total: float = 0.0,\n    rate: float = 1.0,\n) -> float:\n{rebind}    if total > 1000:\n        return round(total * 1.02, 2)\n    else:\n        return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n",
+        "        return round(total * 1.05, 2)",
+        8,
+    ),
+    (
+        "def quote(\n    total: float | None = None,\n    rate: float = 1.0,\n) -> float:\n{rebind}    if total is None:\n        return 7.0\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        "        return 7.0",
+        6,
+    ),
+    (
+        "def quote(\n    total: int = 0,\n    rate: float = 1.0,\n) -> int:\n{rebind}    match total:\n        case 5:\n            return 50\n        case _:\n            return 1\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(3) == 1\n",
+        "            return 50",
+        7,
+    ),
+];
+
+#[test]
+fn multi_line_header_does_not_hide_an_unentered_arm() -> Result<(), String> {
+    let mut mismatches = Vec::new();
+    for (source, tests, after, line) in MULTI_LINE_HEADER_ARMS {
+        let source = source.replace("{rebind}", "");
+        let finding = classify_added_case(&source, tests, line, after)?;
+        if finding.class != ExposureClass::WeaklyExposed {
+            mismatches.push(format!("{source}: {:?}", finding.class));
+        }
+        // The one-line header reads the same.
+        let single = source.replacen(
+            &source[..source.find(":\n").map_or(0, |end| end + 2)],
+            "def quote(total=None, rate=1.0):\n",
+            1,
+        );
+        let finding = classify_added_case(&single, tests, line - 3, after)?;
+        if finding.class != ExposureClass::WeaklyExposed {
+            mismatches.push(format!("{single}: {:?}", finding.class));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn body_rebinding_below_a_multi_line_header_keeps_oracle_credit() -> Result<(), String> {
+    // The same owners with a real body rebinding above the guard: the call
+    // binding no longer predicts what the guard reads, so the oracle verdict
+    // stays.
+    let mut mismatches = Vec::new();
+    for (source, tests, after, line) in MULTI_LINE_HEADER_ARMS {
+        let source = source.replace("{rebind}", "    total = load(total)\n");
+        let finding = classify_added_case(&source, tests, line + 1, after)?;
+        if finding.class != ExposureClass::Exposed {
+            mismatches.push(format!("{source}: {:?}", finding.class));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    Ok(())
+}
+
 // #7874 counterexamples end to end: each call below enters the guarded arm
 // at runtime and its assertion discriminates the changed return, so the
 // verdict must stay `exposed` rather than a false `weakly_exposed`.

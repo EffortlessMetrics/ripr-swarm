@@ -467,7 +467,8 @@ fn entered_if_conditions(
     let ends = super::guard_credit::safe_prefix_line_ends(owner, owner_source, changed_index)?;
     // Python expands tabs and resets indentation on form-feed. Only code
     // indentation matters; comments and string interiors cannot add ancestors.
-    if (owner.start_line..=changed_index).any(|index| {
+    let body_start = owner_body_start(owner_source, owner);
+    if (body_start..=changed_index).any(|index| {
         (index == changed_index || ends[index].is_some())
             && lines[index]
                 .chars()
@@ -485,7 +486,7 @@ fn entered_if_conditions(
         .collect();
     let mut threshold = leading_whitespace(changed);
     let mut conditions = Vec::new();
-    for index in (owner.start_line..changed_index).rev() {
+    for index in (body_start..changed_index).rev() {
         let Some(end) = ends[index] else { continue };
         let raw = owner_source.get(starts[index]..end)?;
         let trimmed = raw.trim();
@@ -576,7 +577,8 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
     let mut else_chains = Vec::new();
     // Docstring text that reads like `else:` / `if X:` is not a branch.
     let scan = scan_triple_quotes(&lines);
-    for index in (owner.start_line..changed_index).rev() {
+    let body_start = owner_body_start(owner_source, owner);
+    for index in (body_start..changed_index).rev() {
         let (masked, starts_in_code) = scan[index];
         let raw = lines[index];
         let trimmed = raw.trim();
@@ -618,7 +620,7 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
             if trimmed != "else:" {
                 return None;
             }
-            else_chains.extend(else_chain_conditions(&lines, index, owner)?);
+            else_chains.extend(else_chain_conditions(&lines, index, body_start)?);
             threshold = indent;
             continue;
         }
@@ -663,13 +665,13 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
 fn else_chain_conditions(
     lines: &[&str],
     else_index: usize,
-    owner: &PythonOwner,
+    body_start: usize,
 ) -> Option<Vec<(usize, String)>> {
     let scan = scan_triple_quotes(lines);
     let in_string: Vec<bool> = scan.iter().map(|(inside, _)| *inside).collect();
     let else_indent = leading_whitespace(lines.get(else_index)?);
     let mut chain = Vec::new();
-    for index in (owner.start_line..else_index).rev() {
+    for index in (body_start..else_index).rev() {
         let raw = lines[index];
         let trimmed = raw.trim();
         // A sibling header that opens a multi-line string (a `for`/`while`
@@ -842,7 +844,7 @@ fn early_exit_conditions(
         return Vec::new();
     }
     let mut found = Vec::new();
-    for index in (owner.start_line..changed_index).rev() {
+    for index in (owner_body_start(owner_source, owner)..changed_index).rev() {
         if in_string[index] {
             // Docstring or multi-line string text is not code.
             continue;
@@ -1181,6 +1183,12 @@ pub(super) fn parameter_rebound_before(
         return false;
     };
     let guard_indent = indent_width(guard_raw);
+    // A multi-line signature's continuation lines (`    total: int | None =
+    // None,`) read like annotated assignments, so the scan starts after the
+    // owner's own header when the guard sits below it (#15292). A one-line or
+    // unrecognized header keeps the scan from the line after `owner_start`.
+    let owner_start = def_header_end(owner_source, owner_start, guard_line.saturating_add(1))
+        .unwrap_or(owner_start);
     let loop_enclosed = lines
         .get(owner_start..guard_line)
         .unwrap_or(&[])
@@ -1238,14 +1246,28 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
 }
 
 /// The 1-based last line of the owner's own multi-line `def` header (#15292).
-/// The shared span search looks ahead for the first `def`, so a header it
-/// does not recognize (`def\tquote(`) could hand back a later nested or
-/// sibling definition's span. A span counts only when no line before its
-/// `def` (from the owner's first line: decorators) starts a definition of its
-/// own, and the header ends inside the owner.
 fn owner_header_end(owner_source: &str, owner: &PythonOwner) -> Option<usize> {
+    def_header_end(owner_source, owner.start_line, owner.end_line)
+}
+
+/// The zero-based index of the first line below the owner's `def` header: the
+/// line after `owner.start_line`, or after the whole header when it spans
+/// several lines. The upward walks from a changed line stop here, so a
+/// header's closing `) -> T:` is not read as an unreadable dedent (#15292).
+pub(super) fn owner_body_start(owner_source: &str, owner: &PythonOwner) -> usize {
+    owner_header_end(owner_source, owner).unwrap_or(owner.start_line)
+}
+
+/// The 1-based last line of the multi-line `def` header of the owner that
+/// starts on 1-based `start_line`, when that header ends before 1-based
+/// `end_line` (#15292). The shared span search looks ahead for the first
+/// `def`, so a header it does not recognize (`def\tquote(`) could hand back a
+/// later nested or sibling definition's span. A span counts only when no line
+/// before its `def` (from the owner's first line: decorators) starts a
+/// definition of its own.
+fn def_header_end(owner_source: &str, start_line: usize, end_line: usize) -> Option<usize> {
     let (def_line, header_end) =
-        super::no_behavior::multi_line_def_header_span(owner_source, owner.start_line)?;
+        super::no_behavior::multi_line_def_header_span(owner_source, start_line)?;
     let starts_definition = |text: &str| {
         let trimmed = text.trim_start();
         let trimmed = trimmed
@@ -1258,11 +1280,10 @@ fn owner_header_end(owner_source: &str, owner: &PythonOwner) -> Option<usize> {
     };
     let earlier_definition = owner_source
         .lines()
-        .skip(owner.start_line.checked_sub(1)?)
-        .take(def_line.checked_sub(owner.start_line)?)
+        .skip(start_line.checked_sub(1)?)
+        .take(def_line.checked_sub(start_line)?)
         .any(starts_definition);
-    (!earlier_definition && header_end > owner.start_line && header_end < owner.end_line)
-        .then_some(header_end)
+    (!earlier_definition && header_end > start_line && header_end < end_line).then_some(header_end)
 }
 
 /// Every owner-body line (zero-based index into `owner_source`, trimmed text)
@@ -1633,7 +1654,7 @@ mod tests {
         let owner = quote_owner("def quote(total):\n    return total\n")?;
         let chain = |source: &str, else_index: usize| {
             let lines: Vec<&str> = source.lines().collect();
-            else_chain_conditions(&lines, else_index, &owner)
+            else_chain_conditions(&lines, else_index, owner.start_line)
         };
         // Blank lines and comments between arms belong to the chain.
         let chained = "def quote(total):\n    if total > 1:\n        return 1\n\n    # note\n    elif total > 0:\n        return 2\n    else:\n        return 3\n";
@@ -1717,7 +1738,7 @@ mod tests {
         // for/else after an `if`: the `for` header line is masked string text.
         let source = "def quote(total):\n    if total > 1:\n        y = 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        pass\n    else:\n        return 3\n";
         let lines: Vec<&str> = source.lines().collect();
-        assert_eq!(else_chain_conditions(&lines, 6, &owner), None);
+        assert_eq!(else_chain_conditions(&lines, 6, owner.start_line), None);
         // Line 8 is the `return 3` inside the loop's `else`; line 7 is the
         // `else:` itself.
         assert!(walk_guards(&owner, source, 8).is_none());
@@ -1725,7 +1746,7 @@ mod tests {
         let plain =
             "def quote(total):\n    if total > 1:\n        return 1\n    else:\n        return 3\n";
         let lines: Vec<&str> = plain.lines().collect();
-        assert!(else_chain_conditions(&lines, 3, &owner).is_some());
+        assert!(else_chain_conditions(&lines, 3, owner.start_line).is_some());
         // A loop body under a string-opening header is not under the `if`.
         let body = "def quote(total):\n    if total > 1:\n        return 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        return 2\n";
         assert!(walk_guards(&owner, body, 6).is_none());
@@ -1926,6 +1947,36 @@ mod tests {
             eval_comparison("total > 1000", 2, &row, &[], source, 0),
             None
         );
+    }
+
+    /// #15292: the guard-side scan starts below a multi-line `def` header, so
+    /// its annotated defaults are not rebindings, while body rebindings and
+    /// headers the span search does not recognize keep the refusal.
+    #[test]
+    fn rebound_scan_starts_below_a_multi_line_header() {
+        let header = "def quote(\n    self,\n    total: int | None = None,\n    rate: float = 1.0,\n) -> int:\n";
+        let clean = format!("{header}    if total > 1000:\n        return 42\n");
+        assert!(!parameter_rebound_before(&clean, 1, 5, "total"));
+        assert!(!parameter_rebound_before(&clean, 1, 5, "rate"));
+        let rebound =
+            format!("{header}    total = total or 0\n    if total > 1000:\n        return 42\n");
+        assert!(parameter_rebound_before(&rebound, 1, 6, "total"));
+        assert!(!parameter_rebound_before(&rebound, 1, 6, "rate"));
+        // A decorator, `async` and brackets inside a string default keep the
+        // header end.
+        let quoted = "@cached\nasync def quote(\n    sep: str = \"(#\\\"\",\n    total: int = 0,\n) -> int:\n    if total > 1000:\n        return 42\n";
+        assert!(!parameter_rebound_before(quoted, 1, 5, "total"));
+        assert!(!parameter_rebound_before(quoted, 1, 5, "sep"));
+        // An unrecognized header never borrows a later nested definition's
+        // span: the rebinding above that definition is still read.
+        let tabbed = "def\tquote(total):\n    total = 10\n    def helper(\n        x,\n    ):\n        return x\n    if total > 1000:\n        return 42\n";
+        assert!(parameter_rebound_before(tabbed, 1, 6, "total"));
+        // A loop above the guard still widens the scan to the whole owner.
+        let looped = format!(
+            "{header}    for step in range(3):\n        if total > 1000:\n            return 42\n        total = step\n"
+        );
+        assert!(parameter_rebound_before(&looped, 1, 6, "total"));
+        assert!(!parameter_rebound_before(&looped, 1, 6, "rate"));
     }
 
     #[test]
