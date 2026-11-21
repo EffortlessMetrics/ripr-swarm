@@ -19847,8 +19847,8 @@ fn dogfood_generated_ci_cockpit_receipts_are_checked() {
         "receipt must name the workflow producer: {GENERATED_CI_COCKPIT_COMMAND}"
     );
     assert!(
-        GENERATED_CI_COCKPIT_COMMAND.contains("reports ci-summary"),
-        "receipt must name the summary producer: {GENERATED_CI_COCKPIT_COMMAND}"
+        GENERATED_CI_COCKPIT_COMMAND.contains("reports ci-summary --full"),
+        "receipt must name the detailed summary preview: {GENERATED_CI_COCKPIT_COMMAND}"
     );
     assert!(
         GENERATED_CI_COCKPIT_COMMAND.contains("--base-ref main"),

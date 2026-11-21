@@ -3935,7 +3935,7 @@ Write reviewer-first report projections from explicit artifacts.
 Usage:
   ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
   ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
-  ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
+  ripr reports ci-summary [--full] [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --repo-exposure PATH [--root PATH] [--out PATH] [--out-md PATH]
@@ -3961,6 +3961,7 @@ CI packet options:
   --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 CI summary options:
+  --full                Preview the detailed report sections locally from the same artifacts.
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
   --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
   --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.
@@ -4115,9 +4116,10 @@ Run `ripr help reports` for every reports subcommand.
 Print the generated CI workflow's step summary from existing artifacts.
 
 Usage:
-  ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
+  ripr reports ci-summary [--full] [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
 
 CI summary options:
+  --full                Preview the detailed report sections locally from the same artifacts.
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
   --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
   --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.

@@ -1885,37 +1885,13 @@ log instead of leaving the summary empty. When `target/ripr/review/comments.json
 exists, the summary opens with "What RIPR found in this pull request": the count
 of changed-behavior spots where the tests may not notice a wrong result, the first
 spot with its missing check, and the `ripr agent repair` start when it is a plain
-`ripr agent repair ...` command (an unfinished analysis is never reported as clean). With no gate configured (`RIPR_GATE_MODE`
-unset or empty), the policy and governance sections (readiness, operations,
-history, promotion, waiver aging, suppression health) are folded into one
-collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
-The fold stays open ("needs attention") when a folded report is unreadable,
-has an unexpected shape, omits an expected count, or states a warning,
-unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when the
-readiness, operations, history, promotion and suppression-health report
-categories each parsed with all expected counts at `0` (preview-promotion and
-waiver-aging reports are conditional and keep it open only when present and not
-clean); it stays open ("some policy reports not found") when a required
-category is missing, and says
-"no policy reports found" (also open) when none was read. First-run status rows
-whose value is only the `not_available` placeholder are omitted, and the
-start-here packet is named as a file in the `ripr-reports` artifact rather than
-a `target/` path. The summary then continues with
-the `start-here` first-run packet when `ripr first-pr` can compose one from
-explicit artifacts, then includes the PR review front panel, first useful
-action fallback, a language preview grouping section when `[languages]` enables
-TypeScript or Python, policy readiness, waiver aging, and suppression health
-when their input artifacts exist, assistant-loop health when proof artifacts
-exist, the report packet index when any indexed artifact exists, the top
-recommendation, the agent review packet when present, artifact links,
-SARIF and badge status, known limits, and PR guidance annotation counts when
-`target/ripr/review/comments.json` exists. Each section keeps its at-a-glance
-lines and names its full Markdown report as a file in the `ripr-reports`
-artifact (`- Full report: ripr/... in the ripr-reports artifact`, the path
-inside the downloaded artifact, which drops the `target/` prefix) rather than
-inlining it; a three-line pull request's summary went from about 50 KB to
-13 KB (#14301). On pull
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). On a PR with readable guidance, the front page shows the gate status, analysis
+limits and available report paths in the `ripr-reports` artifact. Open
+`ripr/reports/index.md` there to navigate the complete packet. Missing guidance
+and non-PR runs retain the detailed diagnostic sections. To preview those
+sections locally against the same checkout and run settings, run
+`ripr reports ci-summary --root . --full`. This command reads existing artifacts.
+On pull
 requests, the generated workflow writes that report before emitting
 changed-line check annotations by default without posting inline review
 comments.
