@@ -62,7 +62,7 @@ impl StaticLimitKind {
     pub fn next_step(&self) -> &'static str {
         match self {
             StaticLimitKind::DynamicDispatch => {
-                "Add a test that calls the changed owner by name on a concrete value, not through a \
+                "Add a test that calls the changed owner directly by its own name, not through a \
                  call whose target is chosen at runtime, and assert on its result."
             }
             StaticLimitKind::Metaprogramming => {
@@ -264,7 +264,7 @@ impl StopReason {
                  its result there."
             }
             StopReason::DynamicDispatchUnresolved => {
-                "Call the changed owner by name on a concrete value in a test, not through a \
+                "Call the changed owner directly by its own name in a test, not through a \
                  dynamically dispatched call, and assert on its result."
             }
             StopReason::ProcMacroOpaque => {
