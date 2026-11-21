@@ -4235,7 +4235,10 @@ mod tests {
             ),
             "{rendered}"
         );
-        assert!(!rendered.contains("no gap selected for repair"), "{rendered}");
+        assert!(
+            !rendered.contains("no gap selected for repair"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains(
                 "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 2 partly noticed. Rerun with --format human-full for the evidence on each removed line\n"
