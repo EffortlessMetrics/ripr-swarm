@@ -976,20 +976,20 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Reads the current ripr-swarm merge/protection surface through GET-only GitHub endpoints or a sanitized --input snapshot and writes one MQ0 current-state packet; desired settings, live observation, apply-route capability, and rollback capture stay separate facts. It never mutates settings, rulesets, workflows, branches, PRs, or secrets, and it does not evaluate a future queue desired state.",
         ),
         command_entry(
-            "merge-queue conflict-notice <new-output-directory> <pr> <main> <head> [--post]",
-            "external_state_mutating",
-            "<new-output-directory>/queue-conflict-notice.json and, only with --post, one GitHub PR comment",
-            true,
-            false,
-            "Rechecks one observed main/head conflict and previews its advisory. Explicit --post may add one PR comment.",
-        ),
-        command_entry(
             "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
             "external_state_read",
             "<new-output-directory>/{queue-pages.json,queue-conflicts.json}",
             false,
             false,
             "Compares frozen PR heads to pinned main using a disposable bare Git store, without changing GitHub or scheduling CI.",
+        ),
+        command_entry(
+            "merge-queue conflict-notice <new-output-directory> <pr> <main> <head> [--post]",
+            "external_state_mutating",
+            "<new-output-directory>/queue-conflict-notice.json and, only with --post, one GitHub PR comment",
+            true,
+            false,
+            "Rechecks one observed main/head conflict and previews its advisory. Explicit --post may add one PR comment.",
         ),
         command_entry(
             "module-health [--threshold <n>]",
