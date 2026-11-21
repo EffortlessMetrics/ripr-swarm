@@ -1,11 +1,12 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.200 for same-line owner calls (#14487)
+## Pending — corpus cache generation 1.201 for test-local empty macros and same-line owner calls (#15539, #14487)
 
 A second directly asserted call on the same line can supply the boundary input.
-The classified cache now rejects entries built before this evidence was recorded.
+Calls erased by test-local empty macros yield no observed input. The editor rejects
+a portable gap ledger that predates this distinction.
 The unchanged-attempt fixture retains its weak grip. Its portable reports and
-dependent verification and receipt hashes were regenerated from the 1.200 producer.
+dependent verification and receipt hashes were regenerated from the 1.201 producer.
 
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 
