@@ -382,10 +382,8 @@ impl RepoRelative {
     }
 
     fn line(&self, line: &[u8]) -> Vec<u8> {
-        // Inside the quotes only the matching closing quote or a separator
-        // ends the root: `'<root> x'` names a sibling directory.
         let line = match self.quoted.first() {
-            Some(&quote) => rewrite_to(line, &self.quoted, &[quote, b'.'], &[b'/', quote]),
+            Some(&quote) => rewrite_to(line, &self.quoted, &[quote, b'.']),
             None => line.to_vec(),
         };
         let line = rewrite(&line, &self.physical);
@@ -394,12 +392,18 @@ impl RepoRelative {
 }
 
 fn rewrite(text: &[u8], root: &[u8]) -> Vec<u8> {
-    rewrite_to(text, root, b".", b"/ '\"`):")
+    rewrite_to(text, root, b".")
 }
 
-/// Replace each whole-token `root` with `dot`: the byte before it must open
-/// a token and the byte after it must be one of `ends`.
-fn rewrite_to(text: &[u8], root: &[u8], dot: &[u8], ends: &[u8]) -> Vec<u8> {
+/// Replace each whole-token `root` with `dot`.
+///
+/// A root inside a shell quote (`'`/`"` just before it, or a needle that
+/// opens with one) is one shell argument: it ends at the matching closing
+/// quote followed by a token boundary, or continues as a descendant at `/`.
+/// So `'<root> x'`, `'<root>:x'` and `'<root>'x` each name another
+/// directory and keep their spelling. Unquoted and markdown-backtick tokens
+/// keep the plain path rule, which also accepts a `:line` suffix.
+fn rewrite_to(text: &[u8], root: &[u8], dot: &[u8]) -> Vec<u8> {
     if root.is_empty() {
         return text.to_vec();
     }
@@ -410,16 +414,19 @@ fn rewrite_to(text: &[u8], root: &[u8], dot: &[u8], ends: &[u8]) -> Vec<u8> {
         let after_root = tail.get(root.len()..).unwrap_or_default();
         let before = pre.last().copied();
         let before_ok = before.is_none_or(|byte| b" '\"`=(".contains(&byte));
-        let after = after_root.first().copied();
-        let after_ok = match before {
-            // A root that opens a shell-quoted span ends at that span's
-            // closing quote, a separator or a `:line` suffix: in
-            // `'<root> x'` the quotes name another directory whose path only
-            // starts with the root. Markdown backticks keep the plain rule.
-            Some(quote @ (b'\'' | b'"')) => {
-                after.is_some_and(|byte| byte == quote || byte == b'/' || byte == b':')
+        let opener = match (root.first(), before) {
+            (Some(&quote @ (b'\'' | b'"')), _) | (_, Some(quote @ (b'\'' | b'"'))) => Some(quote),
+            _ => None,
+        };
+        let after_ok = match (opener, after_root) {
+            (Some(_), [b'/', ..]) => true,
+            (Some(quote), [close, next @ ..]) if *close == quote => {
+                next.first().is_none_or(|byte| b" ;)|&`".contains(byte))
             }
-            _ => after.is_none_or(|byte| ends.contains(&byte)),
+            (Some(_), _) => false,
+            (None, _) => after_root
+                .first()
+                .is_none_or(|byte| b"/ '\"`):".contains(byte)),
         };
         out.extend_from_slice(pre);
         if before_ok && after_ok {
@@ -783,6 +790,8 @@ mod tests {
             let sibling = crate::agent::loop_commands::shell_arg_for(&sibling, false);
             assert_eq!(relative.value(&sibling), sibling);
         }
+        let joined = format!("git -C {quoted}x fetch origin");
+        assert_eq!(relative.value(&joined), joined);
     }
 
     #[test]
@@ -818,7 +827,18 @@ mod tests {
             ..RepoRelative::default()
         };
         assert_eq!(plain.value("\"/w/repo more\""), "\"/w/repo more\"");
-        assert_eq!(plain.value("'/w/repo'x"), "'.'x");
+        // Adjacent pieces join one shell argument (`/w/repox`), and a quoted
+        // `:` belongs to the directory name; both name another directory.
+        assert_eq!(
+            plain.value("git -C '/w/repo'x fetch"),
+            "git -C '/w/repo'x fetch"
+        );
+        assert_eq!(
+            plain.value("git -C '/w/repo:other' fetch"),
+            "git -C '/w/repo:other' fetch"
+        );
+        assert_eq!(plain.value("git -C '/w/repo' fetch"), "git -C '.' fetch");
+        assert_eq!(plain.value("cd '/w/repo'; ls"), "cd '.'; ls");
         assert_eq!(plain.value("ls /w/repo more"), "ls . more");
     }
 }
