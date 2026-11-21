@@ -3348,6 +3348,20 @@ fn evidence_promotion_missing_human_oracle_projection_paths(
     expected_kind: &str,
     expected_strength: &str,
 ) -> Vec<String> {
+    // A name-only test may have an exact assertion on a different owner.
+    // The full report keeps that row's grade in Evidence and names the
+    // finding's absent oracle separately in Weakness.
+    if expected_kind == "unknown"
+        && expected_strength == "none"
+        && human_text.split("\n\n").any(|section| {
+            let mut lines = section.lines();
+            lines.next() == Some("Weakness")
+                && lines.any(|line| line == "  - No relevant oracle was detected")
+        })
+    {
+        return Vec::new();
+    }
+
     if human_text.lines().any(|line| {
         evidence_promotion_human_oracle_line_matches(line, expected_kind, expected_strength)
     }) {

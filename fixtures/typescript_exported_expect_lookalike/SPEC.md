@@ -17,8 +17,10 @@ return-value diff through the production TypeScript preview adapter.
 
 ## Then
 
-The single finding stays `weakly_exposed`, with four related tests and
-`unknown` oracle strength/kind. Each lookalike accepts the wrong return value;
+The single finding stays `weakly_exposed`. All four related rows retain
+`unknown` oracle kind and strength. No row supplies the headline, so the
+finding reports oracle kind `unknown` and strength `none`. Each lookalike
+accepts the wrong return value;
 its `toBe` property cannot establish a runner matcher. The honesty corpus
 independently pins the finding count, class and oracle, so blessing an
 `exposed` golden cannot satisfy that contract.

@@ -1046,6 +1046,37 @@ Evidence
 }
 
 #[test]
+fn absent_finding_oracle_accepts_only_the_reported_weakness() {
+    let assertions = [crate::EvidencePromotionSemanticAssertion::ExpectedOracle {
+        kind: "unknown".to_string(),
+        strength: "none".to_string(),
+    }];
+    let check_json = serde_json::json!({
+        "summary": {"findings": 1},
+        "findings": [{"id": "probe:shadow", "oracle_kind": "unknown", "oracle_strength": "none"}]
+    });
+    let verify = |human: &str| {
+        crate::evidence_promotion_semantic_violations(
+            "shadow",
+            Some("fixtures/shadow"),
+            &assertions,
+            &check_json,
+            Some(human),
+            true,
+        )
+    };
+    let row = "Evidence\n  - related test src/lib.rs:34 shadow uses strong exact value oracle: assert_eq!(other.clone(), other);";
+    assert!(!verify(row).is_empty());
+    assert!(!verify(&format!("{row}\n  - No relevant oracle was detected")).is_empty());
+    assert!(
+        verify(&format!(
+            "{row}\n\nWeakness\n  - No relevant oracle was detected"
+        ))
+        .is_empty()
+    );
+}
+
+#[test]
 fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() {
     let line = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
     assert!(crate::evidence_promotion_human_oracle_line_matches(

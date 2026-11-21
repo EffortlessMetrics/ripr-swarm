@@ -11092,8 +11092,8 @@
         },
         {
           "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
+          "kind": "unknown",
+          "strength": "none"
         },
         {
           "type": "expected_related_test",
@@ -11134,8 +11134,8 @@
         },
         {
           "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
+          "kind": "unknown",
+          "strength": "none"
         },
         {
           "type": "expected_related_test",
@@ -11176,8 +11176,8 @@
         },
         {
           "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
+          "kind": "unknown",
+          "strength": "none"
         },
         {
           "type": "expected_related_test",

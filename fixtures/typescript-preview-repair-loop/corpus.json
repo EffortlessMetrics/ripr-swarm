@@ -27,7 +27,7 @@
       "changed_owner": "applyDiscount",
       "probe_family": "predicate",
       "oracle_kind": "unknown",
-      "oracle_strength": "unknown",
+      "oracle_strength": "none",
       "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "static_limit_kind": null,
