@@ -290,3 +290,38 @@ fn failed_terminal_commit_preserves_intent_and_remote_outcome()
     }
     Ok(())
 }
+
+#[test]
+fn post_acknowledgement_requires_created_id_and_reports_only_numeric_status() -> Result<(), String>
+{
+    for delimiter in ["\r\n", "\n"] {
+        let created = format!(
+            "HTTP/2.0 201 Created{delimiter}X-Private: secret{delimiter}{delimiter}{{\"id\":47}}"
+        );
+        if posted_comment_id(0, created.as_bytes())? != 47 {
+            return Err("missing acknowledged ID".into());
+        }
+    }
+    for (exit, response, expected) in [
+        (1, "HTTP/2.0 403 Forbidden\r\nsecret", "HTTP 403"),
+        (
+            0,
+            "HTTP/2.0 201 Created\n\nsecret",
+            "unreadable comment body",
+        ),
+        (
+            0,
+            "HTTP/2.0 201 Created\n\n{}",
+            "without a positive comment ID",
+        ),
+        (1, "secret", "without a readable HTTP status"),
+    ] {
+        let err = posted_comment_id(exit, response.as_bytes())
+            .err()
+            .ok_or("unexpected acknowledgement")?;
+        if !err.contains(expected) || err.contains("secret") {
+            return Err(format!("unexpected diagnostic: {err}"));
+        }
+    }
+    Ok(())
+}

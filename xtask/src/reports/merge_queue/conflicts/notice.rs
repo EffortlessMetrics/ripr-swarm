@@ -196,12 +196,13 @@ impl NoticeApi for Sweep<'_> {
     fn post(&self, subject: &Subject<'_>, body: &str) -> Result<u64, String> {
         let endpoint = format!("repos/{REPO}/issues/{}/comments", subject.pr);
         let payload = serde_json::to_vec(&json!({"body":body})).map_err(|e| e.to_string())?;
-        let bytes = self.checked(
+        let (exit, bytes) = self.command(
             "gh",
             &[
                 "api",
                 "--hostname",
                 "github.com",
+                "--include",
                 "--method",
                 "POST",
                 &endpoint,
@@ -210,11 +211,42 @@ impl NoticeApi for Sweep<'_> {
             ],
             Some(&payload),
         )?;
-        let published: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-        published["id"].as_u64().filter(|id| *id > 0).ok_or(
-            "comment submission returned no positive ID; inspect GitHub before retrying".into(),
-        )
+        posted_comment_id(exit, &bytes)
     }
+}
+
+// gh api --include emits a status line followed by headers and a JSON body.
+// Retain only the numeric HTTP status on failure; response headers and bodies
+// may contain sensitive details.
+fn posted_comment_id(exit: i32, bytes: &[u8]) -> Result<u64, String> {
+    let first = bytes.split(|b| *b == b'\n').next().unwrap_or_default();
+    let line = std::str::from_utf8(first).unwrap_or_default();
+    let mut fields = line.split_ascii_whitespace();
+    let status = fields
+        .next()
+        .filter(|version| version.starts_with("HTTP/"))
+        .and_then(|_| fields.next())
+        .filter(|s| s.len() == 3 && s.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|s| s.parse::<u16>().ok())
+        .filter(|s| (100..600).contains(s))
+        .ok_or_else(|| format!("gh api exited {exit} without a readable HTTP status"))?;
+    if exit != 0 || status != 201 {
+        return Err(format!(
+            "GitHub comment request returned HTTP {status} (gh exit {exit})"
+        ));
+    }
+    let response = std::str::from_utf8(bytes)
+        .map_err(|_| "GitHub returned HTTP 201 with an unreadable response")?;
+    let (_, body) = response
+        .split_once("\r\n\r\n")
+        .or_else(|| response.split_once("\n\n"))
+        .ok_or("GitHub returned HTTP 201 without a response body")?;
+    let published: Value = serde_json::from_str(body)
+        .map_err(|_| "GitHub returned HTTP 201 with an unreadable comment body")?;
+    published["id"]
+        .as_u64()
+        .filter(|id| *id > 0)
+        .ok_or("GitHub returned HTTP 201 without a positive comment ID".into())
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]

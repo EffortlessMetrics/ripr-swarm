@@ -169,7 +169,7 @@ configured external driver. This contract belongs to the local observer.
 Scheduled notices and native queue protection retain their existing owners.
 
 A maintainer may preview or explicitly post a notice for one observed
-main/head pair under #14705. The command authenticates queue membership,
+main/head pair under [RIPR-SPEC-0454](specs/RIPR-SPEC-0454-operator-queue-conflict-notice.md). The command authenticates queue membership,
 reproduces the Git conflict and its path transitions, and reads existing
 notices before a local post. Treat the comment as advisory evidence for those
 commits. The [notice guide](CI.md#preview-or-post-one-queued-conflict-notice)

@@ -1642,9 +1642,19 @@ run suppresses the same trusted marker. The command commits the immutable
 read records `not_submitted`. A transport failure after dispatch records
 `unconfirmed`. If the terminal receipt cannot be committed, the diagnostic
 retains the comment ID or the transport error alongside the storage error.
-After an uncertain submission, inspect GitHub and the pending intent, then
-run a preview in a fresh directory to reconcile the trusted marker. The scheduled watchdog does not run
-this command.
+After an uncertain submission, copy the first line of the saved intent's
+`body` and look for that exact marker in comments on the original PR:
+
+```bash
+gh api --hostname github.com --paginate repos/EffortlessMetrics/ripr-swarm/issues/<pr>/comments --jq '.[] | [.id, .user.login, .author_association, (.body | split("\n")[0])] | @json'
+```
+
+Compare the first line and confirm the author is the authenticated operator or
+has a MEMBER, OWNER or COLLABORATOR association. This read also works after main
+moves or the PR leaves the queue. A matching comment supplies its ID. An
+incomplete API read leaves delivery uncertain. While the original membership
+and commits still match, a preview in a fresh directory also checks for the
+marker. The scheduled watchdog does not run this command.
 
 ### Issue Staleness Watchdog
 
