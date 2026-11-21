@@ -27,6 +27,13 @@ pub fn read(repo_relative: &str) -> Result<Value, String> {
 
 /// Check `value` against `schema`, resolving `$ref` against `root`.
 pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Result<(), String> {
+    if let Some(allowed) = schema.as_bool() {
+        return if allowed {
+            Ok(())
+        } else {
+            Err(format!("{location}: rejected by false schema"))
+        };
+    }
     if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
         let pointer = reference.strip_prefix('#').ok_or_else(|| {
             format!("{location}: only local references are supported, got {reference}")
@@ -62,6 +69,18 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
         .flatten()
     {
         check(value, branch, root, location)?;
+    }
+    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array)
+        && !branches
+            .iter()
+            .any(|branch| check(value, branch, root, location).is_ok())
+    {
+        return Err(format!("{location}: no anyOf branch matched"));
+    }
+    if let Some(negated) = schema.get("not")
+        && check(value, negated, root, location).is_ok()
+    {
+        return Err(format!("{location}: matched a forbidden schema"));
     }
     if let Some(branches) = schema.get("oneOf").and_then(Value::as_array) {
         let matched = branches
@@ -209,26 +228,37 @@ fn check_object(
             return Err(format!("{location}: missing required field `{field}`"));
         }
     }
-    match schema.get("additionalProperties") {
-        None => {}
-        Some(Value::Bool(false)) => {
-            for field in object.keys() {
-                if !properties.contains_key(field) {
-                    return Err(format!(
-                        "{location}: emitted `{field}`, which the published schema does not declare"
-                    ));
+    if let Some(minimum) = schema.get("minProperties").and_then(Value::as_u64)
+        && (object.len() as u64) < minimum
+    {
+        return Err(format!("{location}: fewer than {minimum} properties"));
+    }
+    if let Some(dependencies) = schema.get("dependentRequired").and_then(Value::as_object) {
+        for (field, required) in dependencies {
+            if object.contains_key(field) {
+                for dependency in required
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    if !object.contains_key(dependency) {
+                        return Err(format!("{location}: `{field}` requires `{dependency}`"));
+                    }
                 }
             }
         }
-        Some(other) => {
-            return Err(format!(
-                "{location}: unsupported `additionalProperties` value {other}"
-            ));
-        }
     }
-    for (field, declared) in properties {
-        if let Some(emitted) = object.get(field) {
+    for (field, emitted) in object {
+        if let Some(declared) = properties.get(field) {
             check(emitted, declared, root, &format!("{location}.{field}"))?;
+        } else if let Some(additional) = schema.get("additionalProperties") {
+            if additional == &Value::Bool(false) {
+                return Err(format!(
+                    "{location}: emitted `{field}`, which the published schema does not declare"
+                ));
+            }
+            check(emitted, additional, root, &format!("{location}.{field}"))?;
         }
     }
     Ok(())
@@ -317,6 +347,8 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "$schema",
     "additionalProperties",
     "allOf",
+    "anyOf",
+    "dependentRequired",
     "const",
     "description",
     "else",
@@ -327,6 +359,8 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "maximum",
     "minItems",
     "minLength",
+    "minProperties",
+    "not",
     "minimum",
     "oneOf",
     "pattern",
@@ -358,11 +392,21 @@ fn collect_unsupported(schema: &Value, found: &mut Vec<String>) {
                     collect_unsupported(member, found);
                 }
             }
-            "items" | "if" | "then" | "else" => collect_unsupported(nested, found),
-            "allOf" | "oneOf" => {
+            "items" | "if" | "then" | "else" | "not" | "additionalProperties" => {
+                collect_unsupported(nested, found)
+            }
+            "allOf" | "oneOf" | "anyOf" => {
                 for member in nested.as_array().into_iter().flatten() {
                     collect_unsupported(member, found);
                 }
+            }
+            "pattern"
+                if !matches!(
+                    nested.as_str(),
+                    Some(SHA256_DIGEST_PATTERN | LONG_FLAG_PATTERN)
+                ) =>
+            {
+                found.push(format!("pattern {nested}"));
             }
             other if SUPPORTED_KEYWORDS.contains(&other) => {}
             other => found.push(other.to_string()),

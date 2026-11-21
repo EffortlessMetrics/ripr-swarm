@@ -27,6 +27,8 @@ const CASE_DEADLINE: Duration = Duration::from_mins(1);
 const MAX_INPUT_BYTES: usize = 400_000;
 const DEFAULT_CASES: u32 = 12;
 
+#[path = "common/published_schema.rs"]
+mod published_schema;
 #[path = "fuzz_panic_freedom/seeds.rs"]
 mod seeds;
 #[cfg(feature = "lang-python")]
@@ -459,7 +461,7 @@ fn class_vocabulary() -> Vec<ExposureClass> {
 }
 
 /// Invariants on whatever a normally ending `ripr check --format json`
-/// printed: documented exit code, and for a completed run valid JSON whose
+/// printed: documented exit code, and for a completed run schema-valid JSON whose
 /// finding classes are in the vocabulary (unknown classes carry a stop
 /// reason) with no runtime-mutation claim.
 fn judge_output(code: Option<i32>, stdout: &[u8]) -> Result<(), String> {
@@ -478,18 +480,6 @@ fn judge_output(code: Option<i32>, stdout: &[u8]) -> Result<(), String> {
         std::str::from_utf8(stdout).map_err(|error| format!("stdout is not UTF-8: {error}"))?;
     let report: serde_json::Value =
         serde_json::from_str(text).map_err(|error| format!("stdout is not JSON: {error}"))?;
-    for key in [
-        "schema_version",
-        "tool",
-        "mode",
-        "root",
-        "summary",
-        "findings",
-    ] {
-        if report.get(key).is_none() {
-            return Err(format!("report is missing required key `{key}`"));
-        }
-    }
     let findings = report
         .get("findings")
         .and_then(serde_json::Value::as_array)
@@ -532,7 +522,19 @@ fn judge_output(code: Option<i32>, stdout: &[u8]) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    static SCHEMA: std::sync::LazyLock<Result<serde_json::Value, String>> =
+        std::sync::LazyLock::new(|| {
+            let schema = published_schema::read("schemas/ripr/check.schema.json")?;
+            let unsupported = published_schema::unsupported_keywords(&schema);
+            if !unsupported.is_empty() {
+                return Err(format!(
+                    "unsupported check schema keywords: {unsupported:?}"
+                ));
+            }
+            Ok(schema)
+        });
+    let schema = SCHEMA.as_ref().map_err(Clone::clone)?;
+    published_schema::check(&report, schema, schema, "$")
 }
 
 /// Two runs over the same bytes must agree on exit code and stdout.
@@ -816,88 +818,86 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
     Ok(())
 }
 
-fn good_report() -> String {
-    r#"{"schema_version":"0.1","tool":"ripr","mode":"ready","root":".","summary":{},"findings":[{"classification":"weakly_exposed","stop_reasons":[],"recommended_next_step":"add an assertion","probe":{"expression":"echoed"}},{"classification":"static_unknown","stop_reasons":["opaque"]}]}"#
-        .to_string()
+fn good_report() -> Result<serde_json::Value, String> {
+    serde_json::from_str(include_str!(
+        "../../../fixtures/rust_proptest_quickcheck_tests/expected/check.json"
+    ))
+    .map_err(|error| error.to_string())
 }
 
-/// The oracle must reject deliberately bad outputs (#12924), or the suites
-/// above would pass whatever `ripr check` printed. Each case is one planted
-/// fault against a known-good report, which must itself be accepted.
+/// Each planted fault changes one property of a known-good producer report.
 #[test]
-fn output_oracle_rejects_planted_faults() {
-    assert_eq!(judge_output(Some(0), good_report().as_bytes()), Ok(()));
-    let good = good_report();
-    // (name, exit code, stdout, substring the rejection must contain)
-    let bad_cases: Vec<(&str, Option<i32>, Vec<u8>, &str)> = vec![
+fn output_oracle_rejects_planted_faults() -> Result<(), String> {
+    use serde_json::json;
+    let good = good_report()?;
+    judge_output(Some(0), good.to_string().as_bytes())?;
+    for (pointer, value, expected) in [
         (
-            "invalid json",
-            Some(0),
-            b"{\"findings\": [".to_vec(),
-            "not JSON",
-        ),
-        ("not utf-8", Some(0), b"\xff\xfe".to_vec(), "not UTF-8"),
-        (
-            "missing key",
-            Some(0),
-            good.replace("\"summary\":{},", "").into_bytes(),
-            "missing required key `summary`",
-        ),
-        (
-            "unknown class",
-            Some(0),
-            good.replace("weakly_exposed", "mostly_exposed")
-                .into_bytes(),
+            "/findings/0/classification",
+            json!("mostly_exposed"),
             "not in the exposure vocabulary",
         ),
         (
-            "unknown class without stop reason",
-            Some(0),
-            good.replace("[\"opaque\"]", "[]").into_bytes(),
+            "/findings/0/stop_reasons",
+            json!([]),
             "carries no stop reason",
         ),
         (
-            "runtime mutation word",
-            Some(0),
-            good.replace("add an assertion", "the mutant was killed") // ripr-allow: static-language: planted fault
-                .into_bytes(),
+            "/findings/0/recommended_next_step",
+            json!("the mutant was killed"), // ripr-allow: static-language: planted fault
             "runtime-mutation term",
         ),
-        (
-            "undocumented exit code",
-            Some(1),
-            good.clone().into_bytes(),
-            "not in docs/EXIT_CODES.md",
-        ),
-        (
-            "no exit code",
-            None,
-            good.clone().into_bytes(),
-            "without an exit code",
-        ),
-    ];
-    for (name, code, body, expected) in bad_cases {
-        let verdict = judge_output(code, &body);
-        assert!(verdict.is_err(), "oracle accepted planted fault: {name}");
-        let error = verdict.err().unwrap_or_default();
+    ] {
+        let mut wrong = good.clone();
+        *wrong
+            .pointer_mut(pointer)
+            .ok_or_else(|| format!("fixture lacks {pointer}"))? = value;
+        let verdict = judge_output(Some(0), wrong.to_string().as_bytes());
         assert!(
-            error.contains(expected),
-            "{name}: rejected for the wrong reason: {error}"
+            verdict.is_err_and(|error| error.contains(expected)),
+            "{pointer}: expected {expected}"
         );
     }
-    assert_eq!(judge_output(Some(2), b"not json at all"), Ok(()));
+    let mut missing = good;
+    missing
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .remove("summary");
+    let missing = missing.to_string();
+    for (code, bytes, expected) in [
+        (
+            Some(0),
+            missing.as_bytes(),
+            "missing required field `summary`",
+        ),
+        (Some(0), &b"{"[..], "not JSON"),
+        (Some(0), &[0xff][..], "not UTF-8"),
+        (Some(1), &b""[..], "not in docs/EXIT_CODES.md"),
+        (None, &b""[..], "without an exit code"),
+    ] {
+        let verdict = judge_output(code, bytes);
+        assert!(
+            verdict.is_err_and(|error| error.contains(expected)),
+            "expected {expected}"
+        );
+    }
+    judge_output(Some(2), b"not json at all")
 }
 
 #[test]
-fn determinism_oracle_rejects_differing_runs() {
-    let a = good_report();
-    let b = a.replace("opaque", "opaqu3");
-    assert_eq!(
-        judge_repeat((Some(0), a.as_bytes()), (Some(0), a.as_bytes())),
-        Ok(())
-    );
-    assert!(judge_repeat((Some(0), a.as_bytes()), (Some(0), b.as_bytes())).is_err());
-    assert!(judge_repeat((Some(0), a.as_bytes()), (Some(2), a.as_bytes())).is_err());
+fn determinism_oracle_rejects_differing_runs() -> Result<(), String> {
+    let report = good_report()?.to_string();
+    let first = format!("{report} ");
+    let second = format!("{report}\n");
+    let a = first.as_bytes();
+    let b = second.as_bytes();
+    judge_output(Some(0), a)?;
+    judge_output(Some(0), b)?;
+    assert_eq!(a.len(), b.len());
+    assert_eq!(judge_repeat((Some(0), a), (Some(0), a)), Ok(()));
+    assert!(judge_repeat((Some(0), a), (Some(0), b)).is_err());
+    assert!(judge_repeat((Some(0), a), (Some(2), a)).is_err());
+    Ok(())
 }
 
 /// The vocabulary the oracle checks against is the domain owner's, not a
@@ -918,33 +918,22 @@ fn class_vocabulary_matches_domain_owner() {
 /// Echoed source may spell a runtime-mutation word; only renderer-owned
 /// values are judged.
 #[test]
-fn output_oracle_ignores_echoed_source() {
-    let echoed = good_report().replace("echoed", "survived"); // ripr-allow: static-language: echoed source fixture
-    assert_eq!(judge_output(Some(0), echoed.as_bytes()), Ok(()));
-}
-
-/// A report shaped like real `ripr check` output with every renderer-owned
-/// pointer populated, so a mistyped pointer cannot silently scan nothing.
-fn full_report() -> serde_json::Value {
-    serde_json::json!({
-        "schema_version": "0.2", "tool": "ripr", "mode": "ready", "root": ".",
-        "summary": {},
-        "analysis_outcome": {"outcome": {"kind": "complete_with_findings", "claim_boundary": "static only"}},
-        "canonical_next_action": {"action_class": "unsupported_or_limited", "non_claim": "advisory"},
-        "findings": [{
-            "classification": "static_unknown", "severity": "note",
-            "oracle_kind": "unknown", "oracle_strength": "none",
-            "recommended_next_step": "add an assertion",
-            "suggested_next_action": "add an assertion",
-            "stop_reasons": ["opaque"]
-        }]
-    })
+fn output_oracle_ignores_echoed_source() -> Result<(), String> {
+    let mut report = good_report()?;
+    report["findings"][0]["probe"]["expression"] = "survived".into(); // ripr-allow: static-language: echoed source fixture
+    judge_output(Some(0), report.to_string().as_bytes())
 }
 
 #[test]
-fn renderer_owned_pointers_resolve_and_each_one_is_judged() {
-    let report = full_report();
-    assert_eq!(judge_output(Some(0), report.to_string().as_bytes()), Ok(()));
+fn renderer_owned_pointers_resolve_and_each_one_is_judged() -> Result<(), String> {
+    let mut report = good_report()?;
+    // The CLI adds navigation context to the generic producer report.
+    report["canonical_next_action"] = serde_json::json!({
+        "schema_version": "canonical_next_action.v1", "producer": "ripr check",
+        "subject": {"root": ".", "diff_source": {}},
+        "action_class": "unsupported_or_limited", "non_claim": "advisory"
+    });
+    judge_output(Some(0), report.to_string().as_bytes())?;
     for pointer in RENDERER_OWNED_VALUES {
         let path: Vec<&str> = pointer.split('/').skip(1).collect();
         let mut values = Vec::new();
@@ -975,4 +964,79 @@ fn renderer_owned_pointers_resolve_and_each_one_is_judged() {
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn output_oracle_checks_nested_report_schema() -> Result<(), String> {
+    let bytes =
+        include_bytes!("../../../fixtures/rust_verification_ghost_only_edit/expected/check.json");
+    judge_output(Some(0), bytes)?;
+    let mut wrong: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    wrong["summary"]["probes"] = serde_json::json!("zero");
+    let verdict = judge_output(Some(0), wrong.to_string().as_bytes());
+    assert!(
+        matches!(&verdict, Err(error) if error.contains("$.summary.probes")),
+        "expected a probe-count type error, got {verdict:?}"
+    );
+    Ok(())
+}
+
+/// Fields of real reports exercise each check-schema constraint added to the
+/// integration-test validator. Each control changes a single emitted value.
+#[test]
+fn output_oracle_checks_conditional_and_dictionary_fields() -> Result<(), String> {
+    use serde_json::json;
+    let mut report = good_report()?;
+    report["evidence_legend"] = json!({"E1": "example"});
+    report["related_test_table"] = json!([{"name": "example"}]);
+    report["finding_routes"] = json!([{
+        "finding_id": "example", "explain_command": "ripr explain",
+        "repair": {"status": "ready", "command": "ripr repair", "seam_id": "example"}
+    }]);
+    judge_output(Some(0), report.to_string().as_bytes())?;
+    for (field, wrong_value, reason) in [
+        ("evidence_legend", json!({"E1": 7}), "$.evidence_legend.E1"),
+        ("related_test_table", json!([{}]), "fewer than 1 properties"),
+        (
+            "analysis_outcome",
+            {
+                let mut projection = report["analysis_outcome"].clone();
+                projection["findings_rendered"] = json!(1);
+                projection
+            },
+            "requires `document_complete`",
+        ),
+        (
+            "finding_routes",
+            {
+                let mut routes = report["finding_routes"].clone();
+                let repair = routes[0]["repair"]
+                    .as_object_mut()
+                    .ok_or("missing repair")?;
+                repair.remove("seam_id");
+                routes
+            },
+            "no anyOf branch matched",
+        ),
+        (
+            "finding_routes",
+            {
+                let mut routes = report["finding_routes"].clone();
+                routes[0]["repair"]["uncommitted_file"] = json!("src/lib.rs");
+                routes
+            },
+            "matched a forbidden schema",
+        ),
+    ] {
+        let mut wrong = report.clone();
+        wrong[field] = wrong_value;
+        let verdict = judge_output(Some(0), wrong.to_string().as_bytes());
+        assert!(
+            matches!(&verdict, Err(error) if error.contains(reason)),
+            "{field}: expected {reason}, got {verdict:?}"
+        );
+    }
+    Ok(())
 }
