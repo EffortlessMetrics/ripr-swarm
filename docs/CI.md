@@ -3267,11 +3267,16 @@ PRs skip those test builds.
 ## Changelog Fold
 
 `cargo xtask fold-changelog [--dry-run | --write] [--limit <N>]
-[--keep-fragments]` (#5114) folds `changelog.d/` fragments into the first
-matching `### <Section>` under `## Unreleased` at the release cut, in file-name
-order, and deletes them with `--write`. The default is a dry run. It reuses the
-`check-changelog-fragments` validator, refuses malformed fragments by file name
-and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
+[--keep-fragments] [--release-cut]` (#5114) folds `changelog.d/` fragments into
+the first matching `### <Section>` under `## Unreleased` at the release cut, in
+file-name order, and deletes them with `--write`. The default is a dry run.
+Advance folds use fold-and-delete batches (`--write --limit 149` so each batch
+PR touches at most 150 changed files including `CHANGELOG.md`);
+`--keep-fragments` is for local inspection only because
+`check-changelog-fragments` rejects fragments duplicating `Unreleased` entries.
+It reuses the `check-changelog-fragments` validator, refuses malformed
+fragments by file name and is not part of `precommit`. `changelog.d/README.md`
+has the batch procedure.
 
 ## Install Receipt
 
