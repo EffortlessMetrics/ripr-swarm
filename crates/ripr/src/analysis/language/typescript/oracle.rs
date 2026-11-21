@@ -2864,6 +2864,7 @@ fn oracle_for_chai_terminal(
             | "below" | "least" | "most" | "lengthOf",
             true,
         ) => (OracleKind::RelationalCheck, OracleStrength::Weak),
+        ("empty", false) => (OracleKind::RelationalCheck, OracleStrength::Weak),
         ("true" | "false" | "ok" | "null" | "undefined" | "exist", false) => {
             (OracleKind::SmokeOnly, OracleStrength::Smoke)
         }
