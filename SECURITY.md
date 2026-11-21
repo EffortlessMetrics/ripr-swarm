@@ -48,6 +48,17 @@ checkout can carry one. Every `ripr` git call therefore:
   names (such as its filter drivers) do not run. Uncommitted edits inside a
   submodule are therefore not reported; a moved submodule commit still is.
 
+`ripr` also asks Cargo for resolved workspace metadata when it checks the
+identity of a few audited dependencies (such as `serde_json` or `anyhow`).
+That makes Cargo run `rustc`, which Cargo configures from `.cargo/config.toml`
+files found in or above the analyzed tree. Before running Cargo, `ripr` refuses
+the check, and runs nothing, when such a file (other than your own Cargo home
+configuration) sets `build.rustc`, `build.rustc-wrapper`,
+`build.rustc-workspace-wrapper`, `build.rustflags`, `target.*.rustflags`,
+`include`, `unstable` or `host`, or an `[env]` key other than `TEMP`, `TMP`,
+`TMPDIR`, `RUST_BACKTRACE`, `RUST_LOG`, `RUST_MIN_STACK` or `RUST_TEST_THREADS`.
+A refusal only withholds credit that depends on that identity.
+
 Not covered: programs that the analyzed project's own build or test tooling
 runs when you ask `ripr` to execute tests are outside these pins. Treat a
 tree from an untrusted source accordingly.

@@ -663,9 +663,10 @@ LSP diagnostics include a stable JSON `data` payload for editor commands:
 }
 ```
 
-Diagnostics remain advisory. `exposed` and weak or missing exposure
-findings render as warnings; `propagation_unknown` and `static_unknown`
-are informational.
+Diagnostics remain advisory. By default, `weakly_exposed`,
+`reachable_unrevealed`, `no_static_path` and `infection_unknown` findings
+render as warnings; `exposed`, `propagation_unknown` and `static_unknown` are
+informational.
 
 ## Hover Content
 

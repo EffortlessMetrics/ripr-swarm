@@ -211,10 +211,7 @@ fn perl_guidance_review_empty_command_cannot_hide_usable_same_test_command() -> 
 #[test]
 fn perl_guidance_review_strict_actionability_keeps_usable_command_and_reference()
 -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let mut base = consume(fixture)?;
+    let mut base = concrete_return_packet()?;
     let test_id = "test:t/app.t:discount_smoke";
     let change_id = "change:lib/My/App.pm:8:return";
     let mut empty = base

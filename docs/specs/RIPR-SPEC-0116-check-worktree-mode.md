@@ -144,6 +144,24 @@ built on these input modes. Their contract is:
 The manifest test runs each entry through the built binary on a fixture
 branch that has one committed and one further staged boundary edit.
 
+## Amendment (first commit and oversized diffs, #15398)
+
+- **Unborn `HEAD`.** `ripr check --worktree --base HEAD` on a branch with no
+  commits yet diffs the staged and worktree content against the empty tree,
+  since that content is the change being committed. The exception is narrow:
+  only the literal base `HEAD`, only with `--worktree`, and only when Git
+  establishes the branch is unborn. Any other base, `--base HEAD` without
+  `--worktree`, a damaged or unreadable `HEAD`, and the default base keep the
+  original refusal (exit 2). No base or merge-base commit is reported.
+- **Oversized diffs.** A `diff_scope_oversized` refusal stays exit 2, because
+  ripr did not analyze the diff, and its message names `SKIP=ripr git commit
+  ...` and the hook `args:` for `--path`/`--exclude`.
+
+Tests: `commit_hook_entry_analyzes_the_first_commit_instead_of_refusing_an_unborn_head`,
+`unborn_head_keeps_other_bases_refused` and
+`oversized_first_commit_refusal_names_the_hook_bypass_and_scoping` in
+`crates/ripr/tests/pre_commit_hook_manifest.rs`.
+
 ## Problem
 
 RIPR is a draft-time evidence tool, but the obvious first-run path still has an

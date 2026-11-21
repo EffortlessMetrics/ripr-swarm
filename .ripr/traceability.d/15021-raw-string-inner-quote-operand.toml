@@ -1,0 +1,8 @@
+# Pin that whitespace inside a hashed raw string with an inner quote is operand
+# content, not layout (#15021); docs/SPEC_FORMAT.md requires a PR to register
+# its tests here.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs::tests::whitespace_inside_a_raw_string_with_an_inner_quote_is_content",
+]

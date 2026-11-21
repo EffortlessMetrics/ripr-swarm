@@ -703,3 +703,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_long_expression_display_bound (44)
+
+Reason:
+RIPR-SPEC-0122: the Changed block notes a condition-only after row over a whole old line (#15420)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

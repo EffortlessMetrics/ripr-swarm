@@ -1282,13 +1282,66 @@ pub(crate) fn fixture_cache_dir(name: &str) -> Result<PathBuf, String> {
 /// cannot distinguish "cleared" from "a lock or permission denied the clear" is
 /// the false-confidence surface #3054 is about.
 fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
-    match fs::remove_dir_all(dir) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!(
-            "failed to clear fixture fact cache {}: {err}",
-            normalize_path(dir)
-        )),
+    clear_fixture_cache_with(
+        dir,
+        |path| fs::remove_dir_all(path),
+        is_transient_windows_removal_error,
+        &CLEAR_RETRY_BACKOFF,
+        std::thread::sleep,
+    )
+}
+
+/// Waits between attempts to clear a fixture cache that a Windows host reports
+/// as momentarily in use (about 1.6s in total). Bounded on purpose: a holder
+/// that outlives it is a real second writer and is reported, not outwaited.
+const CLEAR_RETRY_BACKOFF: [std::time::Duration; 6] = [
+    std::time::Duration::from_millis(25),
+    std::time::Duration::from_millis(50),
+    std::time::Duration::from_millis(100),
+    std::time::Duration::from_millis(200),
+    std::time::Duration::from_millis(400),
+    std::time::Duration::from_millis(800),
+];
+
+/// #15018: the removal failures Windows reports while a handle opened without
+/// delete sharing, a delete-pending entry or a directory still draining is
+/// the only thing in the way: `ERROR_ACCESS_DENIED` (5),
+/// `ERROR_SHARING_VIOLATION` (32) and `ERROR_DIR_NOT_EMPTY` (145). Every other
+/// error, and every error on a non-Windows host, is genuine and is never
+/// retried.
+fn is_transient_windows_removal_error(err: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(err.raw_os_error(), Some(5 | 32 | 145))
+}
+
+/// [`clear_fixture_cache`] with its effects injected so the retry contract is
+/// testable on any host: a transient failure is retried after each `backoff`
+/// step, and the final error names the attempts and the raw OS error so a
+/// persistent holder is diagnosable instead of hidden.
+fn clear_fixture_cache_with(
+    dir: &Path,
+    mut remove: impl FnMut(&Path) -> std::io::Result<()>,
+    transient: impl Fn(&std::io::Error) -> bool,
+    backoff: &[std::time::Duration],
+    mut sleep: impl FnMut(std::time::Duration),
+) -> Result<(), String> {
+    let mut attempts = 0usize;
+    loop {
+        attempts += 1;
+        match remove(dir) {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => match backoff.get(attempts - 1) {
+                Some(wait) if transient(&err) => sleep(*wait),
+                // An OS error's Display already names its raw code, as
+                // "(os error N)", so the report carries it without repeating it.
+                _ => {
+                    return Err(format!(
+                        "failed to clear fixture fact cache {} after {attempts} attempt(s): {err}",
+                        normalize_path(dir)
+                    ));
+                }
+            },
+        }
     }
 }
 
@@ -4174,6 +4227,36 @@ mod tests {
     }
 
     #[test]
+    fn bless_copies_a_sarif_only_change() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("bless-sarif-only")?;
+        let unchanged = ["check.json", "human.txt", "human-full.txt", "github.txt"];
+        let read = |surface: &str| fs::read(expected.join(surface)).map_err(|err| err.to_string());
+        let before = unchanged
+            .iter()
+            .map(|name| read(name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sarif = br#"{"version":"2.1.0","runs":[]}"#;
+        fs::write(run.actual_dir.join("sarif.json"), sarif).map_err(|err| err.to_string())?;
+
+        let applied =
+            apply_bless_outputs_for_host(&expected, &run, &run.name, "SARIF change", false)?;
+        assert_eq!(read("sarif.json")?, sarif);
+        assert_eq!(applied.changed, [expected.join("sarif.json")]);
+        for (surface, original) in unchanged.iter().zip(before) {
+            assert_eq!(read(surface)?, original, "{surface}");
+        }
+        let changelog = fs::read_to_string(&applied.changelog).map_err(|err| err.to_string())?;
+        assert_eq!(changelog.matches("## Pending").count(), 1, "{changelog}");
+        assert_eq!(
+            changelog.split_once("\nUpdated:\n").map(|(_, files)| files),
+            Some("- `expected/sarif.json`\n")
+        );
+        let report = bless_report_body(&dir, "SARIF change", &run, &applied);
+        assert!(!report.contains("No change:"), "{report}");
+        fs::remove_dir_all(dir).map_err(|err| err.to_string())
+    }
+
+    #[test]
     fn bless_gate_equivalent_windows_output_preserves_canonical_bytes() -> Result<(), String> {
         let (dir, expected, run) = parity_bless_fixture("parity-windows-noop")?;
         let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
@@ -5268,6 +5351,158 @@ mod tests {
             "the failure must name what could not be cleared: {err}"
         );
         fs::remove_file(&path).map_err(|err| format!("cleanup {}: {err}", path.display()))
+    }
+
+    /// #15018: a transient Windows removal failure is retried with the bounded
+    /// backoff and then succeeds; the waits are exactly the leading backoff steps.
+    #[test]
+    fn clear_fixture_cache_retries_a_transient_failure_then_succeeds() -> Result<(), String> {
+        use std::time::Duration;
+        let backoff = [
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+            Duration::from_millis(3),
+        ];
+        let mut calls = 0usize;
+        let mut waits = Vec::new();
+        clear_fixture_cache_with(
+            Path::new("target/ripr/fixture-cache/x"),
+            |_| {
+                calls += 1;
+                if calls < 3 {
+                    Err(std::io::Error::from_raw_os_error(32))
+                } else {
+                    Ok(())
+                }
+            },
+            |err| err.raw_os_error() == Some(32),
+            &backoff,
+            |wait| waits.push(wait),
+        )?;
+        assert_eq!(calls, 3, "two transient failures then one success");
+        assert_eq!(
+            waits,
+            backoff[..2].to_vec(),
+            "one wait per transient failure"
+        );
+        Ok(())
+    }
+
+    /// A holder that outlives the bounded backoff is reported with the attempt
+    /// count and raw OS error, never swallowed; a non-transient failure is not
+    /// retried at all.
+    #[test]
+    fn clear_fixture_cache_reports_a_persistent_or_non_transient_failure() -> Result<(), String> {
+        use std::time::Duration;
+        let backoff = [Duration::ZERO, Duration::ZERO];
+        let mut calls = 0usize;
+        let Err(persistent) = clear_fixture_cache_with(
+            Path::new("target/ripr/fixture-cache/x"),
+            |_| {
+                calls += 1;
+                Err(std::io::Error::from_raw_os_error(32))
+            },
+            |err| err.raw_os_error() == Some(32),
+            &backoff,
+            |_| {},
+        ) else {
+            return Err("a persistent holder must be reported".to_string());
+        };
+        assert_eq!(calls, 3, "the initial attempt plus one per backoff step");
+        assert!(
+            persistent.contains("failed to clear fixture fact cache")
+                && persistent.contains("after 3 attempt(s)")
+                && persistent.contains("os error 32"),
+            "the report must keep the contract text and name attempts and raw error: {persistent}"
+        );
+
+        let mut calls = 0usize;
+        let mut waited = 0usize;
+        let Err(genuine) = clear_fixture_cache_with(
+            Path::new("target/ripr/fixture-cache/x"),
+            |_| {
+                calls += 1;
+                Err(std::io::Error::from_raw_os_error(13))
+            },
+            |err| err.raw_os_error() == Some(32),
+            &backoff,
+            |_| waited += 1,
+        ) else {
+            return Err("a genuine failure must be reported".to_string());
+        };
+        assert_eq!(calls, 1, "a non-transient failure is attempted once");
+        assert_eq!(waited, 0, "a non-transient failure must not wait");
+        assert!(genuine.contains("after 1 attempt(s)"), "{genuine}");
+        Ok(())
+    }
+
+    /// The Windows classification is platform-gated: the same raw codes are
+    /// unrelated errors on every other host and must never be retried there.
+    #[test]
+    fn transient_removal_classification_is_windows_only() {
+        for code in [5, 32, 145] {
+            assert_eq!(
+                is_transient_windows_removal_error(&std::io::Error::from_raw_os_error(code)),
+                cfg!(windows),
+                "os error {code}"
+            );
+        }
+        assert!(!is_transient_windows_removal_error(
+            &std::io::Error::from_raw_os_error(2)
+        ));
+    }
+
+    /// #15018: the batch path clears many per-fixture caches from rayon workers
+    /// at once. Every worker's first removal is refused as transiently held and
+    /// only a later attempt reaches the real filesystem, so each worker must go
+    /// through the retry path concurrently and still leave its directory
+    /// removed with no cross-talk between workers.
+    #[test]
+    fn concurrent_clears_of_distinct_fixture_caches_all_recover() -> Result<(), String> {
+        use rayon::prelude::*;
+        use std::time::Duration;
+        let root = unique_temp_path("concurrent-clear");
+        let dirs: Vec<PathBuf> = (0..32).map(|n| root.join(format!("fixture-{n}"))).collect();
+        for dir in &dirs {
+            let entry = dir.join("repo-file-facts").join("0.2").join("stale.json");
+            let parent = entry
+                .parent()
+                .ok_or_else(|| "seeded cache entry should have a parent".to_string())?;
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create {}: {err}", parent.display()))?;
+            fs::write(&entry, b"{}").map_err(|err| format!("write {}: {err}", entry.display()))?;
+        }
+        let results: Vec<Result<usize, String>> = dirs
+            .par_iter()
+            .map(|dir| {
+                let mut calls = 0usize;
+                clear_fixture_cache_with(
+                    dir,
+                    |path| {
+                        calls += 1;
+                        if calls == 1 {
+                            Err(std::io::Error::from_raw_os_error(32))
+                        } else {
+                            fs::remove_dir_all(path)
+                        }
+                    },
+                    |err| err.raw_os_error() == Some(32),
+                    &[Duration::from_millis(1), Duration::from_millis(1)],
+                    std::thread::sleep,
+                )
+                .map(|()| calls)
+            })
+            .collect();
+        let survivors: Vec<_> = dirs.iter().filter(|dir| dir.exists()).collect();
+        let cleanup = fs::remove_dir_all(&root);
+        for result in results {
+            assert_eq!(result?, 2, "each worker retried exactly once");
+        }
+        assert!(
+            survivors.is_empty(),
+            "every cache must be cleared: {survivors:?}"
+        );
+        cleanup.map_err(|err| format!("cleanup {}: {err}", root.display()))
     }
 
     /// The pin only works if it names the variable `ripr` resolves its cache base

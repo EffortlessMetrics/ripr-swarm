@@ -129,6 +129,7 @@ impl Fixture {
         let input = CiSummaryInput {
             root: self.root.clone(),
             base_ref: base_ref.to_string(),
+            event_name: "pull_request".to_string(),
             upload_sarif: upload_sarif == "true",
             pull_request: true,
             gate_baseline: !gate_baseline.is_empty(),
@@ -371,7 +372,7 @@ fn empty_root_names_every_missing_artifact_and_its_regeneration() -> TestResult 
         "- Start-here artifact: not generated yet; inspect uploaded artifacts and job logs.",
         "- Status: `missing_start_here`",
         "- State: `missing_artifact`",
-        "- Safe next action: run `ripr first-pr --root . --base origin/trunk --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`.",
+        "- Safe next action: run `ripr first-pr --root . --base origin/trunk --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`.",
         "PR review summary was not generated.",
         "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.",
         "Recommended next test was not generated.",
@@ -832,6 +833,8 @@ fn checkout_paths_become_the_repository_root_in_copied_commands() -> TestResult 
 fn repo_relative_rewrites_only_whole_path_tokens() {
     let relative = RepoRelative {
         physical: b"/w/repo".to_vec(),
+        display: Vec::new(),
+        quoted: Vec::new(),
         logical: b"/link/repo".to_vec(),
     };
     assert_eq!(
@@ -1360,6 +1363,7 @@ fn render_gate_mode(
     let input = CiSummaryInput {
         root: fixture.root.clone(),
         base_ref: "trunk".to_string(),
+        event_name: "pull_request".to_string(),
         upload_sarif: true,
         pull_request: true,
         gate_baseline: false,
@@ -1919,6 +1923,7 @@ fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
         base_ref: "trunk".to_string(),
         upload_sarif: true,
         pull_request: false,
+        event_name: "workflow_dispatch".to_string(),
         gate_baseline: false,
         gate_configured: false,
         gate_mode: String::new(),
@@ -1934,5 +1939,129 @@ fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
         summary.contains("- Repo seam SARIF: missing or skipped\n"),
         "{summary}"
     );
+    Ok(())
+}
+
+fn render_event(fixture: &Fixture, event_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let input = CiSummaryInput {
+        root: fixture.root.clone(),
+        base_ref: "trunk".to_string(),
+        event_name: event_name.to_string(),
+        upload_sarif: true,
+        pull_request: event_name == "pull_request",
+        gate_baseline: false,
+        gate_configured: false,
+        gate_mode: String::new(),
+        comment_mode: String::new(),
+        configured_languages: vec!["rust".to_string()],
+    };
+    Ok(String::from_utf8(render_ci_summary(&input))?)
+}
+
+/// The First-run status section: up to any collapsed block or the next heading.
+fn visible_first_run(summary: &str) -> &str {
+    let status = summary
+        .split("#### First-run status\n")
+        .nth(1)
+        .unwrap_or_default();
+    status
+        .split("<details>")
+        .next()
+        .and_then(|visible| visible.split("\n### ").next())
+        .unwrap_or_default()
+}
+
+/// #14148: a blocked start-here packet states its own reason, and the
+/// summary shows it with the state; the start-here report itself is only in
+/// the uploaded artifact. A packet without a reason prints no reason line.
+#[test]
+fn a_blocked_start_here_packet_shows_its_reason() -> TestResult {
+    let fixture = Fixture::new("blocked-reason")?;
+    let reason = "The first-pr base `origin/main` does not resolve to a commit. This is a shallow clone, which usually means the base branch was not fetched (in GitHub Actions, set `fetch-depth: 0` on actions/checkout).";
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({
+            "status": "blocked",
+            "selected": {
+                "state": "blocked_artifact",
+                "output_state": "missing_artifacts",
+                "message": reason,
+                "next_command": "git fetch --unshallow origin",
+            },
+            "warnings": [reason],
+        }),
+    )?;
+    fixture.write(
+        "target/ripr/reports/start-here.md",
+        &format!("# Start\n\n- Reason: {reason}\n"),
+    )?;
+    let summary = render_event(&fixture, "pull_request")?;
+    let visible = visible_first_run(&summary);
+    assert!(
+        visible.contains(&format!(
+            "- Selected state: `blocked_artifact`\n- Reason: ``{reason}``\n"
+        )),
+        "{visible}"
+    );
+
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "advisory", "selected": {"state": "no_action", "message": ""}}),
+    )?;
+    let quiet = render_event(&fixture, "pull_request")?;
+    assert!(!visible_first_run(&quiet).contains("- Reason:"), "{quiet}");
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "advisory", "selected": {"state": "no_action"}}),
+    )?;
+    assert_eq!(quiet, render_event(&fixture, "pull_request")?);
+    Ok(())
+}
+
+/// #14148: a run whose event is not `pull_request` says it has no pull
+/// request before the states that follow from it. A `pull_request` event and
+/// an unset event (a local run) print no such note.
+#[test]
+fn a_run_without_a_pull_request_says_so() -> TestResult {
+    let fixture = Fixture::complete("no-pull-request")?;
+    let manual = render_event(&fixture, "workflow_dispatch")?;
+    let visible = visible_first_run(&manual);
+    assert!(
+        visible.starts_with(
+            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
+             - Next step: open or update a pull request to get changed-behavior findings for it.\n"
+        ),
+        "{visible}"
+    );
+    let pull_request = render_event(&fixture, "pull_request")?;
+    assert!(
+        !pull_request.contains("No pull request in this run"),
+        "{pull_request}"
+    );
+    // A local run (no event) prints no note either. Like the manual run it
+    // is not a pull request run, which picks the SARIF rows (#14300), so the
+    // note is the only difference between the two.
+    let local = render_event(&fixture, "")?;
+    assert!(!local.contains("No pull request in this run"), "{local}");
+    assert_eq!(
+        manual.replace(
+            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
+             - Next step: open or update a pull request to get changed-behavior findings for it.\n",
+            ""
+        ),
+        local,
+        "the note is the only difference"
+    );
+
+    // The event says what kind of run this is, not which stages finished: a
+    // manual run that produced no reports gets the same note, and the note
+    // claims nothing about reports having run.
+    let empty = Fixture::new("no-pull-request-no-reports")?;
+    let bare = render_event(&empty, "workflow_dispatch")?;
+    assert!(
+        visible_first_run(&bare).starts_with("- No pull request in this run: "),
+        "{bare}"
+    );
+    assert!(!bare.contains("still ran"), "{bare}");
     Ok(())
 }

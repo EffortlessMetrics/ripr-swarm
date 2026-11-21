@@ -142,6 +142,7 @@ impl RustAdapter {
         );
         let unindexed_manifests = BTreeSet::new();
         let dependency_edges = classify::DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &dependency_adjacency,
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
@@ -158,6 +159,9 @@ impl RustAdapter {
                     related_test_candidate_index.get_or_insert_with(|| {
                         classify::RelatedTestCandidateIndex::new(&index)
                             .with_analysis_root(&options.root)
+                            // #15104: a repo scan has no diff, so no
+                            // declaration changed.
+                            .with_unchanged_module_declarations(&index)
                     });
                 let (mut finding, pre_cap_syntax_only) =
                     classifier::classify_probe_with_candidate_index_and_origins_with_direct_rows(
@@ -191,6 +195,7 @@ impl RustAdapter {
                         &probe.expression,
                     );
                 }
+                dependency_edges.disclose_dependent_test_host(&mut finding, path);
                 push_retained_finding(&mut findings, finding);
             }
         }

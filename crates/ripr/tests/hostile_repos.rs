@@ -764,6 +764,120 @@ fn oversized_file_is_left_out_of_a_partial_scope_with_a_repair_route() -> Result
     Ok(())
 }
 
+/// #15484: a diff larger than the analysis-cost limit cannot be selected
+/// whole by any budget raise, so the partial disclosure names the route that
+/// completes (a PATH argument or a nearer base). Control: with the limit
+/// raised so the whole diff fits, only the raise is named.
+#[test]
+fn partial_scope_over_the_analysis_limit_names_the_narrowing_route() -> Result<(), String> {
+    let scratch = Scratch::new("narrow")?;
+    let root = scratch.path.join("r");
+    repo(&root, |root| {
+        change_lib(root)?;
+        let mut lib = String::from("pub fn total(a: u32) -> u32 { a + 1 }\n");
+        for name in ["a", "b", "c"] {
+            lib.push_str(&format!("pub mod {name};\n"));
+            let body = (0..60)
+                .map(|i| format!("pub fn {name}{i}(x: u32) -> u32 {{ x + {i} }}\n"))
+                .collect::<String>();
+            fs::write(root.join(format!("src/{name}.rs")), body)
+                .map_err(|e| format!("write failed: {e}"))?;
+        }
+        fs::write(root.join("src/lib.rs"), lib).map_err(|e| format!("write failed: {e}"))
+    })?;
+    let narrow = "narrow the diff with a PATH argument";
+    let over = ripr(
+        &root,
+        &["check"],
+        &[
+            ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "100"),
+            ("RIPR_PARTIAL_DIFF_LINE_BUDGET", "70"),
+        ],
+    )?;
+    assert_sane(&over, "over the analysis limit")?;
+    if over.code != Some(0)
+        || !over
+            .stdout
+            .contains("RIPR_PARTIAL_DIFF_LINE_BUDGET to at least")
+        || !over.stdout.contains(narrow)
+    {
+        return Err(format!(
+            "expected a partial scope that names the narrowing route\n{:?}\n{}\n{}",
+            over.code, over.stdout, over.stderr
+        ));
+    }
+    let fits = ripr(
+        &root,
+        &["check"],
+        &[
+            ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "1000"),
+            ("RIPR_PARTIAL_DIFF_LINE_BUDGET", "70"),
+        ],
+    )?;
+    assert_sane(&fits, "whole diff within the analysis limit")?;
+    if fits.code != Some(0)
+        || !fits.stdout.contains("to select the whole diff")
+        || fits.stdout.contains(narrow)
+    {
+        return Err(format!(
+            "expected only the budget raise when the whole diff fits\n{:?}\n{}\n{}",
+            fits.code, fits.stdout, fits.stderr
+        ));
+    }
+    Ok(())
+}
+
+/// #15484: an unresolved base that is a commit id or a version tag names the
+/// fetch that can supply it, which a branch fetch never does. Control: an
+/// ordinary branch name keeps the branch fetch advice.
+#[test]
+fn unresolved_commit_id_and_tag_bases_name_a_fetch_that_can_supply_them() -> Result<(), String> {
+    let scratch = Scratch::new("idbase")?;
+    let root = plain(&scratch, "r")?;
+    git(
+        &root,
+        &["remote", "add", "origin", "https://example.test/fork.git"],
+    )?;
+    let id = "0123456789abcdef0123456789abcdef01234567";
+    let cases = [
+        (id, format!("`git fetch origin {id}`")),
+        ("v9.9.9", "`git fetch --tags origin`".to_string()),
+        (
+            "no-such-branch",
+            "Fetch the ref (for example `git fetch origin`)".to_string(),
+        ),
+    ];
+    for (base, expected) in cases {
+        let ran = ripr(&root, &["check", "--base", base], &[])?;
+        assert_sane(&ran, base)?;
+        if ran.code != Some(2) || !ran.stderr.contains(&expected) {
+            return Err(format!(
+                "{base}: expected `{expected}`\n{:?}\n{}",
+                ran.code, ran.stderr
+            ));
+        }
+        let branch_advice = ran.stderr.contains("Fetch the ref");
+        if branch_advice != (base == "no-such-branch") {
+            return Err(format!("{base}: wrong advice family\n{}", ran.stderr));
+        }
+    }
+    // A branch that only looks like a tag keeps the fetched-branch advice
+    // once it exists as a remote-tracking ref.
+    git(&root, &["update-ref", "refs/remotes/origin/v2", "HEAD"])?;
+    let ran = ripr(&root, &["check", "--base", "v2"], &[])?;
+    assert_sane(&ran, "v2 tracking branch")?;
+    if ran.code != Some(2)
+        || !ran.stderr.contains("The fetched branch is `origin/v2`")
+        || ran.stderr.contains("git fetch --tags")
+    {
+        return Err(format!(
+            "v2: expected the fetched-branch advice\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
 /// A changed package larger than the 1,200-file narrowing threshold runs at
 /// default settings: that threshold bounds time, and only the higher
 /// `RIPR_MAX_DIFF_INDEX_FILES` memory guard refuses. Before the split, the
@@ -2543,6 +2657,84 @@ fn with_locked_rust_dir(
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("restore permissions: {e}"))?;
     result
+}
+
+/// Review guidance needs the full corpus for owner attribution.
+#[cfg(unix)]
+#[test]
+fn review_comments_discloses_incomplete_directory_evidence() -> Result<(), String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let scratch = Scratch::new("review-unreadable")?;
+    let root = plain(&scratch, "review")?;
+    let args = [
+        "review-comments",
+        "--base",
+        "main",
+        "--head",
+        "HEAD",
+        "--out",
+    ];
+    let run = |out| {
+        let mut argv = args.to_vec();
+        argv.push(out);
+        ripr(&root, &argv, &[])
+    };
+    let control = run("target/control/comments.json")?;
+    assert_sane(&control, "readable review-comments")?;
+    assert_eq!(control.code, Some(0), "{}", control.stderr);
+    assert!(root.join("target/control/comments.json").is_file());
+    let read_receipt = |path: &str| -> Result<serde_json::Value, String> {
+        let bytes = fs::read(root.join(path)).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+    };
+    let clean = read_receipt("target/control/run-receipt.json")?;
+    assert_eq!(clean["status"], "complete");
+    let clean_limitations = clean["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(
+        clean_limitations
+            .iter()
+            .all(|entry| entry["category"] != "language_scope_unsupported"),
+        "{clean}"
+    );
+
+    let dir = root.join("src/unchanged");
+    fs::DirBuilder::new()
+        .mode(0o000)
+        .create(&dir)
+        .map_err(|e| e.to_string())?;
+    match fs::read_dir(&dir) {
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(e) => return Err(format!("unexpected fixture error: {e}")),
+    }
+    let refused = run("target/limited/comments.json");
+    fs::remove_dir(&dir).map_err(|e| e.to_string())?;
+    let refused = refused?;
+    assert_sane(&refused, "review-comments with unreadable directory")?;
+    assert_eq!(refused.code, Some(2), "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("evidence is incomplete"),
+        "{}",
+        refused.stderr
+    );
+    let receipt = read_receipt("target/limited/run-receipt.json")?;
+    assert_eq!(receipt["status"], "failed");
+    let limitations = receipt["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(
+        limitations
+            .iter()
+            .any(|entry| entry["category"] == "language_scope_unsupported"
+                && entry["repair_route"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("src/unchanged"))),
+        "{receipt}"
+    );
+    assert!(!root.join("target/limited/comments.json").exists());
+    Ok(())
 }
 
 /// `--format repo-exposure-json` skips the unreadable directory, keeps
