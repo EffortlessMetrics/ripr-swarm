@@ -1,0 +1,43 @@
+{
+  "schema_version": "ripr-typescript-mutant-calibration-v1",
+  "issue": 12901,
+  "note": "Bounded in-repo TypeScript real-mutant calibration (#12901). Subjects are the authored TypeScript verdict-corpus projects; every mutant is a real source edit executed against the subject's own node:test suite and scored against a ripr check --diff verdict on the mutated line. Runtime outcomes are only caught/missed/unscoreable; ripr classifications are never rewritten as runtime outcomes.",
+  "subjects": [
+    {
+      "name": "authored-ts-nodetest-pricing",
+      "path": "fixtures/typescript-verdict-corpus/subjects/authored-ts-nodetest-pricing",
+      "test_command": ["--experimental-strip-types", "--test", "test/*.test.ts"]
+    },
+    {
+      "name": "authored-ts-grid-arithmetic",
+      "path": "fixtures/typescript-verdict-corpus/subjects/authored-ts-grid-arithmetic",
+      "test_command": ["--experimental-strip-types", "--test", "test/*.test.ts"]
+    },
+    {
+      "name": "authored-ts-grid-boundary",
+      "path": "fixtures/typescript-verdict-corpus/subjects/authored-ts-grid-boundary",
+      "test_command": ["--experimental-strip-types", "--test", "test/*.test.ts"]
+    }
+  ],
+  "mutants": [
+    {"id": "pricing-shipping-ge-to-gt", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  if (subtotalCents >= FREE_SHIPPING_CENTS) {", "mutated": "  if (subtotalCents > FREE_SHIPPING_CENTS) {"},
+    {"id": "pricing-tier-gold-ge-to-gt", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  if (points >= 5000) {", "mutated": "  if (points > 5000) {"},
+    {"id": "pricing-tier-silver-ge-to-gt", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  if (points >= 1000) {", "mutated": "  if (points > 1000) {"},
+    {"id": "pricing-discount-gold-10-to-20", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "arithmetic_operator", "mutator": "ConstantInExpression: 10 -> 20 in gold discount rate", "original": "    return Math.floor((subtotalCents * 10) / 100);", "mutated": "    return Math.floor((subtotalCents * 20) / 100);"},
+    {"id": "pricing-discount-silver-5-to-6", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "arithmetic_operator", "mutator": "ConstantInExpression: 5 -> 6 in silver discount rate", "original": "    return Math.floor((subtotalCents * 5) / 100);", "mutated": "    return Math.floor((subtotalCents * 6) / 100);"},
+    {"id": "pricing-tax-8-to-9", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "arithmetic_operator", "mutator": "ConstantInExpression: 8 -> 9 in tax rate", "original": "  return Math.floor((subtotalCents * 8) / 100);", "mutated": "  return Math.floor((subtotalCents * 9) / 100);"},
+    {"id": "pricing-total-plus-to-minus", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: + -> -", "original": "  return subtotalCents + taxCents(subtotalCents);", "mutated": "  return subtotalCents - taxCents(subtotalCents);"},
+    {"id": "pricing-parse-le-to-lt", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: <= -> <", "original": "  if (value <= 0) {", "mutated": "  if (value < 0) {"},
+    {"id": "pricing-receipt-footer-text", "subject": "authored-ts-nodetest-pricing", "file": "src/pricing.ts", "operator_family": "constant_replacement", "mutator": "ConstantReplacement: footer wording", "original": "  return `Thank you for shopping at ${storeName}!`;", "mutated": "  return `Thanks for shopping at ${storeName}!`;"},
+    {"id": "grid-line-total-mul-to-add", "subject": "authored-ts-grid-arithmetic", "file": "src/arithmetic.ts", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "  return qty * price;", "mutated": "  return qty + price;"},
+    {"id": "grid-area-mul-to-add", "subject": "authored-ts-grid-arithmetic", "file": "src/arithmetic.ts", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "  return width * height;", "mutated": "  return width + height;"},
+    {"id": "grid-scaled-mul-to-add", "subject": "authored-ts-grid-arithmetic", "file": "src/arithmetic.ts", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "  return qty * unit;", "mutated": "  return qty + unit;"},
+    {"id": "grid-seconds-60-to-61", "subject": "authored-ts-grid-arithmetic", "file": "src/arithmetic.ts", "operator_family": "constant_replacement", "mutator": "ConstantReplacement: 60 -> 61", "original": "  return minutes * 60;", "mutated": "  return minutes * 61;"},
+    {"id": "grid-tip-mul-to-add", "subject": "authored-ts-grid-arithmetic", "file": "src/arithmetic.ts", "operator_family": "arithmetic_operator", "mutator": "BinaryOperator: * -> +", "original": "  return bill * rate;", "mutated": "  return bill + rate;"},
+    {"id": "boundary-is-adult-ge-to-gt", "subject": "authored-ts-grid-boundary", "file": "src/boundary.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  return age >= 18;", "mutated": "  return age > 18;"},
+    {"id": "boundary-free-shipping-ge-to-gt", "subject": "authored-ts-grid-boundary", "file": "src/boundary.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  return cents >= 5000;", "mutated": "  return cents > 5000;"},
+    {"id": "boundary-can-retire-ge-to-gt", "subject": "authored-ts-grid-boundary", "file": "src/boundary.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  return age >= 67;", "mutated": "  return age > 67;"},
+    {"id": "boundary-passes-ge-to-gt", "subject": "authored-ts-grid-boundary", "file": "src/boundary.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  return score >= 50;", "mutated": "  return score > 50;"},
+    {"id": "boundary-overweight-ge-to-gt", "subject": "authored-ts-grid-boundary", "file": "src/boundary.ts", "operator_family": "comparison_operator", "mutator": "CompareOperator: >= -> >", "original": "  return grams >= 2000;", "mutated": "  return grams > 2000;"}
+  ]
+}

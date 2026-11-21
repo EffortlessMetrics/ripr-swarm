@@ -41,6 +41,7 @@ mod mutmut;
 pub(crate) mod pilot;
 mod stryker;
 mod synthetic_diff;
+mod typescript_calibration;
 
 use crate::run::{
     capture_bytes_in_dir_with_timeout, capture_output_with_timeout,
