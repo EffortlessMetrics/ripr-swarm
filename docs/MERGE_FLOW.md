@@ -155,8 +155,10 @@ exact reviewed head immediately before issuing it:
 1. `Ripr Rust Small Result` and every other required result have completed
    successfully on that head. Queued, running, missing or earlier-head results
    do not count.
-2. The final review marker for that head is posted and admits (see
-   [review marker](#review-marker-read-by-admission)).
+2. The final `REVIEW_READY` marker review for that head is posted and admits
+   (see [review marker](#review-marker-read-by-admission)). A source-only
+   `SOURCE_REVIEW_READY` attestation admits qualification but is not the final
+   review, so it does not satisfy this condition.
 3. The head is unchanged since that review, the PR has no conflict, and no
    review thread or material finding is open.
 
@@ -164,7 +166,10 @@ With every requirement already met, GitHub places the PR in the queue at once.
 Do not issue the call while a required result is pending so that the PR lands
 later on its own: that is the armed wait this route excludes, and a finding
 that arrives during the wait would not stop it. Read back that the PR entered
-the queue. If it shows auto-merge armed without a queue entry, a requirement
+the queue. The queue entry itself is a GraphQL field; over REST, read the PR
+timeline (`gh api repos/EffortlessMetrics/ripr-swarm/issues/<n>/timeline`) for
+an `added_to_merge_queue` event later than the call. If the PR shows auto-merge
+armed without that event, a requirement
 was not met: disarm it with `-X DELETE` on the same path, verify the readback,
 and reconcile before trying again.
 The ruling covers `ripr-swarm` only and changes no setting, required check or
@@ -177,12 +182,18 @@ and it parses review bodies
 ([CI source-review semantics](CI.md#merge-queue-request-cutover)). For a
 `COMMENT` review to admit:
 
-- The first line is exactly `SOURCE_REVIEW_READY` or `REVIEW_READY`, with no
-  SHA, punctuation or prose after it on that line.
-- No later line states a disposition. A `disposition:` field (the last field of
-  the `review-pr` record), `REVIEW_INCOMPLETE`, `REPAIR_REQUIRED` and similar
-  state tokens refuse even as narration. Write the inspection record as prose
-  without those tokens, or put the structured record in a Conversation comment.
+- Write the first line as the bare marker, `SOURCE_REVIEW_READY` or
+  `REVIEW_READY`. The script accepts only a narrow set of tails after it, and a
+  first line such as `SOURCE_REVIEW_READY for head <sha> (...)` has been
+  refused, so do not rely on a tail.
+- No later line states a disposition. A line states one when it carries a
+  `disposition` field label (the last field of the `review-pr` record does), or
+  opens with or consists of a state token such as `REVIEW_INCOMPLETE` or
+  `REPAIR_REQUIRED`; fenced text is scanned for any state token. A state word
+  quoted inside ordinary prose is narration and is not read, but the boundary
+  is the grammar in `CI.md`, not intuition. The reliable form is an inspection
+  record in prose without those tokens, with any structured record in a
+  Conversation comment.
 - Every agent session posts as the same login, and admission reads the latest
   review per login. A later refusing review supersedes an earlier admitting one
   on the same head, so a well-meant follow-up record can break an admissible PR.
@@ -192,15 +203,27 @@ and it parses review bodies
 `.github/actions/pr-candidate-admission/review_disposition.py` is the authority
 for this, with its cases in
 `tools/repo-policy/tests/review_disposition_admission.rs`. Check a PR before
-labelling or enqueueing; exit status 0 admits:
+labelling or enqueueing; exit status 0 admits. Hosted admission runs the script
+from the trusted base, so run the base copy here too. The command receives a
+GitHub token and must not execute a candidate branch's version of the script:
 
 ```bash
-GH_TOKEN=$(gh auth token) python3 -I .github/actions/pr-candidate-admission/review_disposition.py \
+git fetch origin main
+base_copy="$(mktemp -d)/review_disposition.py"
+git show origin/main:.github/actions/pr-candidate-admission/review_disposition.py > "$base_copy"
+GH_TOKEN=$(gh auth token) python3 -I "$base_copy" \
   --repository EffortlessMetrics/ripr-swarm --pr <n> --head <full head sha>
 ```
 
-After a refused admission run, repair the review, then remove and reapply
-`merge-ready`.
+Exit status 0 means a readiness carrier admits. It does not distinguish the
+source-only marker from the final one; read the review itself for that.
+
+A refused label-request admission is repaired by fixing the review, then
+removing and reapplying `merge-ready` for a fresh PR qualification on the exact
+head. A refused queue constituent is different: the entry is ejected, relabelling
+does not start a merge-group run, and the PR is enqueued again after the review
+is repaired and the current PR qualification is confirmed (see
+[qualification recovery](agent-context/convergence-runbook.md)).
 
 Keep H (reviewed head), P (historical PR synthetic merge), G (native queue
 composition) and M (actual landed commit/tree) distinct. A green P does not prove

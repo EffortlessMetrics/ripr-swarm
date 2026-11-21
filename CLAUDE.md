@@ -542,7 +542,8 @@ file presence or a structural gate pass.
 - no mandatory approval pause for ordinary engineering decisions;
 - no parallel mutable lifecycle database or label/prose token as proof authority;
 - no release, publication, tag, signing, marketplace, or secret operation
-  without the existing explicit repository authority. Crate rehearsal and
-  publication run from the publish stage (`cargo xtask publish-dry-run`, then
-  `docs/RELEASE.md`); a plain `cargo package` or `cargo publish` from the
-  checkout is not the release path.
+  without the existing explicit repository authority. Crate rehearsal is
+  `cargo xtask publish-dry-run` from the source root, which builds and packages
+  the publish stage; publication runs from that stage under `docs/RELEASE.md`.
+  A plain `cargo package` or `cargo publish` of the checkout is not the release
+  path.

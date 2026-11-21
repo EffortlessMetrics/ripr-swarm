@@ -150,10 +150,11 @@ is green. Being Ready for review is not REVIEW_READY or permission to arm
 auto-merge; the auto-merge call is permitted only as the immediate enqueue
 described in the [enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface).
 
-Crate rehearsal for a release runs from the publish stage with
-`cargo xtask publish-dry-run`, and the real publish runs from that stage under
-`docs/RELEASE.md`. A plain `cargo package` or `cargo publish --dry-run` from the
-checkout is not release evidence.
+Crate rehearsal for a release is `cargo xtask publish-dry-run`, run from the
+source root: it builds the publish stage and packages from it. The real publish
+then runs from that retained stage under `docs/RELEASE.md` and
+`docs/RELEASE_TRANSACTION.md`. A plain `cargo package` or
+`cargo publish --dry-run` of the checkout is not release evidence.
 
 # Release-scope law
 
