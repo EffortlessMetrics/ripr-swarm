@@ -703,6 +703,9 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     /// #14815: the owner's whole tail gained or lost a prefix `-`/`!`, with
     /// the base-side owner text the diff establishes.
     pub(in crate::analysis) unary_tail: Option<&'a super::UnaryTailChange>,
+    /// #14816: one `if` condition replaced by a bool literal, with the
+    /// base-side owner text the diff establishes.
+    pub(in crate::analysis) literal_condition: Option<&'a super::LiteralConditionChange>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -728,6 +731,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
         literal_length_boundary,
         slice_counter_boundary,
         unary_tail,
+        literal_condition,
     } = owner_inputs;
     if !matches!(probe.family, ProbeFamily::Predicate)
         && let Some(reason) = unresolved_boundary.filter(|reason| {
@@ -859,6 +863,14 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Unknown,
                     Confidence::Low,
                     "No tests were found, so activation/infection cannot be estimated",
+                )
+            } else if let Some((owner, change)) = owner.zip(literal_condition) {
+                literal_condition_infection(
+                    owner,
+                    change,
+                    related_tests,
+                    owner_has_other_callers,
+                    assertion_macros_rebound,
                 )
             } else if activation
                 .missing_discriminators
@@ -1230,6 +1242,83 @@ fn unary_tail_infection(
                 Confidence::Low,
                 format!(
                     "The returned `{operand}` and `-{operand}` agree at `{operand} = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not credited"
+                ),
+            ),
+        },
+    }
+}
+
+/// #14816: infection for an `if` condition forced to a literal. The literal
+/// spells no boundary, so credit comes only from folding the base-side owner
+/// and the current one at the related tests' literal calls: an asserted
+/// exact value where they differ, or every call separating them. An input
+/// that already took the forced branch on the base side agrees on both
+/// versions and reaches nothing; a condition, argument or body the fold
+/// cannot read stays unknown, and a rebound assertion macro reads nothing.
+fn literal_condition_infection(
+    owner: &FunctionSummary,
+    change: &super::LiteralConditionChange,
+    related_tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+    assertion_macros_rebound: bool,
+) -> StageEvidence {
+    use crate::analysis::test_grip_evidence::{
+        RangeChangeVisibility, every_owner_call_separates, owner_change_visibility,
+    };
+    let before = change.before.trim();
+    let forced = change.forced;
+    if assertion_macros_rebound {
+        return StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "The workspace rebinds an assertion macro, so ripr does not read which asserted inputs tell the versions apart",
+        );
+    }
+    match owner_change_visibility(
+        owner,
+        &change.baseline,
+        related_tests,
+        owner_has_other_callers,
+    ) {
+        RangeChangeVisibility::ExactInputSeparates(call) => StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            format!(
+                "A related test asserts an exact value for `{call}`, an input at which the old condition `{before}` and the forced `{forced}` give different results, so the input reaches the change"
+            ),
+        ),
+        RangeChangeVisibility::InexactInputSeparates(call) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "A related test calls `{call}`, where the old condition `{before}` and the forced `{forced}` give different results, but only a relational or inequality assertion checks it; no exact assertion pins an input that tells them apart"
+            ),
+        ),
+        RangeChangeVisibility::EveryAssertedInputAgrees(call) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "Every related test asserts the owner only at inputs where the old condition `{before}` and the forced `{forced}` give the same result (for example `{call}`), so no test input reaches the change"
+            ),
+        ),
+        RangeChangeVisibility::NotEstablished => match every_owner_call_separates(
+            owner,
+            &change.baseline,
+            related_tests,
+            owner_has_other_callers,
+        ) {
+            Some(call) => StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                format!(
+                    "Every call the related tests make, for example `{call}`, passes a literal input at which the old condition `{before}` and the forced `{forced}` give different results, so the inputs reach the change"
+                ),
+            ),
+            None => StageEvidence::new(
+                StageState::Unknown,
+                Confidence::Low,
+                format!(
+                    "The condition `{before}` became the literal `{forced}`; ripr could not fold the owner at a related test's literal input to show that input took the other branch on the base side, so infection is not credited"
                 ),
             ),
         },
@@ -2881,6 +2970,7 @@ mod tests {
                 literal_length_boundary: None,
                 slice_counter_boundary: None,
                 unary_tail: None,
+                literal_condition: None,
             },
             true,
             false,
@@ -2928,6 +3018,7 @@ mod tests {
                 literal_length_boundary: None,
                 slice_counter_boundary: None,
                 unary_tail: None,
+                literal_condition: None,
             },
             other_callers,
             assertion_macros_rebound,

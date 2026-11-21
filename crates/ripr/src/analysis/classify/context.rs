@@ -80,6 +80,11 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// establishes. Gives the change a return-value sink and decides its
     /// infection; `None` keeps the ordinary reading.
     pub unary_tail: Option<super::UnaryTailChange>,
+    /// #14816: one `if` condition replaced by a literal `true`/`false`,
+    /// with the base-side owner the diff establishes. Decides the
+    /// predicate's infection by folding both versions; `None` keeps the
+    /// ordinary reading.
+    pub literal_condition: Option<super::LiteralConditionChange>,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,
     /// #14387: the diff's old text of the probe's line when that line is the
@@ -123,6 +128,7 @@ impl<'a> ProbeContext<'a> {
             owner_may_be_swapped: false,
             compile_time_guarded: false,
             unary_tail: None,
+            literal_condition: None,
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
             owner_sole_change: None,

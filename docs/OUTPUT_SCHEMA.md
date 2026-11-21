@@ -10857,8 +10857,9 @@ Success payload (200-level result object, no `protocol_version`,
   (`kind` ∈ `no_scope` | `no_changed_lines` | `no_behavioral_candidates` AND
   zero canonical items), one human sentence carrying the same
   not-all-clear fact and cause wording as MCP's `empty_scope_hint` plus the
-  editor set-a-base recovery route (the `baseRef` session option or
-  `[lsp] base_ref` in `ripr.toml`, then `ripr.refresh`); `null` for a
+  editor set-a-base recovery route (the `baseRef` initialization option;
+  in VS Code, the `ripr.baseRef` setting; then `ripr.refresh`; `ripr.toml`
+  has no base key); `null` for a
   populated or complete-clean scope (`complete_no_findings` and
   `complete_with_findings` are real answers and stay silent). A different
   fact from `suppression_disclosure` (which names withheld live findings);

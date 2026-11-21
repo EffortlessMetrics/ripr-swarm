@@ -1,0 +1,12 @@
+# An unsafe-boundary probe on an interior line shows the edited line (#14333).
+[[extend]]
+id = "RIPR-SPEC-0168"
+tests = [
+  "crates/ripr/src/analysis/probes/unsafe_interior_line_tests.rs::a_mid_line_block_inside_an_unsafe_fn_shows_the_edited_line",
+  "crates/ripr/src/analysis/probes/unsafe_interior_line_tests.rs::an_interior_line_of_an_unsafe_block_shows_the_edited_line",
+  "crates/ripr/src/analysis/probes/unsafe_interior_line_tests.rs::the_boundary_opening_line_and_a_safe_fn_mid_line_block_are_unchanged",
+  "crates/ripr/src/analysis/probes/unsafe_interior_line_tests.rs::a_closing_brace_line_keeps_the_boundary_label",
+]
+code = [
+  "crates/ripr/src/analysis/probes/diff.rs",
+]

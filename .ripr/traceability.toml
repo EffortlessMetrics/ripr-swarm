@@ -16782,10 +16782,12 @@ tests = [
   "crates/ripr/src/analysis/language/python/related_tests/dunder_protocol.rs::tests::construction_and_protocol_free_dunders_never_match",
   "crates/ripr/src/analysis/language/python/related_tests/dunder_protocol.rs::tests::subscript_kinds_map_to_item_dunders",
   "crates/ripr/src/analysis/language/python/related_tests/dunder_protocol.rs::tests::builtin_and_statement_protocols",
+  "crates/ripr/src/analysis/language/python/tests.rs::unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no",
 ]
 fixtures = [
   "fixtures/python_transitive_reach_positive",
   "fixtures/python_transitive_reach_negative",
+  "fixtures/python_dunder_truthiness_foreign_import",
 ]
 code = [
   "crates/ripr-contract/src/domain/language.rs",

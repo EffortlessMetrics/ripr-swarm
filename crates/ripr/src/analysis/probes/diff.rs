@@ -865,12 +865,25 @@ pub(crate) fn probes_for_file_with_relations(
                         None => line,
                     }
                 });
+                // #14333: a line inside an unsafe boundary opened earlier
+                // (`let repr = unsafe { .. };` in an `unsafe fn`) shows the
+                // edited line as its changed text. The boundary label stays
+                // the expression, so the probe id, gap id and unsafe
+                // obligation are unchanged, and `before` (the old line) and
+                // `after` now name the same edit.
+                // A line of only closers, separators or a comment (`}`,
+                // `})`, `);`) names no edit, so it keeps the label.
+                let after = if shape.unsafe_interior && names_an_edit(text) {
+                    text.to_string()
+                } else {
+                    canonical_text.clone()
+                };
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
                     shape.family,
                     before,
-                    Some(canonical_text.clone()),
+                    Some(after),
                 );
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
             }
@@ -1211,6 +1224,16 @@ fn replaced_literal_is_paired(
                         .is_some_and(|before| before == text || before == literal)
             })
     })
+}
+
+/// #14333: whether a trimmed changed line inside an unsafe boundary names an
+/// edit of its own. A `//` comment or a line of only closers and separators
+/// (`}`, `})`, `);`) does not, so its probe keeps the boundary label.
+pub(super) fn names_an_edit(text: &str) -> bool {
+    !text.starts_with("//")
+        && text
+            .chars()
+            .any(|character| !character.is_whitespace() && !"{}()[];,".contains(character))
 }
 
 /// Old-side lines of removed lines whose positional replacement (one map of
@@ -6325,6 +6348,7 @@ mod tests {
             text,
             standalone_call: false,
             unsafe_boundary: false,
+            unsafe_interior: false,
         }
     }
 

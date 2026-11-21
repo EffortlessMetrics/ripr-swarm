@@ -631,6 +631,16 @@ example, Python project markers in a binary built without the `lang-python`
 feature), validate still succeeds and carries the detection note in its
 output, because there is no user-written file to fail.
 
+`config validate` also checks the suppressions manifest that the config
+selects, resolved against `--root` as `ripr check` resolves it. A configured
+`[suppressions] path` that does not exist fails, naming the path, and so does
+a manifest path, default or configured, that is a dangling link; an absent
+default `.ripr/suppressions.toml` stays silent. A present manifest, default or
+configured, is parsed with the same parser as `check`, its line-numbered
+violations fail the command, and a valid one adds
+`✓ suppressions valid (<path>, N entries)` (#15308). The Python-marker
+advisory case above loads no config, so it does not check the manifest.
+
 ### `ripr lsp`
 
 ```text
