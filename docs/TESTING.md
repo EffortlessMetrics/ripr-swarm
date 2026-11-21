@@ -29,9 +29,9 @@ command when preparation is missing.
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 ```
 
-The literal-JSON owner-return fixture pins serde_json 1.0.151, which the audited
-expansion in `assertion_dependency.rs` requires and the workspace lock no longer
-carries. Prepare it the same way before the owner-pin JSON tests:
+The literal-JSON owner-return fixture pins serde_json 1.0.151, one of the audited
+releases in `assertion_dependency/registry.rs`, which the workspace lock no longer
+carries (it locks the other audited release, 1.0.154). Prepare it the same way before the owner-pin JSON tests:
 
 ```bash
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml

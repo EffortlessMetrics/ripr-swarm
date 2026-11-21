@@ -22,7 +22,7 @@
 
 use crate::cli::CommandError;
 use crate::output::refusal::{
-    PURPOSE_LIST_ARGUMENTS, PURPOSE_LIST_COMMANDS, RefusalBlock, RefusalNext,
+    PURPOSE_LIST_ARGUMENTS, PURPOSE_LIST_COMMANDS, PURPOSE_STATED_STEP, RefusalBlock, RefusalNext,
 };
 use std::cell::RefCell;
 
@@ -44,6 +44,11 @@ pub(crate) const CODE_CONFLICTING_FLAGS: &str = "conflicting_flags";
 /// Machine code of a value that does not have the shape its flag takes,
 /// such as a word where a whole number belongs (#11979).
 pub(crate) const CODE_INVALID_VALUE: &str = "invalid_value";
+
+/// Machine code of an input the argv named (a file, directory or receipt)
+/// that could not be used, for a run that cannot complete without it
+/// (#15260). The message keeps the human cause; `next` is a help pointer.
+pub(crate) const CODE_INPUT_UNUSABLE: &str = "input_unusable";
 
 thread_local! {
     /// The most recent usage-class refusal a builder noted on this thread.
@@ -172,15 +177,56 @@ pub(crate) fn note_invalid_value(value: &str, message: &str) {
     });
 }
 
+/// [`note_invalid_value`] for a builder that owns the command listing the
+/// valid values (`ripr agent status` lists attempt IDs): `next` is that
+/// command, composed from typed state and never lifted from the typed value.
+/// Returns the message so a parser can `Err(..)` it in one expression.
+pub(crate) fn invalid_value_with_next(value: &str, message: &str, next: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_INVALID_VALUE.to_string(),
+        message: message.to_string(),
+        token: (!value.is_empty()).then(|| value.to_string()),
+        next: Some(RefusalNext {
+            purpose: PURPOSE_STATED_STEP,
+            command: next.to_string(),
+        }),
+        disposition: None,
+        choices: None,
+    });
+    message.to_string()
+}
+
+/// The refusal for an argv-named input (a receipt, a ledger, a cache root)
+/// that could not be used (#15260). The token is the input as typed, when
+/// the caller has it; the boundary fills the help route from argv. Command
+/// owners keep their own wording; only the code travels. No `next` is lifted
+/// from the message, which embeds caller-controlled paths.
+pub(crate) fn input_unusable(token: Option<&str>, message: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_INPUT_UNUSABLE.to_string(),
+        message: message.to_string(),
+        token: token.filter(|token| !token.is_empty()).map(str::to_string),
+        next: None,
+        disposition: None,
+        choices: None,
+    });
+    message.to_string()
+}
+
 /// Note a selector that matched no finding. The miss prose embeds the
-/// caller's own selector text, so no `next` is ever lifted from it: the field
-/// stays `null` (fail closed, #11584).
-pub(crate) fn note_selector_miss(selector: &str, message: &str) {
+/// caller's own selector text, so no `next` is ever lifted from it (fail
+/// closed, #11584). The owner passes the listing command it composed from
+/// typed state (root, base, scope), never from the selector, as `list_next`
+/// (#15260); `None` leaves the field `null`.
+pub(crate) fn note_selector_miss(selector: &str, message: &str, list_next: Option<&str>) {
     record(RefusalBlock {
         code: CODE_SELECTOR_MISS.to_string(),
         message: message.to_string(),
         token: Some(selector.to_string()),
-        next: None,
+        next: list_next.map(|command| RefusalNext {
+            purpose: PURPOSE_STATED_STEP,
+            command: command.to_string(),
+        }),
         disposition: None,
         choices: None,
     });
@@ -189,9 +235,27 @@ pub(crate) fn note_selector_miss(selector: &str, message: &str) {
 /// Note a typed `repair`/`continue` refusal (exit 3) at its one owner
 /// (#14931). The code and disposition are the `RepairRefusalCode` the
 /// stderr `refusal code=` line already names, the disposition derived from
-/// the code; `next` is always null.
+/// the code; `next` is null (see [`note_typed_refusal_with_next`] for the one
+/// owner-composed step).
 pub(crate) fn note_typed_refusal(code: crate::app::task_first::RepairRefusalCode, message: &str) {
     note_typed_refusal_with_choices(code, message, None);
+}
+
+/// [`note_typed_refusal`] for a refusal whose owner names one next step and
+/// composed it from typed state (the bound root), not from prose (#15260).
+/// `next` is that command, exactly as the prose's `Next:` line prints it.
+pub(crate) fn note_typed_refusal_with_next(
+    code: crate::app::task_first::RepairRefusalCode,
+    message: &str,
+    next: &str,
+) {
+    let mut block = RefusalBlock::from_prose(code.as_str(), message);
+    block.next = Some(RefusalNext {
+        purpose: PURPOSE_STATED_STEP,
+        command: next.to_string(),
+    });
+    block.disposition = Some(code.disposition().as_str());
+    record(block);
 }
 
 /// [`note_typed_refusal`] for a selection refusal that also offers the
@@ -273,6 +337,7 @@ fn fills_help_route(code: &str) -> bool {
             | CODE_INVALID_VALUE
             | CODE_MISSING_REQUIRED
             | CODE_CONFLICTING_FLAGS
+            | CODE_INPUT_UNUSABLE
     )
 }
 

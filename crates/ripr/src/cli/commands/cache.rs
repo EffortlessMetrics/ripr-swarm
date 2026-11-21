@@ -697,7 +697,14 @@ fn run_status(args: &[String]) -> Result<(), String> {
     }
 
     let (root, is_json) = parse_status_args(args)?;
-    let cache_dir = resolve_cache_dir(root.as_deref())?;
+    // #15260: under `--json` an unusable `--root` is the shared refusal
+    // document on stdout, like its sibling commands, not prose alone.
+    let cache_dir = resolve_cache_dir(root.as_deref()).map_err(|message| {
+        let token = root
+            .as_deref()
+            .map(|root| root.to_string_lossy().into_owned());
+        crate::cli::usage_refusal::input_unusable(token.as_deref(), &message)
+    })?;
     let (inspect_dir, real_dir) = resolve_status_base(&cache_dir);
     let status = inspect_cache_root(&inspect_dir);
     // Read separately from the status, so a cache created in between could

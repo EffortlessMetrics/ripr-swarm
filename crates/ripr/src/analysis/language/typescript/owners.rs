@@ -2188,7 +2188,7 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
 /// literal spelling `require("<literal>")["member"]`), for `const f =
 /// require("./y").f` (#9188). `None` for any other initializer, so a call on
 /// the member, a computed key and a dynamic `require` argument stay unread.
-fn require_member_source(
+pub(super) fn require_member_source(
     expr: &Expression<'_>,
     namespaces: &std::collections::HashMap<String, String>,
 ) -> Option<(String, String)> {
