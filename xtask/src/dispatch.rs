@@ -298,6 +298,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckProductCopy => super::check_product_copy(),
         XtaskCommand::CheckUserText(args) => super::policy::check_user_text_with_args(&args),
         XtaskCommand::CheckPackagedReadme => super::check_packaged_readme(),
+        XtaskCommand::CheckPackageContent => super::check_package_content(),
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets(args) => match args.as_slice() {
