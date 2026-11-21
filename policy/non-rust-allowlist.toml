@@ -1350,6 +1350,24 @@ reason = "Bounded standard-library diagnostic recorder and local fixtures for ch
 covered_by = ["python3 -m unittest discover -s .github/scripts -p test_python_consumer_evidence.py"]
 
 [[allow]]
+glob = ".github/scripts/extension_release_assets.py"
+kind = "editor_release_archive_admission"
+owner = "release"
+surface = "ci"
+classification = "tooling"
+reason = "The read-only server-asset job admits archive names before download and verifies their bytes before the editor packaging job builds xtask."
+covered_by = ["python3 -B .github/scripts/test_extension_release_assets.py"]
+
+[[allow]]
+glob = ".github/scripts/test_extension_release_assets.py"
+kind = "editor_release_archive_admission_test"
+owner = "release"
+surface = "ci"
+classification = "test"
+reason = "Offline policy-shaped release inventories exercise the same pre-download and post-download admission used by the publisher."
+covered_by = ["python3 -B .github/scripts/test_extension_release_assets.py"]
+
+[[allow]]
 glob = ".github/scripts/npm_package.py"
 kind = "npm_package_admission"
 owner = "release"

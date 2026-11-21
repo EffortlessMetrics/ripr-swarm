@@ -23043,6 +23043,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
 
     if matches!(
         path,
+        ".github/scripts/extension_release_assets.py"
+            | ".github/scripts/test_extension_release_assets.py"
+    ) {
+        return Some(
+            "The read-only editor publisher admits archive subjects before transport and verifies their bytes with the runner standard library before the packaging job builds xtask.",
+        );
+    }
+
+    if matches!(
+        path,
         ".github/scripts/pypi_admission.py" | ".github/scripts/test_pypi_admission.py"
     ) {
         return Some(
