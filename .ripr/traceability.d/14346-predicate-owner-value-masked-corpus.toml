@@ -1,0 +1,22 @@
+# Registers the predicate owner-value-masked fixtures and their control
+# (#14346, graduating #14206) under RIPR-SPEC-0094 and the honesty corpus.
+[[extend]]
+id = "RIPR-SPEC-0094"
+fixtures = [
+  "fixtures/rust_predicate_owner_value_masked_is_some",
+  "fixtures/rust_predicate_owner_value_masked_tuple_projection",
+  "fixtures/rust_predicate_owner_value_observed_payload",
+]
+outputs = [
+  "fixtures/rust_predicate_owner_value_masked_is_some/expected/check.json",
+  "fixtures/rust_predicate_owner_value_masked_tuple_projection/expected/check.json",
+  "fixtures/rust_predicate_owner_value_observed_payload/expected/check.json",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/rust_predicate_owner_value_masked_is_some",
+  "fixtures/rust_predicate_owner_value_masked_tuple_projection",
+  "fixtures/rust_predicate_owner_value_observed_payload",
+]

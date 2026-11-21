@@ -2834,7 +2834,7 @@
       "id": "python_patched_callee_reachable_unrevealed",
       "language": "python",
       "tier": "pure",
-      "source_fixture": "fixtures/python_patched_callee_reachable_unrevealed",
+      "source_fixture": "fixtures/python_patched_callee_reachable_h",
       "vector": "change_inside_patched_callee_every_related_test_replaces_it_reached_but_unrevealed",
       "probe_family": "return_value",
       "assertions": [
@@ -15597,6 +15597,51 @@
       ]
     },
     {
+      "id": "ts_dormant_generator_then_callback_cannot_confirm_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_generator_promise",
+      "vector": "generator_then_callback_body_never_runs_so_its_assertion_cannot_fail_the_test",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "total",
+          "file": "tests/total.test.ts",
+          "line": 5,
+          "kind": "unknown",
+          "strength": "unknown",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/total.ts::total"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
       "id": "rust_map_overwrite_count_call_deletion",
       "language": "rust",
       "tier": "pure",
@@ -21347,12 +21392,12 @@
       ]
     },
     {
-      "id": "ts_dormant_generator_then_callback_cannot_confirm_return",
-      "language": "typescript",
+      "id": "rust_predicate_owner_value_masked_is_some",
+      "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/typescript_generator_promise",
-      "vector": "generator_then_callback_body_never_runs_so_its_assertion_cannot_fail_the_test",
-      "probe_family": "return_value",
+      "source_fixture": "fixtures/rust_predicate_owner_value_masked_is_some",
+      "vector": "predicate_assertion_discards_owner_call_value_through_is_some",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -21366,28 +21411,107 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
         },
         {
           "type": "expected_oracle",
-          "kind": "unknown",
-          "strength": "unknown"
+          "kind": "exact_value",
+          "strength": "weak"
         },
         {
           "type": "expected_related_test",
-          "name": "total",
-          "file": "tests/total.test.ts",
-          "line": 5,
-          "kind": "unknown",
-          "strength": "unknown",
+          "name": "at_the_boundary",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "exact_value",
+          "strength": "weak",
+          "relation_reason": "direct_owner_call",
+          "miss": "observation_unconfirmed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_owner_value_masked_tuple_projection",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_owner_value_masked_tuple_projection",
+      "vector": "predicate_assertion_projects_tuple_element_other_than_owner_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "at_the_boundary",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "exact_value",
+          "strength": "weak",
+          "relation_reason": "direct_owner_call",
+          "miss": "observation_unconfirmed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_owner_value_observed_payload",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_owner_value_observed_payload",
+      "vector": "predicate_assertion_compares_variant_payload_holding_owner_call_value",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "at_the_boundary",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "exact_value",
+          "strength": "strong",
           "relation_reason": "direct_owner_call"
-        },
-        {
-          "type": "expected_finding_owner",
-          "owner": "typescript:src/total.ts::total"
-        },
-        {
-          "type": "must_not_emit_repair_packet"
         }
       ]
     }

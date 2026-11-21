@@ -372,8 +372,10 @@ reached the caller.
   | `attempt_stale` | 2 | `terminal` | the cage rejected the edit and HEAD had moved after the repair started |
   | `attempt_incomparable` | 2 | `terminal` | the cage could not compare the files |
 
-  A repeated `ripr continue` after a confirmed-complete attempt reports
-  that attempt's already-complete status and exits `0`: with `--attempt`,
+  A repeated `ripr continue` after a confirmed-complete attempt prints a
+  short already-complete summary (the receipt, the next `ripr repair`, and
+  the `ripr status --attempt` command for the full page; `--json` prints
+  the attempt's status document) and exits `0`: with `--attempt`,
   or without it when the newest attempt (the only one with the latest
   creation time) is the confirmed-complete one and no prepared or
   trust-bound attempt remains. A cage violation is exit `2` and terminal;
