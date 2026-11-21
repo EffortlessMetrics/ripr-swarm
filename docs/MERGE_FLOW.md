@@ -107,8 +107,9 @@ required result.
 - Do not dispatch `routed-rust.yml` on a PR branch (#5394).
 - Inspect the real check results and current findings, make the final integration
   judgment, then enqueue the exact reviewed head. GitHub performs the protected
-  squash after successful queue qualification. Do not arm generic auto-merge or
-  use the refused direct expected-head squash route (#14247).
+  squash after successful queue qualification. Use the
+  [enqueue interface](#enqueue-interface) below. Never arm auto-merge as a wait,
+  and never use the refused direct expected-head squash route (#14247).
 
 The existing docs-only route requires positive surface classification and the
 actual docs gate. Skipped Rust work is not described as executed Rust proof.
@@ -132,6 +133,73 @@ Enqueue authorizes automatic landing if proof succeeds; it is not a neutral
 request for tests. All expected source changes and material review dispositions
 belong before it. The owner still handles ejection, new findings and final
 readback. No resident polling worker is needed while native CI owns the wait.
+
+### Enqueue interface
+
+A session with the native route enqueues there (the GitHub UI or the GraphQL
+enqueue mutation). A session limited to REST, such as a cloud thread session,
+has no native enqueue call. Steven ruled on November 21, 2026:
+
+> Cloud threads may enqueue swarm PRs with the auto-merge call once they're
+> green and reviewed on the exact head.
+
+The call is:
+
+```bash
+gh api -X PUT repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/auto_merge -f merge_method=squash
+```
+
+The call is an enqueue, never an armed wait. Read all of these back on the
+exact reviewed head immediately before issuing it:
+
+1. `Ripr Rust Small Result` and every other required result have completed
+   successfully on that head. Queued, running, missing or earlier-head results
+   do not count.
+2. The final review marker for that head is posted and admits (see
+   [review marker](#review-marker-read-by-admission)).
+3. The head is unchanged since that review, the PR has no conflict, and no
+   review thread or material finding is open.
+
+With every requirement already met, GitHub places the PR in the queue at once.
+Do not issue the call while a required result is pending so that the PR lands
+later on its own: that is the armed wait this route excludes, and a finding
+that arrives during the wait would not stop it. Read back that the PR entered
+the queue. If it shows auto-merge armed without a queue entry, a requirement
+was not met: disarm it, verify the readback, and reconcile before trying again.
+The ruling covers `ripr-swarm` only and changes no setting, required check or
+release authority.
+
+### Review marker read by admission
+
+`Admit PR Candidate` runs for the label request and for every queue constituent,
+and it parses review bodies
+([CI source-review semantics](CI.md#merge-queue-request-cutover)). For a
+`COMMENT` review to admit:
+
+- The first line is exactly `SOURCE_REVIEW_READY` or `REVIEW_READY`, with no
+  SHA, punctuation or prose after it on that line.
+- No later line states a disposition. A `disposition:` field (the last field of
+  the `review-pr` record), `REVIEW_INCOMPLETE`, `REPAIR_REQUIRED` and similar
+  state tokens refuse even as narration. Write the inspection record as prose
+  without those tokens, or put the structured record in a Conversation comment.
+- Every agent session posts as the same login, and admission reads the latest
+  review per login. A later refusing review supersedes an earlier admitting one
+  on the same head, so a well-meant follow-up record can break an admissible PR.
+  Post follow-up evidence as a Conversation comment, or post a plain marker
+  review after it.
+
+`.github/actions/pr-candidate-admission/review_disposition.py` is the authority
+for this, with its cases in
+`tools/repo-policy/tests/review_disposition_admission.rs`. Check a PR before
+labelling or enqueueing; exit status 0 admits:
+
+```bash
+GH_TOKEN=$(gh auth token) python3 -I .github/actions/pr-candidate-admission/review_disposition.py \
+  --repository EffortlessMetrics/ripr-swarm --pr <n> --head <full head sha>
+```
+
+After a refused admission run, repair the review, then remove and reapply
+`merge-ready`.
 
 Keep H (reviewed head), P (historical PR synthetic merge), G (native queue
 composition) and M (actual landed commit/tree) distinct. A green P does not prove

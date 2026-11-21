@@ -54,7 +54,12 @@ the installed landing route for ordinary PRs; landing is only via native enqueue
 Direct expected-head squash and the guarded merge script are a refused
 historical route (#14247), not an alternative landing route, and must not be used
 after a rejection or for any other reason. Verify the current required
-Result and all other applicable checks; do not arm auto-merge or retry without
+Result and all other applicable checks. A session without the native enqueue
+call may use the auto-merge REST call as its enqueue under the
+[enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface) conditions:
+every required result already green on the exact reviewed head and the final
+review marker posted and admitting. Never issue it as an armed wait while a
+required result is pending, and never retry without
 reconciling an uncertain outcome. Check observations and mutation are not
 atomic, so retain native enforcement. Report a rejection without guessing its
 cause; never bypass enforcement or change settings.
@@ -90,7 +95,7 @@ cause; never bypass enforcement or change settings.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
 12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. Applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a merge authorization. Never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
-14. Follow [merge flow](../../../docs/MERGE_FLOW.md): applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a landing authorization. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue; do not substitute generic auto-merge. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
+14. Follow [merge flow](../../../docs/MERGE_FLOW.md): applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a landing authorization. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue, using the [enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface) the session actually has; the REST auto-merge call is an enqueue on an already-green reviewed head, never an armed wait. Before labelling and again before enqueue, confirm the [review marker](../../../docs/MERGE_FLOW.md#review-marker-read-by-admission) admits. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 17. After deliberate closure or supersession, record the winning candidate and preserved residual work.
@@ -142,7 +147,13 @@ Applying `merge-ready` is the request for the required PR qualification
 (`Ripr Rust Small Result`); it does not enqueue and is not a landing
 authorization. Enqueue through the native merge queue after that qualification
 is green. Being Ready for review is not REVIEW_READY or permission to arm
-auto-merge.
+auto-merge; the auto-merge call is permitted only as the immediate enqueue
+described in the [enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface).
+
+Crate rehearsal for a release runs from the publish stage with
+`cargo xtask publish-dry-run`, and the real publish runs from that stage under
+`docs/RELEASE.md`. A plain `cargo package` or `cargo publish --dry-run` from the
+checkout is not release evidence.
 
 # Release-scope law
 

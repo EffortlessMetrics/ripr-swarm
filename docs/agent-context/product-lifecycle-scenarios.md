@@ -55,7 +55,7 @@ no code change since the run. Final product/currentness judgment is absent.
 
 **C2.** The same exact reviewed/qualified subject has a fresh final judgment,
 all material findings dispositioned and all current applicable protections
-satisfied. Ordinary protected squash is authorized; there is no auto-merge.
+satisfied. Ordinary protected squash is authorized; there is no armed auto-merge wait.
 
 ### Pair D: delivery identity and authority
 
@@ -97,7 +97,7 @@ These are examiner expectations, not measured results.
 | A2 | Retain the old claim as unbound; execute the available focused test against recorded current inputs | Earlier HEAD alone does not identify dirty inputs; no fabricated reuse |
 | B1 | Inspect actual discrimination and the opaque path; record a precise limitation or analyzer defect if supported | Do not weaken/couple a useful test solely to make RIPR green; no universal correctness claim from one control |
 | B2 | Execute the applicable native verification and retain its outcome | Static movement is not test execution or mutation confirmation |
-| C1 | Withhold merge; investigate the new finding and refresh affected judgment/proof | Green qualification remains factual but is not final approval; no auto-merge |
+| C1 | Withhold merge; investigate the new finding and refresh affected judgment/proof | Green qualification remains factual but is not final approval; no armed auto-merge wait |
 | C2 | Recheck expected head and current requirements, then use the authorized native-queue landing procedure | No routine second qualification merely to click merge; verify the queue run, actual landing and remaining parent acceptance |
 | D1 | Stop artifact admission and reconcile/requalify the changed bytes | Checkout proof and a receipt for another digest cannot qualify this upload |
 | D2 | Limit delivery to the authorized channel and perform its independent public verification through the existing owner | No all-channel completion from a stale comment; back-sync/release closeout remain governed separately |
