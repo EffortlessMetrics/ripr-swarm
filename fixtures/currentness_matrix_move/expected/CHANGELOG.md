@@ -382,3 +382,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (30)
+
+Reason:
+RIPR-SPEC-0122: removed-code rows name the finding kind
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`

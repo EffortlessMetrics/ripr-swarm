@@ -1011,8 +1011,9 @@ does not say "before treating this run as actionable", which read as
 
 Under that line the run lists what was removed (#15617). A
 `Removed code (static evidence on the old lines, not a test result):` heading
-is followed by one row per removed line: its location, the code that stood
-there in a code span, and what the finding's class says about the old line
+is followed by one row per finding on a removed line: its location, the code
+that stood there in a code span, the finding kind as `(kind: predicate)` so two
+findings on one line stay distinct, and what the class says about the old line
 (`a related test appears to check this behavior`, `tests reach it but check it
 only loosely`, `tests reach it but none appears to check it`, `no test path
 was found`, or `ripr could not tell whether a test checks it (analysis limited,

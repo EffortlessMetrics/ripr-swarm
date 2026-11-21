@@ -45,10 +45,12 @@ pub(super) fn removal_only_rows(root: &std::path::Path, omitted: &[&Finding]) ->
             format!(" `{}`", code.replace('`', "'"))
         };
         let row = format!(
-            "    - {}:{}{}: {}\n",
+            "    - {}:{}{} (kind: {}): {}\n",
             crate::analysis::finding_location_text(root, &finding.probe.location.file),
             finding.probe.location.line,
             subject,
+            // The same line can carry two findings; the kind tells them apart.
+            super::super::evidence_lines::plain_probe_family(&finding.probe.family),
             removed_class_words(&finding.class)
         );
         if !rows.contains(&row) {
@@ -194,7 +196,7 @@ mod tests {
         assert_eq!(
             rows.as_deref(),
             Some(
-                "  Removed code (static evidence on the old lines, not a test result):\n    - src/lib.rs:2 `if percent < 0:`: tests reach it but check it only loosely\n    - src/lib.rs:3 `raise ValueError(\"negative\")`: tests reach it but none appears to check it\n    - src/lib.rs:9: ripr could not tell whether a test checks it (analysis limited, not a verdict)\n"
+                "  Removed code (static evidence on the old lines, not a test result):\n    - src/lib.rs:2 `if percent < 0:` (kind: unclear): tests reach it but check it only loosely\n    - src/lib.rs:3 `raise ValueError(\"negative\")` (kind: unclear): tests reach it but none appears to check it\n    - src/lib.rs:9 (kind: unclear): ripr could not tell whether a test checks it (analysis limited, not a verdict)\n"
             )
         );
     }
@@ -209,7 +211,8 @@ mod tests {
         refs.extend(findings.first());
         let rows = removal_only_rows(std::path::Path::new("."), &refs).unwrap_or_default();
         assert_eq!(
-            rows.matches("`total = 0`: no test path was found").count(),
+            rows.matches("`total = 0` (kind: unclear): no test path was found")
+                .count(),
             3
         );
         assert!(

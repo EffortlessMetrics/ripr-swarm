@@ -33,3 +33,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (4)
+
+Reason:
+RIPR-SPEC-0122: removed-code rows name the finding kind
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
