@@ -67,6 +67,11 @@ routes the missing producer proof to its owning issue.
 
 Agent brief profile coverage: `schemas/ripr/agent-brief.schema.json` (0.2), live producer `crates/ripr/src/output/agent_brief.rs`, canonical producer fixture `fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json`. `cargo xtask check-verification-contracts --check` uses the shared validator; `agent_brief_schema_profiles_reject_mixed_missing_and_unknown_forms` rejects mixed/missing/unknown profiles and malformed pairs. Production CLI range fixtures additionally establish semantic expansion and final-byte counts. No parallel validator is introduced.
 
+The diff, rerun, agent brief and agent packet operational refusals render
+the root with stable slash separators. An explicitly empty root stays empty.
+`empty_root_refusals_preserve_the_supplied_string` checks all four real
+exit-2 documents and rejects a missing or numeric root.
+
 ## What the registered contracts enforce
 
 `xtask/src/verification_contracts.rs` is the single owning validator. Every
