@@ -20,7 +20,7 @@ Start here:
     actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
     tighten a test only if this finds a gap; compare old and new code with the project's configured
     test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
-  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion not established
+  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior

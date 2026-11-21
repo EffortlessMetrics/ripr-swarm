@@ -729,6 +729,13 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
         slice_counter_boundary,
         unary_tail,
     } = owner_inputs;
+    if !matches!(probe.family, ProbeFamily::Predicate)
+        && let Some(reason) = unresolved_boundary.filter(|reason| {
+            reason.starts_with(super::activation::ERROR_RETURN_GUARD_UNRESOLVED_MARKER)
+        })
+    {
+        return StageEvidence::new(StageState::Unknown, Confidence::Low, reason.to_string());
+    }
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
     // Weak or unresolved boundary evidence also applies to the returned
@@ -2257,9 +2264,9 @@ fn balanced(text: &str) -> bool {
 fn unresolved_boundary_summary(reason: &str) -> String {
     // An operand that is a local or computed value comes from somewhere ripr
     // cannot trace (a test input it cannot fold, the runtime, a random draw).
-    // Name what it can read, so the unknown ends in a next step.
+    // Name the inspection without promising that literals supply a missing mapping.
     let next = if reason.starts_with("boundary operand") {
-        "; a related test that passes literal inputs on each side of the boundary would let ripr decide"
+        "; inspect how existing test inputs reach this operand; literal inputs do not guarantee that ripr can trace the required value mapping"
     } else {
         ""
     };
@@ -2471,12 +2478,12 @@ mod tests {
     }
 
     #[test]
-    fn an_unmapped_local_operand_names_the_input_that_would_settle_it() {
+    fn an_unmapped_local_operand_does_not_promise_literal_resolution() {
         let local = unresolved_boundary_summary(
             "boundary operand `unit` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches",
         );
         assert!(local.ends_with(
-            "activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide"
+            "activation/infection is unknown; inspect how existing test inputs reach this operand; literal inputs do not guarantee that ripr can trace the required value mapping"
         ));
         // A reason that is not about an operand keeps its own ending.
         let other = unresolved_boundary_summary("a compared argument is computed");

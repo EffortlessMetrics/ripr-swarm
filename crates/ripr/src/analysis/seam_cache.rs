@@ -698,82 +698,56 @@ pub(crate) struct CachedSeamLimitInfo {
 /// statement through the same owner-pin decision as `ripr check` (#12394).
 /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
 /// the change is visible (#12841).
+/// `1.159`: repo boundary evidence requires the boundary input and admitted
+/// discriminating oracle in the same test (#7490).
+/// `1.159`: proximity-only and unchanged-return-token oracles cannot discriminate (#12010).
+/// `1.160`: compose #7490 boundary pairing with #12010 assertion-local sink identity
+/// and return-delta confirmation; neither independent `1.159` is reusable.
+/// `1.161`: external imported observers cannot inherit collection sink identity.
 /// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
 /// helper assertion (#13219). Raw file facts are unchanged; helper credit is
 /// recomputed after loading them.
 /// `1.160`: same-named receiver and free calls no longer lend one another an
 /// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+/// `1.162`: compose successor 1.161 with main callback/call-kind semantics.
+/// `1.163`: collection observers require importer-bound crate identities.
 /// `1.161`: owner-bound field snapshots carry the shared framework limit
 /// through full and compact evidence before recommendation admission (#13278).
 /// Panic markers also use the producer-owned discrimination prefix (#13291).
-/// `1.162`: computed local initializer operands do not become boundaries (#12981).
-/// `1.163`: an exact error-variant pin that names a sibling variant of an
-/// `error_variant` seam is graded weak in the related-test record, as the
-/// discriminate stage already grades it (#12836).
-/// `1.164`: a bare `assert_matches!` around a placed inherent owner call names
-/// the unread-macro limitation instead of an unnamed gap (#12829).
-/// `1.165`: a guarded `Result` match that names a sibling variant of an
-/// `error_variant` seam is graded weak in the related-test record (#12897).
-/// `1.166`: predicate-boundary facts carry the concrete drafted boundary
-/// assertion (agent-efficiency study tweak #4). Old classified entries would
-/// keep serving the placeholder template for warm workspaces.
-/// `1.167`: a manifest-verified drop-in assertion import around an inherent
-/// owner call names the unverifiable-macro limit when placement is
-/// unavailable (#12886).
-/// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
-/// written before the field cannot decode and inserted-guard facts name the
-/// guard domain instead of the equality boundary (#12414).
-/// `1.169`: the repo-wide audit withholds a plain `assert_eq!` whose literal the
-/// current owner provably does not return; cached grips decided before the
-/// withhold would keep crediting it (#13005).
-/// `1.170`: an `Err(..)` constructor is credited only when every call between it
-/// and its assertion macro is on the positive allowlist; wrapper and receiver
-/// reads are refused (#12474).
-/// `1.171`: a workspace assertion macro defined in another file that forwards
-/// its operands to a std assertion names the macro-wrapped limit instead of an
-/// unnamed gap, with nothing credited (#12886).
-/// `1.172`: a receiver rebound by a multiline Python target withholds
-/// protocol-entry credit (#9992).
-/// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
-/// `.await` on an async owner (#5040). Old entries would keep those assertions
-/// refused as async tests.
-/// `1.174`: the repo-seam proximity gate reads a local's initializer, so an
-/// assertion on a local bound to another function pins that function (#12264).
-/// `1.175`: an equality whose compared error is replaced by an adapter such as
-/// `map_err` classifies as a weak relational check, not an exact value; cached
-/// grips decided before the refusal would keep crediting it (#12610).
-/// `1.176`: a claims `assert_ok_eq!` / `assert_some_eq!` pins a whole-value
-/// field of the struct the owner returns, and a whole-value field pin whose
-/// field value neither owner version computes no longer credits (#12394,
-/// #12864).
-/// `1.177`: same multiline receiver binding refusal as `1.172` (#9992) — the
-/// Python rule rejudges seams the `1.176` transition did not touch.
-/// `1.178`: per-byte slice-counter boundary credit and repeat-array
-/// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
-/// (#5346, #12641) — cached boundary verdicts from before the widening are not
-/// reused.
-/// `1.180`: a constructed field or return spelled with a logical-or (`a || b`)
-/// is no longer read as an opaque closure, so its direct propagation witness
-/// can complete (#14326).
-/// `1.181`: an exact assertion that pins only the success payload (`.unwrap()`,
-/// `Ok(..)`, `Some(..)`) is no longer an oracle on a failure-arm (`Err` /
-/// `None`) seam it cannot reach (#12757).
-/// `1.182`: a module-level `const` read only by a same-module function gains a
-/// reader entry, so cached verdicts for such a value would stay
-/// `no_static_path` (#13592).
-/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
-/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
-/// in `files_content_hash`, so adding or removing it changes the key, and the
-/// key's analyzer build identity already keeps entries written by a build
-/// without the field from this one. A bump would only rewrite
-/// `source_subject.corpus.cache_schema_version` in every repo artifact.
-/// `1.183`: the unresolved boundary-input activation summary leads with the
-/// typed `activation_boundary_input_unresolved` token and the evidence record
-/// no longer derives that category from the sentence (#14951), so a cached
-/// summary without the token would lose its category.
-/// `1.184`: a macro-generated test takes no invocation scopes when its file or
-/// invocation scope rebinds an exempt std macro name (#12852).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
+/// `1.164`: compose importer identity with main field-snapshot and panic-marker semantics.
+/// `1.165`: returned comparisons retain same-owner/element boundary pairing.
+/// `1.166`: canonical scalar-match and unit-error unwrap observer identity.
+/// `1.167`: typed helper-call independence and primitive named-format effect carriers.
+/// `1.168`: changed tuple Option slots retain nominal receiver and component identity.
+/// `1.169`: seal tuple Iterator pins to the unshadowed standard prelude.
+/// `1.170`: complete workspace context is required for tuple Iterator dispatch.
+/// `1.171`: tuple field-type queries bind the exact indexed owner location.
+/// `1.172`: compose importer-aware tuple pins with current module-glob ancestry.
+/// `1.173`: retain the typed unresolved guarded-error-return limitation.
+/// `1.174`: guarded-return lookup uses the indexed fn token, not visibility text.
+/// `1.175`: borrowed bool observers pair only through their exact result argument.
+/// `1.176`: unit-error pattern identity is tied to the selected literal guard row.
+/// `1.177`: certified bool Clone dispatch and returned-comparison pairing.
+/// `1.178`: assertion-local forwarded results, resolved constructor calls and typed Err identity.
+/// `1.179`: imported body globs, primitive getters and same-assertion method entry pairing.
+/// `1.180`: primitive getter trait-default closure and verified asserted effect calls.
+/// `1.181`: closed collection observers, independent expectations and resolved qualified/local type imports.
+/// `1.182`: typed expected callers, split/From/interior-state/success receipts and outer-call boundary subjects.
+/// `1.183`: exact same-line observer coordinates and independent typed scalar projections.
+/// `1.184`: typed literal validity and honest arithmetic/observer-dispatch limits.
+/// `1.185`: same-line call occurrences bind whole observers and retain authenticated bool negation.
+/// `1.186`: preserve authenticated bool, nominal keyed-getter and typed operator observers.
+/// `1.187`: close generic receiver and constructor bindings; retain named operator tuple observations.
+/// `1.191`: refresh accepted plain pairing evidence after main-side composition.
+/// `1.192`: admit only authenticated claims imports in synthetic doc examples.
+/// `1.193`: preserve authenticated whole-return pins independently of predicate pairing.
+/// `1.194`: typed eager option chains and parsed subsequent binding identities.
+/// `1.195`: exact seam owners, assertion-local error custody and producer-bound repair scope.
+/// `1.196`: current swarm and retained source observers, boundary and return evidence.
+/// `1.197`: Composes protected rebound binding and retained deleted-guard assertion evidence.
+/// `1.198`: withhold deleted-guard credit when the base constructor identity is unproven.
+/// `1.199`: bind explicit Cargo harness flags to the selected target path.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.199";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -973,32 +947,45 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+/// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+/// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+/// `0.163`: same external-observer refusal as full `1.161`.
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.164`: composed successor and main semantics, matching full 1.162.
+/// `0.165`: same importer-bound observer semantics as full 1.163.
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
-/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
-/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
-/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
-/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
-/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
-/// `0.169`: same drop-in import limit as full `1.167` (#12886).
-/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
-/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
-/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
-/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
-/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
-/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
-/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
-/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
-/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
-/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
-/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-/// `0.182`: same logical-or field witness as full `1.180` (#14326).
-/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
-/// `0.184`: same module-const reader entry as full `1.182` (#13592).
-/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
+/// `0.166`: same composed semantics as full `1.164`.
+/// `0.167`: same returned-boundary pairing as full `1.165`.
+/// `0.168`: same observer identity as full `1.166`.
+/// `0.169`: same observer identities as full `1.167`.
+/// `0.170`: same tuple-component identity as full `1.168`.
+/// `0.171`: same sealed prelude scope as full `1.169`.
+/// `0.172`: same complete-context tuple dispatch as full `1.170`.
+/// `0.173`: same exact-owner field-type query as full `1.171`.
+/// `0.174`: same composed module-glob ancestry as full `1.172`.
+/// `0.175`: same guarded-error-return limitation as full `1.173`.
+/// `0.176`: same fn-token guarded-return identity as full `1.174`.
+/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
+/// `0.178`: same selected unit-error row identity as full `1.176`.
+/// `0.179`: same certified bool Clone and returned-comparison pairing as full `1.177`.
+/// `0.180`: same affirmative observer identity as full `1.178`.
+/// `0.181`: same composed observer and unresolved-input semantics as full `1.179`.
+/// `0.182`: same getter-default closure and asserted effect semantics as full `1.180`.
+/// `0.183`: same closed collection and resolved observer semantics as full `1.181`.
+/// `0.184`: same typed carriers and outer-call boundary subjects as full `1.182`.
+/// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
+/// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
+/// `0.193`: same accepted plain pairing evidence as full `1.191`.
+/// `0.194`: same authenticated claims doc-example evidence as full `1.192`.
+/// `0.195`: same whole-return pin evidence as full `1.193`.
+/// `0.196`: same option-chain and parsed binding evidence as full `1.194`.
+/// `0.198`: same composed classifications as full `1.196`.
+/// `0.199`: Matches full generation 1.197 for rebound bindings and deleted guards.
+/// `0.200`: match full `1.198` for base-side constructor identity.
+/// `0.201`: match full `1.199` for explicit Cargo target identity.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.201";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1200,32 +1187,44 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+/// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+/// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+/// `0.163`: same external-observer refusal as full `1.161`.
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.164`: composed successor and main semantics, matching full 1.162.
+/// `0.165`: same importer-bound observer semantics as full 1.163.
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
-/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
-/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
-/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
-/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
-/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
-/// `0.169`: same drop-in import limit as full `1.167` (#12886).
-/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
-/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
-/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
-/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
-/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
-/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
-/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
-/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
-/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
-/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
-/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-/// `0.182`: same logical-or field witness as full `1.180` (#14326).
-/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
-/// `0.184`: same module-const reader entry as full `1.182` (#13592).
-/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
+/// `0.166`: same composed semantics as full `1.164`.
+/// `0.167`: same returned-boundary pairing as full `1.165`.
+/// `0.168`: same observer identity as full `1.166`.
+/// `0.169`: same observer identities as full `1.167`.
+/// `0.170`: same tuple-component identity as full `1.168`.
+/// `0.171`: same sealed prelude scope as full `1.169`.
+/// `0.172`: same complete-context tuple dispatch as full `1.170`.
+/// `0.173`: same exact-owner field-type query as full `1.171`.
+/// `0.174`: same composed module-glob ancestry as full `1.172`.
+/// `0.175`: same guarded-error-return limitation as full `1.173`.
+/// `0.176`: same fn-token guarded-return identity as full `1.174`.
+/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
+/// `0.178`: same selected unit-error row identity as full `1.176`.
+/// `0.179`: same certified bool Clone and returned-comparison pairing as full `1.177`.
+/// `0.180`: same affirmative observer identity as full `1.178`.
+/// `0.181`: same composed observer and unresolved-input semantics as full `1.179`.
+/// `0.182`: same getter-default closure and asserted effect semantics as full `1.180`.
+/// `0.183`: same closed collection and resolved observer semantics as full `1.181`.
+/// `0.184`: same typed carriers and outer-call boundary subjects as full `1.182`.
+/// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
+/// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
+/// `0.193`: same accepted plain pairing evidence as full `1.191`.
+/// `0.194`: same authenticated claims doc-example evidence as full `1.192`.
+/// `0.195`: same whole-return pin evidence as full `1.193`.
+/// `0.196`: same option-chain and parsed binding evidence as full `1.194`.
+/// `0.199`: Matches full generation 1.197 for rebound bindings and deleted guards.
+/// `0.200`: match full `1.198` for base-side constructor identity.
+/// `0.201`: match full `1.199` for explicit Cargo target identity.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.201";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1486,6 +1485,8 @@ mod scoped_inventory;
 mod semantic_identity_tests;
 mod store;
 pub(crate) use export::export_current;
+#[cfg(test)]
+pub(crate) use export::verify_current_export_for_test;
 #[cfg(test)]
 pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
 pub(crate) use scoped_inventory::{
@@ -2873,6 +2874,26 @@ impl RepoSeamFactCache {
             None,
             lexical_fallback_files,
             store_limit,
+        )
+    }
+
+    /// Publish complete compact evidence while retaining one producer window at a time.
+    pub(crate) fn store_compact_classified_windows(
+        &self,
+        key: &RepoSeamCacheKey,
+        total_seams: usize,
+        lexical_fallback_files: &[PathBuf],
+        window_limit: usize,
+        producer: impl FnMut(usize) -> Result<Option<Vec<ClassifiedSeam>>, String>,
+    ) -> Result<CacheStoreStatus, String> {
+        store::publish_compact_windows(
+            self,
+            key,
+            total_seams,
+            lexical_fallback_files,
+            window_limit,
+            classified_seam_cache_encoded_shard_ceiling_bytes()?,
+            producer,
         )
     }
 
@@ -5736,33 +5757,14 @@ mod tests {
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
+        // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
+        // 1.159 -> 1.160: both independent predecessor semantics must be invalidated.
+        // 1.160 -> 1.161: unread external collection-observer interception.
         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+        // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
-        // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
-        // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
-        // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
-        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
-        // boundary assertion (agent-efficiency study tweak #4).
-        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
-        // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
-        // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
-        // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
-        // 1.171 -> 1.172: multiline Python receiver rebindings withhold protocol-entry credit (#9992).
-        // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
-        // 1.173 -> 1.174: local-bound proximity pin (#12264).
-        // 1.174 -> 1.175: adapter-replaced error-read refusal (#12610).
-        // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
-        // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
-        // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
-        // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
-        // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
-        // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
-        // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
-        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.184");
-        // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.199");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5902,33 +5904,14 @@ mod tests {
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
+        // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
+        // 0.161 -> 0.162: compose both independent semantic generations.
+        // 0.162 -> 0.163: same external-observer refusal as full 1.161.
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        // 0.163 -> 0.164: same computed-local rule as full 1.162 (#12981).
-        // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
-        // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
-        // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
-        // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
-        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
-        // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
-        // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
-        // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
-        // 0.173 -> 0.174: same multiline receiver binding refusal as full 1.172 (#9992).
-        // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
-        // 0.175 -> 0.176: same local-bound proximity pin as full 1.174 (#12264).
-        // 0.176 -> 0.177: same adapter-replaced refusal as full 1.175 (#12610).
-        // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
-        // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
-        // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
-        // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
-        // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
-        // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
-        // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
-        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
-        // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.201");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.201");
     }
 
     #[test]
@@ -6380,18 +6363,64 @@ mod tests {
 
     #[test]
     fn favorable_classified_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
-        for (previous_full, previous_compact) in [
-            ("1.27", "0.33"),
-            ("1.32", "0.38"),
-            ("1.33", "0.39"),
-            ("1.34", "0.40"),
-            ("1.35", "0.41"),
-            ("1.36", "0.42"),
-            ("1.37", "0.43"),
-            ("1.38", "0.44"),
-            ("1.71", "0.77"),
-            ("1.72", "0.78"),
-            ("1.73", "0.79"),
+        for (semantic_predecessor, previous_full, previous_compact) in [
+            ("historical", "1.27", "0.33"),
+            ("historical", "1.32", "0.38"),
+            ("historical", "1.33", "0.39"),
+            ("historical", "1.34", "0.40"),
+            ("historical", "1.35", "0.41"),
+            ("historical", "1.36", "0.42"),
+            ("historical", "1.37", "0.43"),
+            ("historical", "1.38", "0.44"),
+            ("historical", "1.71", "0.77"),
+            ("historical", "1.72", "0.78"),
+            ("historical", "1.73", "0.79"),
+            // #7490: preserve the immediately preceding main generation.
+            ("historical", "1.157", "0.159"),
+            ("historical", "1.158", "0.160"),
+            // Independent successors shared version numbers but not semantics.
+            ("7490-boundary-pairing", "1.159", "0.161"),
+            ("12010-sink-identity", "1.159", "0.161"),
+            ("external-observer-interception", "1.160", "0.162"),
+            ("pre-main-composition", "1.161", "0.163"),
+            ("crate-alias-interception", "1.162", "0.164"),
+            ("pre-field-snapshot-composition", "1.163", "0.165"),
+            ("pre-returned-boundary-pairing", "1.164", "0.166"),
+            ("pre-scalar-and-unit-error-identity", "1.165", "0.167"),
+            ("pre-helper-and-formatted-effect-identity", "1.166", "0.168"),
+            ("pre-tuple-component-identity", "1.167", "0.169"),
+            ("pre-sealed-tuple-iterator-scope", "1.168", "0.170"),
+            ("pre-complete-tuple-dispatch-context", "1.169", "0.171"),
+            ("pre-exact-tuple-field-owner", "1.170", "0.172"),
+            ("pre-main-glob-composition", "1.171", "0.173"),
+            ("pre-guarded-error-limitation", "1.172", "0.174"),
+            ("pre-guard-fn-token-lookup", "1.173", "0.175"),
+            ("pre-borrowed-bool-pairing", "1.174", "0.176"),
+            ("pre-selected-unit-error-row", "1.175", "0.177"),
+            ("pre-bool-clone-dispatch", "1.176", "0.178"),
+            ("pre-affirmative-observer-identity", "1.177", "0.179"),
+            ("pre-composed-method-getter-identity", "1.178", "0.180"),
+            ("pre-getter-default-dispatch-closure", "1.179", "0.181"),
+            (
+                "pre-closed-collection-and-qualified-observers",
+                "1.180",
+                "0.182",
+            ),
+            ("pre-typed-value-and-success-receipts", "1.181", "0.183"),
+            (
+                "pre-exact-observer-coordinates-and-scalars",
+                "1.182",
+                "0.184",
+            ),
+            ("pre-honest-transfer-and-dispatch-limits", "1.183", "0.185"),
+            ("pre-per-occurrence-observer-pairing", "1.184", "0.186"),
+            ("pre-typed-observer-preservation", "1.185", "0.187"),
+            ("pre-observer-binding-closure", "1.186", "0.188"),
+            ("pre-operator-drop-closure", "1.187", "0.189"),
+            ("pre-current-swarm-and-retained-source", "1.195", "0.197"),
+            ("pre-protected-rebound-and-deleted-guard", "1.196", "0.198"),
+            ("pre-base-constructor-identity", "1.197", "0.199"),
+            ("pre-selected-cargo-target", "1.198", "0.200"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -6413,7 +6442,9 @@ mod tests {
                     };
                     // Representative synthesized favorable classification, not
                     // a claimed capture from the old whole-analyzer execution.
-                    let favorable = synthesized_discarded_oracle_classified();
+                    let mut favorable = synthesized_discarded_oracle_classified();
+                    favorable.evidence.discriminate.summary =
+                        format!("Synthesized favorable {semantic_predecessor} predecessor");
                     let count = if sharded { 2 } else { 1 };
                     let store_limit = if sharded { 1 } else { 10 };
                     let favorable = vec![favorable; count];
@@ -6462,7 +6493,9 @@ mod tests {
     #[test]
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
-            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44",
+            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167", "0.168", "0.169",
+            "0.170",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;

@@ -31,7 +31,7 @@ Static exposure
 
 Evidence
   - reach yes: Related tests appear to reach is_pow2: powers_and_non_powers
-  - infection unknown: Changed boundary input is unresolved: boundary operand `n & (n - 1)` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - infection unknown: Changed boundary input is unresolved: boundary operand `n & (n - 1)` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; inspect how existing test inputs reach this operand; literal inputs do not guarantee that ripr can trace the required value mapping
   - propagation yes: Changed behavior appears to influence returned value: n & (n - 1) == 0
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
@@ -42,7 +42,7 @@ Evidence
   - source function argument value n = 6 at line 6
 
 Weakness
-  - Changed boundary input is unresolved: boundary operand `n & (n - 1)` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - Changed boundary input is unresolved: boundary operand `n & (n - 1)` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; inspect how existing test inputs reach this operand; literal inputs do not guarantee that ripr can trace the required value mapping
   - No detected boundary input for the changed predicate
   - No strong discriminator was detected
 

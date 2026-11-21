@@ -574,3 +574,26 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — tail_comparison_boundary (48)
+
+Reason:
+RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — tail_comparison_boundary (49)
+
+Reason:
+RIPR-SPEC-0001 For tail_comparison_boundary, keep the repair advice aligned with the observed seam, owner and boundary.
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`

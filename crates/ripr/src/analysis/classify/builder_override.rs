@@ -33,10 +33,12 @@
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
     AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
 
 use super::super::rust_index::{OracleFact, RustIndex, TestSummary};
+
+mod mutation;
 
 /// Upper bound on `let` hops from the assertion's receiver back to the owner
 /// call (`retry` <- `builder.build()` <- `RetryBuilder::new()`).
@@ -203,6 +205,11 @@ fn struct_literal_initializers(expression: &str) -> StructLiteral {
 /// -> `Request { url, timeout_ms: t.unwrap_or(3_000) }` names `timeout_ms`
 /// alone). `None` otherwise, so a caller keeps every field in play.
 pub(super) fn changed_struct_literal_fields(before: &str, after: &str) -> Option<Vec<String>> {
+    let changed = changed_struct_literal_field_names(before, after)?;
+    (changed.len() < struct_literal_initializers(after).fields.len()).then_some(changed)
+}
+
+fn changed_struct_literal_field_names(before: &str, after: &str) -> Option<Vec<String>> {
     let (before, after) = (
         struct_literal_initializers(before),
         struct_literal_initializers(after),
@@ -227,7 +234,7 @@ pub(super) fn changed_struct_literal_fields(before: &str, after: &str) -> Option
         .filter(|(b, a)| normalized(&b.1) != normalized(&a.1))
         .map(|(_, a)| a.0.clone())
         .collect();
-    (!changed.is_empty() && changed.len() < after.fields.len()).then_some(changed)
+    (!changed.is_empty()).then_some(changed)
 }
 
 /// The initializer's non-trivia tokens joined by one space, so formatting and
@@ -293,6 +300,394 @@ pub(super) fn overridden_fields_read(
         .filter(|field| every_mention_is_overridden_read(&fragment.tree(), &visible, owner, field))
         .cloned()
         .collect()
+}
+
+/// Affirmative origin for a literal-pinned field read. Unlike override refusal,
+/// this requires every receiver transformation to be proved field-preserving.
+pub(in crate::analysis) fn owner_field_read_identity(
+    probe: &crate::domain::Probe,
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    syntax: &super::OwnerPinSyntax,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> bool {
+    mutation::field_read_identity(probe, index, test, assertion, syntax, expansion)
+        || field_identity(probe, index, test, assertion, syntax, expansion).is_some()
+}
+fn field_identity(
+    probe: &crate::domain::Probe,
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    syntax: &super::OwnerPinSyntax,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> Option<()> {
+    use crate::domain::ProbeFamily;
+    let owner_id = probe.owner.as_ref()?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.id == *owner_id)?;
+    let owner = OwnerCall::from_symbol(&owner_id.0)?;
+    let fields = match probe.family {
+        ProbeFamily::FieldConstruction => {
+            vec![super::reveal::constructed_field_name(&probe.expression)?.to_string()]
+        }
+        ProbeFamily::ReturnValue if probe.expression.contains('{') => match probe.before.as_deref()
+        {
+            Some(before) => changed_struct_literal_field_names(before, &probe.expression)?,
+            None => struct_literal_fields(&probe.expression),
+        },
+        _ => return None,
+    };
+    let tree = parse_clean_source_file(&test.body)?.tree();
+    let call = assertion_macro_at_line(&tree, &test.body, test, assertion)?;
+    let visible = visible_statements_before(call.syntax());
+    let operands = super::reveal::assertion_comparison_operands(&assertion.text)?;
+    for (subject, expected) in [(operands[0], operands[1]), (operands[1], operands[0])] {
+        let subject = parsed_operand(subject)?;
+        let expected = parsed_operand(expected)?;
+        if !matches!(expected, ast::Expr::Literal(_)) {
+            continue;
+        }
+        let (field, receiver) = match subject {
+            ast::Expr::FieldExpr(read) => (read.name_ref()?.text().to_string(), read.expr()?),
+            ast::Expr::MethodCallExpr(read) => {
+                if read.generic_arg_list().is_some()
+                    || read
+                        .arg_list()
+                        .is_none_or(|args| args.args().next().is_some())
+                {
+                    continue;
+                }
+                let field = primitive_getter_field(
+                    function,
+                    owner.impl_type?,
+                    read.name_ref()?.text(),
+                    &fields,
+                    index,
+                    syntax,
+                    expansion,
+                )?;
+                (field, read.receiver()?)
+            }
+            _ => continue,
+        };
+        if fields.contains(&field)
+            && field_origin(
+                &receiver,
+                &visible,
+                &field,
+                MAX_BINDING_HOPS,
+                &FieldOrigin {
+                    owner,
+                    function,
+                    index,
+                    test,
+                    syntax,
+                },
+            )
+        {
+            return Some(());
+        }
+    }
+    None
+}
+/// The unique inherent getter body whose dispatch is closed over the current
+/// indexed expansion/import/trait surface. Body shape and field/type contracts
+/// remain the consumer's job; a matching inherent body alone is not dispatch.
+pub(in crate::analysis) fn getter_dispatch_body<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
+    if !expansion.admits_getter_dispatch(ty) {
+        return None;
+    }
+    indexed_getter_body(index, ty, name)
+}
+
+/// Indexed source view only. This rejects known competing definitions but
+/// grants no closed-dispatch authority in the presence of unknown expansion.
+pub(in crate::analysis) fn indexed_getter_body<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
+    indexed_getter_body_with_nominal_scope(index, ty, name, false)
+}
+
+/// Keyed getters retain complete dispatch closure, while a method on a
+/// separately established nominal receiver cannot intercept this receiver.
+/// This does not relax the primitive-getter or RefCell observer contracts.
+pub(in crate::analysis) fn keyed_getter_dispatch_body<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
+    if !expansion.admits_getter_dispatch(ty) {
+        return None;
+    }
+    indexed_getter_body_with_nominal_scope(index, ty, name, true)
+}
+
+fn indexed_getter_body_with_nominal_scope<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+    distinct_nominal_receivers: bool,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
+    let body = inherent_method_body(index, ty, name)?;
+    let getter = index.functions().iter().find(|candidate| {
+        candidate.name == name
+            && candidate.body.as_str() == body
+            && matches!(&candidate.item.container,
+                crate::analysis::facts::FunctionContainer::Inherent { self_ty } if self_ty == ty)
+    })?;
+    if !getter.attrs.is_empty()
+        || !getter.impl_attrs.is_empty()
+        || !(if distinct_nominal_receivers {
+            super::owner_pin::keyed_getter_dispatch_is_unambiguous(getter, index)
+        } else {
+            super::owner_pin::getter_dispatch_is_unambiguous(getter, index)
+        })
+    {
+        return None;
+    }
+    Some((getter, body))
+}
+
+/// The existing getter/body and primitive-field authorities establish the
+/// observed slot. Dispatch closure excludes trait interception before the
+/// ordinary field-origin walker proves instance identity and currentness.
+fn primitive_getter_field(
+    owner: &super::super::rust_index::FunctionSummary,
+    ty: &str,
+    name: &str,
+    fields: &[String],
+    index: &RustIndex,
+    syntax: &super::OwnerPinSyntax,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> Option<String> {
+    let (getter, body) = getter_dispatch_body(index, ty, name, expansion)?;
+    // Preserve the primitive observer's same-file owner contract.
+    if getter.file != owner.file {
+        return None;
+    }
+    let parsed = parse_clean_source_file(body)?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let tail = function.body()?.stmt_list()?.tail_expr()?;
+    let ast::Expr::FieldExpr(read) = tail else {
+        return None;
+    };
+    let ast::Expr::PathExpr(receiver) = read.expr()? else {
+        return None;
+    };
+    if single_identifier(&receiver).as_deref() != Some("self") {
+        return None;
+    }
+    let field = read.name_ref()?.text().to_string();
+    (fields.contains(&field)
+        && super::owner_pin::indexed_owner_field_builtin_integer(owner, ty, &field, index, syntax)
+            .is_some()
+        && getter_plainly_reads(index, ty, name, &field))
+    .then_some(field)
+}
+
+fn parsed_operand(text: &str) -> Option<ast::Expr> {
+    let tree = parse_clean_source_file(&format!("fn operand() {{ {text}; }}"))?.tree();
+    let function = tree.syntax().children().find_map(ast::Fn::cast)?;
+    let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
+    let [ast::Stmt::ExprStmt(statement)] = statements.as_slice() else {
+        return None;
+    };
+    statement.expr()
+}
+struct FieldOrigin<'a> {
+    owner: OwnerCall<'a>,
+    function: &'a super::super::rust_index::FunctionSummary,
+    index: &'a RustIndex,
+    test: &'a TestSummary,
+    syntax: &'a super::OwnerPinSyntax,
+}
+
+fn field_origin(
+    expression: &ast::Expr,
+    visible: &[ast::Stmt],
+    field: &str,
+    hops: usize,
+    context: &FieldOrigin<'_>,
+) -> bool {
+    let FieldOrigin {
+        owner,
+        function,
+        index,
+        test,
+        syntax,
+    } = context;
+    if hops == 0 {
+        return false;
+    }
+    let mut root = expression.clone();
+    loop {
+        let next = match &root {
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::MethodCallExpr(call) => {
+                let preserves = owner.impl_type.is_some_and(|ty| {
+                    call.name_ref().is_some_and(|name| {
+                        super::effect_carrier::EffectStateCarrier::method_preserves_field(
+                            index,
+                            ty,
+                            name.text(),
+                            field,
+                        )
+                    })
+                });
+                if !preserves {
+                    return false;
+                }
+                call.receiver()
+            }
+            _ => break,
+        };
+        let Some(next) = next else { return false };
+        root = next;
+    }
+    match &root {
+        ast::Expr::CallExpr(call) => {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            let names_owner = callee
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| name.text() == function.name);
+            names_owner
+                && super::OwnerReturnPin::field_call_binds_owner(
+                    function,
+                    index,
+                    test,
+                    &call.syntax().text().to_string(),
+                    syntax,
+                )
+        }
+        ast::Expr::PathExpr(path) => {
+            let Some(binding) = single_identifier(path) else {
+                return false;
+            };
+            let Some((at, definition)) = binding_let(visible, &binding) else {
+                return false;
+            };
+            let Some(initializer) = definition.initializer() else {
+                return false;
+            };
+            if !field_origin(
+                &initializer,
+                &visible_statements_before(definition.syntax()),
+                field,
+                hops - 1,
+                context,
+            ) {
+                return false;
+            }
+            visible[at + 1..].iter().all(|statement| {
+                if !mentions_identifier(statement.syntax(), &binding) {
+                    return true;
+                }
+                // A let initializer can also assign or call a mutating method.
+                // Only a direct alias or field read is an inert intervening read.
+                if let ast::Stmt::LetStmt(statement) = statement {
+                    return statement
+                        .initializer()
+                        .is_some_and(|expression| plain_binding_read(expression, &binding));
+                }
+                let ast::Stmt::ExprStmt(statement) = statement else {
+                    return false;
+                };
+                let Some(ast::Expr::MethodCallExpr(call)) = statement.expr() else {
+                    return false;
+                };
+                let Some(ast::Expr::PathExpr(receiver)) = call.receiver() else {
+                    return false;
+                };
+                if single_identifier(&receiver).as_deref() != Some(binding.as_str()) {
+                    return false;
+                }
+                owner.impl_type.is_some_and(|ty| {
+                    call.name_ref().is_some_and(|name| {
+                        discarded_method_keeps_scalar(index, ty, name.text(), field)
+                    })
+                })
+            })
+        }
+        _ => false,
+    }
+}
+fn plain_binding_read(mut expression: ast::Expr, binding: &str) -> bool {
+    loop {
+        let next = match expression {
+            ast::Expr::PathExpr(path) => {
+                return single_identifier(&path).as_deref() == Some(binding);
+            }
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::FieldExpr(field) => field.expr(),
+            _ => return false,
+        };
+        let Some(next) = next else { return false };
+        expression = next;
+    }
+}
+
+fn discarded_method_keeps_scalar(index: &RustIndex, ty: &str, name: &str, field: &str) -> bool {
+    let Some(definition) = declared_once(index, ty) else {
+        return false;
+    };
+    let Some(ast::FieldList::RecordFieldList(fields)) = definition.field_list() else {
+        return false;
+    };
+    let scalar = fields.fields().any(|entry| {
+        entry.name().is_some_and(|name| name.text() == field)
+            && entry.ty().is_some_and(|ty| {
+                matches!(
+                    ty.syntax().text().to_string().as_str(),
+                    "bool"
+                        | "char"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "usize"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                        | "isize"
+                        | "f32"
+                        | "f64"
+                )
+            })
+    });
+    if !scalar {
+        return false;
+    }
+    let Some(source) = inherent_method_body(index, ty, name) else {
+        return false;
+    };
+    let Some(tree) = parse_clean_source_file(source).map(|parse| parse.tree()) else {
+        return false;
+    };
+    tree.syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|method| method.param_list())
+        .and_then(|parameters| parameters.self_param())
+        .is_some_and(|receiver| receiver.amp_token().is_some() && receiver.mut_token().is_none())
 }
 
 /// The single macro call (`assert_eq!(..)`) starting on the assertion's line.

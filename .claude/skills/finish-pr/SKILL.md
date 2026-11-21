@@ -144,6 +144,29 @@ authorization. Enqueue through the native merge queue after that qualification
 is green. Being Ready for review is not REVIEW_READY or permission to arm
 auto-merge.
 
+# Description and metadata updates
+
+After repairs, reconcile body claims with the final diff and applicable evidence.
+Do not leave resolved findings described as open, silently turn a limited check
+into complete qualification, or weaken the accepted requirement to make an
+unfinished implementation appear complete. Keep ordinary findings/replies in
+review. Update the body when the actual explanation or material limitation
+changes. Delete redundant process narration instead of relocating it into more
+comments; required inspection/evidence records remain available.
+
+For authorized body edits, reload the live text and head immediately before
+writing. Compare with the intended edit, preserve newer valid author changes,
+and reconcile conflicts rather than replaying a stale full replacement. Use a
+supported conditional guard when available. Read back the saved text and head,
+check rendering, and only then report the edit as complete. Separate reads and
+writes are not an atomic transaction.
+
+A summary edit normally refreshes public-claim review, not every unchanged test.
+Retained evidence keeps its original run/subject identity; new exact-head gates
+still apply. A late substantive finding affects readiness even without a new
+commit. Source review, submission readiness and merge readiness remain distinct;
+this guidance does not authorize upstream publication or bypass repository gates.
+
 # Release-scope law
 
 For a pinned release, treat the reviewed immutable pin receipt as the sole membership authority: qualification, source preflight, and finalization consume its exact ref, ancestry, ordered SHA digest, PR dispositions, and manifests unchanged. Ordinary `main` or swarm movement never repins or changes membership; repin only after a release-invalidating exact-candidate qualification or source-preflight failure, with an explicit superseding receipt. Do not close, draft, lock, relabel, retarget, or otherwise mutate unrelated PRs to freeze scope; they remain open and may evolve, and post-pin merges do not retarget the release. Close only this selected PR for its own evidence-backed terminal disposition—never close-now/reopen-after-release.

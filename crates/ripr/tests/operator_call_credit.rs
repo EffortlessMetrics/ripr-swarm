@@ -683,6 +683,52 @@ fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
 }
 
 #[test]
+fn add_observer_checks_the_selected_tuple_operands_across_versions() -> Result<(), String> {
+    let method = Case {
+        old_line: "        Self(other.0 - self.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let operator = Case {
+        old_line: "        Money(other.0 - self.0)",
+        new_line: "        Money(other.0 + self.0)",
+        ..ADD
+    };
+    for (case, test_body, expected) in [
+        (
+            method,
+            "let r = Money(0).add(Money(3));
+        assert_eq!(r.0, 3);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            method,
+            "let r = Money(2).add(Money(3));
+        assert_eq!(5, r.0);",
+            ExposureClass::Exposed,
+        ),
+        (
+            operator,
+            "assert_eq!(Money(0) + Money(3), Money(3));",
+            ExposureClass::StaticUnknown,
+        ),
+        (
+            operator,
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let actual = classes(&Case { test_body, ..case })?;
+        if actual.as_slice() != std::slice::from_ref(&expected) {
+            return Err(format!(
+                "{test_body}: expected {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn grouped_self_import_binds_the_enclosing_type_name() -> Result<(), String> {
     let base = Case {
         label: "grouped_self",
@@ -1075,12 +1121,10 @@ fn a_std_derive_that_defines_the_method_withholds_the_sole_credit() -> Result<()
     Ok(())
 }
 
-/// Relating the test says the operator runs, not that an assertion would
-/// notice the impl change. A result built from the impl's own tokens
-/// (`Money(..)`) is observed by the test's `Money(..)` operands and reads
-/// `exposed`; one built through `Self(..)` shares no token with the assertion,
-/// so the credit is unconfirmed and the gap stays withheld rather than turning
-/// into an "add a test" signal for code the test pins.
+/// Relating the test says the operator runs, not that an assertion observes
+/// its result. The bounded named scalar return has a whole-result operator
+/// equality receipt; `Self(..)` has no such named-return receipt and remains
+/// unresolved. Type-token coincidence alone grants no observation or identity.
 #[test]
 fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> {
     let confirmed = with_body(
@@ -1147,7 +1191,8 @@ mod more {
     );
 
     // A test that names the method decided reach itself, so the finding is
-    // judged by its own evidence, not withheld as syntax-only.
+    // judged by its own evidence, not withheld as syntax-only. Its literal
+    // assertion on the current returned tuple field genuinely observes it.
     let one_named_call = Case {
         label: "one_named_call",
         old_line: "        Self(self.0 + other.0)",
@@ -1166,7 +1211,29 @@ mod named {
 ",
         ..ADD
     };
-    assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
+    assert_eq!(classes(&one_named_call)?, [ExposureClass::Exposed]);
+
+    // An explicit call without an observation still only lifts the implicit
+    // operator withholding. It must not borrow the earlier operator oracle.
+    let one_named_call_without_observation = Case {
+        label: "one_named_call_without_observation",
+        extra_items: "
+#[cfg(test)]
+mod named {
+    use super::*;
+    #[test]
+    fn named_call() {
+        let sum = Money(1).add(Money(1));
+        assert_eq!(2, 2);
+    }
+}
+",
+        ..one_named_call
+    };
+    assert_eq!(
+        classes(&one_named_call_without_observation)?,
+        [ExposureClass::WeaklyExposed]
+    );
 
     // A path call on another type is not a call of this impl: still syntax-only (#10551).
     let other_type_path = Case {
@@ -1644,7 +1711,7 @@ mod operator {
     }
 }
 ",
-        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(r.0, 5);",
+        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(5, 5);",
         ..ADD
     };
     assert_eq!(
@@ -2381,5 +2448,432 @@ fn macros_in_bodies_foreign_macros_and_blanket_defaults_withhold_the_sole_credit
     );
     assert!(source(&not_blanket).contains("impl Wide for Gold {}"));
     assert_eq!(classes(&not_blanket)?, [ExposureClass::WeaklyExposed]);
+    Ok(())
+}
+
+#[test]
+fn whole_operator_result_identity_refuses_discarded_and_computed_observers() -> Result<(), String> {
+    for (label, test) in [
+        (
+            "discarded_result",
+            "let _ = Money(2) + Money(3); assert_eq!(Money(5), Money(5));",
+        ),
+        (
+            "discarded_block",
+            "assert_eq!({ let _ = Money(2) + Money(3); Money(5) }, Money(5));",
+        ),
+        (
+            "cancelled_projection",
+            "assert_eq!((Money(2) + Money(3)).0 * 0, 0);",
+        ),
+        (
+            "same_computed_expectation",
+            "assert_eq!(Money(2) + Money(3), Money(2) + Money(3));",
+        ),
+    ] {
+        let case = with_body(ADD, label, test);
+        assert!(
+            classes(&case)?
+                .iter()
+                .all(|class| *class != ExposureClass::Exposed),
+            "{label}"
+        );
+    }
+    let lenient = Case {
+        label: "lenient_equality",
+        extra_items: "#[derive(Debug, Clone, Copy)] pub struct Money(pub i64); impl PartialEq for Money { fn eq(&self, _: &Self) -> bool { true } }",
+        ..ADD
+    };
+    assert!(
+        classes(&lenient)?
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed)
+    );
+    let skipped_tail = Case {
+        label: "skipped_named_tail",
+        new_line: "        if true { return Money(5); } Money(other.0 + self.0)",
+        ..ADD
+    };
+    let findings = findings_of(&skipped_tail)?;
+    let tails: Vec<_> = findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::domain::ProbeFamily::ReturnValue
+                && finding.probe.expression == "Money(other.0 + self.0)"
+        })
+        .collect();
+    assert_eq!(tails.len(), 1, "the selected skipped tail must be nonempty");
+    assert_ne!(tails[0].class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn whole_operator_result_literals_match_the_indexed_scalar_type() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "signed_suffixes",
+            "assert_eq!(Money(2i64) + Money(3i64), Money(5i64));",
+        ),
+        (
+            "signed_negative_zero",
+            "assert_eq!(Money(-0i64) + Money(3i64), Money(3i64));",
+        ),
+        (
+            "signed_minimum",
+            "assert_eq!(Money(-9223372036854775808i64) + Money(0i64), Money(-9223372036854775808i64));",
+        ),
+    ] {
+        assert_eq!(
+            classes(&with_body(ADD, label, body))?,
+            [ExposureClass::Exposed],
+            "{label}"
+        );
+    }
+    for (label, body) in [
+        (
+            "signed_overflow_expected",
+            "assert_eq!(Money(2) + Money(3), Money(9223372036854775808));",
+        ),
+        (
+            "signed_underflow_left",
+            "assert_eq!(Money(-9223372036854775809i64) + Money(3), Money(5));",
+        ),
+        (
+            "wrong_suffix_expected",
+            "assert_eq!(Money(2) + Money(3), Money(5u32));",
+        ),
+        (
+            "wrong_suffix_left",
+            "assert_eq!(Money(2u32) + Money(3i64), Money(5i64));",
+        ),
+        (
+            "wrong_suffix_right",
+            "assert_eq!(Money(2i64) + Money(3u32), Money(5i64));",
+        ),
+    ] {
+        let classes = classes(&with_body(ADD, label, body))?;
+        assert!(
+            classes.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {classes:?}"
+        );
+    }
+    let unsigned = Case {
+        label: "unsigned_slot",
+        extra_items: "#[derive(Debug, Clone, Copy, PartialEq)] pub struct Money(pub u32);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&with_body(
+            unsigned,
+            "unsigned_valid",
+            "assert_eq!(Money(2u32) + Money(3u32), Money(5u32));"
+        ))?,
+        [ExposureClass::Exposed]
+    );
+    for (label, body) in [
+        (
+            "unsigned_negative_zero_left",
+            "assert_eq!(Money(-0u32) + Money(3u32), Money(3u32));",
+        ),
+        (
+            "unsigned_negative_zero_right",
+            "assert_eq!(Money(2u32) + Money(-0), Money(2u32));",
+        ),
+        (
+            "unsigned_negative_zero_expected",
+            "assert_eq!(Money(0u32) + Money(0u32), Money(-0u32));",
+        ),
+        (
+            "unsigned_overflow_left",
+            "assert_eq!(Money(4294967296u32) + Money(0u32), Money(0u32));",
+        ),
+        (
+            "unsigned_overflow_expected",
+            "assert_eq!(Money(2u32) + Money(3u32), Money(4294967296));",
+        ),
+        (
+            "unsigned_wrong_suffix",
+            "assert_eq!(Money(2u32) + Money(3u32), Money(5i64));",
+        ),
+    ] {
+        let classes = classes(&with_body(unsigned, label, body))?;
+        assert!(
+            classes.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {classes:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn whole_operator_constructor_independence_refuses_callable_value_shadows() -> Result<(), String> {
+    for (label, extra) in [
+        (
+            "function_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    fn Money(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "raw_function_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    fn r#Money(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "const_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    const Money: fn(i64) -> super::Money = make;
+    fn make(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "static_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    static Money: fn(i64) -> super::Money = make;
+    fn make(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "imported_constructor_alias",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    use self::factory::make as Money;
+    mod factory {
+        pub fn make(n: i64) -> crate::Money { crate::Money(n) + crate::Money(0) }
+    }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "opaque_foreign_constructor_glob",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    use external_factory::*;
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+    ] {
+        let case = Case {
+            label,
+            extra_items: extra,
+            test_body: "let _ = Money(2) + Money(3);",
+            ..ADD
+        };
+        let findings = findings_of(&case)?;
+        assert_eq!(findings.len(), 1, "{label}: {findings:#?}");
+        assert_ne!(
+            findings[0].class,
+            ExposureClass::Exposed,
+            "{label}: {findings:#?}"
+        );
+    }
+    // The ordinary unshadowed constructor and standard operator glob retain
+    // the existing primitive/derived-equality positive control.
+    assert_eq!(classes(&ADD)?, [ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn whole_operator_constructor_independence_refuses_item_macro_expansion() -> Result<(), String> {
+    let case = Case {
+        label: "macro_generated_constructor_function",
+        extra_items: r#"
+#[path = "macros.rs"] mod constructors;
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    crate::emit_constructor!();
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        sibling: r#"
+#[macro_export]
+macro_rules! emit_constructor {
+    () => {
+        fn Money(n: i64) -> crate::Money { crate::Money(n) + crate::Money(0) }
+    };
+}
+"#,
+        test_body: "let _ = Money(2) + Money(3);",
+        ..ADD
+    };
+    assert!(
+        !case.sibling.contains("impl"),
+        "the prior impl-token guard cannot establish closure"
+    );
+    let findings = findings_of(&case)?;
+    assert_eq!(findings.len(), 1, "{findings:#?}");
+    assert_ne!(findings[0].class, ExposureClass::Exposed, "{findings:#?}");
+    Ok(())
+}
+
+#[test]
+fn named_add_tuple_projection_requires_current_exact_method_result() -> Result<(), String> {
+    let base = Case {
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    for (label, body) in [
+        (
+            "named_tuple",
+            "let other = Money(2).add(Money(3));\n        assert_eq!(other.0, 5);",
+        ),
+        (
+            "named_tuple_reversed_oracle",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(5i64, sum.0);",
+        ),
+    ] {
+        assert_eq!(
+            classes(&with_body(base, label, body))?,
+            [ExposureClass::Exposed],
+            "{label}"
+        );
+    }
+    for (label, body) in [
+        (
+            "named_tuple_disabled_binding",
+            "#[cfg(any())] let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "named_tuple_ignored",
+            "let _ = Money(2).add(Money(3));\n        assert_eq!(5, 5);",
+        ),
+        (
+            "named_tuple_overwritten",
+            "let mut sum = Money(2).add(Money(3));\n        sum.0 = 5;\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "named_tuple_wrong_instance",
+            "let other = Money(2).add(Money(3));\n        let sum = Money(5);\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "named_tuple_self_expected",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, Money(2).add(Money(3)).0);",
+        ),
+        (
+            "named_tuple_wrong_suffix",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, 5u32);",
+        ),
+        (
+            "named_tuple_overflow",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, 9223372036854775808);",
+        ),
+        (
+            "named_tuple_indirect",
+            "let sum = Money::add(Money(2), Money(3));\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "self_implicit_stays_refused",
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+        ),
+    ] {
+        let actual = classes(&with_body(base, label, body))?;
+        assert!(
+            actual.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {actual:?}"
+        );
+    }
+    for (label, extra, body) in [
+        (
+            "inherent_method_intercepts",
+            "impl Money { fn add(self, _:Money)->Money { Money(5) } }",
+            "let sum=Money(2).add(Money(3));\n        assert_eq!(sum.0,5);",
+        ),
+        (
+            "reference_trait_intercepts",
+            "trait Decoy { fn add(self, other:Money)->Money; } impl Decoy for &Money { fn add(self,_:Money)->Money { Money(5) } }",
+            "let sum=(&Money(2)).add(Money(3));\n        assert_eq!(sum.0,5);",
+        ),
+    ] {
+        let case = Case {
+            label,
+            extra_items: extra,
+            test_body: body,
+            ..base
+        };
+        let actual = classes(&case)?;
+        assert!(
+            actual.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {actual:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn named_scalar_add_observer_requires_a_plain_result_destructor() -> Result<(), String> {
+    for (drop_case, items, exposed) in [
+        (
+            "none",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64);",
+            true,
+        ),
+        (
+            "empty",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64); impl Drop for Money { fn drop(&mut self) {} }",
+            true,
+        ),
+        (
+            "nonmasking",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64); impl Drop for Money { fn drop(&mut self) { std::hint::black_box(self.0); } }",
+            false,
+        ),
+        (
+            "panic-exit",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64); impl Drop for Money { fn drop(&mut self) { if std::thread::panicking() { std::process::exit(0); } } }",
+            false,
+        ),
+    ] {
+        for (mode, old_line, new_line, body) in [
+            (
+                "implicit-named",
+                "        Money(self.0 + other.0)",
+                "        Money(other.0 + self.0)",
+                "assert_eq!(Money(2) + Money(3), Money(5));",
+            ),
+            (
+                "explicit-projected",
+                "        Self(self.0 + other.0)",
+                "        Self(other.0 + self.0)",
+                "let sum = Money(2).add(Money(3)); assert_eq!(sum.0, 5);",
+            ),
+        ] {
+            let case = Case {
+                extra_items: items,
+                old_line,
+                new_line,
+                test_body: body,
+                ..ADD
+            };
+            let found = findings_of(&case)?;
+            assert_eq!(found.len(), 1, "{drop_case}/{mode}: {found:#?}");
+            assert_eq!(
+                found[0].class == ExposureClass::Exposed,
+                exposed,
+                "{drop_case}/{mode}: {found:#?}"
+            );
+        }
+    }
     Ok(())
 }

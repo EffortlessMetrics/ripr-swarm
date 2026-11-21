@@ -399,3 +399,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — wildcard_oracle_wildcard_original (29)
+
+Reason:
+RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_original --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — wildcard_oracle_wildcard_original (30)
+
+Reason:
+RIPR-SPEC-0108 For wildcard_oracle_wildcard_original, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_wildcard_original --reason "..."`
+
+Updated:
+- `expected/check.json`

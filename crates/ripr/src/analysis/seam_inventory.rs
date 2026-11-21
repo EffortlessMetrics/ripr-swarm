@@ -16,6 +16,9 @@
 //!
 //! Both contracts are pinned by tests in this file.
 
+#[path = "seam_inventory/compact_prefill.rs"]
+mod compact_prefill;
+
 use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
@@ -654,80 +657,119 @@ fn inventory_classified_seams_report_collect(
     }
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
-    let (classified, limit_info, lexical_fallback_files, compact_classified, evidence_limitations) =
+    let (classified, limit_info, lexical_fallback_files, evidence_limitations) =
         match inventory_classified_seams_from_state_with_config(
             &state,
             config,
             &analyzed_production_files,
-        ) {
-            Ok(pair) => {
+            |classified, limit_info, lexical_fallback_files, index, pass, total| {
                 trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
-                pair
-            }
+                // #13340 applies before either full storage or compact prefill.
+                // Keep this pass alive for canonical compact publication, but
+                // never persist its transient fail-closed stand-ins.
+                if pass.warm_failed() {
+                    trace_latency_phase(
+                        "cache_store",
+                        "skipped_evidence_incomplete",
+                        Duration::ZERO,
+                    );
+                    trace_latency_phase(
+                        "compact_cache_prefill",
+                        "skipped_evidence_incomplete",
+                        Duration::ZERO,
+                    );
+                    return Ok(());
+                }
+                // Best-effort write: a write failure does not fail analysis. The
+                // result is already in memory; the next run just sees a miss again.
+                // Persist the limit_info so a warm-path load returns the correct run_status.
+                let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.map(Into::into);
+                let store_started = Instant::now();
+                trace_latency_phase(
+                    "cache_store",
+                    &format!(
+                        "start_classified_{}_limit_{}",
+                        classified.len(),
+                        store_limit
+                    ),
+                    Duration::ZERO,
+                );
+                let (store_status, stored) = match cache
+                    .store_classified_seams_with_limit_and_fallback(
+                        &key,
+                        classified,
+                        cached_limit_info.as_ref(),
+                        lexical_fallback_files,
+                        store_limit,
+                    ) {
+                    Ok(status) => {
+                        if let Some(advisory) = &status.advisory {
+                            eprintln!("ripr: {advisory}");
+                        }
+                        (status.label, true)
+                    }
+                    Err(reason) => {
+                        eprintln!("ripr: repo seam cache store ignored ({reason})");
+                        let label = cache_store_status_label(&reason);
+                        family_store_failures.record_store_failure(
+                            PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                            FileFactStoreError {
+                                stage: FileFactStoreStage::ClassifiedSeamStore,
+                                message: reason,
+                            },
+                        );
+                        (label, false)
+                    }
+                };
+                trace_latency_phase("cache_store", &store_status, store_started.elapsed());
+
+                if !stored {
+                    return Ok(());
+                }
+
+                let prefill_started = Instant::now();
+                let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    compact_prefill::publish(
+                        &state,
+                        &key,
+                        &analyzed_production_files,
+                        index,
+                        pass,
+                        total,
+                        lexical_fallback_files,
+                    )
+                }));
+                let status = match attempt {
+                    Ok(Ok(status)) => status.label,
+                    Ok(Err(failure)) => {
+                        cancellation::checkpoint()?;
+                        if failure.inputs_changed {
+                            return Err(failure.message);
+                        }
+                        let label = cache_store_status_label(&failure.message);
+                        family_store_failures.record_store_failure(
+                            PathBuf::from("repo-compact-classified-seams"),
+                            FileFactStoreError {
+                                stage: FileFactStoreStage::ClassifiedSeamStore,
+                                message: failure.message,
+                            },
+                        );
+                        label
+                    }
+                    Err(_) => "skipped_compact_prefill_panic".to_string(),
+                };
+                trace_latency_phase("compact_cache_prefill", &status, prefill_started.elapsed());
+                cancellation::checkpoint()?;
+                Ok(())
+            },
+        ) {
+            Ok(pair) => pair,
             Err(err) => {
                 trace_latency_phase("cold_compute", "error", compute_started.elapsed());
                 trace_latency_phase("total", "error", total_started.elapsed());
                 return Err(err);
             }
         };
-    // Best-effort write: a write failure does not fail analysis. The
-    // result is already in memory; the next run just sees a miss again.
-    // Persist the limit_info so a warm-path load returns the correct run_status.
-    let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.as_ref().map(Into::into);
-    let store_started = Instant::now();
-    trace_latency_phase(
-        "cache_store",
-        &format!(
-            "start_classified_{}_limit_{}",
-            classified.len(),
-            store_limit
-        ),
-        Duration::ZERO,
-    );
-    // #13340: a walk whose shared-table warm panicked answered every seam with
-    // the fail-closed stand-in. That is one run's transient fault, not a
-    // property of the inputs the key names, so it is never stored: the next
-    // run recomputes instead of replaying the stand-in as the cached result.
-    let (store_status, classified_store_stored) = if !evidence_limitations.is_empty() {
-        ("skipped_evidence_incomplete".to_owned(), false)
-    } else {
-        match cache.store_classified_seams_with_limit_and_fallback(
-            &key,
-            &classified,
-            cached_limit_info.as_ref(),
-            &lexical_fallback_files,
-            store_limit,
-        ) {
-            Ok(status) => {
-                if let Some(advisory) = &status.advisory {
-                    eprintln!("ripr: {advisory}");
-                }
-                (status.label, true)
-            }
-            Err(reason) => {
-                eprintln!("ripr: repo seam cache store ignored ({reason})");
-                let label = cache_store_status_label(&reason);
-                family_store_failures.record_store_failure(
-                    PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
-                    FileFactStoreError {
-                        stage: FileFactStoreStage::ClassifiedSeamStore,
-                        message: reason,
-                    },
-                );
-                (label, false)
-            }
-        }
-    };
-    trace_latency_phase("cache_store", &store_status, store_started.elapsed());
-    // #12506 dual publication: publish the compact-classified family the
-    // summary renderer reads, derived inside this same cold walk, so a
-    // classified run leaves summary-json's warm path populated instead of
-    // forcing it to re-derive every seam. Best-effort like the classified
-    // store; it runs only when the classified store stored, per the
-    // plan's ordering.
-    if classified_store_stored && let Some(compact_classified) = compact_classified {
-        publish_compact_classified_family(root, &key, compact_classified, &lexical_fallback_files);
-    }
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
@@ -746,46 +788,6 @@ fn inventory_classified_seams_report_collect(
             .chain(unreadable_limitations)
             .collect(),
     })
-}
-
-/// Publish the compact-classified family derived inside a classified cold
-/// walk (#12506). Best-effort like the classified store: a failure does not
-/// fail analysis and keeps the ordinary stderr sentence the compact cold
-/// walk itself prints, and an invalid compact store-limit override reads as
-/// that same ignored-store state instead of failing the classified run.
-fn publish_compact_classified_family(
-    root: &Path,
-    key: &RepoSeamCacheKey,
-    compact_classified: Vec<ClassifiedSeam>,
-    lexical_fallback_files: &[PathBuf],
-) {
-    let compact_cache = RepoSeamFactCache::at_compact_classified(root);
-    let store_started = Instant::now();
-    trace_latency_phase(
-        "compact_cache_store",
-        &format!("start_classified_derived_{}", compact_classified.len()),
-        Duration::ZERO,
-    );
-    let status = match compact_classified_seam_cache_store_limit().and_then(|compact_store_limit| {
-        compact_cache.store_compact_classified_seams_with_limit_and_fallback(
-            key,
-            &compact_classified,
-            lexical_fallback_files,
-            compact_store_limit,
-        )
-    }) {
-        Ok(status) => {
-            if let Some(advisory) = &status.advisory {
-                eprintln!("ripr: {advisory}");
-            }
-            status.label
-        }
-        Err(reason) => {
-            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
-            cache_store_status_label(&reason)
-        }
-    };
-    trace_latency_phase("compact_cache_store", &status, store_started.elapsed());
 }
 
 /// Return the workspace cache identity used by the full classified inventory.
@@ -1372,9 +1374,6 @@ type ClassifiedSeamInventory = (
     Vec<ClassifiedSeam>,
     Option<SeamLimitInfo>,
     Vec<PathBuf>,
-    // Compact-classified records derived for the same seams (#12506), or
-    // `None` when this run cannot publish a complete compact family.
-    Option<Vec<ClassifiedSeam>>,
     Vec<AnalysisLimitation>,
 );
 
@@ -1382,6 +1381,14 @@ fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
     production_files: &[PathBuf],
+    publish: impl for<'index> FnOnce(
+        &[ClassifiedSeam],
+        Option<&SeamLimitInfo>,
+        &[PathBuf],
+        &'index RustIndex,
+        &test_grip_evidence::EvidencePass<'index>,
+        usize,
+    ) -> Result<(), String>,
 ) -> Result<ClassifiedSeamInventory, String> {
     let build_started = Instant::now();
     trace_latency_phase(
@@ -1445,8 +1452,9 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let (evidence, evidence_limitations) =
-        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index)?;
+    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
+    let evidence = pass.evidence_for(&seams);
+    let evidence_limitations = pass.limitations()?;
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1457,37 +1465,19 @@ fn inventory_classified_seams_from_state_with_config(
     );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
-    // #12506: derive the compact-classified records while the index is
-    // still in memory, through the same per-seam projection the compact
-    // cold walk uses, so this run can publish the compact family
-    // summary-json reads. A capped run retained only a prefix of the
-    // seams and publishes nothing: the compact family must stay a
-    // complete inventory. A fail-closed evidence pass (#13340) answered
-    // every seam with the stand-in; the derived compact records would
-    // replay that fault, so they are not published either.
-    let compact_classified = match limit_info {
-        Some(_) => None,
-        None if !evidence_limitations.is_empty() => None,
-        None => {
-            let compact_started = Instant::now();
-            trace_latency_phase(
-                "compact_classify_seams",
-                &format!("start_seams_{}", classified.len()),
-                Duration::ZERO,
-            );
-            let compact = compact_classified_seams_from_seams(
-                classified.iter().map(|entry| &entry.seam),
-                &cached.index,
-            )?;
-            trace_latency_phase("compact_classify_seams", "ok", compact_started.elapsed());
-            Some(compact)
-        }
-    };
+    publish(
+        &classified,
+        limit_info.as_ref(),
+        &lexical_fallback_files,
+        &cached.index,
+        &pass,
+        bounded.total_unique,
+    )?;
+    cancellation::checkpoint()?;
     Ok((
         classified,
         limit_info,
         lexical_fallback_files,
-        compact_classified,
         evidence_limitations,
     ))
 }
@@ -4551,6 +4541,7 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
     file: &Path,
     evidence_files: &[PathBuf],
     seam_index: &mut Option<FileSeamIndex>,
+    owner_receipt: Option<&super::match_arm_scope::MatchArmOwnerReceipt>,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
     if !workspace::classify_with(file, &context).seeds_production_findings() {
@@ -4563,9 +4554,15 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
         }
     }
     if let Some(index) = seam_index.as_ref().filter(|index| index.covers(&files)) {
+        if owner_receipt.is_some_and(|receipt| !receipt.matches_index(&index.index)) {
+            return Err("bounded match-arm owner authority source mismatch".to_string());
+        }
         return index.classify_in_file(file);
     }
     let built = FileSeamIndex::build(root, config, &files)?;
+    if owner_receipt.is_some_and(|receipt| !receipt.matches_index(&built.index)) {
+        return Err("bounded match-arm owner authority source mismatch".to_string());
+    }
     let classified = built.classify_in_file(file)?;
     *seam_index = Some(built);
     Ok(classified)
@@ -4588,7 +4585,7 @@ fn seams_from_index_files(
             continue;
         }
         let owners = FileOwners {
-            lookup: rust_index::FileOwnerLookup::new(facts.functions.iter()),
+            lookup: rust_index::FileOwnerLookup::with_source(facts.functions.iter(), &facts.source),
             // #15000: one owner opt-out decision per file, the same one diff
             // scope applies, so a seam inside a skipped `impl`, `trait`,
             // inline module or file is withheld like a fn-level one.
@@ -4608,7 +4605,7 @@ fn seams_from_index_files(
             if twin {
                 continue;
             }
-            let Some(seam) = build_seam_from_shape(
+            let Some((seam, owner)) = build_seam_from_shape(
                 path,
                 shape,
                 &owners,
@@ -4619,7 +4616,7 @@ fn seams_from_index_files(
             ) else {
                 continue;
             };
-            if admission.admits(&seam, &facts.source, &owners.lookup)? {
+            if admission.admits(&seam, &facts.source, owner)? {
                 seams.push(seam);
             }
         }
@@ -4766,6 +4763,19 @@ pub(crate) fn inventory_seams_from_index_bounded(
     }
     rust_index::eprint_index_limit_disclosures(index);
     let mut collector = BoundedSeamCollector::new(limit);
+    visit_inventory_seams(production_files, index, |seam| {
+        collector.push(seam);
+        Ok(())
+    })?;
+    Ok(collector.finish())
+}
+
+/// Shared construction authority; callers choose retention and publication.
+fn visit_inventory_seams(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+    mut visit: impl FnMut(RepoSeam) -> Result<(), String>,
+) -> Result<(), String> {
     let admission = FieldSeamAdmission::new(index);
     for file in production_files {
         cancellation::checkpoint()?;
@@ -4776,7 +4786,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
             continue;
         }
         let owners = FileOwners {
-            lookup: rust_index::FileOwnerLookup::new(facts.functions.iter()),
+            lookup: rust_index::FileOwnerLookup::with_source(facts.functions.iter(), &facts.source),
             // #15000: one owner opt-out decision per file, the same one diff
             // scope applies, so a seam inside a skipped `impl`, `trait`,
             // inline module or file is withheld like a fn-level one.
@@ -4793,10 +4803,11 @@ pub(crate) fn inventory_seams_from_index_bounded(
         let arm_ranges = match_arm_source_ranges(&facts.source, &facts.probe_shapes);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
+            cancellation::checkpoint()?;
             if twin {
                 continue;
             }
-            if let Some(seam) = build_seam_from_shape(
+            if let Some((seam, owner)) = build_seam_from_shape(
                 file,
                 shape,
                 &owners,
@@ -4804,13 +4815,13 @@ pub(crate) fn inventory_seams_from_index_bounded(
                 &line_starts,
                 &crlf_pairs,
                 &arm_ranges,
-            ) && admission.admits(&seam, &facts.source, &owners.lookup)?
+            ) && admission.admits(&seam, &facts.source, owner)?
             {
-                collector.push(seam);
+                visit(seam)?;
             }
         }
     }
-    Ok(collector.finish())
+    Ok(())
 }
 
 /// Test-only entry that feeds pre-built seams through the bounded
@@ -4927,7 +4938,7 @@ impl<'a> FieldSeamAdmission<'a> {
         &self,
         seam: &RepoSeam,
         source: &str,
-        owners: &rust_index::FileOwnerLookup<'_>,
+        owner: &rust_index::FunctionSummary,
     ) -> Result<bool, String> {
         if !written_field_is_nonpublic(seam, source) {
             return Ok(true);
@@ -4937,9 +4948,6 @@ impl<'a> FieldSeamAdmission<'a> {
         // known; an undeclared one, or one no relational assertion reads,
         // stays ungraded.
         let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
-            return Ok(false);
-        };
-        let Some(owner) = owners.owner(seam.display_line()) else {
             return Ok(false);
         };
         // Cheap necessary conditions first; the exact start (the seam's own
@@ -4983,16 +4991,19 @@ struct FileOwners<'a> {
     opt_outs: owner_opt_out::FileOwnerOptOuts,
 }
 
-fn build_seam_from_shape(
+fn build_seam_from_shape<'a>(
     path: &Path,
     shape: &ProbeShapeFact,
-    owners: &FileOwners<'_>,
+    owners: &FileOwners<'a>,
     source: &str,
     line_starts: &[usize],
     crlf_pairs: &CrlfPairPositions,
     arm_ranges: &BTreeMap<usize, (usize, usize)>,
-) -> Option<RepoSeam> {
+) -> Option<(RepoSeam, &'a rust_index::FunctionSummary)> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // Shape coordinates, rather than the last function on a shared line,
+    // bind both production eligibility and every downstream owner consumer.
+    let owner_fact = owners.lookup.production_owner_for_shape(shape)?;
     // RIPR-SPEC-0228 field writes (`self.count += 1`) get a seam only where
     // the diff-side rule (`assigned_field_path`) reads the write as the
     // owner's last word on one plain `self` field; that field is the
@@ -5002,10 +5013,7 @@ fn build_seam_from_shape(
     let written_field = if kind == SeamKind::FieldConstruction
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
-        Some(written_field_of_shape(
-            owners.lookup.owner(shape.start_line())?,
-            shape,
-        )?)
+        Some(written_field_of_shape(owner_fact, shape)?)
     } else {
         None
     };
@@ -5014,14 +5022,6 @@ fn build_seam_from_shape(
     // consumer's predicate, return or error seam carries that behavior
     // (#6677). Diff-scope `call_deletion` probes are unchanged.
     if kind == SeamKind::CallPresence && shape.value_consumed {
-        return None;
-    }
-    let owner_fact = owners.lookup.owner(shape.start_line())?;
-    // Skip shapes whose owner is itself a test function (e.g.,
-    // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
-    // the source-role model already excludes physical test files;
-    // this catches inline test modules.
-    if owner_fact.source_role.is_evidence_role() {
         return None;
     }
     // `FunctionFact.id` is built from `path.display()`, which uses native
@@ -5094,7 +5094,7 @@ fn build_seam_from_shape(
     // The `match` keyword shape has no arm range and remains line-only.
     let (start_line, start_byte, end_byte) = if shape.kind == ProbeShapeKind::MatchArm {
         let Some(&(start, end)) = arm_ranges.get(&shape.start_byte()) else {
-            return Some(seam);
+            return Some((seam, owner_fact));
         };
         (
             line_starts.partition_point(|offset| *offset <= start),
@@ -5105,8 +5105,8 @@ fn build_seam_from_shape(
         (shape.start_line(), shape.start_byte(), shape.end_byte())
     };
     match byte_span_to_lines_with_starts(source, line_starts, start_line, start_byte, end_byte) {
-        Some(span) => Some(seam.with_span(span)),
-        None => Some(seam),
+        Some(span) => Some((seam.with_span(span), owner_fact)),
+        None => Some((seam, owner_fact)),
     }
 }
 
@@ -5549,6 +5549,71 @@ marker = "libtest_mimic::Trial"
             index.extend_functions(functions);
         }
         Ok(index)
+    }
+
+    #[test]
+    fn shared_line_shapes_keep_exact_owners_in_full_and_bounded_inventory() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        for (source, line) in [
+            (
+                include_str!("../../tests/data/repo-shared-line/opening.rs"),
+                1,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/closing.rs"),
+                2,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/production-before-test.rs"),
+                1,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/production-after-test.rs"),
+                1,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/nested-helper.rs"),
+                1,
+            ),
+        ] {
+            for boundary in [9, 10] {
+                let source = source.replace("n > 10", &format!("n > {boundary}"));
+                let index = index_from_files(&[(path.clone(), &source)])?;
+                let full = inventory_seams_from_index_checked(std::slice::from_ref(&path), &index)?;
+                let bounded = inventory_seams_from_index_bounded(
+                    std::slice::from_ref(&path),
+                    &index,
+                    Some(20),
+                )?;
+                assert_eq!(full, bounded.seams);
+                assert_eq!(
+                    full.len(),
+                    1,
+                    "test-only shape or missing production: {source}"
+                );
+                let seam = &full[0];
+                assert_eq!(seam.owner(), "src/lib.rs::price");
+                assert_eq!(seam.expression(), format!("n > {boundary}"));
+                assert_eq!(seam.display_line(), line);
+                assert_eq!(
+                    seam.byte_offset(),
+                    source
+                        .find(&format!("n > {boundary}"))
+                        .ok_or("missing source predicate")?
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_line_field_admission_uses_the_exact_impl_owner() -> Result<(), String> {
+        let source = include_str!("../../tests/data/repo-shared-line/field.rs");
+        assert_eq!(
+            written_field_seam_files(&[("src/counter.rs", source)])?,
+            vec!["src/counter.rs"]
+        );
+        Ok(())
     }
 
     /// #7203: the production inventory's seam IDs must not move when the
@@ -6483,7 +6548,23 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
             index.extend_tests(adapter.summarize_file(path, source)?.tests.iter().cloned());
         }
         let paths: Vec<PathBuf> = owned.iter().map(|(path, _)| path.clone()).collect();
-        Ok(inventory_seams_from_index(&paths, &index)
+        let full = inventory_seams_from_index(&paths, &index);
+        let bounded = inventory_seams_from_index_bounded(&paths, &index, None)?;
+        let mut streamed = Vec::new();
+        visit_inventory_seams(&paths, &index, |seam| {
+            streamed.push(seam);
+            Ok(())
+        })?;
+        let keys = |seams: &[RepoSeam]| -> std::collections::BTreeSet<_> {
+            seams.iter().map(SeamSortKey::of).collect()
+        };
+        assert_eq!(keys(&full), keys(&bounded.seams), "bounded field admission");
+        assert_eq!(
+            keys(&full),
+            keys(&streamed),
+            "compact-prefill visitor field admission"
+        );
+        Ok(full
             .iter()
             .filter(|seam| seam.expression().starts_with("self."))
             .map(|seam| seam.file().display().to_string().replace('\\', "/"))
@@ -7229,14 +7310,14 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         format!("{}-{:x}", std::process::id(), nanos)
     }
 
-    fn make_tempdir(label: &str) -> Result<PathBuf, String> {
+    pub(super) fn make_tempdir(label: &str) -> Result<PathBuf, String> {
         let dir = std::env::temp_dir().join(format!("ripr-inv-{label}-{}", unique_suffix()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
         Ok(dir)
     }
 
-    fn write_file(path: &Path, content: &str) -> Result<(), String> {
+    pub(super) fn write_file(path: &Path, content: &str) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
@@ -7371,8 +7452,22 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     fn list_compact_cache_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
-        let dir = compact_cache_dir_under(root);
-        list_entries(&dir)
+        // A completed compact generation may be monolithic or windowed.
+        // Count authoritative entries, not the number of staged shard files.
+        let mut entries = Vec::new();
+        for (dir, sharded) in RepoSeamFactCache::at_compact_classified(root).entry_dirs() {
+            for entry in list_entries(&dir)? {
+                if sharded {
+                    let manifest = entry.join("manifest.json");
+                    if manifest.is_file() {
+                        entries.push(manifest);
+                    }
+                } else {
+                    entries.push(entry);
+                }
+            }
+        }
+        Ok(entries)
     }
 
     fn list_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -7513,19 +7608,21 @@ mod tests {
             write_file(
                 &root.join("src/lib.rs"),
                 r#"
-pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
+pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
 #[cfg(test)] mod tests {
     use super::discount;
     #[test] fn snapshots_discount() { insta::assert_snapshot!(discount(12, 10)); }
 }
 "#,
             )?;
+            // A single numeric return keeps this policy control independent
+            // of comparison-boundary pairing. Require that one seam throughout.
             // The committed expected file is what lets the file-backed
             // snapshot discriminate at all (#12189); this test varies only
             // the configured strength.
             write_file(
                 &root.join("src/snapshots/krate__tests__snapshots_discount.snap"),
-                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\ntrue\n",
+                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\n2\n",
             )?;
             let medium = if loaded {
                 write_file(
@@ -7547,8 +7644,8 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
              -> Result<(), String> {
                 assert_eq!(
                     seams.len(),
-                    2,
-                    "snapshot fixture must retain exactly two seams"
+                    1,
+                    "snapshot fixture must retain exactly its return-value seam"
                 );
                 let returned = seams
                     .iter()
@@ -7581,9 +7678,9 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 assert_eq!(
                     (strong, weak_count),
                     if class == SeamGripClass::StronglyGripped {
-                        (1, 1)
+                        (1, 0)
                     } else {
-                        (0, 2)
+                        (0, 1)
                     }
                 );
                 Ok(())
@@ -7596,9 +7693,9 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 true,
             )?;
             let counts = inventory_seam_grip_class_counts_at_with_config(&root, &medium)?;
-            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.analyzed_seams(), 1);
             assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 1);
-            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 0);
             let compact_cold = inventory_compact_classified_seams_at_with_config(&root, &medium)?;
             check(
                 &compact_cold,
@@ -7630,9 +7727,9 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 serde_json::to_value(&fresh).map_err(|e| e.to_string())?
             );
             let counts = inventory_seam_grip_class_counts_at_with_config(&root, &weak)?;
-            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.analyzed_seams(), 1);
             assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 0);
-            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 2);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
             let compact_warm = inventory_compact_classified_seams_at_with_config(&root, &weak)?;
             check(
                 &compact_warm,
@@ -8638,8 +8735,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         let evidence = vec![PathBuf::from("tests/it.rs")];
 
         let mut shared: Option<FileSeamIndex> = None;
-        let classified_shared =
-            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared)?;
+        let classified_shared = classify_seams_in_file_with_shared_index(
+            &root,
+            &config,
+            &lib,
+            &evidence,
+            &mut shared,
+            None,
+        )?;
         if shared
             .as_ref()
             .is_none_or(|index| !index.covers(&[lib.clone(), evidence[0].clone()]))
@@ -8648,8 +8751,9 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
         let seams_shared = scoped_file_seams(&root, &config, &lib, &mut shared)?;
 
-        let classified_fresh =
-            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut None)?;
+        let classified_fresh = classify_seams_in_file_with_shared_index(
+            &root, &config, &lib, &evidence, &mut None, None,
+        )?;
         let seams_fresh = scoped_file_seams(&root, &config, &lib, &mut None)?;
 
         if seams_shared != seams_fresh || seams_shared.is_empty() {
@@ -8907,6 +9011,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 &lib,
                 &evidence,
                 &mut shared,
+                None,
             )?;
             let seams = scoped_file_seams(&root, &config, &lib, &mut shared)?;
             Ok::<_, String>((classified, seams))
@@ -9769,6 +9874,13 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         if after_failed != 0 {
             return Err(format!(
                 "a failed walk must not be cached, found {after_failed} entries"
+            ));
+        }
+
+        let compact_after_failed = list_compact_cache_entries(&root)?.len();
+        if compact_after_failed != 0 {
+            return Err(format!(
+                "a failed walk must not publish compact entries, found {compact_after_failed}"
             ));
         }
 
@@ -11863,16 +11975,31 @@ marker = "libtest_mimic::Trial"
         let lib = PathBuf::from("src/pricing.rs");
         let evidence = vec![PathBuf::from("tests/pricing.rs")];
         let mut shared: Option<FileSeamIndex> = None;
-        let healthy =
-            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared);
+        let healthy = classify_seams_in_file_with_shared_index(
+            &root,
+            &config,
+            &lib,
+            &evidence,
+            &mut shared,
+            None,
+        );
         // The shared-index form reuses the index the healthy run stored.
         let failed_shared = {
             let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
-            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared)
+            classify_seams_in_file_with_shared_index(
+                &root,
+                &config,
+                &lib,
+                &evidence,
+                &mut shared,
+                None,
+            )
         };
         let failed_fresh = {
             let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
-            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut None)
+            classify_seams_in_file_with_shared_index(
+                &root, &config, &lib, &evidence, &mut None, None,
+            )
         };
         let _ = std::fs::remove_dir_all(&root);
         let healthy = healthy?;

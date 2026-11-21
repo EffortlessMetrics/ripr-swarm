@@ -58,3 +58,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — same_line_call_inputs_negation (6)
+
+Reason:
+RIPR-SPEC-0001 / RIPR-SPEC-0186 / RIPR-SPEC-0197 and accepted main #13400: retain unobservable masked/nested/custom-Not predicate refusals and the honest strongest-oracle identity explanation; refresh the specifically reviewed full native output on frozen 7ce1289b8baf8837af5e0ed880363af6687305e0.
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs_negation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — same_line_call_inputs_negation (7)
+
+Reason:
+RIPR-SPEC-0001 For same_line_call_inputs_negation, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs_negation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

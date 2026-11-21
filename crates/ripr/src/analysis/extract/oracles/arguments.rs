@@ -47,6 +47,42 @@ pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
     .map(|(_, text)| text)
 }
 
+/// The observed subject of a standard assertion, excluding diagnostics and
+/// unwrapping a `matches!` condition. This supplies operand boundaries only;
+/// identity, execution and strength remain with their existing authorities.
+pub(crate) fn assertion_observed_operand(line: &str) -> Option<String> {
+    observed_assertion_macro_operand(line).or_else(|| {
+        let (_, twin) = super::scan::err_return_guard_twin(line)?;
+        observed_assertion_macro_operand(&twin)
+    })
+}
+
+fn observed_assertion_macro_operand(line: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(line);
+    let (_, mut arguments) = [
+        "assert!",
+        "debug_assert!",
+        "ensure!",
+        "assert_eq!",
+        "assert_ne!",
+        "debug_assert_eq!",
+        "debug_assert_ne!",
+        "assert_matches!",
+        "debug_assert_matches!",
+    ]
+    .into_iter()
+    .filter_map(|name| macro_invocation_arguments_at(line, &masked, name))
+    .min_by_key(|(offset, _)| *offset)?;
+    let subject = arguments.drain(..).next()?;
+    if subject.trim_start().starts_with("matches!") {
+        macro_invocation_arguments(&subject, "matches!")?
+            .into_iter()
+            .next()
+    } else {
+        Some(subject)
+    }
+}
+
 pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(line);
     let open = masked.find('(')?;

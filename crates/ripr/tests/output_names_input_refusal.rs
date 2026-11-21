@@ -721,9 +721,11 @@ fn out_jsonl_naming_an_input_by_absolute_path_or_symlink_is_refused() -> Result<
     #[cfg(unix)]
     std::os::unix::fs::symlink("in.json", dir.join("art/link.json"))
         .map_err(|error| format!("symlink: {error}"))?;
-    let mut spellings = vec![absolute];
-    #[cfg(unix)]
-    spellings.push("art/link.json".to_string());
+    let spellings = [
+        absolute,
+        #[cfg(unix)]
+        "art/link.json".to_string(),
+    ];
     let mut failures = Vec::new();
     for spelling in &spellings {
         let ledger = run(

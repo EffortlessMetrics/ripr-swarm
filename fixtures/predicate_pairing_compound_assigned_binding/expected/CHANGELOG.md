@@ -263,6 +263,19 @@ Updated:
 ## Pending — predicate_pairing_compound_assigned_binding (21)
 
 Reason:
+RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (22)
+
+Reason:
 RIPR-SPEC-0186: plain same_test_pairing_missing summary; exact summary values only, existing evidence prose sort retained; classifications, IDs, counts, oracle fields and recommendations unchanged
 
 Command:
@@ -321,4 +334,16 @@ Command:
 `cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
 
 Updated:
+- `expected/human.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (26)
+
+Reason:
+RIPR-SPEC-0186 For predicate_pairing_compound_assigned_binding, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
 - `expected/human.txt`

@@ -321,3 +321,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — same_name_sibling_file_test (26)
+
+Reason:
+RIPR-SPEC-0172 For same_name_sibling_file_test, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless same_name_sibling_file_test --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -368,3 +368,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_array_element_drop_exit (28)
+
+Reason:
+RIPR-SPEC-0225 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_array_element_drop_exit (29)
+
+Reason:
+RIPR-SPEC-0225 For rust_array_element_drop_exit, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`

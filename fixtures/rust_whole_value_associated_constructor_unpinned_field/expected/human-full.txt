@@ -34,7 +34,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches constructed field: retries: n + 1
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field
+  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)
   - local flow reaches constructed field: retries: n + 1 (line 9)
   - related test tests/fresh.rs:3 fresh_config uses strong whole object equality oracle: assert_eq!(Cfg::fresh(3), Cfg { retries: 7, verbose: false }); misses: no assertion pins `retries: n + 1`
   - source assertion argument value 7 at line 4

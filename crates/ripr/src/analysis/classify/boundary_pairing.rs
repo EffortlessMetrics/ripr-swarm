@@ -28,11 +28,68 @@ use crate::value_origins::LocatedValueFact as ValueFact;
 use ra_ap_syntax::ast::HasArgList;
 use ra_ap_syntax::{AstNode, ast};
 
+mod borrowed_result;
 mod bound_result;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
 pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairing_missing";
+
+/// A whole returned comparison has the same boundary-observation obligation
+/// as its predicate companion. This is an activation/pairing view only: it
+/// never emits a second finding or supplies an assertion's sink identity.
+pub(in crate::analysis) fn returned_boundary_probe(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    unconditional_boolean: bool,
+) -> Option<Probe> {
+    if !matches!(probe.family, ProbeFamily::ReturnValue) {
+        return None;
+    }
+    let expression = if unconditional_boolean {
+        probe.expression.clone()
+    } else {
+        admitted_owner_adaptor_tail(owner, index)
+            .filter(|tail| tail.tail_is(&probe.expression))?
+            .closure_body
+    };
+    let source = format!("fn __returned_boundary() {{ {expression} }}");
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&source)?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let statements = function.body()?.stmt_list()?;
+    let mut value = statements.tail_expr().or_else(|| {
+        let mut statements = statements.statements();
+        let ast::Stmt::ExprStmt(statement) = statements.next()? else {
+            return None;
+        };
+        statements
+            .next()
+            .is_none()
+            .then(|| statement.expr())
+            .flatten()
+    })?;
+    for _ in 0..16 {
+        value = match value {
+            ast::Expr::ParenExpr(paren) => paren.expr()?,
+            ast::Expr::ReturnExpr(returned) => returned.expr()?,
+            other => {
+                let ast::Expr::BinExpr(comparison) = other else {
+                    return None;
+                };
+                if !matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+                    return None;
+                }
+                let mut predicate = probe.clone();
+                predicate.family = ProbeFamily::Predicate;
+                predicate.delta = DeltaKind::Control;
+                predicate.expression = comparison.syntax().text().to_string();
+                return Some(predicate);
+            }
+        };
+    }
+    None
+}
 
 pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     format!(
@@ -43,6 +100,45 @@ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
 /// Activation recomputed from one test alone.
 pub(in crate::analysis) type TestActivation<'a> = &'a dyn Fn(&TestSummary) -> ActivationEvidence;
 
+/// Pair only a forwarding wrapper entry, without admitting direct owner or
+/// bound-local paths when the aggregate owner identity is unresolved.
+pub(in crate::analysis) fn has_wrapper_boundary_oracle_pairing(
+    owner: &FunctionSummary,
+    tests: &[&TestSummary],
+    entry: WrapperEntryPairing<'_>,
+    assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    index: &RustIndex,
+) -> bool {
+    let Some(hop) = entry.chain.hops.last() else {
+        return false;
+    };
+    tests.iter().any(|test| {
+        let scope = super::argument_fold::FoldScope::of_test(test, index);
+        let rows = std::cell::OnceCell::new();
+        test.assertions.iter().any(|assertion| {
+            (test.start_line..=test.end_line).contains(&assertion.line)
+                && assertion_admitted(test, assertion)
+                && assertion_is_discriminating(assertion)
+                && ((chain_forwards_owner_result(&owner.name, entry.chain)
+                    && ((entry.entry_admitted)(test, assertion)
+                        || mapped_literal_entry_admitted(owner, entry.chain, assertion)))
+                    || mapped_enum_entry_admitted(owner, entry.chain, test, assertion, index))
+                && assertion_names_one_entry_call(
+                    owner,
+                    &hop.caller.name,
+                    assertion,
+                    Some((test, scope)),
+                )
+                && assertion_observes_boundary_entry_call(
+                    owner,
+                    &hop.caller.name,
+                    assertion,
+                    rows.get_or_init(|| (entry.test_activation)(test)),
+                )
+        })
+    })
+}
+
 /// The helper chain a wrapper-entry pin pairs through (#6694 / #6672), and
 /// activation recomputed from one test alone. The entry path reads only those
 /// per-test rows (#6780 review): `ValueFact` carries no source test, so a row
@@ -52,6 +148,8 @@ pub(in crate::analysis) type TestActivation<'a> = &'a dyn Fn(&TestSummary) -> Ac
 pub(in crate::analysis) struct WrapperEntryPairing<'a> {
     pub(in crate::analysis) chain: &'a HelperChain,
     pub(in crate::analysis) test_activation: TestActivation<'a>,
+    /// Independently establish the entry result and expected operand.
+    pub(in crate::analysis) entry_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// The check helper an admitted assertion is borrowed from, without the
     /// owner-call identity gate of `helper_loan`: a method-hop chain's
     /// asserting entry (#9329) reaches the owner through the method, so the
@@ -78,6 +176,13 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
         return false;
     };
     let name = hop.caller.name.as_str();
+    let qualified = super::helper_transfer::assertion_bound_qualified_entry_path(
+        index,
+        test,
+        assertion,
+        &hop.caller,
+    );
+    let path = qualified.as_deref().unwrap_or(name);
     let literal = |text: &str| {
         matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
     };
@@ -89,7 +194,10 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     // `qualified_owner_calls_resolve` admits every spelling of a non-free
     // owner, so a method wrapper must not borrow a path-spelled `X::name(..)`.
     let free_wrapper = hop.caller.item.container == FunctionContainer::Free;
-    let whole_call_of = |subject: &str| {
+    let whole_entry = |subject: &str| {
+        if qualified.is_some() {
+            return super::helper_transfer::operand_is_exact_call(subject, path);
+        }
         super::owner_pin::direct_call_name(subject) == Some(name)
             || (free_wrapper
                 && path_qualified_whole_call(subject, name).is_some()
@@ -102,14 +210,14 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
                 ))
     };
     let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
-        (whole_call_of(left) && literal(right)) || (whole_call_of(right) && literal(left))
+        (whole_entry(left) && literal(right)) || (whole_entry(right) && literal(left))
     });
     assertion.text.trim_start().starts_with("assert_eq!")
         && assertion.kind == OracleKind::ExactValue
         && assertion.strength == OracleStrength::Strong
         && whole_call
         && chain_forwards_owner_result(&owner.name, chain)
-        && assertion_names_one_entry_call(owner, name, assertion, Some((test, scope)))
+        && assertion_names_one_entry_call_at_path(owner, name, path, assertion, Some((test, scope)))
         && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
 }
 
@@ -183,18 +291,51 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
             )
         });
     }
+    if wrapper_entry.is_some_and(|entry| {
+        let Some(hop) = entry.chain.hops.last() else {
+            return false;
+        };
+        related_tests.iter().any(|test| {
+            let rows = std::cell::OnceCell::new();
+            let method_identity = std::cell::OnceCell::new();
+            test.assertions.iter().any(|assertion| {
+                assertion_admitted(test, assertion)
+                    && ((super::helper_transfer::assertion_bound_qualified_entry_path(
+                            index, test, assertion, &hop.caller,
+                        ).is_some()
+                        && wrapper_return_boundary_pinned(
+                            owner, assertion, entry.chain,
+                            rows.get_or_init(|| (entry.test_activation)(test)), test, index,
+                        ))
+                        // The receiver/result producer supplies identity; the
+                        // existing per-test transferred equality row supplies
+                        // this same assertion's boundary, independently.
+                        || ((test.start_line..=test.end_line).contains(&assertion.line)
+                            && assertion_is_discriminating(assertion)
+                            && super::helper_transfer::method_entry_result_identity(
+                                &owner.name, entry.chain,
+                                &[(test, RelationReason::HelperOwnerCall)], index,
+                                test, assertion, &method_identity,
+                            )
+                            && assertion_observes_boundary_entry_call(
+                                owner, &hop.caller.name, assertion,
+                                rows.get_or_init(|| (entry.test_activation)(test)),
+                            )))
+            })
+        })
+    }) {
+        return true;
+    }
     // #6694 / #6672: a private helper reached only through a wrapper pairs
     // on the wrapper call when every hop hands the helper's result to its
     // caller's return; any other chain shape keeps the pairing missing.
-    let forwarding_entry = wrapper_entry
-        .filter(|entry| chain_forwards_owner_result(&owner.name, entry.chain))
-        .and_then(|entry| {
-            entry
-                .chain
-                .hops
-                .last()
-                .map(|hop| (hop.caller.name.as_str(), entry.test_activation))
-        });
+    let forwarding_entry = wrapper_entry.and_then(|entry| {
+        entry
+            .chain
+            .hops
+            .last()
+            .map(|hop| (hop.caller.name.as_str(), entry))
+    });
     // #9329: a method-hop chain whose top hop is the check helper asserting
     // the method's result, with every hop below forwarding the owner's.
     let asserting_entry = wrapper_entry.and_then(|entry| {
@@ -226,7 +367,7 @@ fn test_pairs_boundary_input_with_oracle(
     owner: &FunctionSummary,
     test: &TestSummary,
     activation: &ActivationEvidence,
-    forwarding_entry: Option<(&str, TestActivation<'_>)>,
+    forwarding_entry: Option<(&str, WrapperEntryPairing<'_>)>,
     asserting_entry: Option<(&str, WrapperEntryPairing<'_>)>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
@@ -263,7 +404,12 @@ fn test_pairs_boundary_input_with_oracle(
         // through the owner-pin-approved loan's exact mapping (#6482).
         if !(test.start_line..=test.end_line).contains(&assertion.line) {
             return helper_loan(test, assertion).is_some_and(|loan| {
-                loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
+                borrowed_result::pairs(probe, owner, test, &loan, assertion, index)
+                    || (super::owner_pin::helper_pins_owner_call(
+                        &loan.helper,
+                        &crate::analysis::extract::mask_comments_and_strings(&test.body),
+                        &owner.name,
+                    ) && loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation))
             }) || (assertion_is_discriminating(assertion)
                 && asserting_entry.is_some_and(|(helper, entry)| {
                     (entry.entry_loan)(test, assertion).is_some_and(|loan| {
@@ -289,16 +435,199 @@ fn test_pairs_boundary_input_with_oracle(
             // rule: the owner-return pin judges the owner's own call, never
             // a wrapper's.
             || (assertion_is_discriminating(assertion)
-                && forwarding_entry.is_some_and(|(entry, test_activation)| {
-                    assertion_names_one_entry_call(owner, entry, assertion, Some((test, scope)))
+                && forwarding_entry.is_some_and(|(name, entry)| {
+                    ((chain_forwards_owner_result(&owner.name, entry.chain)
+                        && ((entry.entry_admitted)(test, assertion)
+                            || mapped_literal_entry_admitted(owner, entry.chain, assertion)))
+                        || mapped_enum_entry_admitted(owner, entry.chain, test, assertion, index))
+                        && assertion_names_one_entry_call(owner, name, assertion, Some((test, scope)))
                         && assertion_observes_boundary_entry_call(
                             owner,
-                            entry,
+                            name,
                             assertion,
-                            own_rows.get_or_init(|| test_activation(test)),
+                            own_rows.get_or_init(|| (entry.test_activation)(test)),
                         )
                 }))
     })
+}
+
+/// A one-hop, same-root enum mapping requires real call identity, unit
+/// variants with derived equality, and the test's direct enum import.
+fn mapped_enum_entry_admitted(
+    owner: &FunctionSummary,
+    chain: &HelperChain,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+) -> bool {
+    let [hop] = chain.hops.as_slice() else {
+        return false;
+    };
+    if hop.caller.file != owner.file
+        || hop.through_macro
+        || hop.receiver.is_some()
+        || hop.module_qualified
+    {
+        return false;
+    }
+    let Some([left, right]) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    let expected = if super::owner_pin::direct_call_name(left) == Some(hop.caller.name.as_str()) {
+        right
+    } else if super::owner_pin::direct_call_name(right) == Some(hop.caller.name.as_str()) {
+        left
+    } else {
+        return false;
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&hop.caller.body) else {
+        return false;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if list.statements().next().is_some() {
+        return false;
+    }
+    let Some(ast::Expr::IfExpr(branch)) = list.tail_expr() else {
+        return false;
+    };
+    let Some(condition) = branch.condition() else {
+        return false;
+    };
+    if super::owner_pin::direct_call_name(&condition.syntax().text().to_string())
+        != Some(owner.name.as_str())
+    {
+        return false;
+    }
+    let path = |block: ast::BlockExpr| {
+        let list = block.stmt_list()?;
+        if list.statements().next().is_some() {
+            return None;
+        }
+        let ast::Expr::PathExpr(path) = list.tail_expr()? else {
+            return None;
+        };
+        Some(path.syntax().text().to_string())
+    };
+    let Some(a) = branch.then_branch().and_then(path) else {
+        return false;
+    };
+    let Some(ast::ElseBranch::Block(other)) = branch.else_branch() else {
+        return false;
+    };
+    let Some(b) = path(other) else {
+        return false;
+    };
+    let caller = TestSummary {
+        name: hop.caller.name.clone(),
+        file: hop.caller.file.clone(),
+        start_line: hop.caller.start_line,
+        end_line: hop.caller.end_line,
+        body: hop.caller.body.clone(),
+        calls: hop.caller.calls.clone(),
+        assertions: Vec::new(),
+        literals: hop.caller.literals.clone(),
+        attrs: hop.caller.attrs.clone(),
+        nested_fn_names: hop.caller.nested_fn_names.clone(),
+        let_bindings: hop.caller.let_bindings.clone(),
+        generated: None,
+    };
+    let syntax = super::owner_pin::OwnerPinSyntax::default();
+    super::owner_pin::same_file_free_helper_call_reaches_owner(&caller, owner, None, index, &syntax)
+        && super::owner_pin::targeted_free_call_reaches_owner(&caller, owner, None, index, &syntax)
+        && super::owner_pin::mapped_unit_enum_expectation(
+            &hop.caller,
+            test,
+            assertion,
+            &a,
+            &b,
+            expected,
+            index,
+        )
+}
+
+/// A mapped boolean result is discriminating only if the exact expected
+/// literal is one of the two distinct literal branch outputs. The chain
+/// authority separately establishes the condition and each forwarding hop.
+pub(super) fn mapped_literal_entry_admitted(
+    owner: &FunctionSummary,
+    chain: &HelperChain,
+    assertion: &OracleFact,
+) -> bool {
+    if !chain_forwards_owner_result(&owner.name, chain) {
+        return false;
+    }
+    let Some(entry) = chain.hops.last() else {
+        return false;
+    };
+    let Some([left, right]) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    let expected = if super::owner_pin::direct_call_name(left) == Some(entry.caller.name.as_str()) {
+        right
+    } else if super::owner_pin::direct_call_name(right) == Some(entry.caller.name.as_str()) {
+        left
+    } else {
+        return false;
+    };
+    let Some(expected) = super::helper_transfer::strict_literal(expected) else {
+        return false;
+    };
+    if expected.contains('\\')
+        || (expected.starts_with('"') && !super::owner_pin::is_string_literal(&expected))
+        || (expected.starts_with('\'') && expected.len() != 3)
+    {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&entry.caller.body) else {
+        return false;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let Some(ast::Expr::IfExpr(branch)) = list.tail_expr() else {
+        return false;
+    };
+    let literal = |block: ast::BlockExpr| {
+        let list = block.stmt_list()?;
+        if list.statements().next().is_some() {
+            return None;
+        }
+        let expression = list.tail_expr()?;
+        if !matches!(expression, ast::Expr::Literal(_)) {
+            return None;
+        }
+        super::helper_transfer::strict_literal(&expression.syntax().text().to_string())
+    };
+    let Some(a) = branch.then_branch().and_then(literal) else {
+        return false;
+    };
+    let Some(ast::ElseBranch::Block(other)) = branch.else_branch() else {
+        return false;
+    };
+    let Some(b) = literal(other) else {
+        return false;
+    };
+    if a.contains('\\') || b.contains('\\') {
+        return false;
+    }
+    let equivalent = |value: &str| {
+        if value.bytes().all(|c| c.is_ascii_digit()) && expected.bytes().all(|c| c.is_ascii_digit())
+        {
+            let normalize = |text: &str| text.trim_start_matches('0').to_string();
+            normalize(value) == normalize(&expected)
+        } else {
+            value == expected
+        }
+    };
+    equivalent(&a) || equivalent(&b)
 }
 
 /// The assertion's subject is one call of the chain's entry whose arguments
@@ -310,13 +639,33 @@ fn assertion_names_one_entry_call(
     assertion: &OracleFact,
     test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
 ) -> bool {
+    assertion_names_one_entry_call_at_path(owner, entry, entry, assertion, test)
+}
+
+fn assertion_names_one_entry_call_at_path(
+    owner: &FunctionSummary,
+    entry: &str,
+    path: &str,
+    assertion: &OracleFact,
+    test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
+) -> bool {
+    let whole_entry = assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
+        operands.into_iter().any(|operand| {
+            if path == entry {
+                super::owner_pin::direct_call_name(operand) == Some(entry)
+            } else {
+                super::helper_transfer::operand_is_exact_call(operand, path)
+            }
+        })
+    });
     let subject = assertion_subject(&assertion.text);
     let entry_calls = owner_call_argument_lists(&subject, entry);
     // #6780 review round 2: activation binds the first scalar buried in a
     // compound argument (`order_discount(std::cmp::max(10, 50))`,
     // `order_discount(10 * 2)`), so every entry argument must be a whole
     // literal, identifier or path, as on the owner-call path.
-    entry_calls.len() == 1
+    whole_entry
+        && entry_calls.len() == 1
         && entry_calls[0].1.iter().all(|argument| {
             let argument = argument.trim();
             argument_is_activation_fallback_shape(argument)
@@ -591,7 +940,7 @@ fn test_pairs_boundary_element(
         ) {
             return false;
         }
-        whole_owner_call_operands(test, &assertion.text, owner)
+        whole_owner_call_operands(test, &assertion.text, owner, true)
             .iter()
             .any(|arguments| {
                 arguments_feed_boundary_element(test, None, arguments, &assertion.text, element)
@@ -631,7 +980,7 @@ fn loan_pairs_boundary_element(
     if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
         return false;
     }
-    whole_owner_call_operands(test, assertion_text, owner)
+    whole_owner_call_operands(test, assertion_text, owner, false)
         .iter()
         .any(|arguments| {
             arguments_feed_boundary_element(test, Some(loan), arguments, assertion_text, element)
@@ -649,6 +998,7 @@ fn whole_owner_call_operands(
     test: &TestSummary,
     assertion_text: &str,
     owner: &FunctionSummary,
+    qualified_resolved: bool,
 ) -> Vec<Vec<String>> {
     let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
         // An expected side that reaches the owner again compares the owner
@@ -686,12 +1036,30 @@ fn whole_owner_call_operands(
         .filter_map(|operand| {
             let operand = operand.trim();
             let lists = owner_call_argument_lists(operand, &owner.name);
-            let [(_, arguments)] = lists.as_slice() else {
+            let [(offset, arguments)] = lists.as_slice() else {
                 return None;
             };
-            (operand.starts_with(&format!("{}(", owner.name))
-                && delimited_contents_at(operand, owner.name.len())
-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            // The direct assertion path has already resolved every owner call
+            // against this test's imports and module. Preserve its qualified
+            // spelling; helper loans retain their existing bare-call limit.
+            let prefix = operand.get(..*offset)?;
+            let bare_or_resolved_path = prefix.is_empty()
+                || (qualified_resolved
+                    && prefix.strip_suffix("::").is_some_and(|path| {
+                        path.split("::").all(|segment| {
+                            let segment = segment.strip_prefix("r#").unwrap_or(segment);
+                            !segment.is_empty()
+                                && segment.chars().enumerate().all(|(position, character)| {
+                                    character == '_'
+                                        || character.is_ascii_alphabetic()
+                                        || (position > 0 && character.is_ascii_digit())
+                                })
+                        })
+                    }));
+            (bare_or_resolved_path
+                && delimited_contents_at(operand, offset + owner.name.len()).is_some_and(
+                    |contents| contents.len() + offset + owner.name.len() + 2 == operand.len(),
+                ))
             .then(|| arguments.clone())
         })
         .collect()
@@ -823,7 +1191,7 @@ fn assertion_observes_boundary_owner_call(
     {
         observed_free_owner_call_sites(&subject, owner, index)
     } else {
-        owner_call_sites(&subject, owner)
+        observed_owner_call_sites(&subject, owner)
     };
     // #13037: a comparison guarded by `&& flag` pairs only with a call that
     // sits on the boundary and holds every guard. A guarded shape the rule
@@ -903,11 +1271,48 @@ fn observed_free_owner_call_sites(
     else {
         return Vec::new();
     };
+    // Only the existing closed primitive type authority may make unary Not
+    // value-preserving here; a nominal result may overload it to a constant.
+    let builtin_bool = std::cell::OnceCell::new();
+    let whole_owner_call = |mut value: ast::Expr| {
+        while let ast::Expr::ParenExpr(paren) = value {
+            let Some(inner) = paren.expr() else {
+                return false;
+            };
+            value = inner;
+        }
+        let ast::Expr::CallExpr(call) = value else {
+            return false;
+        };
+        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+            return false;
+        };
+        callee
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| name.text() == owner.name.as_str())
+    };
     let mut pending = vec![value];
     let mut calls = Vec::new();
     while let Some(value) = pending.pop() {
         match value {
             ast::Expr::ParenExpr(inner) => pending.extend(inner.expr()),
+            ast::Expr::PrefixExpr(prefix)
+                if prefix.op_kind() == Some(ast::UnaryOp::Not)
+                    && prefix.expr().is_some_and(whole_owner_call)
+                    && *builtin_bool.get_or_init(|| {
+                        super::owner_pin::declared_return_type(&owner.body).as_deref()
+                            == Some("bool")
+                            && super::owner_pin::builtin_type_unshadowed(
+                                "bool",
+                                index,
+                                &index.call_identity_memos.receiver_pin_syntax,
+                            )
+                    }) =>
+            {
+                pending.extend(prefix.expr());
+            }
             ast::Expr::TupleExpr(tuple) => pending.extend(tuple.fields()),
             ast::Expr::ArrayExpr(array) if array.semicolon_token().is_none() => {
                 pending.extend(array.exprs());
@@ -992,6 +1397,37 @@ fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummar
             }
         })
         .sum()
+}
+
+/// An exact bool comparison reads this still-current boundary result as its
+/// whole operand. The existing block-result producer resolves the actual tail;
+/// a name inside a projection, diagnostic or unrelated block is not identity.
+pub(in crate::analysis) fn assertion_reads_bound_boundary_bool(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    activation: &ActivationEvidence,
+    index: &RustIndex,
+) -> bool {
+    let Some([left, right]) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    let bound = boundary_bound_locals(
+        probe,
+        owner,
+        test,
+        activation,
+        super::argument_fold::FoldScope::of_test(test, index),
+        &|text, line| {
+            super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
+        },
+        assertion.line,
+    );
+    bound.iter().any(|name| {
+        (left.trim() == name && matches!(right.trim(), "true" | "false"))
+            || (right.trim() == name && matches!(left.trim(), "true" | "false"))
+    })
 }
 
 fn assertion_observes_bound_name(operands: &str, bound_names: &[String]) -> bool {
@@ -1385,16 +1821,44 @@ fn assertion_subject(text: &str) -> String {
 /// module-level `fn` is called only by a bare or module-qualified spelling,
 /// never by a same-named `Type::name(..)` or `value.name(..)` (#6713).
 fn owner_call_sites(text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+    positioned_owner_calls(text, owner)
+        .into_iter()
+        .map(|(_, arguments)| arguments)
+        .collect()
+}
+
+fn positioned_owner_calls(text: &str, owner: &FunctionSummary) -> Vec<(usize, Vec<String>)> {
     let lists = owner_call_argument_lists(text, &owner.name);
     if owner.impl_context != crate::analysis::facts::FunctionImplContext::Free {
-        return lists.into_iter().map(|(_, arguments)| arguments).collect();
+        return lists;
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     lists
         .into_iter()
         .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, &owner.name))
-        .map(|(_, arguments)| arguments)
         .collect()
+}
+
+/// The outer owner call is what the assertion observes. A nested invocation
+/// can activate a boundary without its changed value surviving the outer call.
+/// Keep full enumeration for activation/display; only this oracle consumer
+/// excludes argument-nested calls from its subject list.
+fn observed_owner_call_sites(text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let mut end = 0;
+    let mut observed = Vec::new();
+    for (at, arguments) in positioned_owner_calls(text, owner) {
+        if at < end {
+            continue;
+        }
+        let open = at + owner.name.len();
+        let Some(inner) = delimited_contents_at(&masked, open) else {
+            return Vec::new();
+        };
+        end = open + inner.len() + 2;
+        observed.push(arguments);
+    }
+    observed
 }
 
 /// Owner calls in code only: a spelling inside a comment or string literal
@@ -1769,6 +2233,7 @@ mod tests {
         chain.map(|chain| WrapperEntryPairing {
             chain,
             test_activation: rows,
+            entry_admitted: &|_, _| true,
             entry_loan: &|_, _| None,
         })
     }
@@ -3962,6 +4427,78 @@ mod tests {
             pairing_with_admitted_oracles(&probe, Some(&owner), &[&alone], &activation),
             "a line holding only the asserted owner call keeps the activation fallback"
         );
+    }
+
+    #[test]
+    fn nested_owner_input_cannot_lend_boundary_credit_to_a_masking_outer_call() {
+        let probe = predicate_probe("input >= 10");
+        let mut owner = gate_owner();
+        // Exercise the parser-authenticated free-function route. The shared
+        // synthetic owner deliberately defaults to unknown dispatch context.
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Free;
+        owner.item.container = crate::analysis::facts::FunctionContainer::Free;
+        owner.body = "pub fn gate(input: u32) -> u32 { if input >= 10 { 2 } else { 1 } }".into();
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: None,
+                line: 1,
+                text: String::new(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        for (text, oracle, paired) in [
+            ("assert_eq!(gate(10), 2);", "assert_eq!(gate(10), 2);", true),
+            (
+                "assert_eq!(gate(gate(10)), 1);",
+                "assert_eq!(gate(gate(10)), 1);",
+                false,
+            ),
+            (
+                "assert_eq!(gate (gate(10)), 1);",
+                "assert_eq!(gate (gate(10)), 1);",
+                false,
+            ),
+            (
+                "assert_eq!(gate /* outer */ (gate(10)), 1);",
+                "assert_eq!(gate /* outer */ (gate(10)), 1);",
+                false,
+            ),
+            (
+                "assert_eq!(gate(crate::gate(10)), 1);",
+                "assert_eq!(gate(crate::gate(10)), 1);",
+                false,
+            ),
+            (
+                "assert_eq!(gate(gate(gate(10))), 1);",
+                "assert_eq!(gate(gate(gate(10))), 1);",
+                false,
+            ),
+            (
+                "let _ = gate(10); assert_eq!(gate(50), 2);",
+                "assert_eq!(gate(50), 2);",
+                false,
+            ),
+            (
+                "let _ = gate(gate(50)); assert_eq!(gate(10), 2);",
+                "assert_eq!(gate(10), 2);",
+                true,
+            ),
+        ] {
+            let test = test_summary(
+                "nested",
+                text,
+                vec![call("gate", text)],
+                vec![exact(oracle)],
+                &["10"],
+            );
+            assert_eq!(
+                pairing_with_admitted_oracles(&probe, Some(&owner), &[&test], &activation),
+                paired,
+                "{text}"
+            );
+        }
     }
 
     #[test]

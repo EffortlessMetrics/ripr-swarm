@@ -194,3 +194,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_param_rebind_match_arm_struct (16)
+
+Reason:
+RIPR-SPEC-0158 For rust_param_rebind_match_arm_struct, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless rust_param_rebind_match_arm_struct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

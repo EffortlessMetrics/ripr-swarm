@@ -1,0 +1,17 @@
+{
+  "id": "rust_bool_clone_trait_interception",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bool-clone-trait-interception.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception",
+  "vector": "bool_clone_trait_interception_cannot_supply_an_owner_result_or_boundary_pair",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::gate",
+      "expression": "n>=10",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    }
+  ]
+}

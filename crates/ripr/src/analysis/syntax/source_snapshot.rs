@@ -497,6 +497,15 @@ impl SourceSnapshot {
         Some(true)
     }
 
+    pub(crate) fn owner_name_scopes(&self, owner: &FunctionSummary) -> Option<NameScopes> {
+        super::name_scope::name_scopes_in_tree(
+            &self.tree()?,
+            &self.lines,
+            owner.start_line,
+            &owner.name,
+        )
+    }
+
     pub(crate) fn name_scopes(&self, caller: &TestSummary) -> Option<Arc<NameScopes>> {
         let key = (
             caller.name.clone(),

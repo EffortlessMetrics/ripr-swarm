@@ -268,3 +268,28 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (21)
+
+Reason:
+RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (22)
+
+Reason:
+RIPR-SPEC-0108 For cross_crate_trait_impl_direct_owner_positive, admit the discriminator only with assertion evidence linked to the changed result, and explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

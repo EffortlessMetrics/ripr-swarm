@@ -934,6 +934,27 @@ pub(super) struct TupleOwner<'a> {
     pub(super) self_is_type: bool,
 }
 
+impl TupleOwner<'_> {
+    /// The selected literal call agrees across both versions of an otherwise
+    /// distinguishable edit. Unreadable and globally equivalent rewrites keep
+    /// their ordinary owner-pin reading (RIPR-SPEC-0197, #12808).
+    pub(super) fn agrees_on_distinguishable_change(
+        &self,
+        definition: &str,
+        name: &str,
+        changed_line: usize,
+        before: &str,
+        call: &str,
+    ) -> bool {
+        let Some(lowered) = lower_tuple_call(call, name, self.type_name) else {
+            return false;
+        };
+        ClosedChange::read_tuple(definition, name, changed_line, before, self).is_some_and(
+            |change| change.versions_agree(name, &lowered) && change.versions_differ_somewhere(),
+        )
+    }
+}
+
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }

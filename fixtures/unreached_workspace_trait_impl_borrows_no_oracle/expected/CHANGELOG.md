@@ -264,3 +264,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (21)
+
+Reason:
+RIPR-SPEC-0108 For unreached_workspace_trait_impl_borrows_no_oracle, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

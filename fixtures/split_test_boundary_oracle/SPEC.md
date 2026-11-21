@@ -30,7 +30,8 @@ The public diff analysis examines the changed predicate on `src/lib.rs`.
 
 ## Then
 
-The predicate reads below `exposed`. Infection from `boundary` and the exact
+Both the predicate and its returned-comparison companion read below
+`exposed`. Infection from `boundary` and the exact
 oracle from `far` do not combine: no test both feeds a boundary input and
 holds a discriminating oracle on that call. The discriminate summary names
 `same_test_pairing_missing`.

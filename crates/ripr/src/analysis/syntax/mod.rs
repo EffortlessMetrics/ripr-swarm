@@ -42,8 +42,8 @@ pub(crate) use owner_pin::{
     owner_pin_assertions, owner_pin_assertions_with_default_features, owner_reference_count,
     qualified_matches_paths, returns_leave_the_function, skipping_table_column,
     source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
-    standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites, use_rebinds_crate_name,
+    source_item_builtin_name_holds, standard_derive_names, supported_targeted_item_context,
+    trusted_macro_binding_site_sets, trusted_macro_binding_sites, use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{
     ClaimsMacroKind, claims_macro_names, claims_payload_variant, decimal_u8,

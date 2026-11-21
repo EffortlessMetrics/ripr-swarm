@@ -178,3 +178,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inherent_receiver_macro_discard (15)
+
+Reason:
+RIPR-SPEC-0005 For inherent_receiver_macro_discard, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless inherent_receiver_macro_discard --reason "..."`
+
+Updated:
+- `expected/human.txt`

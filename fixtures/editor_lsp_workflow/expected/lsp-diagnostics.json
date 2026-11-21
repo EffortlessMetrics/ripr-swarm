@@ -6,7 +6,7 @@
         "diagnostic_id": "seam:2a9b75e33cbdbdc9",
         "evidence": {
           "activate": "yes",
-          "discriminate": "yes",
+          "discriminate": "weak",
           "observe": "yes",
           "propagate": "yes",
           "reach": "yes"

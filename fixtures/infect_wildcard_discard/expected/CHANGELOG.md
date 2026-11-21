@@ -159,6 +159,8 @@ Updated:
 ## Pending
 
 Reason:
+RIPR-SPEC-0096: add non-canonical whitespace wildcard-discard production fixture coverage for #1568
+
 RIPR-SPEC-0151: rebless check JSON for the additive source_currentness field; classifications, stages, confidence, counts, and recorded coordinates remain unchanged.
 
 Command:

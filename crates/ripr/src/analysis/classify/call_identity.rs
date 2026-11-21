@@ -119,11 +119,25 @@ pub(crate) struct CallIdentityMemos {
     /// a guard held across a query would serialize every worker and could
     /// re-enter on the rayon thread that steals a sibling seam mid-scan.
     pub(super) receiver_pin_syntax: super::OwnerPinSyntax,
+    /// Nominal dispatch and enum equality only, never assertion observation.
+    /// Cleared with the index and guarded by membership generation on hits.
+    pub(super) nominal_observers:
+        crate::analysis::sync_memo::SyncMemo<super::owner_pin::NominalObserverMemo>,
     /// #11509: the whole-workspace macro-site scan, parsed once per index and
     /// absorbed by every owner-pin syntax instance over it (the diff pass's
     /// candidate index, the seam walk, the receiver owner above, the seam
     /// inventory). Keyed by the index state it was computed under.
     pub(super) macro_site_scans: super::owner_pin::SharedMacroScans,
+    /// Complete all-files negative proof over immutable parser candidates.
+    pub(super) empty_macro_candidates: std::sync::OnceLock<bool>,
+    /// Exact index-owned enum expectation decisions, shared across seams.
+    pub(super) mapped_enum_decisions: crate::analysis::sync_memo::SyncMemo<
+        BTreeMap<super::owner_pin::MappedEnumDecisionKey, std::sync::Arc<bool>>,
+    >,
+    #[cfg(test)]
+    pub(super) mapped_enum_decision_builds: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(super) empty_macro_candidate_scans: std::sync::atomic::AtomicUsize,
     /// #13754: every `matches` binding site in the workspace, for the
     /// `assert!(matches!(..))` argument check. Parsed once per index, not once
     /// per owner-pin syntax instance, so the diff pass, the seam walk and
@@ -141,6 +155,8 @@ pub(crate) struct CallIdentityMemos {
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
     constants: std::sync::OnceLock<ConstantTable>,
+    /// Standard bool-clone view, including importer and expansion authority.
+    pub(super) bool_clone_view: std::sync::OnceLock<bool>,
     /// #9209: the workspace's non-plain `Drop` impls, read once per index so
     /// `drop_is_plain` is a lookup instead of a per-probe corpus parse.
     drop_impls: std::sync::OnceLock<super::element_field_pin::DropImplIndex>,
@@ -162,6 +178,17 @@ pub(crate) struct CallIdentityMemos {
     /// #10625: derive, blanket-impl and macro sources the index cannot list,
     /// read once per index for the sole-method credit.
     hidden_impls: std::sync::OnceLock<super::implicit_call::HiddenImpls>,
+    /// One fixed-set transparent-macro verdict, retaining its scope and
+    /// manifest authority so a replaced context cannot reuse a stale result.
+    transparent_macro_rebound: Mutex<
+        Option<(
+            BTreeSet<String>,
+            crate::analysis::facts::drop_in::DropInManifests,
+            bool,
+        )>,
+    >,
+    #[cfg(test)]
+    pub(super) transparent_macro_scans: std::sync::atomic::AtomicUsize,
     /// #10977: whole-index macro-rebound answers keyed by requested name
     /// set, so the fixed-set production callers share one parser-backed
     /// scan per set instead of rescanning the corpus per probe.
@@ -216,6 +243,45 @@ pub(crate) struct CallIdentityMemos {
 }
 
 impl CallIdentityMemos {
+    pub(super) fn transparent_macro_rebound(
+        &self,
+        index: &RustIndex,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let scope = index.macro_scope_crates();
+        let manifests = &index.drop_in_manifests;
+        // Verdict locks precede the outer memo lock. The underlying manifest
+        // readers never acquire the outer memo; the scan itself is below,
+        // after these guards have been dropped.
+        if let Some(Some(result)) = manifests.with_healthy_verdict_caches(|| {
+            let memo = self.transparent_macro_rebound.lock().ok()?;
+            let (old_scope, old_manifests, result) = memo.as_ref()?;
+            (old_scope == scope && old_manifests.same_authority(manifests)).then_some(*result)
+        }) {
+            return result;
+        }
+        // The scan is outside the lock; a panic cannot cache a false result.
+        // Concurrent misses may compute twice for the same immutable index.
+        let result = compute();
+        #[cfg(test)]
+        self.transparent_macro_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = manifests.with_healthy_verdict_caches(|| {
+            if let Ok(mut memo) = self.transparent_macro_rebound.lock() {
+                *memo = Some((scope.clone(), manifests.clone(), result));
+            }
+        });
+        result
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_empty_macro_candidates(&mut self) {
+        self.empty_macro_candidates.take();
+        self.bool_clone_view.take();
+        self.mapped_enum_decisions = Default::default();
+        self.transparent_macro_rebound = Default::default();
+    }
+
     /// The memoized item bindings for `key`, computed by `compute` on first
     /// use (recomputed, not cached, if the lock is poisoned).
     pub(super) fn item_bindings(
@@ -1142,10 +1208,26 @@ impl OwnerCallIdentity {
                 return from_globs.union(self.matches_module(base.map(<[String]>::to_vec)));
             }
             if scope.fn_body {
-                // A glob in a function body may bind the name there,
-                // shadowing every enclosing module.
+                // A top-level body glob binds before enclosing modules. Read
+                // its actual known module through the same import authority;
+                // nested-block globs already refused in block_binds above.
                 if !scope.globs.is_empty() {
-                    return Matches::Any;
+                    let mut matches = Matches::none();
+                    for glob in &scope.globs {
+                        let Some(glob) = glob else {
+                            return Matches::Any;
+                        };
+                        matches = matches.union(self.matches_module(use_target(
+                            glob,
+                            base,
+                            scope,
+                            crate_names,
+                        )));
+                    }
+                    return match matches {
+                        Matches::Some(set) if set.is_empty() => Matches::Any,
+                        other => other,
+                    };
                 }
                 continue;
             }
@@ -2031,7 +2113,20 @@ pub(super) fn library_module_path_is_bound(
     module
         .iter()
         .all(|segment| !module_declaration_is_ambiguous(index, segment, true))
-        && library_declaration_chain_reaches_file(index, &function.file, false)
+        && library_declaration_chain_reaches_file(index, &function.file, false, false)
+}
+
+/// As above, but require every out-of-line library module in the path to
+/// be unconditionally public to an integration-test crate.
+pub(super) fn public_library_module_path_is_bound(
+    index: &RustIndex,
+    function: &FunctionSummary,
+    module: &[String],
+) -> bool {
+    module
+        .iter()
+        .all(|segment| !module_declaration_is_ambiguous(index, segment, true))
+        && library_declaration_chain_reaches_file(index, &function.file, false, true)
 }
 
 /// Whether a relative `self::`/`super::` import (`import_path`, unaliased) in a
@@ -2110,7 +2205,7 @@ pub(super) fn unit_test_relative_import_names_entry(
         .iter()
         .any(|segment| matches!(segment.as_str(), "self" | "super" | "crate"))
         || !library_module_path_is_bound(index, entry, &entry_module)
-        || !library_declaration_chain_reaches_file(index, test_file, true)
+        || !library_declaration_chain_reaches_file(index, test_file, true, false)
     {
         return false;
     }
@@ -2238,8 +2333,9 @@ fn library_declaration_chain_reaches_file(
     index: &RustIndex,
     file: &Path,
     unit_test_module: bool,
+    public_only: bool,
 ) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName, ast::HasVisibility};
     let Some(segments) = file_module_segments(file) else {
         return false;
     };
@@ -2277,6 +2373,21 @@ fn library_declaration_chain_reaches_file(
         let [declaration] = same_named.as_slice() else {
             return false;
         };
+        if public_only
+            && (declaration
+                .visibility()
+                .is_none_or(|visibility| visibility.syntax().text() != "pub")
+                || ast::HasAttrs::attrs(declaration).any(|attr| {
+                    attr.path().is_none_or(|path| {
+                        !matches!(
+                            path.syntax().text().to_string().as_str(),
+                            "doc" | "allow" | "warn" | "deny" | "forbid"
+                        )
+                    })
+                }))
+        {
+            return false;
+        }
         let bare_cfg_test = unit_test_module
             && position + 1 == segments.len()
             && ast::HasAttrs::attrs(declaration)
@@ -2659,7 +2770,7 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
 /// for a bare call, `Some([a, b])` for `a::b::name(..)`, `None` for a
 /// qualifier this scan cannot read (`<T as Tr>::name`, a generic segment).
 /// Method calls (`x.name(..)`) and the `fn name` definition are skipped.
-fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
+pub(super) fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
     call_sites(body, name, false)
         .into_iter()
         .map(|(qualifier, _)| qualifier)
@@ -2749,6 +2860,26 @@ fn anchored_rest<'a>(
         .contains(first)
     };
     anchored.then_some(rest)
+}
+
+/// An explicitly crate-rooted associated call names this owner's module
+/// and self type. Unlike reach's no-rival fallback, identity requires the
+/// namespace to settle even when no rival definition is indexed.
+pub(super) fn rooted_associated_call_names_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    qualifier: &[String],
+) -> bool {
+    let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
+        return false;
+    };
+    let Some((named, module)) = qualifier.split_last() else {
+        return false;
+    };
+    named == self_type
+        && module_path_of(owner, true)
+            .is_some_and(|path| anchored_rest(index, owner, test, module) == Some(path.as_slice()))
 }
 
 /// Whether the test's file defines a rival `fn <owner name>` (any scope).
@@ -3679,7 +3810,7 @@ fn module_reexports_owner(
     })
 }
 
-fn qualified_call_names_owner(
+pub(super) fn qualified_call_names_owner(
     index: &RustIndex,
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -4542,6 +4673,66 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
     }
     segments.reverse();
     Some(segments)
+}
+
+// A trait on Ref<Vec<_>> can intercept first/last before dereferencing to
+// the slice, even when its method declaration is outside the index. The
+// workspace import closure is deliberately conservative: an unread external
+// import (including a re-export in another indexed file) withholds this
+// projection witness. Ordinary field identity and closed standard imports
+// keep their existing admission.
+pub(in crate::analysis) fn closed_method_dispatch_imports(index: &RustIndex) -> bool {
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{AstNode, ast};
+    // MemberCrates admits only a witnessed library target at src/lib.rs.
+    // A globally familiar crate name is not its binding in this importer:
+    // Cargo can bind the package's own name, or even `alloc`, to an outside
+    // dependency. Resolve each nonstandard root through manifest authority.
+    // The value-equality witness separately certifies the std/core roots.
+    let library_roots: Vec<_> = index
+        .files()
+        .iter()
+        .map(|(path, _)| path)
+        .filter(|path| path.ends_with("src/lib.rs"))
+        .collect();
+    index.files().iter().all(|(file, facts)| {
+        let known = |root: &str| {
+            matches!(root, "std" | "core" | "crate" | "self" | "super")
+                || library_roots.iter().any(|library| {
+                    index
+                        .member_crates
+                        .import_names(file, library)
+                        .iter()
+                        .any(|bound| bound == root)
+                })
+        };
+        if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
+            .iter()
+            .any(|import| {
+                !known(
+                    import
+                        .path
+                        .trim_start_matches("::")
+                        .split("::")
+                        .next()
+                        .unwrap_or_default(),
+                )
+            })
+        {
+            return false;
+        }
+        if !facts.source.contains("extern") {
+            return true;
+        }
+        let Some(file) = parse_clean_source_file(&facts.source) else {
+            return false;
+        };
+        file.tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::ExternCrate::cast)
+            .all(|item| item.name_ref().is_some_and(|name| known(name.text())))
+    })
 }
 
 #[cfg(test)]

@@ -7,8 +7,8 @@ mod reach;
 mod scan;
 
 pub(crate) use arguments::{
-    assertion_compares_only_literals, assertion_oracle_text, equality_assertion_arguments,
-    outer_assertion_condition,
+    assertion_compares_only_literals, assertion_observed_operand, assertion_oracle_text,
+    equality_assertion_arguments, outer_assertion_condition,
 };
 pub(crate) use classify::{
     assertion_reads_placeholder, classify_assertion, classify_assertion_with,
@@ -20,8 +20,9 @@ pub(crate) use pattern_admission::table_builds;
 #[cfg(test)]
 pub(crate) use patterns::contains_macro_invocation;
 pub(crate) use patterns::{
-    OracleTextShape, has_oracle_text_shape, is_exact_membership_any_assertion,
-    is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
+    OracleTextShape, has_oracle_text_shape, inline_unwrap_err_owner_call,
+    is_exact_membership_any_assertion, is_inline_unwrap_err_error_assertion,
+    is_unwrap_err_bound_error_assertion,
 };
 pub(crate) use reach::{lines_touching_unreached, retain_reached_oracles};
 pub(crate) use scan::{

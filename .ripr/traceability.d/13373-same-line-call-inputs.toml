@@ -2,6 +2,8 @@
 [[extend]]
 id = "RIPR-SPEC-0001"
 tests = [
+  "crates/ripr/tests/same_line_call_inputs.rs::primitive_bool_negation_keeps_a_whole_boundary_observer",
+  "crates/ripr/tests/same_line_call_inputs.rs::nominal_bool_alias_cannot_borrow_builtin_negation_identity",
   "crates/ripr/tests/same_line_call_inputs.rs::nested_observer_masking_and_far_call_orders_refuse_credit",
   "crates/ripr/tests/same_line_call_inputs.rs::nested_observer_refusal_keeps_a_separately_observed_direct_boundary",
   "crates/ripr/tests/same_line_call_inputs.rs::masked_arithmetic_observer_does_not_promote_a_second_boundary_call",

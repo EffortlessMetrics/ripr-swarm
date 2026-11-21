@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0453"
+unmeasured = true
+reason = "Source-promotion CI verifies exact Git history, workflow identity, and retained release evidence; its acceptance examples are unnumbered and have no language verdict measurement."

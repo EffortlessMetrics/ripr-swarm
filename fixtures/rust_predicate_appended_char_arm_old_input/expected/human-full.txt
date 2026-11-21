@@ -17,7 +17,8 @@ Shared evidence and guidance
   E2 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
   E3 [findings 1, 2]: related test src/lib.rs:9 comma_separates uses weak relational check oracle: assert!(is_separator(',')); misses: assertion too weak to tell the old behavior from the new
   E4 [findings 1, 2]: related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.')); misses: assertion too weak to tell the old behavior from the new
-  E5 [findings 1, 2]: source function argument value c = '.' at line 11
+  E5 [findings 1, 2]: source function argument value c = ',' at line 9
+  E6 [findings 1, 2]: source function argument value c = '.' at line 11
 
 Finding 1: WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:7a595285
@@ -39,10 +40,10 @@ Evidence
   shared evidence: E2
   - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
   - local flow reaches returned value: c ==     || c == (line 2)
-  shared evidence: E3, E4, E5
+  shared evidence: E3, E4, E5, E6
 Weakness
   - No strong discriminator was detected
-  - missing discriminator c == ';': No related test call uses c equal to ';'; observed c values: '.'; target ';' value: ';'
+  - missing discriminator c == ';': No related test call uses c equal to ';'; observed c values: ',', '.'; target ';' value: ';'
 Next step
   - Add boundary tests for below, equal, and above the changed threshold with exact assertions
 Drill in:
@@ -70,7 +71,7 @@ Evidence
   shared evidence: E2
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: c == ',' || c == ';' (line 2)
-  shared evidence: E3, E4, E5
+  shared evidence: E3, E4, E5, E6
 Weakness
   - No strong discriminator was detected
 Next step

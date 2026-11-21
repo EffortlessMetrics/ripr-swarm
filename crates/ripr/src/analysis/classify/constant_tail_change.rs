@@ -164,15 +164,143 @@ pub(in crate::analysis) fn constant_tail_change(
     })
 }
 
-/// #14936: a deleted early-return guard whose returned constant is the
-/// value the candidate owner returns on every input.
+/// #14936: the base early return and candidate whole-body tail authenticated
+/// for a removed-line return probe.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::analysis) struct DeletedGuardAgreement {
+pub(in crate::analysis) struct DeletedGuardReturn {
     /// Raw text of the candidate owner's whole-body constant tail.
     pub(in crate::analysis) tail: String,
+    before_value: Const,
+    after_value: Const,
+    taken_argument: Option<i128>,
+    return_type: String,
+    trusted_source: bool,
 }
 
-impl DeletedGuardAgreement {
+impl DeletedGuardReturn {
+    pub(in crate::analysis) fn values_agree(&self) -> bool {
+        self.before_value == self.after_value
+    }
+
+    pub(in crate::analysis) fn established_agreement(&self) -> bool {
+        self.trusted_source && self.values_agree()
+    }
+
+    pub(in crate::analysis) fn supports_pin(
+        &self,
+        index: &RustIndex,
+        syntax: &super::OwnerPinSyntax,
+    ) -> bool {
+        if !self.trusted_source {
+            return false;
+        }
+        if let Some(element) = self
+            .return_type
+            .strip_prefix("Vec<")
+            .and_then(|ty| ty.strip_suffix('>'))
+        {
+            return INTEGER_SUFFIXES.contains(&element)
+                && super::owner_pin::builtin_type_unshadowed("Vec", index, syntax)
+                && super::owner_pin::builtin_type_unshadowed(element, index, syntax);
+        }
+        self.return_type == "bool"
+            && super::owner_pin::builtin_type_unshadowed("bool", index, syntax)
+    }
+
+    /// Every statement of a test used for positive credit must be one of its
+    /// indexed top-level comparisons. Nested, skipped and unmodeled statements
+    /// cannot lend a syntactic assertion a runtime path through the test.
+    pub(in crate::analysis) fn straight_comparisons(
+        &self,
+        owner: &str,
+        body: &str,
+        count: usize,
+        old_matches: bool,
+    ) -> bool {
+        let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(body) else {
+            return false;
+        };
+        let Some(function) = parsed.tree().syntax().children().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let Some(list) = function.body().and_then(|block| block.stmt_list()) else {
+            return false;
+        };
+        let mut assertions = 0;
+        for node in list.syntax().children() {
+            let Some(call) = node.descendants().find_map(ast::MacroCall::cast) else {
+                return false;
+            };
+            // The comparison itself must occupy this top-level statement.
+            // A nested match, conditional or extension method is outside this proof.
+            let same_statement = node.text().to_string();
+            let call_text = call.syntax().text().to_string();
+            if same_statement.trim().trim_end_matches(';').trim()
+                != call_text.trim().trim_end_matches(';').trim()
+                || self
+                    .compared_call(owner, &call_text)
+                    .is_none_or(|(_, baseline)| baseline != old_matches)
+            {
+                return false;
+            }
+            assertions += 1;
+        }
+        assertions == count && assertions > 0
+    }
+
+    /// A direct equality can separate distinct returns only for an argument
+    /// known to enter the old guard and an expected value one side returns.
+    pub(in crate::analysis) fn compared_call<'a>(
+        &self,
+        owner: &str,
+        assertion: &'a str,
+    ) -> Option<(&'a str, bool)> {
+        let assertion = assertion.trim();
+        if !assertion.starts_with("assert_eq!") {
+            return None;
+        }
+        let operands = super::assertion_comparison_operands(assertion)?;
+        for (call, expected) in [(operands[0], operands[1]), (operands[1], operands[0])] {
+            if !super::owner_pin::is_whole_free_owner_call(call, owner) {
+                continue;
+            }
+            let argument = call
+                .trim()
+                .strip_prefix(owner)?
+                .trim()
+                .strip_prefix('(')?
+                .strip_suffix(')')?
+                .trim();
+            if !self.values_agree()
+                && self
+                    .taken_argument
+                    .zip(argument.parse::<i128>().ok())
+                    .is_none_or(|(guard, input)| guard != input)
+            {
+                continue;
+            }
+            let expected_value = if self
+                .return_type
+                .strip_prefix("Vec<")
+                .and_then(|s| s.strip_suffix('>'))
+                .is_some_and(|ty| INTEGER_SUFFIXES.contains(&ty))
+                && compact(expected)
+                    == format!("{}::new()", self.return_type.replacen("Vec<", "Vec::<", 1))
+            {
+                Const::List {
+                    vec: true,
+                    elements: Vec::new(),
+                }
+            } else {
+                whole_body_constant_tail(&format!("fn expected() {{ {expected} }}"))?.value
+            };
+            if expected_value == self.before_value || expected_value == self.after_value {
+                return Some((call, expected_value == self.before_value));
+            }
+        }
+        None
+    }
+
     /// The discriminate-stage summary that replaces a credited oracle.
     pub(in crate::analysis) fn summary(&self) -> String {
         format!(
@@ -183,8 +311,8 @@ impl DeletedGuardAgreement {
 }
 
 /// #14936: whether the removed-only `return_value` probe `probe` is a
-/// deleted `if <cond> { return <constant>; }` guard whose constant equals
-/// what the candidate owner now returns for every input.
+/// deleted `if <cond> { return <constant>; }` guard and the new owner returns
+/// a single constant. Distinct values also require a known guard input.
 ///
 /// On the base side an input that takes the guard returns the guard's
 /// constant; on the candidate side every input returns the owner's
@@ -192,10 +320,10 @@ impl DeletedGuardAgreement {
 /// assertion on the owner's return can tell the guard's deletion apart on the
 /// inputs it handled, so an exact pin is no discriminator for it.
 ///
-/// This only ever withholds credit, so it reads more loosely than the
-/// admission in [`constant_tail_change`]: `Vec::new()` and `String::new()`
-/// read as empty values, and a possibly rebound `vec!` is not refused. It
-/// fails closed (keeps today's reading) on everything else:
+/// Equal folded values may withhold credit. A positive discriminator also
+/// requires trusted constructor, type and macro identities in both revisions,
+/// an input that takes the old guard and consistent exact comparisons on the
+/// resolved owner. The source shape refuses:
 ///
 /// - a probe that is not removed-only, or whose owner or file differ;
 /// - a candidate body that is not one constant tail (any statement, early
@@ -206,14 +334,15 @@ impl DeletedGuardAgreement {
 /// - a deleted line that is not the base body's first statement, not a
 ///   guard with no `else` whose block is exactly one `return <constant>`,
 ///   or not the removed line the probe stands on;
-/// - constants that do not fold to the same value.
-pub(in crate::analysis) fn deleted_guard_agreement(
+/// - differing constants without a provable guard input and distinct values.
+pub(in crate::analysis) fn deleted_guard_return(
     probe: &Probe,
     owner: &FunctionSummary,
     changed: &ChangedFile,
     index: &RustIndex,
     modules: &ModuleDeclarations,
-) -> Option<DeletedGuardAgreement> {
+    base_may_rebind: bool,
+) -> Option<DeletedGuardReturn> {
     if probe.family != ProbeFamily::ReturnValue
         || probe.after.is_some()
         || probe.owner.as_ref() != Some(&owner.id)
@@ -242,7 +371,8 @@ pub(in crate::analysis) fn deleted_guard_agreement(
         return None;
     }
     let (tail_value, tail_text) = whole_body_agreement_tail(&base.new_text)?;
-    let (guard_value, guard_text, guard_offset) = first_statement_return_guard(&base.old_text)?;
+    let (guard_value, guard_text, guard_offset, taken_argument, return_type) =
+        first_statement_return_guard(&base.old_text)?;
     let guard_line = base.old_first_line + base.old_text.get(..guard_offset)?.matches('\n').count();
     // The guard is exactly the removed line this probe stands on.
     // Compare trimmed text, not whitespace-collapsed text: a collapse would
@@ -257,7 +387,81 @@ pub(in crate::analysis) fn deleted_guard_agreement(
     {
         return None;
     }
-    (guard_value == tail_value).then_some(DeletedGuardAgreement { tail: tail_text })
+    if guard_value != tail_value
+        && (taken_argument.is_none() || !distinct(&guard_value, &tail_value))
+    {
+        return None;
+    }
+    let trusted_source = !base_may_rebind
+        && !super::activation::macro_names_rebound(index, &TRUSTED_MACROS)
+        && base.old_text.split_once('{')?.0.trim() == base.new_text.split_once('{')?.0.trim()
+        && (owner.file.ends_with("src/lib.rs") || owner.file.ends_with("src/main.rs"))
+        && guard_prelude_identity(new_source, base.new_first_line, &owner.name)
+        && crate::analysis::diff::reconstruct_old_source(new_source, changed)
+            .is_some_and(|old| guard_prelude_identity(&old, base.old_first_line, &owner.name));
+    Some(DeletedGuardReturn {
+        tail: tail_text,
+        before_value: guard_value,
+        after_value: tail_value,
+        taken_argument,
+        return_type,
+        trusted_source,
+    })
+}
+
+/// The returned type and its constructor are resolved in each full source
+/// revision. A matching function signature alone does not give the old
+/// `Vec::new()` the candidate's prelude binding. External module bodies can
+/// export a macro into the root, even without `#[macro_use]`. A removed
+/// module body need not have a ChangedFile, so this proof stops at that edge.
+fn guard_prelude_identity(source: &str, line: usize, owner: &str) -> bool {
+    let Some(scopes) = crate::analysis::syntax::name_scopes_for_fn(source, line, owner) else {
+        return false;
+    };
+    let names = ["std", "Vec", "String", "vec", "bool"];
+    if scopes.scopes.iter().any(|scope| {
+        !scope.globs.is_empty()
+            || scope.block_globs
+            || names.iter().chain(INTEGER_SUFFIXES.iter()).any(|name| {
+                scope.defines.contains(*name)
+                    || scope.child_modules.contains(*name)
+                    || scope.block_binds(name)
+                    || scope.imports_of(name).any(|binding| {
+                        !matches!(binding, crate::analysis::syntax::UseBinding::Path(path)
+                            if (*name == "Vec" && path == &["std", "vec", "Vec"])
+                                || (*name == "String" && path == &["std", "string", "String"]))
+                    })
+            })
+    }) {
+        return false;
+    }
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    !parsed.tree().syntax().descendants().any(|node| {
+        ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_none())
+            || ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let target = attr.syntax().parent();
+                match compact(&attr.syntax().text().to_string()).as_str() {
+                    "#[cfg(test)]" => !target.is_some_and(|item| {
+                        ast::Module::can_cast(item.kind())
+                            && crate::analysis::syntax::source_item_builtin_name_holds("cfg", &item)
+                    }),
+                    "#[test]" => !target.is_some_and(|item| {
+                        ast::Fn::can_cast(item.kind())
+                            && crate::analysis::syntax::source_item_builtin_name_holds(
+                                "test", &item,
+                            )
+                    }),
+                    _ => true,
+                }
+            })
+            || ast::MacroCall::cast(node).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    !TRUSTED_MACROS.contains(&path.syntax().text().to_string().as_str())
+                })
+            })
+    })
 }
 
 /// The folded value and raw text of the tail of the one function in `text`
@@ -288,7 +492,9 @@ fn whole_body_agreement_tail(text: &str) -> Option<(Const, String)> {
 /// The folded returned constant, raw text and byte offset of the first
 /// statement of the one function in `text` when that statement is
 /// `if <cond> { return <constant>; }` with no `else`.
-fn first_statement_return_guard(text: &str) -> Option<(Const, String, usize)> {
+fn first_statement_return_guard(
+    text: &str,
+) -> Option<(Const, String, usize, Option<i128>, String)> {
     let parse = crate::analysis::syntax::parse_clean_source_file(text)?;
     let mut items = parse.tree().syntax().children();
     let function = ast::Fn::cast(items.next()?)?;
@@ -317,16 +523,36 @@ fn first_statement_return_guard(text: &str) -> Option<(Const, String, usize)> {
         return None;
     };
     let value = fold_agreement_value(&returned.expr()?)?;
+    let return_type = compact(&function.ret_type()?.ty()?.syntax().text().to_string());
+    let taken_argument = (|| {
+        let params = function.param_list()?;
+        let mut params = params.params();
+        let param = params.next()?;
+        if params.next().is_some()
+            || !INTEGER_SUFFIXES.contains(&param.ty()?.syntax().text().to_string().as_str())
+        {
+            return None;
+        }
+        let name = param.pat()?.syntax().text().to_string();
+        let condition = guard.condition()?.syntax().text().to_string();
+        let (lhs, rhs) = condition.split_once("==")?;
+        (lhs.trim() == name)
+            .then(|| rhs.trim().parse::<i128>().ok())
+            .flatten()
+    })();
     let range = statement.syntax().text_range();
     Some((
         value,
         statement.syntax().text().to_string(),
         usize::from(range.start()),
+        taken_argument,
+        return_type,
     ))
 }
 
 /// [`fold`], plus a bare `Vec::new()` or `String::new()` read as the empty
-/// value. Used only where a match withholds credit.
+/// value. A positive comparison separately verifies the prelude bindings in
+/// both revisions before trusting these syntactic spellings.
 fn fold_agreement_value(expr: &ast::Expr) -> Option<Const> {
     if let ast::Expr::CallExpr(call) = expr
         && call.arg_list()?.args().next().is_none()
@@ -1316,6 +1542,20 @@ mod tests {
             "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,1 @@\n-use helper::vec;\n pub mod a;\n",
         )?;
         assert!(base_side_may_rebind_trusted_macros(&files, &index));
+        // A removed assertion import can also substitute the old observer.
+        for (import, rebound) in [
+            ("use observer::assert_eq;", true),
+            ("use observer::{check as assert_eq};", true),
+            ("use observer::*;", true),
+            ("use observer::check as unrelated;", false),
+        ] {
+            let files = changed(&format!(
+                "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,1 @@\n-{import}\n pub mod a;\n"
+            ))?;
+            if base_side_may_rebind_trusted_macros(&files, &index) != rebound {
+                return Err(format!("unexpected base assertion identity for {import}"));
+            }
+        }
         // Control: an unrelated removed line rebinds nothing.
         let files = changed(
             "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,1 @@\n-pub fn gone() {}\n pub mod a;\n",
@@ -1451,7 +1691,7 @@ mod tests {
         new: &str,
         owner: &str,
         deleted: &str,
-    ) -> Result<Option<DeletedGuardAgreement>, String> {
+    ) -> Result<Option<DeletedGuardReturn>, String> {
         let path = "src/lib.rs";
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new(path), new)?;
         let changed_file =
@@ -1494,16 +1734,161 @@ mod tests {
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         };
-        Ok(deleted_guard_agreement(
-            &probe,
-            &function,
-            &changed_file,
-            &index,
-            &modules,
-        ))
+        Ok(
+            deleted_guard_return(&probe, &function, &changed_file, &index, &modules, false)
+                .filter(DeletedGuardReturn::established_agreement),
+        )
+    }
+
+    #[test]
+    fn deleted_guard_pin_requires_taken_argument_and_distinct_assertion_outcomes()
+    -> Result<(), String> {
+        let guard = DeletedGuardReturn {
+            tail: "vec![9]".to_string(),
+            before_value: Const::List {
+                vec: true,
+                elements: vec![],
+            },
+            after_value: Const::List {
+                vec: true,
+                elements: vec![Const::Int(9)],
+            },
+            taken_argument: Some(0),
+            return_type: "Vec<u32>".to_string(),
+            trusted_source: true,
+        };
+        for (text, expected) in [
+            ("assert_eq!(pick(0), Vec::<u32>::new());", true),
+            ("assert_eq!(vec![9], pick(0));", true),
+            ("assert_eq!(pick(1), Vec::<u32>::new());", false),
+            ("assert_ne!(pick(0), vec![2]);", false),
+            ("assert_eq!(pick(0), pick(0));", false),
+            ("assert_eq!(pick(0), vec![2]);", false),
+            ("assert_eq!(pick(0), Vec::<u32>::from([2]));", false),
+            ("assert_eq!(other(0), Vec::<u32>::new());", false),
+            ("assert_eq!(vec![9], vec![9], \"{:?}\", pick(0));", false),
+        ] {
+            let got = guard.compared_call("pick", text).is_some();
+            if got != expected {
+                return Err(format!(
+                    "{text}: expected a guard pin {expected}, got {got}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_guard_pin_combines_only_compatible_straight_comparisons() -> Result<(), String> {
+        let guard = DeletedGuardReturn {
+            tail: "vec![9]".to_string(),
+            before_value: Const::List {
+                vec: true,
+                elements: vec![],
+            },
+            after_value: Const::List {
+                vec: true,
+                elements: vec![Const::Int(9)],
+            },
+            taken_argument: Some(0),
+            return_type: "Vec<u32>".to_string(),
+            trusted_source: true,
+        };
+        let baseline = "assert_eq!(pick(0), Vec::<u32>::new());";
+        let alternate = "assert_eq!(pick(0), vec![9]);";
+        for (body, count, result) in [
+            (format!("{baseline} {baseline}"), 2, true),
+            (format!("{baseline} {alternate}"), 2, false),
+            (
+                format!("{baseline} assert_eq!(pick(0), vec![2]);"),
+                2,
+                false,
+            ),
+            (format!("return; {baseline}"), 1, false),
+            (format!("if false {{ {baseline} }}"), 1, false),
+            (
+                "assert_eq!(pick(0), Vec::<u32>::new()).extra();".to_string(),
+                1,
+                false,
+            ),
+        ] {
+            let code = format!("fn test() {{ {body} }}");
+            if guard.straight_comparisons("pick", &code, count, true) != result {
+                return Err(format!("unexpected whole-test result for {code}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_guard_prelude_names_are_resolved_in_the_whole_owner_module() -> Result<(), String> {
+        let owner = "pub fn pick(x: u32) -> Vec<u8> { vec![9] }";
+        for (prefix, trusted) in [
+            ("", true),
+            (
+                "struct Unrelated; fn other() {} mod sibling { pub struct Other; }",
+                true,
+            ),
+            ("use std::fmt::Debug;", true),
+            (
+                "#[cfg(test)] mod tests { use super::*; #[test] fn run() { assert_eq!(pick(0), vec![9]); } }",
+                true,
+            ),
+            ("use inject::emit_vec as test; #[test] fn seed() {}", false),
+            (
+                "use inject::{emit_vec as r#test}; #[test] fn seed() {}",
+                false,
+            ),
+            ("use inject::test; #[test] fn seed() {}", false),
+            ("mod inner { use inject::*; #[test] fn seed() {} }", false),
+            (
+                "use inject::emit_vec as test; mod inner { use super::*; #[test] fn seed() {} }",
+                false,
+            ),
+            (
+                "mod inner { use inject::emit_vec as test; } #[test] fn seed() {}",
+                true,
+            ),
+            ("use std::vec::Vec;", true),
+            (
+                "mod std { pub mod vec { pub struct Vec; } } use std::vec::Vec;",
+                false,
+            ),
+            ("struct Vec<T>(T);", false),
+            ("type Vec<T> = pretend::Container<T>;", false),
+            ("use pretend::Container as Vec;", false),
+            ("use pretend::*;", false),
+            ("mod removed; use removed::Container as Vec;", false),
+            ("mod external;", false),
+            (
+                "mod sibling { #[macro_export] macro_rules! vec { () => {} } }",
+                false,
+            ),
+            ("include!(\"bindings.rs\");", false),
+        ] {
+            let source = format!("{prefix}\n{owner}");
+            if guard_prelude_identity(&source, 2, "pick") != trusted {
+                return Err(format!("unexpected guard prelude binding for {prefix:?}"));
+            }
+        }
+        Ok(())
     }
 
     const GUARD: &str = "if x == 0 { return Vec::new(); }";
+
+    #[test]
+    fn deleted_guard_agreement_refuses_a_removed_nominal_empty_constructor() -> Result<(), String> {
+        let new = "pub fn pick(x: u32) -> Vec<u8> {\n    vec![]\n}\n";
+        let old = format!(
+            "pub fn pick(x: u32) -> Vec<u8> {{\n    {GUARD}\n    Vec::new()\n}}\nstruct Vec<T>(std::vec::Vec<T>);\nimpl Vec<u8> {{ fn new() -> Self {{ Self(vec![9]) }} }}\n"
+        );
+        if read_deleted_guard(&old, new, "pick", GUARD)?.is_some() {
+            return Err(
+                "the removed constructor returned [9], not the candidate's empty vector".into(),
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn deleted_guard_returning_the_remaining_tail_value_agrees() -> Result<(), String> {

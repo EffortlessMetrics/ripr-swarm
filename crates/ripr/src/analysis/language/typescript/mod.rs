@@ -619,6 +619,7 @@ impl TypeScriptAdapter {
         // before the walk instead of parsing every file for no finding.
         if !diff_needs_typescript_workspace(changed_files, handwritten, excluded_file_patterns) {
             return Ok(LanguageDiffResult {
+                rust_match_arm_scope: None,
                 value_origins: Default::default(),
                 findings: Vec::new(),
                 harness_projections: Vec::new(),
@@ -2043,6 +2044,7 @@ impl TypeScriptAdapter {
         }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
+            rust_match_arm_scope: None,
             value_origins: Default::default(),
             findings,
             harness_projections: Vec::new(),

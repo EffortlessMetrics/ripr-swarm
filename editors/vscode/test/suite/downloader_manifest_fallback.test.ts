@@ -11,13 +11,16 @@ import {
   ManifestFetchOutcome,
   ManifestPlacementRequest,
   downloadServer,
+  cachedServerInstallation,
   manifestPlacementPlan,
   placementArchiveUrl,
   resolveServerManifestPlacement
 } from '../../src/downloader';
 import { ManagedServerInstallRequest, readManagedServerInstallation } from '../../src/managedServerInstall';
 import { RiprPlatform } from '../../src/platform';
-import { ServerDistributionDescriptor } from '../../src/serverDescriptor';
+import { SERVER_DISTRIBUTION_DESCRIPTORS, ServerDistributionDescriptor } from '../../src/serverDescriptor';
+import { DistributionDescriptor, resolveDistributionRequest } from '../../src/distributionDescriptor';
+import { withManifestResponses } from '../manifestResponses';
 
 interface FixtureRoute {
   readonly status: number;
@@ -334,6 +337,100 @@ suite('Downloader Manifest Placement', () => {
       await fs.promises.rm(storage, { recursive: true, force: true });
       await fs.promises.rm(archiveRoot, { recursive: true, force: true });
       await server.stop();
+    }
+  });
+
+  test('schema-1 download uses the named RC only after a direct 404 and catalogue admission', async function () {
+    this.timeout(20_000);
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-catalog-placement-'));
+    const generation = '2.0.0';
+    const base = 'https://downloads.example/repository';
+    const filename = 'ripr-server-manifest-v2.0.0.json';
+    const preferred = `${base}/releases/download/v2.0.0/${filename}`;
+    const rc = `${base}/releases/download/v2.0.0-rc.7`;
+    const catalog: DistributionDescriptor = {
+      schema: 1, productVersion: generation, channel: 'stable', releaseTag: 'v2.0.0', releaseRef: 'refs/tags/v2.0.0',
+      manifestFile: filename, sourceRepository: base,
+      fallbackPlacements: [{ channel: 'rc', releaseTag: 'v2.0.0-rc.7', releaseRef: 'refs/tags/v2.0.0-rc.7' }]
+    };
+    const generated = SERVER_DISTRIBUTION_DESCRIPTORS as ServerDistributionDescriptor[];
+    const distribution = resolveDistributionRequest(generation, catalog);
+    const ctx = mockContext(root);
+    const runDownload = (request = distribution, storage = ctx) => downloadServer(
+      storage, fixtureConfig(''), fixturePlatform(), generation, captureOutput().channel, request
+    );
+    const missing = { status: 404, body: Buffer.alloc(0) };
+    const start = generated.length;
+    try {
+      const archive = await buildFixtureArchive(path.join(root, 'fixture'));
+      const archiveName = `server.${fixturePlatform().archiveExtension}`;
+      const bytes = manifestJson(generation, `${base}/releases/download/v2.0.0/${archiveName}`, archive.sha256);
+      const digest = sha256Bytes(bytes);
+      await withManifestResponses([missing], async (requests) => {
+        await assert.rejects(runDownload(), /not found/i);
+        assert.deepStrictEqual(requests, [preferred]);
+      });
+      const preferredRc = resolveDistributionRequest(generation, {
+        ...catalog, channel: 'rc', releaseTag: 'v2.0.0-rc.7', releaseRef: 'refs/tags/v2.0.0-rc.7', fallbackPlacements: []
+      });
+      await withManifestResponses([{ status: 200, body: bytes }, { status: 200, body: archive.bytes }], async (requests) => {
+        const installed = await runDownload(preferredRc, mockContext(path.join(root, 'preferred-rc')));
+        assert.deepStrictEqual(requests, [`${rc}/${filename}`, `${rc}/${archiveName}`]);
+        assert.strictEqual(installed.receipt.manifestSelection, 'preferred_exact');
+        assert.strictEqual(installed.receipt.manifestPlacement, undefined);
+      });
+      generated.push({ generation, manifestSha256: digest });
+      const embedded = resolveDistributionRequest(generation, {
+        ...catalog, schema: 2, distributionGeneration: '1'.repeat(64), targetSetDigest: '2'.repeat(64),
+        manifestSha256: '3'.repeat(64), producer: { tool: 'xtask release-distribution-catalog', schema: 'distribution-catalog/1' }
+      });
+      await withManifestResponses([], async (requests) => {
+        await assert.rejects(runDownload(embedded), /admissions disagree/);
+        await assert.rejects(async () => cachedServerInstallation(ctx, generation, fixturePlatform(), embedded), /admissions disagree/);
+        assert.deepStrictEqual(requests, []);
+      });
+      const changed = { status: 200, body: Buffer.concat([bytes, Buffer.from(' ')]) };
+      await withManifestResponses([changed], async (requests) => {
+        await assert.rejects(runDownload(), /admitted manifest SHA-256/);
+        assert.deepStrictEqual(requests, [preferred]);
+      });
+      await withManifestResponses([missing, changed], async (requests) => {
+        await assert.rejects(runDownload(), /admitted manifest SHA-256/);
+        assert.deepStrictEqual(requests, [preferred, `${rc}/${filename}`]);
+      });
+      await withManifestResponses([missing, { status: 200, body: bytes }, { status: 200, body: archive.bytes }], async (requests) => {
+        const installation = await runDownload();
+        assert.deepStrictEqual(requests, [preferred, `${rc}/${filename}`, `${rc}/${archiveName}`]);
+        assert.strictEqual(installation.receipt.manifestSelection, 'fallback_exact_after_preferred_absent');
+        assert.strictEqual(installation.receipt.manifestPlacement, 'rc_after_stable_absent');
+        assert.strictEqual(installation.receipt.manifestSha256, digest);
+        assert.strictEqual(installation.receipt.distributionIdentity, distribution.descriptorIdentity);
+      });
+      const platform = fixturePlatform();
+      const typed = Buffer.from(JSON.stringify({
+        schema_version: '2', product_version: generation, distribution_generation: '1'.repeat(64),
+        source_repository: 'EffortlessMetrics/ripr', target_set: { targets: [platform.target], digest: '2'.repeat(64) },
+        assets: { [platform.target]: {
+          subject: archiveName, sha256: archive.sha256, archive_format: platform.archiveExtension, archive_size: archive.bytes.length,
+          executable: { path: platform.executableName, size: 1, sha256: '0'.repeat(64) }
+        } }
+      }));
+      const admitted = sha256Bytes(typed);
+      generated.splice(start, 1, { generation, manifestSha256: admitted.toUpperCase() });
+      const matching = resolveDistributionRequest(generation, {
+        ...catalog, schema: 2, distributionGeneration: '1'.repeat(64), targetSetDigest: '2'.repeat(64),
+        manifestSha256: admitted, producer: { tool: 'xtask release-distribution-catalog', schema: 'distribution-catalog/1' }
+      });
+      await withManifestResponses([missing, { status: 200, body: typed }, { status: 200, body: archive.bytes }], async (requests) => {
+        const installed = await runDownload(matching);
+        assert.deepStrictEqual(requests, [preferred, `${rc}/${filename}`, `${rc}/${archiveName}`]);
+        assert.strictEqual(installed.receipt.manifestSha256, admitted);
+        assert.strictEqual(installed.receipt.manifestSelection, 'fallback_exact_after_preferred_absent');
+        assert.deepStrictEqual(await cachedServerInstallation(ctx, generation, platform, matching), installed);
+      });
+    } finally {
+      generated.splice(start);
+      await fs.promises.rm(root, { recursive: true, force: true });
     }
   });
 

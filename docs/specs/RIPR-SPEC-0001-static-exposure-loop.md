@@ -591,6 +591,9 @@ whose return is actually observed. It does not borrow an inner call from a call
 argument, arithmetic, a message or an unsupported wrapper/operator. A readable
 inner input remains evidence; a missing observer association is not a missing
 boundary input. An independently observed direct boundary call retains credit.
+A whole primitive-boolean negation retains that association only under the
+existing unshadowed primitive type authority; a nominal result or unresolved
+operator binding cannot borrow it.
 
 An edit that adds or removes a `&&` or `||` operand (`other > 0 && 100 <=
 points` to `100 < points`, in an `if` or a match guard) changes more than the

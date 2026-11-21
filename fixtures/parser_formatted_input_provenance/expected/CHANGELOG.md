@@ -415,3 +415,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — parser_formatted_input_provenance (33)
+
+Reason:
+RIPR-SPEC-0240 For parser_formatted_input_provenance, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless parser_formatted_input_provenance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

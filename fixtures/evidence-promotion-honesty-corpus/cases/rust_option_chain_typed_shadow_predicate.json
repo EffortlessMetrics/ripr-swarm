@@ -1,0 +1,20 @@
+{
+  "id": "rust_option_chain_typed_shadow_predicate",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/option_chain_typed_shadow",
+  "vector": "typed_shadow_cannot_supply_a_stale_option_boundary",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    }
+  ]
+}

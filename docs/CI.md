@@ -1010,34 +1010,66 @@ Use the pinned [local command](agent-context/validation.md#workflow-policy)
 before publishing workflow changes; a successful YAML parse is not equivalent.
 
 ### Swarm Routed Rust
+### Workflow content policy
 
-`ripr-swarm` adds `.github/workflows/routed-rust.yml` as the development-trunk
-Rust gate. It exposes one branch-protection-facing check:
+`cargo xtask check-workflows` scans every `.github/workflows/*.yml` file in
+this repository, including the real npm publish workflow
+`.github/workflows/publish-npm.yml`. Since the npm dist-tag guard
+(ripr-swarm#9663, `xtask/src/policy/workflow_npm_tags.rs`), it refuses:
+
+- any workflow `npm publish` that does not pass exactly one literal
+  non-`latest` `--tag`/`--tag=` (an omitted tag defaults to `latest`);
+- any workflow `npm dist-tag add`/`set` whose tag is missing or not a literal
+  non-`latest` word;
+- tags carried by variables, `${{ }}` expressions, command substitution or
+  quoting tricks, because they can expand to `latest` at run time.
+
+`--dry-run` publishes are exempt. YAML folding (`run: >`), quoted `run:`
+values, and trailing comments after a block scalar header are decoded before
+shell tokenization so those forms cannot bypass the scan. Out of scope, as
+upstream: `pnpm`/`yarn` publish, `NPM_CONFIG_TAG`, and composite or reusable
+actions. The current publish workflow satisfies the guard by staging with the
+literal `--tag=next`; moving npm `latest` remains a separate maintainer
+decision outside CI.
+
+### Routed Rust
+
+`.github/workflows/routed-rust.yml` is the source repository's Rust gate. It
+exposes one branch-protection-facing check:
 
 ```text
 Ripr Rust Small Result
 ```
 
-The implementation jobs are conditional and should not be required directly:
+The implementation jobs are conditional and must not be required directly:
 
 ```text
 Route Ripr Rust Small
-Ripr Rust Small on CX53
-Ripr Rust Small on CX43
 Ripr Rust Small on GitHub Hosted
+Ripr Docs Gate
 ```
 
 Routing policy:
 
 ```text
-trusted same-repo PR or push:
-  CX43 if idle
-  CPX42 if idle
-  CX53 if idle
-  GitHub-hosted otherwise
+every supported source subject:
+  GitHub-hosted Rust proof
 
-fork or otherwise untrusted PR:
-  GitHub-hosted only
+docs-only pull request:
+  docs gate; the Rust proof is not applicable
+```
+
+The source repository proves its own pull requests on GitHub-hosted runners.
+Self-hosted runner capacity is `ripr-swarm` authority, so the source route
+performs no organization runner discovery, requests no private runner secret,
+and does not treat GitHub-hosted execution as a degraded fallback (ripr#1446).
+The route job emits three negative assertions that the normalized result job
+re-checks and fails closed on:
+
+```text
+self_hosted_selection_attempted=false
+private_runner_secret_requested=false
+org_runner_query_attempted=false
 ```
 
 Label events are not an implicit full-gate refresh, and Draft iteration does not
@@ -1158,6 +1190,14 @@ runner availability blocker without exposing runner tokens or secrets.
 
 The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e on admitted `merge-ready` and native merge-group requests (#12122, #12252, #8082). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted PR diff or the complete merge-group event base-to-head diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. A queue request tests `github.sha`, the admitted composition G, so an earlier constituent's extension change is included even when the tip PR is Rust-only. Admission supplies the union of constituent labels. The Result lists both jobs in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it. `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). Missing merge-group identities never fall back to the tip PR's diff. The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Manual-dispatch results do not require it. This closes the extension prerequisite for #8082; it does not retire the legacy PR qualification trigger or complete the queue-only cutover. The `CI` workflow retains manual dispatch and its frozen `subject_sha` callable path; its ordinary PR and main-push triggers are retired.
 
+The routed lane runs the existing Rust/product command surface without release
+package or publish dry-run steps. The required lane invokes the shared
+`cargo xtask precommit` gate table after the cargo build/test steps and keeps
+only the lane-only gates enumerated (`check-evidence-promotion-honesty`,
+`check-dependencies`, `check-process-policy`, `check-network-policy`,
+`goldens check`, `fixtures`); the docs-gate job runs the same precommit table
+for docs-only pull requests. It keeps advisory evidence artifacts
+non-blocking and uploads the normal `target/ripr` report packet when present.
 Hosted gates set `CARGO_PROFILE_DEV_DEBUG=0` before cache restore and Cargo,
 matching the test profile. Dev artifacts lose file/line debug metadata; assertions,
 overflow checks, features, commands and scratch execution remain unchanged.
@@ -1243,8 +1283,8 @@ selection with `run_msrv`. It has no independent PR subscription.
 The legacy workflow's `release-proof`, `rust-only-features`, and `msrv` jobs
 run on `ubuntu-latest`. They carry release-surface and baseline proof and must not
 depend on self-hosted runner capacity when preparing a source release. The
-routed Rust-small workflow remains the swarm development lane that selects
-self-hosted runners when available and falls back to hosted capacity.
+routed Rust-small workflow is also GitHub-hosted by construction; it neither
+selects self-hosted runners nor treats hosted execution as fallback capacity.
 
 Local shaping commands are intentionally separate from CI because they mutate
 the worktree:
@@ -1412,9 +1452,15 @@ The VS Code extension build and extension publish workflows use Node 24. This
 is separate from the VS Code extension-host compatibility declared in
 `editors/vscode/package.json`.
 
-The coverage workflow currently runs:
+The coverage workflow currently runs the supported external-test recipe in
+one shell (show-env first, clean after that environment, plain instrumented
+build/test, then report), binding the analyzer-consuming xtask tests to the
+actual instrumented executable through an absolute explicit override:
 
 ```bash
+set -euo pipefail
+llvm_cov_env="$(cargo llvm-cov show-env --export-prefix)"
+eval "$llvm_cov_env"
 cargo llvm-cov clean --workspace
 cargo build -p ripr
 cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
@@ -1674,11 +1720,17 @@ the allowlist budget row.
 
 ### Self-Hosted Runner Placement
 
-The everyday required Rust gate routes through `routed-rust.yml`
-(`CX43 -> CPX42 -> CX53 -> GitHub-hosted` fallback, shared `/mnt/ci-cache`, disk guards,
-and scratch cleanup) and exposes the single branch-protection check
-`Ripr Rust Small Result`. That lane is the migrated reference and is not changed
-by routine runner-placement edits.
+The everyday required Rust gate routes through `routed-rust.yml`, which runs on
+GitHub-hosted runners only and exposes the single branch-protection check
+`Ripr Rust Small Result`. It requests no self-hosted capacity, no organization
+runner discovery, and no private runner secret (ripr#1446), so runner-placement
+edits do not apply to it.
+
+Self-hosted capacity remains in use by the advisory bot lanes
+(`droid.yml`, `droid-review.yml`, `droid-security-scan.yml`, group
+`em-ci-review`) and by `scratch-gc.yml`, which garbage-collects the scratch
+mounts those runners share. None of those lanes gate the required source PR
+proof.
 
 The auxiliary placement below reflects current workflow declarations, not the
 older shared-runner migration plan. PR-label predicates left in some jobs do not
@@ -3341,3 +3393,17 @@ A branch is ready to merge when:
 Local `--allow-dirty` packaging checks are useful during review but are not a
 substitute for plain package and publish dry-run checks on the final committed
 branch.
+
+### Scoped source editor qualification
+
+Use the existing `vscode` label for a selected source editor candidate. The
+`ci.yml` editor job runs its existing compile, admitted-package and editor-host
+commands. Rust, MSRV and release-check conditions are unchanged; the label is
+not an integrated release qualification or publication decision.
+
+In Routed Rust, opened/synchronize/reopened, `full-ci` label additions, pushes
+and manual dispatches retain the existing typed receipt/aggregate path. Other
+label additions and removals use a separate concurrency group, skip proof
+selection, and never post `Ripr Rust Small Result`, including as a skipped job.
+Their cheap ignored-event summary proves no Rust subject. Existing proof for an
+exact head remains its own evidence and cannot be replaced by a label event.

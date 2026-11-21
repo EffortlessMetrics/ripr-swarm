@@ -5,9 +5,9 @@
   "changed_seams": [],
   "inputs": {
     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-    "after_content_sha256": "sha256:1acdbd057caa51e649bc048708287637cbf613f0e4070573fd789e711b96675a",
+    "after_content_sha256": "sha256:760d8eafd36e3fb5193aecc9e20287a7c7248a54723ab063ae55b7b40ca3d4f2",
     "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-    "before_content_sha256": "sha256:1acdbd057caa51e649bc048708287637cbf613f0e4070573fd789e711b96675a"
+    "before_content_sha256": "sha256:760d8eafd36e3fb5193aecc9e20287a7c7248a54723ab063ae55b7b40ca3d4f2"
   },
   "new_gaps": [],
   "resolved_gaps": [],
@@ -36,11 +36,13 @@
     {
       "activate_delta": null,
       "after": "weakly_gripped",
-      "after_discriminate_state": "yes",
+      "after_discriminate_state": "weak",
       "after_missing_discriminators": [
         "discount_threshold (equality boundary) (observed values do not include the equality-boundary case for this predicate)"
       ],
-      "after_open_legs": [],
+      "after_open_legs": [
+        "discriminate (weak)"
+      ],
       "before": "weakly_gripped",
       "change": "unchanged",
       "discriminate_delta": null,

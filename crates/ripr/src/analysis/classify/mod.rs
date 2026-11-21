@@ -4,15 +4,15 @@ mod argument_fold;
 mod arm_selection;
 mod binding_return_flow;
 mod boundary_pairing;
-mod builder_override;
+pub(in crate::analysis) mod builder_override;
 mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
 mod const_flow;
 mod constant_tail_change;
 pub(in crate::analysis) use constant_tail_change::{
-    ConstantTailChange, DeletedGuardAgreement, base_side_may_rebind_trusted_macros,
-    constant_tail_change, deleted_guard_agreement, is_equal_constant_respelling,
+    ConstantTailChange, DeletedGuardReturn, base_side_may_rebind_trusted_macros,
+    constant_tail_change, deleted_guard_return, is_equal_constant_respelling,
 };
 #[cfg(feature = "lang-rust")]
 mod tier_flow;
@@ -51,6 +51,18 @@ mod match_transfer;
 mod operand_pin;
 mod out_parameter;
 mod owner_pin;
+
+#[cfg(test)]
+pub(in crate::analysis) fn nominal_observer_trace_decisions(
+    owner: &crate::analysis::facts::FunctionSummary,
+    qualifier: &str,
+    index: &crate::analysis::facts::RustIndex,
+) -> (bool, bool) {
+    (
+        owner_pin::getter_dispatch_is_unambiguous(owner, index),
+        owner_pin::error_enum_compares_payload(qualifier, index),
+    )
+}
 mod owner_prelude;
 mod owner_shape;
 mod owner_value;
@@ -87,8 +99,9 @@ pub(in crate::analysis) use activation::{
     function_parameters as whole_signature_parameters, guarded_boundary_row_reaches,
     literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
     owner_receiver_borrow, owner_writes_field_only_at_probe, predicate_line_bool_guards,
-    pushed_collection_compared_whole, pushed_literal_path, repo_seam_unselected_arm,
-    signature_parameters, test_binds_owner_type,
+    pushed_collection_compared_whole, pushed_collection_compared_whole_with_getter,
+    pushed_literal_path, repo_seam_unselected_arm, signature_parameters, test_binds_owner_type,
+    unresolved_guard_error_edge,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -98,8 +111,9 @@ pub(in crate::analysis) use binding_return_flow::{
     BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
 };
 pub(in crate::analysis) use boundary_pairing::{
-    WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
-    same_test_pairing_missing_summary, wrapper_return_boundary_pinned,
+    WrapperEntryPairing, assertion_is_discriminating, assertion_reads_bound_boundary_bool,
+    has_same_test_boundary_oracle_pairing, has_wrapper_boundary_oracle_pairing,
+    returned_boundary_probe, same_test_pairing_missing_summary, wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
@@ -126,10 +140,14 @@ pub(in crate::analysis) use decision::{
     recommended_next_step_with_boundary, stop_reasons,
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
-pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
+pub(in crate::analysis) use effect_carrier::{
+    ArgumentReceiver, EffectStateCarrier, RefCellCounter, RefCellObserverDispatchRefusal,
+    successful_push_call,
+};
 pub(in crate::analysis) use element_field_pin::{
-    drop_is_plain_in_closed_sources, observes_returned_element_field,
-    returned_array_construction_plain, workspace_has_visible_non_plain_drop,
+    drop_is_plain_in_closed_sources, observes_returned_array_value,
+    observes_returned_element_field, returned_array_construction_plain,
+    workspace_has_visible_non_plain_drop,
 };
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
@@ -145,6 +163,7 @@ pub(in crate::analysis) use flow::{
 pub(in crate::analysis) use framework_oracle::{
     insta_field_snapshot_limitation, withhold_framework_oracle_gap,
 };
+pub(in crate::analysis) use gap_admission::withhold_configured_error_projection_gap;
 pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
     REFUSALS_ARE_ANALYZER_LIMITS, assertion_confirms_captured_log_exact_membership, is_ignored,
@@ -156,14 +175,19 @@ pub(in crate::analysis) use gap_admission::{
 pub(in crate::analysis) use gap_admission::{
     withhold_read_limited_workspace_gap, withhold_truncated_discovery_gap,
 };
-pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
+pub(in crate::analysis) use helper_transfer::{
+    ARITHMETIC_FIELD_LIMIT_PREFIX, FieldProjectionReceipt, field_projection_receipt,
+    transformed_field_arithmetic_limitation,
+};
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
-    ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_entry_pin_admits,
-    chain_forwards_return_to_observed_hops, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, helper_only_reach,
-    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
-    returned_ledger_caller_is_observed, selected_inherent_calls,
+    ambiguous_helper_entry_called_by_tests, asserting_entry_result_identity, callee_is_unique,
+    chain_entry_pin_admits, chain_forwards_return_to_observed_hops,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops,
+    free_mapped_entry_result_identity, helper_only_reach, hop_reach_keeps_weak_oracle_gap,
+    method_entry_result_identity, receivers_are_entry_type, resolve_chain,
+    resolve_repo_boundary_chain, returned_ledger, returned_ledger_caller_is_observed,
+    selected_inherent_calls,
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
@@ -191,11 +215,13 @@ pub(in crate::analysis) use owner_pin::SCAN_LOG;
 pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
-    claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
-    expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
-    owner_builds_declared_error_variant, pin_scope_needs, returned_closure_pin_required,
-    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
-    trait_impl_self_type_names,
+    assertion_has_independent_record_collection, boolean_projection_matches_versions,
+    claims_payload_eq_candidates, current_unwrapped_error_binding, direct_call_name,
+    equality_condition_operands, expected_operand_value, function_declaration_is_async,
+    helper_pins_owner_call, mapped_boolean_assertion, owner_builds_declared_error_variant,
+    pin_scope_needs, primitive_bool_projected_result_identity, returned_closure_pin_required,
+    selected_unit_error_return, targeted_free_call_reaches_owner, targeted_name_is_alias,
+    targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
@@ -236,9 +262,9 @@ pub(in crate::analysis) use refusal_miss::{
     split_assertion_not_credited_misses,
 };
 pub(in crate::analysis) use related_tests::{
-    DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
-    body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
-    companion_scope_admits, declared_dependent_package_calls_owner,
+    DependencyEdgeContext, RelatedTestCandidateIndex, assertion_observes_named_add_result,
+    assertion_pins_display_string, body_contains_owner_call, call_text_may_call_free_function,
+    changes_only_string_literals, companion_scope_admits, declared_dependent_package_calls_owner,
     find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
     inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
@@ -274,7 +300,7 @@ pub(in crate::analysis) use unpolled_future::withhold_unpolled_future_gap;
 pub(in crate::analysis) use text::{
     changed_error_variant, enum_variant_values, error_constructor_call_paths,
     error_constructor_payloads, error_result_payload_literal_sets, exact_error_variant,
-    rust_string_literals,
+    is_wildcard_discard_binding, rust_string_literals,
 };
 // RIPR-SPEC-0114: bounded transitive-reach walk for Rust no_static_path findings.
 // RIPR-SPEC-0115: the walk now returns a witness so the limitation can name the

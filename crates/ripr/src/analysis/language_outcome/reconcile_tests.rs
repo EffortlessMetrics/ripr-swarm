@@ -44,6 +44,7 @@ fn diff_children(
     touched: &[&str],
 ) -> Vec<LanguageAnalysisOutcomeV1> {
     let result = LanguageDiffResult {
+        rust_match_arm_scope: None,
         findings,
         changed_files: 1,
         ..LanguageDiffResult::default()

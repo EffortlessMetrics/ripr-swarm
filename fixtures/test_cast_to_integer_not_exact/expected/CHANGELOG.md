@@ -282,3 +282,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — test_cast_to_integer_not_exact (23)
+
+Reason:
+RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless test_cast_to_integer_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — test_cast_to_integer_not_exact (24)
+
+Reason:
+RIPR-SPEC-0231 For test_cast_to_integer_not_exact, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless test_cast_to_integer_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`

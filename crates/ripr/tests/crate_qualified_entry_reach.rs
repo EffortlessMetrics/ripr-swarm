@@ -2113,3 +2113,37 @@ fn an_in_file_relative_import_of_another_scope_stays_refused() -> Result<(), Str
         "nearer let binding",
     )
 }
+
+#[test]
+fn qualified_wrapper_boundary_credit_stays_on_the_observed_call() -> Result<(), String> {
+    let observed = "assert_eq!(qual_reach::inner::order_discount(10), 5);";
+    for (body, exposed) in [
+        (format!("let input=10;\n    assert_eq!(input,10);\n    {observed}"), true),
+        (format!("{observed}\n    let input=10;\n    assert_eq!(input,10);"), true),
+        ("let input=10;\n    let _=qual_reach::inner::order_discount(input);\n    assert_eq!(input,10);".to_string(), false),
+        ("assert_eq!(qual_reach::inner::order_discount(10) * 0, 0);".to_string(), false),
+    ] {
+        let package = module_package("src/inner.rs", MODULE_LIB, test_file(&body), vec![]);
+        assert_eq!(package.classification()? == "exposed", exposed, "{body}");
+    }
+    let foreign = "mod other { pub fn other_discount(_: u32) -> u32 { 5 } }\n";
+    let tests = format!(
+        "{foreign}{}",
+        test_file(
+            "let _=qual_reach::inner::order_discount(10);\n    assert_eq!(other::other_discount(10),5);"
+        )
+    );
+    assert_ne!(
+        module_package("src/inner.rs", MODULE_LIB, tests, vec![]).classification()?,
+        "exposed"
+    );
+    let separate = format!(
+        "{}\n#[test]\nfn activates_only() {{ let _=qual_reach::inner::order_discount(10); }}\n",
+        test_file("assert_eq!(qual_reach::inner::order_discount(50),5);")
+    );
+    assert_ne!(
+        module_package("src/inner.rs", MODULE_LIB, separate, vec![]).classification()?,
+        "exposed"
+    );
+    Ok(())
+}

@@ -138,6 +138,19 @@ Updated:
 ## Pending — rust_wrapper_crate_alias_logging_macro (11)
 
 Reason:
+RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless rust_wrapper_crate_alias_logging_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_wrapper_crate_alias_logging_macro (12)
+
+Reason:
 RIPR-SPEC-0186: plain same_test_pairing_missing summary; exact summary values only, existing evidence prose sort retained; classifications, IDs, counts, oracle fields and recommendations unchanged
 
 Command:
@@ -199,3 +212,15 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_crate_alias_logging_macro (16)
+
+Reason:
+RIPR-SPEC-0186 For rust_wrapper_crate_alias_logging_macro, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless rust_wrapper_crate_alias_logging_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

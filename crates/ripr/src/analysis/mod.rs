@@ -12,6 +12,7 @@ mod facts;
 #[cfg(all(test, feature = "lang-rust"))]
 pub(crate) use facts::index_build_probe;
 mod generated_rust_corpus;
+pub(crate) mod match_arm_scope;
 pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };

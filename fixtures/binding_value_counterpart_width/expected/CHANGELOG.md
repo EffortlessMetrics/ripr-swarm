@@ -137,3 +137,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — binding_value_counterpart_width (12)
+
+Reason:
+RIPR-SPEC-0158 For binding_value_counterpart_width, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

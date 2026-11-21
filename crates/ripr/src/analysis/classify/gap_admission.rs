@@ -36,6 +36,265 @@ pub(in crate::analysis) const MIXED_REFUSAL_IS_ANALYZER_LIMIT: &str = "gap_admis
 const LIMIT: StaticLimitKind = StaticLimitKind::RustAssertionContextUnresolved;
 const JUDGED_TEST_LIMIT: usize = 3;
 
+/// A test can assert the concrete error from the previous spelling while
+/// the changed return names an associated type. Its presence under the owner's
+/// unresolved configuration establishes neither its execution nor a missing pin.
+pub(in crate::analysis) fn withhold_configured_error_projection_gap(
+    finding: &mut Finding,
+    context: &super::ProbeContext<'_>,
+) {
+    use super::owner_pin::OwnerPinSyntax;
+    use crate::analysis::facts::FunctionImplContext;
+
+    if finding.class != ExposureClass::WeaklyExposed
+        || finding.static_limit_kind.is_some()
+        || !matches!(
+            finding.probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        )
+    {
+        return;
+    }
+    let probe = context.probe;
+    let Some(owner) = context.owner_fn else {
+        return;
+    };
+    let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
+        return;
+    };
+    let Some(after) = super::exact_error_variant(&probe.expression) else {
+        return;
+    };
+    let Some((projection, variant)) = after.rsplit_once("::") else {
+        return;
+    };
+    if !projection
+        .strip_prefix("Self::")
+        .is_some_and(|name| !name.is_empty() && !name.contains("::"))
+    {
+        return;
+    }
+    let Some(before) = probe.before.as_deref().and_then(super::exact_error_variant) else {
+        return;
+    };
+    if before == after
+        || before
+            .rsplit_once("::")
+            .is_none_or(|(_, leaf)| leaf != variant)
+    {
+        return;
+    }
+
+    let parameters = super::activation::call_parameter_names(owner);
+    let [parameter] = parameters.as_slice() else {
+        return;
+    };
+    let Some(guard) = error_return_entry_guard(context.index, owner, probe, parameter) else {
+        return;
+    };
+    let callee = format!("{self_type}::{}", owner.name);
+    let fallback = OwnerPinSyntax::default();
+    let syntax = context.owner_pin_syntax.unwrap_or(&fallback);
+    for (test, relation) in &context.related_tests {
+        if *relation != RelationReason::DirectOwnerCall
+            || test.file != owner.file
+            || is_ignored(test)
+            || !super::refusal_miss::test_shares_owner_cfg_gates(context, test)
+        {
+            continue;
+        }
+        if !test.assertions.iter().any(|assertion| {
+            assertion.kind == OracleKind::ExactErrorVariant
+                && OwnerPinSyntax::assertion_macro_name(&assertion.text).as_deref()
+                    == Some("assert_eq")
+                && compares_unwrapped_owner_error(
+                    &assertion.text,
+                    &callee,
+                    &before,
+                    parameter,
+                    guard,
+                )
+                && syntax
+                    .equality_assertion_refusal(probe, Some(owner), test, assertion, context.index)
+                    .is_none_or(|refusal| {
+                        super::refusal_miss::assertion_refusal_counts_as_analyzer_limit(
+                            context, test, &refusal,
+                        )
+                    })
+        }) {
+            continue;
+        }
+        withhold_gap(
+            finding,
+            StaticLimitKind::RustAssertionContextUnresolved,
+            "whether the configured test executes the exact associated error return",
+            format!(
+                "Verify that `{}` runs with the matching configuration and observes the changed error return.",
+                test.name
+            ),
+            std::slice::from_ref(&test.name),
+        );
+        return;
+    }
+}
+
+/// Accept only a first guard at function entry, optionally following the
+/// input's byte-view conversion. Earlier statements may change its value
+/// or prevent entry. The selected return must be the guard's first statement.
+fn error_return_entry_guard<'a>(
+    index: &RustIndex,
+    owner: &'a crate::analysis::facts::FunctionSummary,
+    probe: &Probe,
+    parameter: &str,
+) -> Option<&'a str> {
+    let offset = probe.location.line.checked_sub(owner.start_line)?;
+    let mut lines = owner.body.lines().take(offset);
+    let signature = lines.next()?.trim_end();
+    if !signature.ends_with('{') {
+        return None;
+    }
+    let mut body = lines.map(str::trim).filter(|line| !line.is_empty());
+    let mut guard = body.next()?;
+    if guard == format!("let {parameter} = {parameter}.as_ref();") {
+        if !standard_literal_byte_view(index, owner, signature, parameter) {
+            return None;
+        }
+        guard = body.next()?;
+    }
+    if body.next().is_some() {
+        return None;
+    }
+    guard.strip_prefix("if ")?.strip_suffix('{').map(str::trim)
+}
+
+/// The standard prelude implementation of AsRef<[u8]> for a string
+/// literal preserves its byte length. A local trait or import may supply a
+/// different conversion. Restrict this reading to an unshadowed crate-root
+/// method with a single generic parameter constrained to that exact view.
+fn standard_literal_byte_view(
+    index: &RustIndex,
+    owner: &crate::analysis::facts::FunctionSummary,
+    signature: &str,
+    parameter: &str,
+) -> bool {
+    use ra_ap_syntax::{
+        AstNode, ast,
+        ast::{HasAttrs, HasModuleItem},
+    };
+    if owner.file != std::path::Path::new("src/lib.rs") {
+        return false;
+    }
+    let Some((_, bounds)) = signature.split_once(&format!("fn {}<", owner.name)) else {
+        return false;
+    };
+    let Some((generic, tail)) = bounds.split_once(": AsRef<[u8]>>(") else {
+        return false;
+    };
+    if !tail.starts_with(&format!("{parameter}: {generic})")) {
+        return false;
+    }
+    let Some(snapshot) = index.source_syntax.get(index, &owner.file) else {
+        return false;
+    };
+    let Some(tree) = snapshot.tree() else {
+        return false;
+    };
+    let Some(scopes) = snapshot.owner_name_scopes(owner) else {
+        return false;
+    };
+    let removes_prelude = tree.attrs().any(|attr| {
+        attr.skip_cfg_attrs().iter().any(|meta| {
+            matches!(
+                meta.simple_name().as_deref(),
+                Some("no_implicit_prelude" | "no_core")
+            ) && !meta
+                .syntax()
+                .ancestors()
+                .filter_map(ast::CfgAttrMeta::cast)
+                .any(|gate| {
+                    gate.cfg_predicate().is_some_and(|predicate| {
+                        cfg_predicates::attribute_test_build_availability(&format!(
+                            "#[cfg({predicate})]"
+                        )) == Some(false)
+                    })
+                })
+        })
+    });
+    if removes_prelude
+        || scopes.scopes.iter().any(|scope| {
+            !scope.modules.is_empty()
+                || !scope.globs.is_empty()
+                || scope.block_globs
+                || ["AsRef", "u8"].iter().any(|name| {
+                    scope.defines.contains(*name)
+                        || scope.block_binds(name)
+                        || scope.imports_of(name).next().is_some()
+                })
+        })
+    {
+        return false;
+    }
+    !tree
+        .items()
+        .any(|item| matches!(item, ast::Item::MacroCall(_)))
+}
+
+fn compares_unwrapped_owner_error(
+    text: &str,
+    callee: &str,
+    expected_variant: &str,
+    parameter: &str,
+    guard: &str,
+) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasArgList};
+    let Some([left, right]) = super::assertion_comparison_operands(text) else {
+        return false;
+    };
+    [(left, right), (right, left)]
+        .iter()
+        .any(|(actual, expected)| {
+            if expected.trim() != expected_variant {
+                return false;
+            }
+            let Some(ast::Expr::MethodCallExpr(read)) =
+                super::owner_value_sink::parse_expression(actual)
+            else {
+                return false;
+            };
+            if read
+                .name_ref()
+                .is_none_or(|name| name.text() != "unwrap_err")
+                || read
+                    .arg_list()
+                    .is_none_or(|args| args.args().next().is_some())
+            {
+                return false;
+            }
+            let Some(ast::Expr::CallExpr(call)) = read.receiver() else {
+                return false;
+            };
+            if call
+                .expr()
+                .is_none_or(|expr| expr.syntax().text() != callee)
+            {
+                return false;
+            }
+            let Some(arguments) = call.arg_list() else {
+                return false;
+            };
+            let mut args = arguments.args();
+            let Some(ast::Expr::Literal(literal)) = args.next() else {
+                return false;
+            };
+            let inputs = super::value_transfer::ExactInputs::from([(
+                parameter.to_owned(),
+                literal.syntax().text().to_string(),
+            )]);
+            args.next().is_none()
+                && super::match_transfer::evaluate_guard(guard, &inputs) == Some(true)
+        })
+}
+
 /// Withhold a Rust gap whose evidence rests on an analyzer limit. Returns
 /// `true` when the finding was rewritten to `static_unknown`.
 pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bool {
@@ -461,17 +720,20 @@ fn capture_assertion_matches_template(
 
 /// #6991 / #7120: the same captured-log membership shape gap admission
 /// recognizes, for reveal observation confirmation on effect-family probes.
-pub(in crate::analysis) fn assertion_confirms_captured_log_exact_membership(
+pub(in crate::analysis) fn assertion_confirms_captured_log_exact_membership<'a>(
     probe_expression: &str,
     test: &TestFact,
     assertion: &OracleFact,
-    owner: &str,
+    owner: impl FnOnce() -> Option<&'a str>,
     index: &RustIndex,
 ) -> bool {
     if !is_qualified_log_macro(probe_expression) {
         return false;
     }
     let Some(template) = log_template(probe_expression) else {
+        return false;
+    };
+    let Some(owner) = owner() else {
         return false;
     };
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
@@ -1432,6 +1694,54 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn projected_error_abstention_requires_an_asserted_call_entering_the_guard()
+    -> Result<(), String> {
+        let callee = "Decoder::parse";
+        let matches = |assertion: &str| {
+            compares_unwrapped_owner_error(
+                assertion,
+                callee,
+                "Fault::Odd",
+                "input",
+                "input.len() % 2 != 0",
+            )
+        };
+        for (assertion, expected) in [
+            (
+                r#"assert_eq!(Decoder::parse("a").unwrap_err(), Fault::Odd)"#,
+                true,
+            ),
+            (
+                r#"assert_eq!(Fault::Odd, Decoder::parse("abc").unwrap_err())"#,
+                true,
+            ),
+            (
+                r#"assert_eq!(Decoder::parse("é").unwrap_err(), Fault::Odd)"#,
+                false,
+            ),
+            (
+                r#"assert_eq!(Decoder::parse(value).unwrap_err(), Fault::Odd)"#,
+                false,
+            ),
+            (
+                r#"assert_eq!(Other::parse("a").unwrap_err(), Fault::Odd)"#,
+                false,
+            ),
+            (
+                r#"assert_eq!(Decoder::parse("a").unwrap_err(), Fault::Other)"#,
+                false,
+            ),
+        ] {
+            if matches(assertion) != expected {
+                return Err(format!(
+                    "unexpected projected error evidence for {assertion}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn stage(state: StageState, summary: &str) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, summary)
     }
@@ -2046,6 +2356,55 @@ mod tests {
     const AUDIT_LOG: &str = "log::info!(\"audited {}\", amount * 7);";
 
     #[test]
+    fn captured_log_owner_resolution_follows_semantic_refusal_per_consultation()
+    -> Result<(), String> {
+        let index = log_index();
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "audit_through_once_lock")
+            .ok_or("captured-log test fixture missing")?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.contains(".iter().any("))
+            .ok_or("exact membership assertion missing")?;
+        let calls = std::cell::Cell::new(0);
+        let resolve = || {
+            calls.set(calls.get() + 1);
+            Some("audit")
+        };
+        for expression in ["n >= 10", "log::info!(\"{}\", amount)"] {
+            assert!(!assertion_confirms_captured_log_exact_membership(
+                expression, test, assertion, resolve, &index,
+            ));
+        }
+        assert_eq!(
+            calls.get(),
+            0,
+            "semantic refusals must not resolve the owner"
+        );
+        for expected in 1..=2 {
+            assert!(assertion_confirms_captured_log_exact_membership(
+                AUDIT_LOG, test, assertion, resolve, &index,
+            ));
+            assert_eq!(
+                calls.get(),
+                expected,
+                "each applicable consultation resolves"
+            );
+        }
+        assert!(!assertion_confirms_captured_log_exact_membership(
+            AUDIT_LOG,
+            test,
+            assertion,
+            || None,
+            &index,
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn a_captured_log_assertion_withholds_the_gap_under_its_own_limit() {
         let index = log_index();
         for test in [
@@ -2106,7 +2465,11 @@ mod tests {
             {
                 assert!(matches!(assertion.kind, OracleKind::ExactValue));
                 assert!(assertion_confirms_captured_log_exact_membership(
-                    AUDIT_LOG, test, assertion, "audit", &index,
+                    AUDIT_LOG,
+                    test,
+                    assertion,
+                    || Some("audit"),
+                    &index,
                 ));
                 confirmed = true;
             }
@@ -2132,7 +2495,11 @@ mod tests {
                 .filter(|assertion| assertion.text.contains(".contains("))
             {
                 assert!(!assertion_confirms_captured_log_exact_membership(
-                    AUDIT_LOG, test, assertion, "audit", &index,
+                    AUDIT_LOG,
+                    test,
+                    assertion,
+                    || Some("audit"),
+                    &index,
                 ));
                 let mut finding = log_finding("audit_relational", AUDIT_LOG);
                 assert!(!withhold_log_capture_gap(

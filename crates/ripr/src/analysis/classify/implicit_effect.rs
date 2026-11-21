@@ -21,6 +21,26 @@ pub(in crate::analysis) use scope_end::{
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
+/// Parsed identifier spellings for the getter-only exclusion view. Preserve
+/// short and Unicode names that the observed-token filter omits, and compare
+/// raw identifiers by the same nominal spelling as their non-raw form.
+fn getter_exclusion_names(node: &ra_ap_syntax::SyntaxNode) -> Vec<String> {
+    let text = node.text().to_string();
+    let mut names = crate::analysis::extract::extract_identifier_tokens(&text);
+    names.extend(node.descendants().filter_map(|node| {
+        ast::NameRef::cast(node.clone())
+            .map(|name| name.text().to_string())
+            .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
+            .map(|name| name.trim_start_matches("r#").to_owned())
+    }));
+    let compact = compact(&text);
+    if let Some(short) = compact.rsplit("::").next().filter(|name| !name.is_empty()) {
+        names.push(short.to_owned());
+        names.push(short.trim_start_matches("r#").to_owned());
+    }
+    names
+}
+
 /// The trait path of an impl without its generic arguments, compacted.
 fn impl_trait_text(item: &ast::Impl) -> Option<String> {
     item.trait_()
@@ -90,6 +110,7 @@ fn known_builtin_attribute(attr: &ast::Attr) -> bool {
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct ImplicitExpansionMemo {
     surface: OnceLock<ExpansionSurface>,
+    getter_surface: OnceLock<ExpansionSurface>,
 }
 
 /// The immutable source index and its run-owned safety memo travel together.
@@ -105,6 +126,61 @@ impl<'a> ImplicitExpansionContext<'a> {
 
     fn admits(&self, receiver: &str) -> bool {
         self.memo.admits(self.index, receiver)
+    }
+
+    /// Closed expansion/trait surface for a nominal primitive-field getter.
+    /// Keep the existing implicit-observer policy separate; workspace globs
+    /// here require the importer-aware closure proof before they are admitted.
+    pub(in crate::analysis) fn admits_getter_dispatch(&self, receiver: &str) -> bool {
+        self.getter_surface().is_some_and(|surface| {
+            surface.bounded
+                && !surface.excluded_receivers.contains(
+                    receiver
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(receiver)
+                        .trim_start_matches("r#"),
+                )
+        })
+    }
+
+    /// A local observer may be present while workspace expansion is unread.
+    /// Known receiver exclusions (aliases, trait/default interception) and
+    /// unresolved imports remain separate refusals, never this limitation.
+    pub(in crate::analysis) fn getter_expansion_unresolved_only(&self, receiver: &str) -> bool {
+        self.getter_surface().is_some_and(|surface| {
+            !surface.bounded
+                && !surface.excluded_receivers.contains(
+                    receiver
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(receiver)
+                        .trim_start_matches("r#"),
+                )
+        })
+    }
+
+    fn getter_surface(&self) -> Option<&ExpansionSurface> {
+        if !super::call_identity::closed_method_dispatch_imports(self.index)
+            || !self.index.files().iter().all(|(file, _)| {
+                ["std", "core"].into_iter().all(|name| {
+                    self.index
+                        .drop_in_manifests
+                        .unbound_standard_root(file, name)
+                })
+            })
+        {
+            return None;
+        }
+        Some(self.memo.getter_surface.get_or_init(|| {
+            ExpansionSurface::scan_with_getter_traits(
+                self.index
+                    .files()
+                    .values()
+                    .map(|facts| std::sync::Arc::clone(&facts.source)),
+                true,
+            )
+        }))
     }
 }
 
@@ -163,8 +239,64 @@ impl ImplicitExpansionMemo {
     }
 }
 
+/// A bool result may pass through Clone only after shared expansion/impl
+/// authority excludes interception. Local globs are admitted solely after the
+/// importer-aware workspace import check; the original observer policy stays
+/// unchanged. An unrelated standard Drop cannot change primitive bool Clone.
+pub(super) fn standard_bool_clone_view(index: &RustIndex) -> bool {
+    // Manifest authority may change independently of immutable source memos.
+    if !super::call_identity::closed_method_dispatch_imports(index)
+        || !index.files().iter().all(|(file, _)| {
+            ["std", "core"]
+                .into_iter()
+                .all(|name| index.drop_in_manifests.unbound_standard_root(file, name))
+        })
+    {
+        return false;
+    }
+    *index.call_identity_memos.bool_clone_view.get_or_init(|| {
+        if super::owner_pin::projected_standard_roots_shadowed(index)
+            || ["Clone", "Iterator", "Add", "Drop"]
+                .into_iter()
+                .any(|name| super::owner_pin::wrapper_may_be_rebound(name, index))
+        {
+            return false;
+        }
+        let surface = ExpansionSurface::scan_with_workspace_globs(
+            index
+                .files()
+                .values()
+                .map(|facts| std::sync::Arc::clone(&facts.source)),
+            true,
+        );
+        surface.bounded_apart_from_drop && !surface.excluded_apart_from_drop.contains("bool")
+    })
+}
+
 impl ExpansionSurface {
     fn scan<S: AsRef<str>>(sources: impl IntoIterator<Item = S>) -> Self {
+        Self::scan_with_workspace_globs(sources, false)
+    }
+
+    fn scan_with_workspace_globs<S: AsRef<str>>(
+        sources: impl IntoIterator<Item = S>,
+        workspace_globs_verified: bool,
+    ) -> Self {
+        Self::scan_with_trait_policy(sources, workspace_globs_verified, false)
+    }
+
+    fn scan_with_getter_traits<S: AsRef<str>>(
+        sources: impl IntoIterator<Item = S>,
+        workspace_globs_verified: bool,
+    ) -> Self {
+        Self::scan_with_trait_policy(sources, workspace_globs_verified, true)
+    }
+
+    fn scan_with_trait_policy<S: AsRef<str>>(
+        sources: impl IntoIterator<Item = S>,
+        workspace_globs_verified: bool,
+        getter_trait_closure: bool,
+    ) -> Self {
         const BUILTIN_MACROS: &[&str] = &[
             "assert",
             "assert_eq",
@@ -229,22 +361,43 @@ impl ExpansionSurface {
                 if let Some(alias) = ast::TypeAlias::cast(node.clone())
                     && let Some(ty) = alias.ty()
                 {
-                    surface.exclude_all(
-                        compact(&ty.syntax().text().to_string())
-                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_owned),
-                    );
+                    if getter_trait_closure {
+                        surface.exclude_all(getter_exclusion_names(ty.syntax()));
+                    } else {
+                        surface.exclude_all(
+                            compact(&ty.syntax().text().to_string())
+                                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                                .filter(|name| !name.is_empty())
+                                .map(str::to_owned),
+                        );
+                    }
                 }
                 if let Some(use_tree) = ast::UseTree::cast(node.clone()) {
-                    surface.exclude_all(
-                        compact(&use_tree.syntax().text().to_string())
-                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_owned),
-                    );
+                    if getter_trait_closure {
+                        surface.exclude_all(getter_exclusion_names(use_tree.syntax()));
+                    } else {
+                        surface.exclude_all(
+                            compact(&use_tree.syntax().text().to_string())
+                                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                                .filter(|name| !name.is_empty())
+                                .map(str::to_owned),
+                        );
+                    }
                 }
                 if let Some(item) = ast::Impl::cast(node) {
+                    // Standard traits can supply unindexed default methods.
+                    // For getter identity every participating nominal type is
+                    // excluded, including trait arguments: From<Id> for u8
+                    // induces an Into method on Id, not only on u8. The older
+                    // implicit-observer and Clone views retain their policy.
+                    if getter_trait_closure && item.trait_().is_some() {
+                        surface.exclude_all(
+                            [item.trait_(), item.self_ty()]
+                                .into_iter()
+                                .flatten()
+                                .flat_map(|ty| getter_exclusion_names(ty.syntax())),
+                        );
+                    }
                     let trait_text = impl_trait_text(&item);
                     if trait_text
                         .as_deref()
@@ -313,9 +466,9 @@ impl ExpansionSurface {
                         !path_text.contains("::") && BUILTIN_MACROS.contains(&path_text)
                     })
                 })
-            // An imported macro can shadow a prelude macro with the same
-            // spelling. Refuse wildcard imports and imports of any name in
-            // the small macro allowlist instead of attempting resolution.
+            // An imported macro can shadow a prelude macro. Existing observers
+            // refuse wildcard imports; the Clone view admits them only after
+            // importer-aware workspace proof. Trusted names remain constrained.
             && tree
                 .syntax()
                 .descendants()
@@ -330,12 +483,17 @@ impl ExpansionSurface {
                         use_text.as_str(),
                         "usestd::ops::Add;" | "usecore::ops::Add;"
                     );
-                    !use_text.contains('*')
+                    let canonical_clone_import = workspace_globs_verified && matches!(
+                        use_text.as_str(),
+                        "usestd::clone::Clone;" | "usecore::clone::Clone;"
+                    );
+                    (workspace_globs_verified || !use_text.contains('*'))
                         && use_text
                             .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
                             .all(|name| {
                                 !BUILTIN_MACROS.contains(&name)
-                                    && !BUILTIN_DERIVES.contains(&name)
+                                    && (!BUILTIN_DERIVES.contains(&name)
+                                        || (name == "Clone" && canonical_clone_import))
                                     && name != "Drop"
                                     && (name != "Iterator" || canonical_iterator_import)
                                     && (name != "Add" || canonical_add_import)
@@ -496,6 +654,15 @@ fn shared_field(
     .then_some(field_name)
 }
 fn standard_handles(tree: &ra_ap_syntax::SourceFile) -> bool {
+    standard_handles_with_required(tree, &["Rc"])
+}
+
+/// Shared lexical standard-handle binding proof. Consumers choose which
+/// explicit imports are mandatory without changing the Rc observer contract.
+pub(super) fn standard_handles_with_required(
+    tree: &ra_ap_syntax::SourceFile,
+    required: &[&str],
+) -> bool {
     const HANDLES: &[&str] = &["Rc", "Cell", "RefCell", "Vec"];
     // A same-spelled local type or type alias defeats the lexical std form.
     if tree.syntax().descendants().any(|node| {
@@ -525,7 +692,7 @@ fn standard_handles(tree: &ra_ap_syntax::SourceFile) -> bool {
             })
             .collect();
         if named.is_empty() {
-            return handle != "Rc";
+            return !required.contains(&handle);
         }
         if named.len() != 1 || named[0].rename().is_some() {
             return false;

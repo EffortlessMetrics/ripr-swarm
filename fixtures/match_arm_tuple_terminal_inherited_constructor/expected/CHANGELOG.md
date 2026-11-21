@@ -358,3 +358,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_tuple_terminal_inherited_constructor (28)
+
+Reason:
+RIPR-SPEC-0093 For match_arm_tuple_terminal_inherited_constructor, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_inherited_constructor --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_predicate_added_disjunct_sibling_field/input
 
-Summary: 2 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -13,13 +13,11 @@ Start here:
   File: ./src/lib.rs:10
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Gap ID (for scripts): gap:rust:src/lib.rs:options_from_flag:predicate_boundary:predicate:flag==lit2d76_flag==lit2d2d766572626f7365
-  Changed behavior: flag == "-v" || flag == "--verbose"
-  Missing check: Check unconfirmed: no supported assertion that distinguishes the changed behavior
-    is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a
-    separate exact assertion do not establish that pairing
-  Related test (1 of 3 matched rows): src/lib.rs:18 keeps_default_retries (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Gap ID (for scripts): gap:rust:src/lib.rs:options_from_flag:field_construction:field_construction:verbose_flag==lit2d76_flag==lit2d2d766572626f7365
+  Changed behavior: verbose: flag == "-v" || flag == "--verbose"
+  Missing check: No strong assertion was detected
+  Related test (1 of 3 matched rows): src/lib.rs:18 keeps_default_retries
+  Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -32,20 +30,21 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach options_from_flag: keeps_default_retries, reads_retries_in_a_closure_of_the_old_flag, reads_verbose_only_from_the_old_flag
-    - infection yes: A related test passes "--verbose", which makes the added `||` arm true while every original string-equality arm is false, so the input reaches the change
-    - 15 more detail line(s) in --format human-full
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 16 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast probe:src_lib.rs:predicate:8be11d8d
-  ripr context --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast --at probe:src_lib.rs:predicate:8be11d8d
-  no repair start offered: this finding's changed line holds 2 spots (`flag == "-v"`, `flag == "--verbose"`) and ripr will not pick one for you; follow the Next step above
-No test stub here: the spot a stub would target is not a reported gap; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`
+  ripr explain --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast probe:src_lib.rs:field_construction:9e9fd805
+  ripr context --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:9e9fd805
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --at src/lib.rs:10 --kind field_construction
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:10 (exposed); kind: field_construction; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:10 (weak); kind: predicate; reason: No strong assertion was detected
   Hidden classes:
-    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

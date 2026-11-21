@@ -2502,6 +2502,7 @@ impl PythonAdapter {
         // are decided once here, from static facts at the root.
         verify_interpreter::PytestVerifyInterpreter::at(&options.root).apply(&mut findings);
         Ok(LanguageDiffResult {
+            rust_match_arm_scope: None,
             value_origins,
             findings,
             harness_projections: Vec::new(),

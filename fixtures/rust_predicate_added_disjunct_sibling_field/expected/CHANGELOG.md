@@ -57,3 +57,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_predicate_added_disjunct_sibling_field (6)
+
+Reason:
+RIPR-SPEC-0158 Reading the sibling field cannot identify an observation of verbose on the changed boundary call.
+
+Command:
+`cargo xtask goldens bless rust_predicate_added_disjunct_sibling_field --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

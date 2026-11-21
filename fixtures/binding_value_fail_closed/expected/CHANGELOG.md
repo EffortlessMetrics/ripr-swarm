@@ -613,3 +613,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (45)
+
+Reason:
+RIPR-SPEC-0158 For binding_value_fail_closed, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

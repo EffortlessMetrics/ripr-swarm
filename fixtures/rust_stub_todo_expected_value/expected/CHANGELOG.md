@@ -46,3 +46,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_stub_todo_expected_value (5)
+
+Reason:
+RIPR-SPEC-0231 For rust_stub_todo_expected_value, keep the repair advice aligned with the observed seam, owner and boundary.
+
+Command:
+`cargo xtask goldens bless rust_stub_todo_expected_value --reason "..."`
+
+Updated:
+- `expected/human.txt`

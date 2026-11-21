@@ -538,3 +538,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — recursive_controls (44)
+
+Reason:
+RIPR-SPEC-0165 For recursive_controls, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless recursive_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

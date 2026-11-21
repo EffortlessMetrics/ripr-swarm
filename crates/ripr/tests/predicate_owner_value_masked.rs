@@ -44,11 +44,15 @@ impl Drop for Scratch {
 /// The predicate finding for `qty > 10` changed to `qty >= 10`, with `body`
 /// as the body of the one unit test beside the owner.
 fn predicate_finding(body: &str) -> Result<Value, String> {
+    predicate_finding_with_root_items(body, "")
+}
+
+fn predicate_finding_with_root_items(body: &str, root_items: &str) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     let manifest =
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
     let lib = format!(
-        "pub fn over(qty: u32) -> bool {{\n    qty >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn first(a: bool, _b: bool) -> bool {{\n        a\n    }}\n\n    #[test]\n    fn t() {{\n        let _ = first(true, true);\n        {body}\n    }}\n}}\n"
+        "pub fn over(qty: u32) -> bool {{\n    qty >= 10\n}}\n{root_items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn first(a: bool, _b: bool) -> bool {{\n        a\n    }}\n\n    #[test]\n    fn t() {{\n        let _ = first(true, true);\n        {body}\n    }}\n}}\n"
     );
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    qty > 10\n+    qty >= 10\n";
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
@@ -154,6 +158,532 @@ fn an_observing_assertion_beside_a_masked_one_keeps_the_credit() -> Result<(), S
     ] {
         let finding = predicate_finding(body)?;
         assert_eq!(finding["classification"], "exposed", "{body}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_cast_pins_only_a_compared_owner_against_its_numeric_encoding() -> Result<(), String> {
+    for (body, expected) in [
+        ("assert_eq!(over(10) as u8, 1);", "exposed"),
+        ("assert_eq!(1, over(10) as u8);", "exposed"),
+        ("assert_eq!(over(10) as u8 * 0, 0);", "weakly_exposed"),
+        (
+            "assert_eq!(0, 0, \"{}\", over(10) as u8);",
+            "reachable_unrevealed",
+        ),
+        (
+            "let _ = over(10); assert_eq!(first(true, true) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!(over(10) as u8, over(10) as u8);",
+            "weakly_exposed",
+        ),
+        (
+            "use core::primitive::i16 as u8; assert_eq!(over(10) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "macro_rules! define_type { ($a:ty as $b:ident) => { type $b = $a; } } define_type!(i16 as u8); assert_eq!(over(10) as u8, 1);",
+            "reachable_unrevealed",
+        ),
+        (
+            "struct Rival; impl Rival { fn over(&self, _: bool) -> bool { true } } assert_eq!(Rival.over(over(10)) as u8, 1);",
+            "weakly_exposed",
+        ),
+        ("assert_eq!(over(10) as u8, 2);", "weakly_exposed"),
+        (
+            "let _ = over(10); assert_eq!(over(11) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "let _ = over(10); let over = |_| true; assert_eq!(over(10) as u8, 1);",
+            "weakly_exposed",
+        ),
+        (
+            "type u8 = i16; assert_eq!(over(10) as u8, 1);",
+            "weakly_exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let actual = finding.get("classification").and_then(Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {actual:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_tuple_of_boolean_owner_calls_must_match_on_exactly_one_version() -> Result<(), String> {
+    for (body, expected) in [
+        ("assert_eq!((over(10), over(9)), (true, false));", "exposed"),
+        ("assert_eq!((false, true), (over(9), over(10)));", "exposed"),
+        (
+            "assert_eq!((over(10), over(9)), (false, false));",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, true));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(10)), (true, false));",
+            "infection_unknown",
+        ),
+        ("assert_eq!((over(10), 1).1, 1);", "weakly_exposed"),
+        (
+            "assert_eq!((over(10), over(9)), (over(10), over(9)));",
+            "weakly_exposed",
+        ),
+        (
+            "let _ = over(10); assert_eq!((over(11), over(9)), (true, false));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!((over(10), first(true, over(9))), (true, true));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!((true, false), (true, false), \"{}\", over(10));",
+            "reachable_unrevealed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let actual = finding.get("classification").and_then(Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {actual:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_tuple_without_standard_equality_cannot_pin_the_owner() -> Result<(), String> {
+    let calls = ["over(10)"; 13].join(", ");
+    let expected = ["true"; 13].join(", ");
+    let finding = predicate_finding(&format!("assert_eq!(({calls}), ({expected}));"))?;
+    let class = finding.get("classification").and_then(Value::as_str);
+    if class != Some("weakly_exposed") {
+        return Err(format!(
+            "expected weakly_exposed for a 13-tuple, got {class:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn all_tuple_and_scalar_assertions_must_allow_the_same_version() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_eq!(over(10), false);",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_ne!((over(10), over(9)), (true, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_ne!(over(10), true);",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nassert_ne!(over(10), false);",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nif false { assert_ne!(over(10), true); }",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false));\nlet _ = || { assert_ne!(over(10), true); };",
+            "exposed",
+        ),
+        (
+            "assert_eq!(over(10) as u8, 1); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!(!over(10), true); assert_eq!((over(10), over(9)), (true, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false)); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false)); assert_eq!((over(11), over(9)), (false, true));",
+            "infection_unknown",
+        ),
+        (
+            "assert!(over(10)); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (true, false)); assert_eq!((over(9), over(10)), (false, true));",
+            "exposed",
+        ),
+        (
+            "assert_eq!((over(10), over(9)), (false, false)); assert_eq!((over(9), over(10)), (false, false));",
+            "exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn option_equality_requires_a_bound_payload_and_a_shared_passing_version() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            "mod other { pub fn Some(_: bool) -> u8 { 7 } } use other::*; assert_eq!(Some(over(10)), Some(true));",
+            "static_unknown",
+        ),
+        ("assert_eq!(Some(over(10)), Some(true));", "exposed"),
+        ("assert_eq!(Some(false), Some(over(10)));", "exposed"),
+        (
+            "assert_eq!(Some(over(10)), Some(over(10)));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!(Some(over(10)).is_some(), true);",
+            "weakly_exposed",
+        ),
+        (
+            "fn Some(_: bool) -> u8 { 7 } assert_eq!(Some(over(10)), Some(true));",
+            "weakly_exposed",
+        ),
+        (
+            "let _ = over(10); assert_eq!(Some(over(11)), Some(true));",
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!(Some(over(10)), Some(true)); assert_eq!(Some(false), Some(over(10)));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!(Some(over(10)), Some(true)); assert_eq!((over(10), over(9)), (false, false));",
+            "infection_unknown",
+        ),
+        (
+            "assert_eq!(Some(over(10)), Some(true)); assert_ne!(Some(over(10)), Some(true));",
+            "infection_unknown",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn sibling_module_glob_cannot_rebind_the_tests_option_constructor() -> Result<(), String> {
+    let finding = predicate_finding_with_root_items(
+        "assert_eq!(Some(over(10)), Some(true));",
+        "mod unrelated { use std::fmt::*; fn f() -> usize { 0 } }",
+    )?;
+    if finding.get("classification").and_then(Value::as_str) != Some("exposed") {
+        return Err(format!(
+            "sibling module glob withdrew Option payload discrimination: {finding}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_primitive_branch_must_change_the_compared_value_on_one_version() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_eq!(over(10).then_some(1), None);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_eq!(None, over(10).then_some(1));"#,
+            "infection_unknown",
+        ),
+        (r#"assert_eq!(None, over(10).then_some(1));"#, "exposed"),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_ne!(None, over(10).then_some(1));"#,
+            "exposed",
+        ),
+        (
+            r#"const None: Option<i32> = Some(1); assert_eq!(over(10).then_some(1), Some(1)); assert_eq!(over(10).then_some(1), None);"#,
+            "exposed",
+        ),
+        (r#"assert_eq!(if over(10) { 1 } else { 2 }, 1);"#, "exposed"),
+        (r#"assert_eq!(2, if over(10) { 1 } else { 2 });"#, "exposed"),
+        (
+            r#"assert_eq!(match over(10) { true => 'y', false => 'n' }, 'y');"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!('n', match over(10) { false => 'n', true => 'y' });"#,
+            "exposed",
+        ),
+        (r#"assert_eq!(over(10).then_some(1), Some(1));"#, "exposed"),
+        (r#"assert_eq!(Some(1), over(10).then_some(1));"#, "exposed"),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 1 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(match over(10) { true => 'y', false => '\x79' }, 'y');"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(2));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 2 }, 3);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(match over(10) { true => 'y', false => 'n' }, 'x');"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 2 }, 1); assert_eq!(match over(10) { true => 'y', false => 'n' }, 'n');"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_eq!((over(10), over(9)), (false, false));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(over(10).then_some(1), Some(1)); assert_ne!(Some(1), over(10).then_some(1));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(if over(10) { 1 } else { 2 }, 1); assert_eq!(match over(10) { true => 'y', false => 'n' }, 'y');"#,
+            "exposed",
+        ),
+        (
+            r#"let _ = over(10); assert_eq!(if over(11) { 1 } else { 2 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(if true { 1 } else { over(10) as u8 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(false.then_some(over(10)), None);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(if over(10) { let _ = 1; 1 } else { 2 }, 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(match over(10) { true if false => 'y', _ => 'n' }, 'n');"#,
+            "weakly_exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_branch_observer_cannot_borrow_another_tests_boundary() -> Result<(), String> {
+    let finding = predicate_finding_with_root_items(
+        "assert_eq!(if over(11) { 1 } else { 2 }, 1);",
+        "#[cfg(test)] mod boundary_only { use super::*; #[test] fn calls() { let _ = over(10); } }",
+    )?;
+    let class = finding.get("classification").and_then(Value::as_str);
+    if class != Some("weakly_exposed") {
+        return Err(format!(
+            "off-boundary branch borrowed a sibling call: {class:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn standard_scalar_encodings_compare_on_the_same_version() -> Result<(), String> {
+    for (body, expected) in [
+        (r#"assert_eq!(u8::from(over(10)), 1);"#, "exposed"),
+        (r#"assert_eq!(0, u8::from(over(10)));"#, "exposed"),
+        (r#"assert_eq!(u8::from(over(10)), 2);"#, "infection_unknown"),
+        (
+            r#"assert_eq!(u8::from(over(10)), 1); assert_eq!(over(10), false);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"struct Dummy; impl Dummy { fn from(_: bool) -> u8 { 1 } } assert_eq!(Dummy::from(over(10)), 1);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(format!("a, b ({})", over(10)), "a, b (true)");"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!("a, b (false)", format!("a, b ({})", over(10)));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(format!("a, b ({})", over(10)), "wrong");"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(format!("{}", over(10)), "true"); assert_ne!(format!("{}", over(10)), "true");"#,
+            "infection_unknown",
+        ),
+        (
+            r#"macro_rules! format { ($($t:tt)*) => { "true" } }; assert_eq!(format!("{}", over(10)), "true");"#,
+            "reachable_unrevealed",
+        ),
+        (
+            r#"assert_eq!(format!("{}", over(10)), "true"); assert_eq!(Some(over(10)), Some(false));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(u8::from(over(10)), 1); assert_eq!(format!("{}", over(10)), "true");"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(format!("{}", over(10)), "true"); assert!(over(10));"#,
+            "exposed",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn private_encoding_names_do_not_replace_standard_scalar_observers() -> Result<(), String> {
+    let unrelated = "mod private { trait Converts { fn from(b: bool) -> u8; } macro_rules! format { ($($t:tt)*) => { 0 } } struct Local(u32); impl From<u32> for Local { fn from(value: u32) -> Self { Self(value) } } }";
+    for body in [
+        r#"assert_eq!(format!("{}", over(10)), "true");"#,
+        "assert_eq!(u8::from(over(10)), 1);",
+    ] {
+        let finding = predicate_finding_with_root_items(body, unrelated)?;
+        if finding.get("classification").and_then(Value::as_str) != Some("exposed") {
+            return Err(format!(
+                "unrelated encoding suppressed the real observer: {body}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn single_element_container_observers_compare_the_actual_boolean_payload() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)), true);"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(false, Some(over(10)).eq(&Some(true)));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).unwrap_or(false), true);"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(false, Some(over(10)).unwrap_or(true));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(Some(true).unwrap_or(over(10)), true);"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(vec![over(10)].contains(&true), true);"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(false, vec![over(10)].contains(&true));"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(vec![over(10), true].contains(&true), true);"#,
+            "weakly_exposed",
+        ),
+        (r#"assert_eq!([over(10)].first(), Some(&true));"#, "exposed"),
+        (
+            r#"assert_eq!(Some(&false), [over(10)].first());"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!([false, over(10)].first(), Some(&false));"#,
+            "weakly_exposed",
+        ),
+        (
+            r#"assert_eq!(true, vec![over(10)].contains(&false)); assert_eq!(Some(over(10)).unwrap_or(false), true);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)), true); assert_eq!([over(10)].first(), Some(&false));"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(vec![over(10)].contains(&true), true); assert_eq!(Some(over(10)).unwrap_or(true), true);"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!([over(10)].first(),Some(&true)); assert_eq!([over(10)].first(),None);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)),true); assert_eq!(Some(over(10)).eq(&None),true);"#,
+            "infection_unknown",
+        ),
+        (
+            r#"assert_eq!([over(10)].first(),Some(&true)); assert_ne!(None,[over(10)].first());"#,
+            "exposed",
+        ),
+        (
+            r#"assert_eq!(Some(over(10)).eq(&Some(true)),true); assert_eq!(Some(over(10)).eq(&None),false);"#,
+            "exposed",
+        ),
+        (
+            r#"fn Some(_: bool) -> u8 { 7 } assert_eq!(vec![over(10)].contains(&true), true); assert_eq!([over(10)].first(), None);"#,
+            "infection_unknown",
+        ),
+    ] {
+        let finding = predicate_finding(body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some(expected) {
+            return Err(format!("{body}: expected {expected}, got {class:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn encoding_sibling_accepts_rust_macro_trailing_commas_and_messages() -> Result<(), String> {
+    for sibling in [
+        r#"assert_eq!(format!("{}",over(10),), "false");"#,
+        r#"assert_eq!(format!("{}",over(10)), "false",);"#,
+        r#"assert_eq!(format!("{}",over(10)), "false", "unexpected display");"#,
+    ] {
+        let body = format!(r#"assert_eq!(format!("{{}}",over(10)), "true"); {sibling}"#);
+        let finding = predicate_finding(&body)?;
+        let class = finding.get("classification").and_then(Value::as_str);
+        if class != Some("infection_unknown") {
+            return Err(format!("{body}: got {class:?}"));
+        }
     }
     Ok(())
 }

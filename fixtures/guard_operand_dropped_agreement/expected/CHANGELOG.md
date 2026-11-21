@@ -35,3 +35,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guard_operand_dropped_agreement (4)
+
+Reason:
+RIPR-SPEC-0197 The omitted guard agrees on both literal call inputs. The return retains its weak discriminator while the predicate reports an unresolved computed operand.
+
+Command:
+`cargo xtask goldens bless guard_operand_dropped_agreement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

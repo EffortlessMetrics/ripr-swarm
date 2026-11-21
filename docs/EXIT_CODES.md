@@ -24,6 +24,11 @@ and then the same evaluation, with the same exit codes. If `review-comments`
 cannot complete, gate check exits `2` (config_error); it never passes. In `calibrated-gate` mode a changed file the parser could not read also blocks (exit `3`), since no seam was judged for it; the other modes report it as an `advisory` warning (#14485). Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
+An empty result warrants a look at the selected diff, warnings, and analysis
+limits. The [change-selection guide](QUICKSTART.md#choose-the-change-to-analyze)
+covers working-tree, committed, and saved-diff inputs. For an older release,
+consult the versioned CLI documentation and the installed command help.
+
 ## Why codes 2 and 3?
 
 ripr uses exit code `2` for all could-not-complete conditions (not `1`) to
@@ -479,3 +484,28 @@ unendorsed API migration is for the upcoming 0.11.0 minor, not a 0.11.x patch.
 Native execution evidence is Linux x86_64 with explicitly trusted single-process
 fixture exporters. macOS/Windows runtime, arbitrary descendants, hostile path
 replacement and real perllsp compatibility remain unqualified.
+
+## Capture failures without losing the diagnosis
+
+This Bash example preserves the command status and keeps diagnostics separate
+from JSON. Run it from the project checkout with the intended base available:
+
+```bash
+check_status=0
+ripr check --base origin/main --format json > check.json 2> check.stderr || check_status=$?
+if [ "$check_status" -ne 0 ]; then
+  cat check.stderr >&2
+  exit "$check_status"
+fi
+# Inspect check.json and any warnings in check.stderr before consuming the evidence.
+```
+
+In an advisory CI workflow, retain the captured status, stderr, and any output
+as diagnostic artifacts even if the workflow continues. Validate a report
+before passing it to a downstream consumer. `continue-on-error` changes the
+workflow's handling of a failure; it does not turn an unsuccessful analysis
+into valid evidence. See [CI strategy](CI.md).
+
+For an unexpected `ripr: internal error (this is a bug)` message, preserve
+stderr, the RIPR version, and the reproduction command when reporting the
+failure. The top-level panic boundary also maps such a failure to `2`.

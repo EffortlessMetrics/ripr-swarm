@@ -12,6 +12,10 @@ const LOCK_HEARTBEAT_MS = 30_000;
 const LOCK_STALE_MS = 10 * LOCK_HEARTBEAT_MS;
 const MANAGED_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
+export type ManagedManifestSelection = 'preferred_exact' | 'fallback_exact_after_preferred_absent';
+export type PreferredManifestObservation = 'accepted' | 'direct_not_found';
+export type FallbackManifestObservation = 'not_requested' | 'accepted';
+
 export interface InstallReceiptV1 {
   readonly schemaVersion: 1;
   readonly installationState: 'complete';
@@ -26,6 +30,23 @@ export interface InstallReceiptV1 {
   readonly archiveSha256: string;
   readonly executableSha256: string;
   readonly binaryVersion: string;
+  /**
+   * Exact manifest location observed when these bytes were admitted.
+   * This is provenance/observation evidence only: cache currentness remains
+   * bound to distributionIdentity + manifestSha256, so identical RC bytes are
+   * not redownloaded merely to relabel them as stable.
+   */
+  readonly selectedManifestUrl?: string;
+  readonly manifestSelection?: ManagedManifestSelection;
+  readonly preferredManifestObservation?: PreferredManifestObservation;
+  readonly fallbackManifestObservation?: FallbackManifestObservation;
+  /**
+   * Placement-neutral identity of the distribution descriptor that produced
+   * this install. Absent on legacy receipts; a distribution-bound request
+   * never accepts those, so a binary verified against a different producer
+   * cannot be selected for the same version.
+   */
+  readonly distributionIdentity?: string;
 }
 
 export interface ManagedServerInstallation {
@@ -48,6 +69,14 @@ export interface ManagedServerInstallRequest {
    * explicitly offline-trusted on version and local self-consistency alone.
    */
   readonly admittedManifestSha256?: string;
+  readonly distributionIdentity?: string;
+  /**
+   * Descriptor-admitted manifest digest the install must be bound to. When
+   * present, only receipts stamped with the same digest are cache-eligible;
+   * a changed manifest under an otherwise identical version/ref rejects as
+   * contradiction instead of overwriting or reusing the live entry.
+   */
+  readonly expectedManifestSha256?: string;
 }
 
 export interface ResolvedArchive {
@@ -58,6 +87,20 @@ export interface ResolvedArchive {
   readonly manifestPlacement?: ManifestPlacement;
   /** Raw-byte SHA-256 of the manifest the archive digest came from. */
   readonly manifestSha256?: string;
+  /**
+   * Descriptor-admitted manifest digest the archive was selected under.
+   * Present only when the downloader admitted the manifest bytes against
+   * the resolved distribution; the staged receipt binds to it below.
+   */
+  readonly admittedManifestSha256?: string;
+  /**
+   * Exact manifest URL used to select this archive. Observation only; it is
+   * retained in the completed receipt but is deliberately not a cache key.
+   */
+  readonly selectedManifestUrl?: string;
+  readonly manifestSelection?: ManagedManifestSelection;
+  readonly preferredManifestObservation?: PreferredManifestObservation;
+  readonly fallbackManifestObservation?: FallbackManifestObservation;
 }
 
 /**
@@ -78,6 +121,10 @@ export interface ManagedServerInstallOperations {
 export interface ManagedServerReceiptIdentity {
   readonly assetDigest: string;
   readonly installationState: 'complete';
+  readonly selectedManifestUrl?: string;
+  readonly manifestSelection?: ManagedManifestSelection;
+  readonly preferredManifestObservation?: PreferredManifestObservation;
+  readonly fallbackManifestObservation?: FallbackManifestObservation;
 }
 
 export function validateManagedServerVersion(version: string): string {
@@ -110,7 +157,19 @@ export function combineActiveManagedServerIdentity<T extends { readonly binaryVe
   return {
     ...active,
     assetDigest: installation.receipt.archiveSha256,
-    installationState: 'complete'
+    installationState: 'complete',
+    ...(installation.receipt.selectedManifestUrl !== undefined
+      ? { selectedManifestUrl: installation.receipt.selectedManifestUrl }
+      : {}),
+    ...(installation.receipt.manifestSelection !== undefined
+      ? { manifestSelection: installation.receipt.manifestSelection }
+      : {}),
+    ...(installation.receipt.preferredManifestObservation !== undefined
+      ? { preferredManifestObservation: installation.receipt.preferredManifestObservation }
+      : {}),
+    ...(installation.receipt.fallbackManifestObservation !== undefined
+      ? { fallbackManifestObservation: installation.receipt.fallbackManifestObservation }
+      : {})
   };
 }
 
@@ -416,6 +475,19 @@ async function stageAndPromote(
     ) {
       throw new Error('Resolved server manifest does not match the admitted manifest SHA-256.');
     }
+    if (
+      request.expectedManifestSha256 !== undefined &&
+      resolved.admittedManifestSha256 !== request.expectedManifestSha256
+    ) {
+      throw new Error(
+        'Distribution-bound install requires the archive admitted under the expected manifest digest; refusing before extraction.'
+      );
+    }
+    if (resolved.manifestSha256 !== undefined && resolved.admittedManifestSha256 !== undefined
+      && !safeDigestEquals(resolved.manifestSha256, resolved.admittedManifestSha256)) {
+      throw new Error('Resolved manifest digest and descriptor admission stamp disagree.');
+    }
+    const manifestSha256 = resolved.manifestSha256 ?? resolved.admittedManifestSha256;
     if (!isSha256(resolved.expectedSha256)) {
       throw new Error('Server manifest asset digest is not a SHA-256 value.');
     }
@@ -454,10 +526,25 @@ async function stageAndPromote(
       ...(resolved.manifestUrl !== undefined && resolved.manifestUrl.length > 0 ? { manifestUrl: resolved.manifestUrl } : {}),
       platformTarget: request.platformTarget,
       executableName: request.executableName,
-      ...(resolved.manifestSha256 !== undefined ? { manifestSha256: resolved.manifestSha256 } : {}),
+      ...(manifestSha256 !== undefined ? { manifestSha256 } : {}),
       archiveSha256,
       executableSha256,
-      binaryVersion
+      binaryVersion,
+      ...(request.distributionIdentity !== undefined
+        ? { distributionIdentity: request.distributionIdentity }
+        : {}),
+      ...(resolved.selectedManifestUrl !== undefined
+        ? { selectedManifestUrl: resolved.selectedManifestUrl }
+        : {}),
+      ...(resolved.manifestSelection !== undefined
+        ? { manifestSelection: resolved.manifestSelection }
+        : {}),
+      ...(resolved.preferredManifestObservation !== undefined
+        ? { preferredManifestObservation: resolved.preferredManifestObservation }
+        : {}),
+      ...(resolved.fallbackManifestObservation !== undefined
+        ? { fallbackManifestObservation: resolved.fallbackManifestObservation }
+        : {})
     };
     await fs.promises.rm(archivePath, { force: true });
     await fs.promises.rm(extractDir, { recursive: true, force: true });
@@ -536,7 +623,9 @@ function isMatchingReceipt(value: unknown, request: ManagedServerInstallRequest)
     && typeof receipt.archiveSha256 === 'string'
     && isSha256(receipt.archiveSha256)
     && typeof receipt.executableSha256 === 'string'
-    && isSha256(receipt.executableSha256);
+    && isSha256(receipt.executableSha256)
+    && (request.distributionIdentity === undefined || receipt.distributionIdentity === request.distributionIdentity)
+    && (request.expectedManifestSha256 === undefined || receipt.manifestSha256 === request.expectedManifestSha256);
 }
 
 /**

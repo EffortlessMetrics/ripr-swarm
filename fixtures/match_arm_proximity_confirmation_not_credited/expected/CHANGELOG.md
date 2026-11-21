@@ -389,3 +389,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (31)
+
+Reason:
+RIPR-SPEC-0094 For match_arm_proximity_confirmation_not_credited, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -230,3 +230,41 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_pairing_sibling_owner (18)
+
+Reason:
+RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_owner (19)
+
+Reason:
+RIPR-SPEC-0226 / RIPR-SPEC-0186 / RIPR-SPEC-0197: preserve the independently authenticated whole-return owner pin while Predicate retains its same-call boundary refusal; refresh reviewed native output on frozen f90c6d2104758630db9c026cd48e2e9222d15888.
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_owner (20)
+
+Reason:
+RIPR-SPEC-0186 The independent whole-return owner assertion retains credit while the predicate refuses the sibling owner under RIPR-SPEC-0186 and RIPR-SPEC-0226.
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

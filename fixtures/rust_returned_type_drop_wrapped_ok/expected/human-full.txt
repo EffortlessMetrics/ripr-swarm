@@ -73,7 +73,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: Ok(Cfg { n: x * 3 })
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: Ok(Cfg { n: x * 3 }) (line 13)
   - related test src/lib.rs:21 makes uses strong whole object equality oracle: assert_eq!(make(4), Ok(Cfg { n: 12 })); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 12 at line 22

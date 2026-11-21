@@ -382,3 +382,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — human_full_shared_parse_port (30)
+
+Reason:
+RIPR-SPEC-0122 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (31)
+
+Reason:
+RIPR-SPEC-0122 For human_full_shared_parse_port, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`

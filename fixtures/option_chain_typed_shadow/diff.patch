@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@
+     let	mut n: usize = n;
+     let alias = &mut n;
+     *alias = 2;
+-    n == 2
++    n < 3
+ }
+ 
+ #[cfg(test)]

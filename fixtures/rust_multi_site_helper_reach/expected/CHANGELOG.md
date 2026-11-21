@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_multi_site_helper_reach (2)
+
+Reason:
+RIPR-SPEC-0159 For rust_multi_site_helper_reach, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless rust_multi_site_helper_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

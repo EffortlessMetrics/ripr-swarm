@@ -23,3 +23,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — predicate_oracle_gated_mod_ungated_owner_refused (3)
+
+Reason:
+RIPR-SPEC-0197 For predicate_oracle_gated_mod_ungated_owner_refused, keep the repair advice aligned with the observed seam, owner and boundary.
+
+Command:
+`cargo xtask goldens bless predicate_oracle_gated_mod_ungated_owner_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`

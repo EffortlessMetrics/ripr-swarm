@@ -1,0 +1,2 @@
+crates/ripr/tests/repo_shared_line_owners.rs|Command::new|1|rust-repo-exposure-tests|#9135: run the Cargo-built ripr binary with fixed instant repository-report arguments and a fixture-local cache to check shared-line owner attribution.
+crates/ripr/tests/repo_shared_line_owners.rs|use std::process::Command|1|rust-repo-exposure-tests|#9135: import Command for the isolated repository-report CLI invocation in this test.

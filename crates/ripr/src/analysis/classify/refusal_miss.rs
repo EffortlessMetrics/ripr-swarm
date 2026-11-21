@@ -24,7 +24,7 @@ pub(in crate::analysis) fn assertion_refusal_counts_as_analyzer_limit(
             .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
 }
 
-fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -> bool {
+pub(super) fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -> bool {
     let Some(owner) = context.owner_fn else {
         return false;
     };

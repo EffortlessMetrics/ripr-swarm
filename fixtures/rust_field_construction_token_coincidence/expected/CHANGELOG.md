@@ -490,3 +490,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_field_construction_token_coincidence (41)
+
+Reason:
+RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_field_construction_token_coincidence (42)
+
+Reason:
+RIPR-SPEC-0094 For rust_field_construction_token_coincidence, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

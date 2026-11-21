@@ -1,0 +1,1 @@
+#[test] fn check_price() { if 777 > 666 { assert_eq!(price(11), 10); } } pub fn price(n: i32) -> i32 { if n > 10 { n - 1 } else { n } }

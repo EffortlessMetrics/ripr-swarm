@@ -177,3 +177,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inherent_receiver_module_type_shadow (16)
+
+Reason:
+RIPR-SPEC-0005 For inherent_receiver_module_type_shadow, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless inherent_receiver_module_type_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

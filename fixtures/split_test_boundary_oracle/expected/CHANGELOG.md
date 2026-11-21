@@ -453,3 +453,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (38)
+
+Reason:
+RIPR-SPEC-0186: retain same-test and same-owner boundary-oracle pairing on returned comparisons; separate tests do not establish the joined witness
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (39)
+
+Reason:
+RIPR-SPEC-0226 / RIPR-SPEC-0186 / RIPR-SPEC-0197: preserve the independently authenticated whole-return owner pin while Predicate retains its same-call boundary refusal; refresh reviewed native output on frozen f90c6d2104758630db9c026cd48e2e9222d15888.
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -9,6 +9,141 @@ use super::related_tests::{
 use super::shadow_index::{BodyShadowIndex, SHADOW_INDEX_BUILDS};
 use std::collections::BTreeSet;
 
+fn relation_guard_test(imports: &str, body: &str) -> Result<super::TypeScriptTest, String> {
+    let source = format!(
+        "import {{ it }} from 'vitest';\n{imports}\nit('relation guard', () => {{\n{body}\n}});\n"
+    );
+    let tests = super::extract_tests(std::path::Path::new("tests/pricing.test.ts"), &source);
+    if tests.len() != 1 {
+        return Err(format!("expected one extracted test, got {}", tests.len()));
+    }
+    tests
+        .into_iter()
+        .next()
+        .ok_or_else(|| "test missing".to_string())
+}
+
+#[test]
+fn relation_guard_unrelated_imports_do_not_build_shadow_indexes() -> Result<(), String> {
+    let owner = super::test_owner("price", "src/pricing.ts");
+    for (imports, body) in [
+        (
+            "import * as pricing from '../src/pricing';",
+            "expect(pricing.other(1)).toBe(1);",
+        ),
+        ("import { expect } from 'vitest';", "expect(1).toBe(1);"),
+    ] {
+        let test = relation_guard_test(imports, body)?;
+        let _run = DirectoryModuleCacheScope::open();
+        let before = index_builds();
+        assert_eq!(
+            super::owner_call_relation(&test, &owner, &super::ReExportIndex::empty(), None, None),
+            None,
+            "an unrelated call cannot reach price"
+        );
+        assert_eq!(
+            index_builds() - before,
+            0,
+            "an unrelated namespace member or runner import must not request binding facts"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn relation_guard_namespace_calls_still_check_body_and_scope_shadows() -> Result<(), String> {
+    let owner = super::test_owner("price", "src/pricing.ts");
+    for (body, expected) in [
+        ("expect(pricing.price(100)).toBe(100);", true),
+        ("expect(pricing?.price(100)).toBe(100);", true),
+        (
+            "const pricing = { price: () => 100 };\nexpect(pricing.price(100)).toBe(100);",
+            false,
+        ),
+    ] {
+        let test = relation_guard_test("import * as pricing from '../src/pricing';", body)?;
+        let _run = DirectoryModuleCacheScope::open();
+        assert_eq!(
+            super::owner_call_relation(&test, &owner, &super::ReExportIndex::empty(), None, None)
+                .is_some(),
+            expected,
+            "{body}"
+        );
+    }
+    let mut test = relation_guard_test(
+        "import * as pricing from '../src/pricing';",
+        "expect(pricing.price(100)).toBe(100);",
+    )?;
+    test.scope_bindings = vec![super::TypeScriptScopeBinding {
+        name: "pricing".to_owned(),
+        constructed_by: None,
+        file_level: false,
+        parameter_end: None,
+    }]
+    .into();
+    assert_eq!(
+        super::owner_call_relation(&test, &owner, &super::ReExportIndex::empty(), None, None),
+        None,
+        "an enclosing binding still defeats the namespace call"
+    );
+    Ok(())
+}
+
+#[test]
+fn relation_guard_reexports_still_check_local_and_enclosing_shadows() -> Result<(), String> {
+    let root = super::ts_unique_tempdir("relation-guard-reexport")?;
+    let owner_source = "export function price(value: number) { return value; }\n";
+    let barrel_source = "export { price as cost } from './pricing';\n";
+    super::ts_write_file(&root.join("src/pricing.ts"), owner_source)?;
+    super::ts_write_file(&root.join("src/index.ts"), barrel_source)?;
+    let sources = std::collections::HashMap::from([
+        (
+            std::path::PathBuf::from("src/pricing.ts"),
+            owner_source.to_string(),
+        ),
+        (
+            std::path::PathBuf::from("src/index.ts"),
+            barrel_source.to_string(),
+        ),
+    ]);
+    let files: Vec<_> = sources.keys().cloned().collect();
+    let index = super::ReExportIndex::build(&files, &sources, &root, None, |_| false);
+    let owner = super::test_owner("price", "src/pricing.ts");
+    for (body, expected) in [
+        ("expect(cost(100)).toBe(100);", true),
+        (
+            "const cost = () => 100;\nexpect(cost(100)).toBe(100);",
+            false,
+        ),
+    ] {
+        let test = relation_guard_test("import { cost } from '../src/index';", body)?;
+        let _run = DirectoryModuleCacheScope::open();
+        assert_eq!(
+            super::owner_call_relation(&test, &owner, &index, None, Some(&root)).is_some(),
+            expected,
+            "{body}"
+        );
+    }
+    let mut test = relation_guard_test(
+        "import { cost } from '../src/index';",
+        "expect(cost(100)).toBe(100);",
+    )?;
+    test.scope_bindings = vec![super::TypeScriptScopeBinding {
+        name: "cost".to_owned(),
+        constructed_by: None,
+        file_level: false,
+        parameter_end: None,
+    }]
+    .into();
+    assert_eq!(
+        super::owner_call_relation(&test, &owner, &index, None, Some(&root)),
+        None,
+        "an enclosing binding still defeats the re-export call"
+    );
+    let _ = std::fs::remove_dir_all(root);
+    Ok(())
+}
+
 fn index_builds() -> usize {
     SHADOW_INDEX_BUILDS.with(std::cell::Cell::get)
 }

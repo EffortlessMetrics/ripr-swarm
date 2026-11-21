@@ -1331,6 +1331,24 @@ fn normalize_agent_receipt_fixture_for_root(
     let object = value
         .as_object_mut()
         .ok_or("agent receipt fixture should be a JSON object")?;
+    if let Some(diagnostic) = object
+        .get("analysis_outcome_error")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        && !diagnostic.trim_end_matches('.').is_empty()
+    {
+        for pointer in [
+            "/summary/next_action/recommended_action",
+            "/summary/next_recommendation",
+        ] {
+            if let Some(serde_json::Value::String(text)) = value.pointer_mut(pointer) {
+                *text = text.replace(diagnostic.trim_end_matches('.'), "<analysis_outcome_error>");
+            }
+        }
+    }
+    let object = value
+        .as_object_mut()
+        .ok_or("agent receipt fixture should be a JSON object")?;
     if object.contains_key("analysis_outcome_error") {
         object.insert(
             "analysis_outcome_error".to_string(),
@@ -1346,6 +1364,26 @@ fn normalize_agent_receipt_fixture_for_root(
     let mut rendered = serde_json::to_string_pretty(&value)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+#[test]
+fn receipt_fixture_normalizes_embedded_machine_diagnostic() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = serde_json::json!({
+        "analysis_outcome_error": "missing /tmp/example.",
+        "summary": {"next_action": {"recommended_action": "Refuse (missing /tmp/example)"}, "next_recommendation": "Refuse (missing /tmp/example)"}
+    });
+    let normalized: serde_json::Value =
+        serde_json::from_str(&normalize_agent_receipt_fixture(&source.to_string())?)?;
+    assert_eq!(
+        normalized["summary"]["next_recommendation"],
+        "Refuse (<analysis_outcome_error>)"
+    );
+    assert_eq!(
+        normalized["summary"]["next_action"]["recommended_action"],
+        "Refuse (<analysis_outcome_error>)"
+    );
+    Ok(())
 }
 
 #[test]
@@ -37505,9 +37543,26 @@ fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        // The latency trace is on so window counts can be read from stderr; it
+        // also writes wall-clock `duration_ms` into the receipt, which differs
+        // between runs. Compare everything else byte for byte.
+        let zero_durations = |bytes: Vec<u8>| -> Vec<u8> {
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                .map(|line| match line.split_once("\"duration_ms\": ") {
+                    Some((head, rest)) => {
+                        let tail = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+                        format!("{head}\"duration_ms\": 0{tail}")
+                    }
+                    None => line.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into_bytes()
+        };
         let bytes = (
-            std::fs::read(&out)?,
-            std::fs::read(out.with_extension("md"))?,
+            zero_durations(std::fs::read(&out)?),
+            zero_durations(std::fs::read(out.with_extension("md"))?),
         );
         if let Some(ref expected) = expected {
             assert_eq!(&bytes, expected);

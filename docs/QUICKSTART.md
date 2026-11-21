@@ -256,6 +256,8 @@ terminal. The JSON is the full versioned report and
 is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
 finding's evidence with `ripr context --at <finding-id> --json --quiet`.
 
+<a id="choose-the-change-to-analyze"></a>
+
 ### Choose the change
 
 By default, `check` analyzes the working tree when the repository has
@@ -285,6 +287,19 @@ On an unchanged base branch, an empty diff is expected. To analyze a saved patch
 use `ripr check --diff PATH`, replacing `PATH` with your patch file. The common
 options are in `ripr help check`; `ripr help check --all` lists every option,
 output format, and environment variable.
+
+The published 0.10.0 CLI and the development CLI can inspect the same tracked
+edits through a saved patch. Run this from the repository root in Bash:
+
+```bash
+git diff --no-ext-diff --submodule=short --output=ripr-local.diff HEAD -- && ripr check --diff ripr-local.diff
+```
+
+Git includes staged and unstaged changes to tracked files relative to `HEAD`.
+Stage the intended new files before creating the patch. After a test edit, run
+the focused test, regenerate the patch, and repeat the check. Keep the test
+result alongside the static evidence. Use `ripr --version` and the installed
+help to find the commands and output formats supported by that build.
 
 ### Check, test, and refresh the same change
 

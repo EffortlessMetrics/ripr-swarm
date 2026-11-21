@@ -550,3 +550,28 @@ Updated:
 - `expected/human.txt`
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — helper_chain_one_hop (43)
+
+Reason:
+RIPR-SPEC-0159 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — helper_chain_one_hop (44)
+
+Reason:
+RIPR-SPEC-0159 For helper_chain_one_hop, retain the unresolved boundary input in the infection evidence and advice.
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/sarif.json`

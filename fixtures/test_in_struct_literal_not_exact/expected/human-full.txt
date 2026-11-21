@@ -34,7 +34,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: points * 2
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: points * 2 (line 2)
   - related test src/lib.rs:15 score_is_zero_only_for_zero_points uses weak relational check oracle: assert_eq!(Check { zero: score(points) == 0 }, Check { zero }); misses: assertion too weak to tell the old behavior from the new
   - source table row value 0 at line 16

@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_oracle_disabled_mod_refused (3)
+
+Reason:
+RIPR-SPEC-0197 For predicate_oracle_disabled_mod_refused, keep the repair advice aligned with the observed seam, owner and boundary.
+
+Command:
+`cargo xtask goldens bless predicate_oracle_disabled_mod_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`

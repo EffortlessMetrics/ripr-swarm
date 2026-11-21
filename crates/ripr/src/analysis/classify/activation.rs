@@ -6,7 +6,7 @@
 //! [`activation_and_boundary_input`]. Output feeds the infect stage; it never
 //! claims a runtime outcome.
 
-use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
+use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary, extract_literals};
 use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
@@ -595,6 +595,36 @@ fn observed_discriminator_values(
             });
             continue;
         }
+        if matches!(left_resolved, Some(ResolvedOperand::Local(..)))
+            && let Some(left_value) = &left_exact
+            && let Some(alternative) = separating_comparison_value(
+                probe,
+                owner,
+                owner_source,
+                &left,
+                &right,
+                &left_value.value,
+            )
+            && !equality_line_may_be_diverted(probe, owner, owner_source)
+        {
+            facts.push(ValueFact {
+                file: row.first().and_then(|cell| cell.file.clone()),
+                line: row.first().map(|cell| cell.line).unwrap_or_default(),
+                text: format!(
+                    "{} | {}; {alternative}",
+                    row.first()
+                        .map(|cell| cell.text.as_str())
+                        .unwrap_or_default(),
+                    left_value.provenance
+                ),
+                // This names the row's actual computed value, not an equality
+                // to either threshold. The exact comparison alternatives above
+                // establish why this value is a discriminator.
+                value: format!("{left} == {}", left_value.value),
+                context: ValueContext::FunctionArgument,
+            });
+            continue;
+        }
         if let (Some(left_value), Some(old)) = (&left_exact, &replaced)
             && exact_values_equal(&old.value, &left_value.value)
         {
@@ -942,6 +972,19 @@ fn local_integer_operations_supported(
     parameter_types: &[Option<String>],
     provenance: &[super::value_transfer::EvalStep],
 ) -> bool {
+    // New option-chain consumers may select only builtin option values.
+    // A generic/custom method with the same spelling cannot acquire string
+    // semantics merely because its caller passes a string literal.
+    let option_consumer = provenance
+        .iter()
+        .any(|step| matches!(step.operation.as_str(), "map_or" | "unwrap_or"));
+    if option_consumer
+        && parameter_types
+            .iter()
+            .any(|ty| !integer_operation_type_supported(ty.as_deref(), false))
+    {
+        return false;
+    }
     let checked = provenance
         .iter()
         .any(|step| matches!(step.operation.as_str(), "checked_add" | "checked_sub"));
@@ -1243,7 +1286,40 @@ fn resolve_boundary_operand(
     workspace_complete: bool,
     allow_closed_form: bool,
 ) -> Option<ResolvedOperand> {
-    if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
+    let local_length = allow_closed_form
+        .then(|| operand.strip_suffix(".len()"))
+        .flatten()
+        .filter(|name| is_plain_identifier(name));
+    let initializer = live_local_initializer(owner, operand, predicate_line).or_else(|| {
+        let name = local_length?;
+        let initializer = live_local_initializer_for(owner, name, predicate_line, true)?;
+        // The typed evaluator must start from intrinsic text, not a method
+        // lookalike on a generic/custom receiver. Retain the ordinary root and
+        // signature shadow refusals before composing the authenticated local.
+        let names = free_identifiers(&initializer);
+        let reads: Vec<&String> = names
+            .iter()
+            .filter(|name| parameters.contains(name))
+            .collect();
+        if names.iter().any(|name| !parameters.contains(name))
+            || reads.is_empty()
+            || intrinsic_parameter_types(owner, &reads, index)
+                .iter()
+                .any(|ty| ty.as_deref() != Some("&str"))
+        {
+            return None;
+        }
+        Some(format!("{initializer}.len()"))
+    });
+    if let Some(initializer) = initializer {
+        if (initializer.contains(".map_or(") || initializer.contains(".unwrap_or("))
+            && index
+                .files()
+                .get(&owner.file)
+                .is_some_and(|facts| may_declare_items_in_owner_scope(&facts.source, &owner.name))
+        {
+            return None;
+        }
         // #3296 scanner/helper remainder: a local whose initializer is
         // itself a direct call to a unique helper (`let final_state =
         // scan_state(input)`) jumps to the helper authority — the value
@@ -1278,15 +1354,23 @@ fn resolve_boundary_operand(
         // The local's own declaration may shadow the parameter it reads
         // (`let input = input.strip_prefix(..)`); only an earlier rebinding
         // changes what the initializer's parameter name means.
+        let source_initializer = if local_length.is_some() {
+            initializer
+                .trim()
+                .strip_suffix(".len()")
+                .unwrap_or(initializer.trim())
+        } else {
+            initializer.trim()
+        };
         let declared_line = owner.start_line
             + owner
                 .body
-                .rfind(initializer.trim())
+                .rfind(source_initializer)
                 .map_or(0, |at| owner.body[..at].matches('\n').count());
         if free_identifiers(&initializer).iter().any(|name| {
             parameters.contains(name)
                 && !accounted(name)
-                && parameter_rebound_before(owner, name, declared_line, &initializer)
+                && parameter_rebound_before(owner, name, declared_line, source_initializer)
         }) {
             return None;
         }
@@ -2237,6 +2321,15 @@ pub(in crate::analysis) fn live_local_initializer(
     operand: &str,
     predicate_line: usize,
 ) -> Option<String> {
+    live_local_initializer_for(owner, operand, predicate_line, false)
+}
+
+fn live_local_initializer_for(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    length: bool,
+) -> Option<String> {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     // Detection runs on the masked line; the initializer is taken from
     // the raw line so string literals survive for evaluation (#3295).
@@ -2259,8 +2352,23 @@ pub(in crate::analysis) fn live_local_initializer(
                 crate::analysis::language::changed_let_binding(raw_statement.trim())
             && declared == operand
         {
+            // Alias writes through `&mut local` are outside this bounded
+            // transfer. An initializer is not its later value in that case.
+            let has_statement_tail = masked_line
+                .get(raw_statement.len()..)
+                .is_none_or(|tail| !tail.trim().is_empty());
+            if (length || initializer.contains(".map_or(") || initializer.contains(".unwrap_or("))
+                && (has_statement_tail || !immutable_local_declaration(raw_statement, operand))
+            {
+                return None;
+            }
             let initializer = initializer.to_string();
-            let resolution = crate::analysis::probes::resolve_changed_binding_uses(
+            let resolve = if length {
+                crate::analysis::probes::resolve_changed_binding_length_uses
+            } else {
+                crate::analysis::probes::resolve_changed_binding_uses
+            };
+            let resolution = resolve(
                 operand,
                 &initializer,
                 &owner.body,
@@ -2280,6 +2388,42 @@ pub(in crate::analysis) fn live_local_initializer(
     None
 }
 
+/// Read mutability from the binding pattern, never the spelling of `let mut`.
+/// A declaration the parser cannot authenticate does not establish immutability.
+fn immutable_local_declaration(statement: &str, operand: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+    let source = format!("fn __option_local() {{ {statement} }}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(function) = parsed.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(block) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let mut statements = block.statements();
+    let Some(ast::Stmt::LetStmt(declaration)) = statements.next() else {
+        return false;
+    };
+    if statements.next().is_some()
+        || block.tail_expr().is_some()
+        || declaration.let_else().is_some()
+    {
+        return false;
+    }
+    let Some(ast::Pat::IdentPat(pattern)) = declaration.pat() else {
+        return false;
+    };
+    pattern.name().is_some_and(|name| name.text() == operand)
+        && pattern.mut_token().is_none()
+        && pattern.ref_token().is_none()
+        && pattern.at_token().is_none()
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the shared evidence inputs flow through one authority"
@@ -2295,18 +2439,17 @@ fn missing_discriminator_facts(
     workspace_complete: bool,
     unresolved_boundary: &mut Option<String>,
 ) -> Vec<MissingDiscriminatorFact> {
+    let boundary_evidence = BoundaryEvidence {
+        related_tests,
+        flow_sinks,
+        helper_chain,
+        index,
+        workspace_complete,
+    };
     let mut missing = Vec::new();
     if matches!(probe.family, ProbeFamily::Predicate)
-        && let Some(fact) = missing_boundary_discriminator(
-            probe,
-            owner_fn,
-            related_tests,
-            flow_sinks,
-            helper_chain,
-            index,
-            workspace_complete,
-            unresolved_boundary,
-        )
+        && let Some(fact) =
+            missing_boundary_discriminator(probe, owner_fn, boundary_evidence, unresolved_boundary)
     {
         missing.push(fact);
     }
@@ -2318,11 +2461,7 @@ fn missing_discriminator_facts(
         && let Some(fact) = missing_boundary_discriminator(
             view,
             owner_fn,
-            related_tests,
-            flow_sinks,
-            helper_chain,
-            index,
-            workspace_complete,
+            boundary_evidence,
             &mut returned_unresolved,
         )
         && returned_unresolved.is_none()
@@ -2779,6 +2918,63 @@ fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
     })
 }
 
+/// An exact local value that separates two bare comparison alternatives on
+/// the same operand. The resulting fact retains that actual value and both
+/// outcomes; neither threshold is substituted for the value. Call identity,
+/// intrinsic type admission and same-call observation remain with their owners.
+fn separating_comparison_value(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
+    left: &str,
+    right: &str,
+    value: &str,
+) -> Option<String> {
+    fn parts(expression: &str) -> Option<(&'static str, String, usize)> {
+        if !is_top_level_comparison(expression) {
+            return None;
+        }
+        for operator in [">=", "<=", "==", "!=", ">", "<"] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let right = clean_operand(right);
+                if right.is_empty() || !right.chars().all(|ch| ch.is_ascii_digit()) {
+                    return None;
+                }
+                return Some((operator, clean_operand(left), right.parse().ok()?));
+            }
+        }
+        None
+    }
+    fn holds(operator: &str, value: usize, threshold: usize) -> bool {
+        match operator {
+            ">=" => value >= threshold,
+            "<=" => value <= threshold,
+            "==" => value == threshold,
+            "!=" => value != threshold,
+            ">" => value > threshold,
+            _ => value < threshold,
+        }
+    }
+    if !first_decision_is_clear(owner, owner_source, probe, false) {
+        return None;
+    }
+    let before = probe.before.as_deref()?;
+    let (old_op, old_left, old_threshold) = parts(before)?;
+    let (new_op, new_left, new_threshold) = parts(&probe.expression)?;
+    if old_left != new_left
+        || new_left != left
+        || new_threshold.to_string() != right
+        || value.is_empty()
+        || !value.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    let value = value.parse().ok()?;
+    let old = holds(old_op, value, old_threshold);
+    let new = holds(new_op, value, new_threshold);
+    (old != new).then(|| format!("exact comparison alternatives: `{before}` gives {old}, `{}` gives {new} at {left} = {value}", probe.expression))
+}
+
 /// Whether an observed exact input of the compared parameter separates the old
 /// and new returned comparison when only its integer-literal threshold moved
 /// (`x > 100` to `x > 102`: `thr(101)` is true before and false after). Such an
@@ -2866,16 +3062,221 @@ fn observed_input_separates_threshold_move(
     clippy::too_many_arguments,
     reason = "the shared evidence inputs plus the unresolved-boundary reason computed on the same pass"
 )]
-fn missing_boundary_discriminator(
+/// #1579: stable reason marker for a changed error return behind a
+/// boolean guard the bounded evaluator cannot carry the producing
+/// expression through. The finding builder matches on the returned
+/// reason to withhold an unverifiable repair prescription.
+pub(in crate::analysis) const ERROR_RETURN_GUARD_UNRESOLVED_MARKER: &str =
+    "error return guard unresolved";
+
+/// #1579: name the guard when a bare-identifier predicate guards a
+/// changed error return an exact observer already covers. A guard
+/// with visible literals keeps its satisfiable boundary repair; only
+/// the bare-guard shape (no boundary to test) with a strong
+/// owner-calling observer qualifies. Every related-test row must
+/// leave the sink expression `Unsupported`: a single row the
+/// evaluator resolves means the edge is not unresolved, so the
+/// marker stays withheld no matter the row order. Returns `None`
+/// when the guard is not an owner parameter, the sink is not behind
+/// the guard, or no exact observer exists, so those keep their
+/// honest evidence and satisfiable repair.
+pub(in crate::analysis) fn unresolved_guard_error_edge(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
     index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let owner = owner_fn?;
+    let (guard, error) = if probe.family == ProbeFamily::Predicate {
+        let sink = flow_sinks.iter().find(|sink| {
+            sink.kind == FlowSinkKind::ErrorVariant && sink.line > probe.location.line
+        })?;
+        (probe.expression.trim().to_string(), sink.text.clone())
+    } else {
+        guarded_struct_error_return(probe, owner, index)?
+    };
+    let guard = guard.as_str();
+    if !super::value_transfer::is_identifier(guard) || !extract_literals(guard).is_empty() {
+        return None;
+    }
+    // #1726 review: `function_parameters` preserves `mut`, so a
+    // mutable guard (`mut cancelled: bool`) must match the bare probe
+    // guard. Only the comparison is normalized; call-row and helper
+    // binding keep consuming the raw positional names.
+    let parameters = function_parameters(owner);
+    if !parameters
+        .iter()
+        .any(|parameter| parameter.strip_prefix("mut ").unwrap_or(parameter) == guard)
+    {
+        return None;
+    }
+    let exact_observer = related_tests.iter().any(|test| {
+        test.assertions
+            .iter()
+            .any(|assertion| assertion.strength == OracleStrength::Strong)
+            && super::related_tests::body_contains_owner_call(&test.body, &owner.name)
+    });
+    if !exact_observer {
+        return None;
+    }
+    let call_values = call_values_for_owner(
+        owner,
+        &parameters,
+        related_tests,
+        helper_chain,
+        index,
+        false,
+    );
+    if call_values.is_empty() {
+        return None;
+    }
+    let mut earliest_unsupported: Option<String> = None;
+    for row in &call_values {
+        let inputs: super::value_transfer::ExactInputs = row
+            .iter()
+            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+            .collect();
+        if probe.family != ProbeFamily::Predicate
+            && inputs.get(guard).is_none_or(|value| value != "true")
+        {
+            return None;
+        }
+        match super::value_transfer::evaluate_initializer(&error, &inputs) {
+            super::value_transfer::EvalOutcome::Unsupported { earliest_edge } => {
+                if earliest_unsupported.is_none() {
+                    earliest_unsupported = Some(earliest_edge);
+                }
+            }
+            _ => return None,
+        }
+    }
+    let earliest_edge = earliest_unsupported?;
+    Some(format!(
+        "{ERROR_RETURN_GUARD_UNRESOLVED_MARKER}: `{guard}` guards the changed `{}` (earliest unsupported edge: {earliest_edge})",
+        error
+    ))
+}
+
+/// The actual guarded record-valued error return, not a synthetic flow
+/// witness. The first statement is one bare-parameter `if`, its sole statement
+/// returns the record, and the remaining tail is `Ok`. Shared parser and source
+/// coordinates keep this independent of formatting; enums retain their pins.
+fn guarded_struct_error_return(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<(String, String)> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasName};
+    if !matches!(
+        probe.family,
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) {
+        return None;
+    }
+    let facts = index.files().get(&owner.file)?;
+    if facts.used_lexical_fallback {
+        return None;
+    }
+    let parsed = crate::analysis::syntax::parse_clean_source_file_memoized(&facts.source)?;
+    let lines = crate::analysis::syntax::ra::LineIndex::new(&facts.source);
+    let tree = parsed.tree();
+    let mut functions = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == owner.name)
+                && function
+                    .fn_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == owner.start_line)
+                && lines.line_for_range_end(function.syntax().text_range().end()) == owner.end_line
+        });
+    let function = functions.next()?;
+    if functions.next().is_some() || function.attrs().next().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    let mut statements = body.statements();
+    let ast::Stmt::ExprStmt(statement) = statements.next()? else {
+        return None;
+    };
+    let ast::Expr::IfExpr(guarded) = statement.expr()? else {
+        return None;
+    };
+    if statements.next().is_some() || guarded.else_branch().is_some() {
+        return None;
+    }
+    let ast::Expr::CallExpr(tail) = body.tail_expr()? else {
+        return None;
+    };
+    if tail.expr()?.syntax().text().to_string().trim() != "Ok"
+        || tail.arg_list()?.args().count() != 1
+    {
+        return None;
+    }
+    let arm = guarded.then_branch()?;
+    let mut statements = arm.statements();
+    let ast::Stmt::ExprStmt(statement) = statements.next()? else {
+        return None;
+    };
+    let ast::Expr::ReturnExpr(returned) = statement.expr()? else {
+        return None;
+    };
+    if statements.next().is_some()
+        || arm.tail_expr().is_some()
+        || !(lines.line(returned.syntax().text_range().start())
+            ..=lines.line_for_range_end(returned.syntax().text_range().end()))
+            .contains(&probe.location.line)
+    {
+        return None;
+    }
+    let ast::Expr::CallExpr(error_call) = returned.expr()? else {
+        return None;
+    };
+    if error_call.expr()?.syntax().text().to_string().trim() != "Err" {
+        return None;
+    }
+    let arguments = error_call.arg_list()?;
+    let mut arguments = arguments.args();
+    if !matches!(arguments.next()?, ast::Expr::RecordExpr(_)) || arguments.next().is_some() {
+        return None;
+    }
+    let error = error_call.syntax().text().to_string();
+    // A record with a bare type name is not a supported enum variant pin.
+    if exact_error_variant(&error).is_some() {
+        return None;
+    }
+    Some((guarded.condition()?.syntax().text().to_string(), error))
+}
+
+/// The shared evidence a boundary reading draws on, bundled so the reading takes the probe,
+/// its owner and the unresolved-reason slot without a long positional list.
+#[derive(Clone, Copy)]
+struct BoundaryEvidence<'a> {
+    related_tests: &'a [&'a TestSummary],
+    flow_sinks: &'a [FlowSinkFact],
+    helper_chain: Option<&'a super::helper_transfer::HelperChain>,
+    index: &'a crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
+}
+
+fn missing_boundary_discriminator(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    evidence: BoundaryEvidence<'_>,
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
+    let BoundaryEvidence {
+        related_tests,
+        flow_sinks,
+        helper_chain,
+        index,
+        workspace_complete,
+    } = evidence;
     let owner = owner_fn?;
     let legacy = |unresolved: &mut Option<String>| {
         missing_boundary_discriminator_in(
@@ -3461,18 +3862,10 @@ fn missing_boundary_discriminator_in(
         index,
         text_cells,
     );
-    if call_values.is_empty()
-        && boundary_parameter_field_projection(&parameters, &left).is_none_or(|_| {
-            boundary_operand_values_at_owner_calls(
-                owner,
-                &left,
-                probe.location.line,
-                related_tests,
-                index,
-            )
-            .is_empty()
-        })
-    {
+    // A record parameter identifies the field owner, not the field value.
+    let projected_field =
+        |operand: &str| boundary_parameter_field_projection(&parameters, operand).is_some();
+    if call_values.is_empty() && !projected_field(&left) && !projected_field(&right) {
         // Every related call passes only computed arguments (#6672): the
         // inputs exist but none is readable, so the boundary is
         // unresolved rather than silently unmeasured.
@@ -3662,6 +4055,16 @@ fn missing_boundary_discriminator_in(
             rights
                 .iter()
                 .any(|right_value| exact_values_equal(&right_value.value, &left_value.value))
+                || (matches!(left_resolved, Some(ResolvedOperand::Local(..)))
+                    && separating_comparison_value(
+                        probe,
+                        owner,
+                        owner_source,
+                        &left,
+                        &right,
+                        &left_value.value,
+                    )
+                    .is_some())
         })
     });
 
@@ -3830,21 +4233,23 @@ fn missing_boundary_discriminator_in(
                    parameter: Option<&str>,
                    resolved: Option<&ResolvedOperand>,
                    counterpart: Option<&str>| {
+        if projected_field(operand) {
+            return !collect_boundary_field_values_at_owner_calls(
+                owner,
+                &parameters,
+                operand,
+                probe.location.line,
+                related_tests,
+                index,
+                None,
+                |_, _, _, _, _| {},
+            );
+        }
         parameter.is_none()
             && !operand_evaluates(resolved, counterpart)
             && literal_operand_value(operand).is_none()
             && crate::analysis::value_resolution::constant_operand_name(operand).is_none()
             && crate::analysis::value_resolution::constant_offset_operand(operand).is_none()
-            && boundary_parameter_field_projection(&parameters, operand).is_none_or(|_| {
-                boundary_operand_values_at_owner_calls(
-                    owner,
-                    operand,
-                    probe.location.line,
-                    related_tests,
-                    index,
-                )
-                .is_empty()
-            })
     };
     // When neither side has a value (`out.len() != data.len() / 2`) no
     // row says which side of the boundary a test reaches either, so both
@@ -6702,6 +7107,28 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
     assertion: &OracleFact,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
+    pushed_collection_compared_whole_with_getter(
+        owner,
+        path,
+        test,
+        assertion,
+        index,
+        &|ty, getter, field| {
+            super::builder_override::getter_plainly_reads(index, ty, getter, field)
+        },
+    )
+}
+
+/// Assertion-local whole-collection identity with consumer-owned getter
+/// dispatch admission. Direct field reads retain the existing binding rules.
+pub(in crate::analysis) fn pushed_collection_compared_whole_with_getter(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+    getter_reads_field: &dyn Fn(&str, &str, &str) -> bool,
+) -> bool {
     let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
         return false;
     };
@@ -6723,19 +7150,17 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
                         super::related_tests::own_crate_qualifier(index, test, owner)
                     }),
                 )
-                && super::reveal::binding_untouched_after_owner_call(
+                && super::reveal::binding_untouched_before_assertion(
                     &test.body,
                     test.start_line,
                     &read.binding,
                     call.name(),
                     assertion.line,
+                    &assertion.text,
                 )
                 && read.getter.as_deref().is_none_or(|getter| {
-                    call.impl_type().is_some_and(|impl_type| {
-                        super::builder_override::getter_plainly_reads(
-                            index, impl_type, getter, path,
-                        )
-                    })
+                    call.impl_type()
+                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
                 })
         })
 }
@@ -8609,18 +9034,21 @@ fn collect_boundary_field_values_at_owner_calls<F>(
     index: &crate::analysis::rust_index::RustIndex,
     constant: Option<&BoundaryConstant>,
     mut emit: F,
-) where
+) -> bool
+where
     F: FnMut(&TestSummary, usize, &str, &str, bool),
 {
     let Some((parameter, field)) = boundary_parameter_field_projection(parameters, operand) else {
-        return;
+        return false;
     };
     if owner_rebinds_boundary_field(owner, &parameter, &field, predicate_line) {
-        return;
+        return false;
     }
     let Some(position) = parameters.iter().position(|name| name == &parameter) else {
-        return;
+        return false;
     };
+    let mut saw_owner_call = false;
+    let mut all_values_readable = true;
     for test in related_tests {
         // Only a value that names the constant depends on which declaration
         // the test file means; a spelled literal is judged on its own value.
@@ -8642,22 +9070,22 @@ fn collect_boundary_field_values_at_owner_calls<F>(
             let Some(text) = owner_name_call_text(&call.text, &owner.name, is_free(owner)) else {
                 continue;
             };
-            let Some(arguments) = call_arguments(text, &call.name) else {
+            saw_owner_call = true;
+            let projected = call_arguments(text, &call.name).and_then(|arguments| {
+                projected_boundary_field_expression(arguments.get(position)?, &field)
+            });
+            let Some(projected) = projected else {
+                all_values_readable = false;
                 continue;
             };
-            let Some(argument) = arguments.get(position) else {
-                continue;
-            };
-            let Some(projected) = projected_boundary_field_expression(argument, &field) else {
-                continue;
-            };
-            for (value, _) in
-                env_facts.resolve_at_call(&projected, call.line, &call.name, &call.text)
-            {
+            let values = env_facts.resolve_at_call(&projected, call.line, &call.name, &call.text);
+            all_values_readable &= !values.is_empty();
+            for (value, _) in values {
                 emit(test, call.line, &call.text, &value, identity_permitted);
             }
         }
     }
+    saw_owner_call && all_values_readable
 }
 
 fn boundary_operand_values_at_owner_calls(
@@ -9323,6 +9751,10 @@ fn oriented_comparison_operands(
     let owner_bound = |operand: &str| {
         boundary_operand_parameter(owner, owner_source, parameters, operand, predicate_line).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
+            || operand.strip_suffix(".len()").is_some_and(|name| {
+                is_plain_identifier(name)
+                    && live_local_initializer_for(owner, name, predicate_line, true).is_some()
+            })
             // Any declared local keeps the left side, as before #4228:
             // the swap exists for literals, not to reinterpret locals.
             || owner_declares_local(owner, operand, usize::MAX)
@@ -10229,7 +10661,10 @@ fn split_top_level_args(text: &str) -> Vec<String> {
     let mut depth = 0i32;
     let mut in_string = false;
     let mut escaped = false;
-    for (idx, ch) in text.char_indices() {
+    let chars = text.char_indices().collect::<Vec<_>>();
+    let mut at = 0usize;
+    while let Some(&(idx, ch)) = chars.get(at) {
+        at += 1;
         if in_string {
             if escaped {
                 escaped = false;
@@ -10242,6 +10677,15 @@ fn split_top_level_args(text: &str) -> Vec<String> {
         }
         match ch {
             '"' => in_string = true,
+            // A char literal is one unit: brackets inside `'['` must not
+            // affect depth, or the top-level comma is lost and later
+            // arguments are mislabeled (#1724 review). A lifetime (`'a`)
+            // is not a literal and is left alone.
+            '\'' => {
+                if let Some(close) = char_literal_close(&chars, at - 1) {
+                    at = close + 1;
+                }
+            }
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth -= 1,
             ',' if depth == 0 => {
@@ -11654,7 +12098,7 @@ mod tests {
     #[test]
     fn shadowing_local_wins_over_the_parameter_argument() -> Result<(), String> {
         let owner = function(
-            "pub fn split_after(input: &str) -> bool {
+            "pub fn score(input: &str) -> bool {
     let input = input.strip_prefix(\"x\").map_or(\"none\", |s| s);
     input == \"y\"
 }",
@@ -17241,5 +17685,198 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
         assert!(!macro_names_rebound(&index, &["assert"]));
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
+    }
+
+    #[test]
+    fn split_top_level_args_respects_char_literals() {
+        // #1724 review: brackets inside `'['`/`']'` must not suppress the
+        // top-level comma, or `close` is mislabeled as `open`.
+        assert_eq!(
+            split_top_level_args("\"[]\", '[', ']'"),
+            vec!["\"[]\"".to_string(), "'['".to_string(), "']'".to_string()]
+        );
+        // A lifetime is not a char literal and must not swallow arguments.
+        assert_eq!(
+            split_top_level_args("text: &'a str, other: &'b str"),
+            vec!["text: &'a str".to_string(), "other: &'b str".to_string()]
+        );
+    }
+
+    fn guard_owner() -> FunctionSummary {
+        function(
+            "pub fn score(cancelled: bool) -> i32 {\n    if cancelled {\n        1\n    } else {\n        0\n    }\n}",
+        )
+    }
+
+    fn guard_sink(line: usize) -> FlowSinkFact {
+        FlowSinkFact {
+            kind: FlowSinkKind::ErrorVariant,
+            text: "Result::Err(OpError { code: -32800 })".to_string(),
+            line,
+            owner: None,
+        }
+    }
+
+    fn guard_test(name: &str, body: &str, strong_oracle: bool) -> TestSummary {
+        TestSummary {
+            name: name.to_string(),
+            file: PathBuf::from("tests/score.rs"),
+            start_line: 10,
+            end_line: 14,
+            body: body.to_string().into(),
+            calls: vec![CallFact {
+                name: "score".to_string(),
+                line: 11,
+                text: "score(true)".to_string().into(),
+            }]
+            .into(),
+            assertions: if strong_oracle {
+                vec![OracleFact {
+                    kind: OracleKind::ExactValue,
+                    strength: OracleStrength::Strong,
+                    line: 12,
+                    text: "assert_eq!(err, cancelled_error());".to_string(),
+                    observed_tokens: Vec::new(),
+                    ok_value_observed: None,
+                }]
+            } else {
+                Vec::new()
+            },
+            literals: Default::default(),
+            attrs: Default::default(),
+            nested_fn_names: Default::default(),
+            let_bindings: Default::default(),
+            generated: None,
+        }
+    }
+
+    // #1726 review T1: a mutable guard parameter (`mut cancelled`)
+    // still names the guard edge; only the comparison is normalized.
+    #[test]
+    fn guard_error_edge_names_mutable_guard_parameter() -> Result<(), String> {
+        let index = crate::analysis::rust_index::RustIndex::default();
+        let mut owner = guard_owner();
+        owner.body = "pub fn score(mut cancelled: bool) -> i32 {\n    if cancelled {\n        1\n    } else {\n        0\n    }\n}"
+            .into();
+        let probe = probe(ProbeFamily::Predicate, "cancelled");
+        let test = guard_test(
+            "cancelled_return_is_exact",
+            "let err = score(true).expect_err(\"x\");\nassert_eq!(err, cancelled_error());",
+            true,
+        );
+
+        let Some(reason) = unresolved_guard_error_edge(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[guard_sink(3)],
+            None,
+            &index,
+        ) else {
+            return Err("mutable guard must name the edge".to_string());
+        };
+        if !reason.contains("`cancelled`") {
+            return Err(format!("reason must name the guard: {reason}"));
+        }
+        Ok(())
+    }
+
+    // #1579: a bare guard parameter over a changed error return an
+    // exact observer already covers names the guard edge.
+    #[test]
+    fn guard_error_edge_names_guard_for_exactly_observed_return() -> Result<(), String> {
+        let index = crate::analysis::rust_index::RustIndex::default();
+        let owner = guard_owner();
+        let probe = probe(ProbeFamily::Predicate, "cancelled");
+        let test = guard_test(
+            "cancelled_return_is_exact",
+            "let err = score(true).expect_err(\"x\");\nassert_eq!(err, cancelled_error());",
+            true,
+        );
+
+        let Some(reason) = unresolved_guard_error_edge(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[guard_sink(3)],
+            None,
+            &index,
+        ) else {
+            return Err("bare guard with exact observer must name the edge".to_string());
+        };
+        for needle in [
+            ERROR_RETURN_GUARD_UNRESOLVED_MARKER,
+            "`cancelled`",
+            "not a supported operation chain",
+        ] {
+            if !reason.contains(needle) {
+                return Err(format!("reason must carry {needle}: {reason}"));
+            }
+        }
+        Ok(())
+    }
+
+    // #1579 paired controls: each missing signal withholds the marker
+    // so satisfiable repairs stay prescribable.
+    #[test]
+    fn guard_error_edge_withholds_without_each_signal() {
+        let index = crate::analysis::rust_index::RustIndex::default();
+        let owner = guard_owner();
+        let exact = guard_test(
+            "cancelled_return_is_exact",
+            "let err = score(true).expect_err(\"x\");\nassert_eq!(err, cancelled_error());",
+            true,
+        );
+        let weak = guard_test(
+            "cancelled_return_is_weak",
+            "let err = score(true).expect_err(\"x\");",
+            false,
+        );
+        let guarded = probe(ProbeFamily::Predicate, "cancelled");
+        let literal_guard = probe(ProbeFamily::Predicate, "amount >= threshold");
+        let foreign_guard = probe(ProbeFamily::Predicate, "other_flag");
+        let edge = |probe: &Probe,
+                    owner: Option<&FunctionSummary>,
+                    test: &TestSummary,
+                    sink: FlowSinkFact| {
+            unresolved_guard_error_edge(probe, owner, &[test], &[sink], None, &index)
+        };
+
+        // Guard with visible literals keeps its boundary repair.
+        assert!(
+            edge(&literal_guard, Some(&owner), &exact, guard_sink(3)).is_none(),
+            "literal guard must not take the unresolved edge"
+        );
+        // Guard that is not an owner parameter names no edge.
+        assert!(
+            edge(&foreign_guard, Some(&owner), &exact, guard_sink(3)).is_none(),
+            "non-parameter guard must not take the unresolved edge"
+        );
+        // Sink on the probe line is not behind the guard.
+        assert!(
+            edge(&guarded, Some(&owner), &exact, guard_sink(2)).is_none(),
+            "sink on the guard line must not take the unresolved edge"
+        );
+        // No exact observer means the assertion gap stays actionable.
+        assert!(
+            edge(&guarded, Some(&owner), &weak, guard_sink(3)).is_none(),
+            "missing exact observer must not take the unresolved edge"
+        );
+        // A sink the evaluator resolves is not an unresolved edge.
+        let resolved = FlowSinkFact {
+            kind: FlowSinkKind::ErrorVariant,
+            text: "\"operation cancelled\"".to_string(),
+            line: 3,
+            owner: None,
+        };
+        assert!(
+            edge(&guarded, Some(&owner), &exact, resolved).is_none(),
+            "resolvable sink must not take the unresolved edge"
+        );
+        // No owner means no guard identity to name.
+        assert!(
+            edge(&guarded, None, &exact, guard_sink(3)).is_none(),
+            "missing owner must not take the unresolved edge"
+        );
     }
 }

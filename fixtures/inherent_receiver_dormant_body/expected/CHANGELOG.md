@@ -189,3 +189,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_dormant_body (17)
+
+Reason:
+RIPR-SPEC-0005 For inherent_receiver_dormant_body, explain why the bounded match-arm owner cannot start a repair.
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/human.txt`

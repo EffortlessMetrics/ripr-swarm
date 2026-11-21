@@ -1,3 +1,4 @@
+use super::super::classify::is_wildcard_discard_binding;
 use super::super::diff::{ChangedFile, ChangedLine};
 use super::super::rust_index::{
     RustIndex, SyntaxNodeFact, changed_nodes_for_lines, extract_identifier_tokens, find_file_facts,
@@ -1004,7 +1005,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
     }
 
-    let represented_short_lines = represented_short_replacements(changed, &probes);
+    let represented_lines = represented_replacements(changed, &probes);
     let represented_value_lines = represented_value_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         if crate::analysis::cancellation::checkpoint().is_err() {
@@ -1099,7 +1100,7 @@ pub(crate) fn probes_for_file_with_relations(
                 changed,
                 &added_static_only,
                 &added_run_starts,
-            ) || represented_short_lines.contains(&(removed.line, family.as_str())))
+            ) || represented_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
@@ -1508,7 +1509,7 @@ fn changed_binding_return_flow(
 
 fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
     let changed_head = changed_head.trim();
-    if changed_head.starts_with("let _ =") {
+    if is_wildcard_discard_binding(changed_head) {
         changed_head.to_string()
     } else {
         parser_expression.to_string()
@@ -2485,8 +2486,8 @@ const MAX_ATTRIBUTE_LOOKBEHIND_LINES: usize = 32;
 
 /// One inline module scope: 1-based lines strictly inside the braces.
 /// `close_line` is the closing-brace line, or [`usize::MAX`] when the
-/// block never closes. The opening and closing lines themselves are
-/// never members (fail-closed: bare syntax lines stay eligible).
+/// block never closes. The opening line is never a member (fail-closed:
+/// bare syntax lines stay eligible); the closing line is (#1428).
 struct InlineModuleRange {
     open_line: usize,
     close_line: usize,
@@ -2502,11 +2503,14 @@ fn test_module_ranges_for(index: &RustIndex, path: &Path) -> Vec<InlineModuleRan
 }
 
 /// Whether `line` (1-based) sits inside a `requires_test` inline-module
-/// range (#3718).
+/// range (#3718). The closing brace belongs to its module (#1428): it is
+/// test-only text, and excluding it mints production-debt seams on added
+/// test modules. The opener stays outside: it may carry the module's own
+/// declaration weight.
 fn line_in_module_ranges(ranges: &[InlineModuleRange], line: usize) -> bool {
     ranges
         .iter()
-        .any(|range| range.requires_test && range.open_line < line && line < range.close_line)
+        .any(|range| range.requires_test && range.open_line < line && line <= range.close_line)
 }
 
 /// Whether `line` (1-based) sits inside an inline `mod` block whose own
@@ -2941,11 +2945,13 @@ fn has_matching_added_line(
 }
 
 /// #7807: absence of long identifier tokens is not absence of a replacement.
+/// The same proof also prevents a canonical parsed field edit from emitting
+/// a second historical whole-line field when lexical classification changes.
 /// Admit an exact old line/family only when an emitted probe at its positional
 /// counterpart faithfully carries the edit. A whole old `before` beside a
 /// smaller `after` is insufficient: one selected constructor may not own all
 /// edits on that line. Uneven blocks and unrepresented families stay historical.
-fn represented_short_replacements(
+fn represented_replacements(
     changed: &ChangedFile,
     probes: &[SeededProbe],
 ) -> std::collections::BTreeSet<(usize, &'static str)> {
@@ -2961,7 +2967,9 @@ fn represented_short_replacements(
         let Some(removed) = counterparts.get(&probe.location.line) else {
             continue;
         };
-        if !extract_identifier_tokens(&removed.text).is_empty() {
+        if !(extract_identifier_tokens(&removed.text).is_empty()
+            || probe.family == ProbeFamily::FieldConstruction && seeded.parser_span.is_some())
+        {
             continue;
         }
         let Some(added) = added_at.get(&probe.location.line) else {
@@ -6623,44 +6631,58 @@ mod tests {
 
     #[test]
     fn probes_for_file_preserves_wildcard_discard_head() -> Result<(), String> {
-        let path = PathBuf::from("src/lib.rs");
-        let changed_text = "let _ = compute_fee(amount * 9);";
-        let changed = ChangedFile {
-            path: path.clone(),
-            added_lines: vec![ChangedLine {
-                line: 4,
-                new_side_line: 4,
-                text: changed_text.to_string(),
-            }],
-            removed_lines: vec![],
-        };
-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            files: BTreeMap::from([(
-                path.clone(),
-                FileFacts {
-                    path,
-                    probe_shapes: vec![ProbeShapeFact {
-                        start_line: 4,
-                        end_line: 4,
-                        start_byte: 40,
-                        end_byte: 63,
-                        kind: ProbeShapeKind::CallDeletion,
-                        text: "compute_fee(amount * 9)".into(),
-                        value_consumed: false,
-                        source_lines: None,
-                    }],
-                    ..FileFacts::default()
-                },
-            )]),
-            ..Default::default()
-        });
+        for changed_text in [
+            "let _ = compute_fee(amount * 9);",
+            "let _ : u32 = compute_fee(amount * 9);",
+            "let _= compute_fee(amount * 9);",
+        ] {
+            let path = PathBuf::from("src/lib.rs");
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line: 4,
+                    new_side_line: 4,
+                    text: changed_text.to_string(),
+                }],
+                removed_lines: vec![],
+            };
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path,
+                        probe_shapes: vec![ProbeShapeFact {
+                            start_line: 4,
+                            end_line: 4,
+                            start_byte: 40,
+                            end_byte: 63,
+                            kind: ProbeShapeKind::SideEffect,
+                            text: "compute_fee(amount * 9)".into(),
+                            value_consumed: false,
+                            source_lines: None,
+                        }],
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            });
 
-        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
-        let Some(probe) = probes.first() else {
-            return Err("expected wildcard-discard call probe".to_string());
-        };
-        if probe.expression != changed_text {
-            return Err(format!("wildcard discard context was erased: {probe:?}"));
+            let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+            let Some(probe) = probes.first() else {
+                return Err("expected wildcard-discard call probe".to_string());
+            };
+            if probe.expression != changed_text {
+                return Err(format!("wildcard discard context was erased: {probe:?}"));
+            }
+            let sinks = crate::analysis::classify::local_flow_sinks(probe, None);
+            if !sinks
+                .first()
+                .is_some_and(|sink| sink.kind == crate::domain::FlowSinkKind::Unknown)
+            {
+                return Err(format!(
+                    "wildcard discard did not produce an unknown sink: {probe:?}"
+                ));
+            }
         }
         Ok(())
     }
@@ -8776,6 +8798,28 @@ mod source_currentness_tests {
              \x20   const VALUE: u32 = 3;\n\
              }\n";
         assert!(line_in_cfg_test_module(spaced, 3));
+    }
+
+    /// #1428: the closing brace of a requires_test inline module is test
+    /// evidence like its contents; a production closing brace stays
+    /// eligible, and the module opener stays outside the scope.
+    #[test]
+    fn cfg_test_module_scope_includes_closing_brace() {
+        let source = "#[cfg(test)]\n\
+             mod tests {\n\
+             \x20   #[test]\n\
+             \x20   fn case() {\n\
+             \x20       assert!(true);\n\
+             \x20   }\n\
+             }\n";
+        assert!(!line_in_cfg_test_module(source, 2));
+        assert!(line_in_cfg_test_module(source, 4));
+        assert!(line_in_cfg_test_module(source, 6));
+        assert!(line_in_cfg_test_module(source, 7));
+        let production = "pub fn live() -> bool {\n\
+             \x20   true\n\
+             }\n";
+        assert!(!line_in_cfg_test_module(production, 3));
     }
 
     /// #14089: the module brace offset was measured from the text after the
