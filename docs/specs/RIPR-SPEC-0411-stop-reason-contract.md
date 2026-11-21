@@ -74,6 +74,11 @@ Heuristic annotations run in `decision::stop_reasons` before classification
 backfill; they only add parallel reasons. Unknown-class backfill runs after
 classification via `ensure_unknown_stop_reason`.
 
+For `compile_time_invariant`, the assertion shape is a source observation.
+A bare `const_assert!` can name a local macro; the reason establishes neither
+macro provenance nor evaluation. A violation can prevent a build that evaluates
+the assertion. For example, `debug_assert!` depends on `debug_assertions`.
+
 ### Reserved wire values
 
 `max_depth_reached`, `external_crate_boundary`, and `feature_unknown` remain

@@ -193,7 +193,8 @@ pub(in crate::analysis) fn missing_evidence(
 /// A changed item-level compile-time assertion: `const _: () = assert!(..)`
 /// (also `assert_eq!`/`assert_ne!`/`debug_assert!` forms) or the
 /// `static_assertions` `const_assert*!` macros, bare or path-qualified. The
-/// match is on the written text only; anything else keeps its generic reason.
+/// match is on the written text only. A bare name may denote a local macro;
+/// this check does not resolve the invocation or verify its behavior.
 pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
     if let Some(rest) = text.strip_prefix("const _") {
@@ -1769,6 +1770,7 @@ mod tests {
         for text in [
             "const _: () = assert!(N <= 16);",
             "const _: () = assert_eq!(N, 16);",
+            "const _: () = debug_assert!(N <= 16);",
             "const _ : () = assert!(N <= 16);",
             "const _: () = { assert!(N <= 16); };",
             "const_assert!(N <= 16);",
@@ -1781,6 +1783,7 @@ mod tests {
             "pub const N: usize = 12;",
             "const _: () = ();",
             "assert!(N <= 16);",
+            "debug_assert!(N <= 16);",
             "other::const_assert!(N <= 16);",
             "let const_assert = 1;",
             "const _: () = register(\"assertion_table\");",
