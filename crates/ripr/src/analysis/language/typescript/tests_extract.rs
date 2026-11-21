@@ -6703,7 +6703,7 @@ fn assignment_follows(after: &str) -> bool {
 
 /// The content of the second top-level argument of `args` when it is a plain
 /// string literal (no template interpolation), else `None`.
-fn second_argument_literal(args: &str) -> Option<&str> {
+pub(crate) fn second_argument_literal(args: &str) -> Option<&str> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;

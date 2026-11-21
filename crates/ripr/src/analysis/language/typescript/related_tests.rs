@@ -3136,8 +3136,15 @@ pub(crate) fn receiver_owner_call_relation(
     }
     let constructor_names =
         constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
-    let mut receiver_names =
-        receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+    // A replaced member (`c.apply = fake`, a `spyOn`/`stub` naming it) runs
+    // the replacement, not the method as written (#15950, #6980). A getter
+    // has its own, wider rule below.
+    if owner.method_kind != TypeScriptMethodKind::Getter
+        && super::method_replacement_guard::method_replaced_in_test(test, &owner.name)
+    {
+        return false;
+    }
+    let mut receiver_names = unrebound_constructed_receivers(&test.body_text, &constructor_names);
     // A receiver built in the enclosing scope (`const cart = new Cart()` in a
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
@@ -3837,7 +3844,7 @@ pub(crate) fn owner_method_receiver_names(
             let constructor_names =
                 constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
             let mut receivers =
-                receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+                unrebound_constructed_receivers(&test.body_text, &constructor_names);
             for binding in test.scope_bindings.iter() {
                 if binding
                     .constructed_by
@@ -3884,6 +3891,11 @@ pub(crate) fn class_method_owner_call_relation(
     if owner.owner_kind != OwnerKind::ClassMethod
         || test_mocks_owner_module(test, owner, alias_map, workspace_root)
     {
+        return false;
+    }
+    // A replaced static (`Cart.make = fake`, `spyOn(Cart, 'make')`) is not
+    // the method as written (#15950, #6980).
+    if super::method_replacement_guard::method_replaced_in_test(test, &owner.name) {
         return false;
     }
     let class_names = class_names_for_class_method_owner(test, owner, alias_map, workspace_root);
@@ -4064,6 +4076,42 @@ pub(crate) fn receiver_names_for_constructor_calls(
         }
     }
     receiver_names
+}
+
+/// [`receiver_names_for_constructor_calls`] without the receivers the body
+/// assigns again (`let c = new Cart(); c = new Other();`, `c ??= x`, `c++`):
+/// what such a name holds at the call is not read, so it is no evidence of
+/// the owner's class (#15950). A second declaration of the name is a
+/// block-scoped shadow, not a write to the receiver: the first binding still
+/// holds the instance, so it stays a receiver.
+pub(crate) fn unrebound_constructed_receivers(
+    body_text: &str,
+    constructor_names: &[String],
+) -> Vec<String> {
+    let mut receivers = receiver_names_for_constructor_calls(body_text, constructor_names);
+    if receivers.is_empty() {
+        return receivers;
+    }
+    let writes = super::tests_extract::identifier_writes(body_text);
+    receivers.retain(|receiver| {
+        !writes
+            .iter()
+            .any(|(written, at)| written == receiver && !write_is_declaration(body_text, *at))
+    });
+    receivers
+}
+
+/// `true` when the write at byte `at` is the name of a `const`/`let`/`var`
+/// declarator rather than an assignment to an existing binding.
+fn write_is_declaration(body: &str, at: usize) -> bool {
+    let before = body[..at].trim_end();
+    ["const", "let", "var"].iter().any(|keyword| {
+        before.strip_suffix(keyword).is_some_and(|head| {
+            head.chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+        })
+    })
 }
 
 /// `line` without a trailing `// comment` (a `//` outside any quote). An

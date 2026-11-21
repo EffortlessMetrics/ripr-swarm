@@ -1,0 +1,27 @@
+# Registers the setup-file mock (#15949) and replaced-method (#15950) proofs under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::a_setup_file_that_mocks_another_module_keeps_the_relation",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::a_vitest_setup_file_mock_of_the_owner_withholds",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::a_define_config_call_with_a_resolved_entry_withholds",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::jest_setup_keys_withhold_from_every_config_form",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::a_package_json_setup_key_outside_the_jest_block_is_not_a_config",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::global_setup_registers_no_mock_for_a_test",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::a_literal_root_dir_bases_the_setup_entry",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::the_mock_specifier_resolves_from_the_setup_file",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::a_mock_in_a_file_the_setup_file_imports_withholds_within_the_hop_bound",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::a_config_governs_only_tests_under_its_directory",
+  "crates/ripr/tests/typescript_setup_file_mocks.rs::an_unreadable_setup_specifier_withholds_like_an_in_file_one",
+  "crates/ripr/tests/typescript_replaced_methods.rs::an_unreplaced_method_on_a_constructed_receiver_relates",
+  "crates/ripr/tests/typescript_replaced_methods.rs::a_method_replaced_in_the_test_body_withholds",
+  "crates/ripr/tests/typescript_replaced_methods.rs::a_method_replaced_in_a_hook_withholds",
+  "crates/ripr/tests/typescript_replaced_methods.rs::a_receiver_the_body_rebinds_withholds",
+  "crates/ripr/tests/typescript_replaced_methods.rs::a_static_method_relates_unless_the_file_replaces_it",
+  "crates/ripr/src/analysis/language/typescript/method_replacement_guard.rs::a_replacement_call_must_name_the_member_as_its_second_argument",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/setup_file_mocks.rs::apply_setup_file_mocks",
+  "crates/ripr/src/analysis/language/typescript/method_replacement_guard.rs::method_replaced_in_test",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs::unrebound_constructed_receivers",
+]
