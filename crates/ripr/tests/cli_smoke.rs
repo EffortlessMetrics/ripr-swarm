@@ -37570,16 +37570,19 @@ fn agent_repair_stale_cross_namespace_seam_id_is_a_typed_refusal()
 #[test]
 fn ci_summary_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
     let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
-    let mut child = probe_command(env!("CARGO_BIN_EXE_ripr"))
+    // Close the reader before spawning: dropping `Child::stdout` after spawn
+    // races with the child's write, and a summary that fits the pipe buffer
+    // would then exit 0.
+    let (reader, writer) = std::io::pipe()?;
+    drop(reader);
+    let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
         .args(["reports", "ci-summary", "--root"])
         .arg(&sample)
         .args(["--base-ref", "main"])
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
+        .stdout(writer)
         .stderr(Stdio::piped())
-        .spawn()?;
-    drop(child.stdout.take());
-    let output = child.wait_with_output()?;
+        .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
     assert!(
