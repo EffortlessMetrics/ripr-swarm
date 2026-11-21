@@ -100,7 +100,7 @@ fn check_at_the_git_top_level_still_offers_the_repair_start() -> Result<(), Stri
 
 #[test]
 fn agent_repair_refuses_a_subdirectory_root_before_writing_anything() -> Result<(), String> {
-    let (_guard, _top, backend) = monorepo("refuse")?;
+    let (_guard, top, backend) = monorepo("refuse")?;
     let output = ripr(
         &backend,
         &[
@@ -121,6 +121,14 @@ fn agent_repair_refuses_a_subdirectory_root_before_writing_anything() -> Result<
         return Err(format!(
             "expected the top-level refusal with exit 2, got {:?}:\n{stderr}",
             output.status.code()
+        ));
+    }
+    // The refusal names the next step: check from the top-level it found.
+    let top = std::fs::canonicalize(&top).map_err(|error| format!("canonicalize top: {error}"))?;
+    let next_step = format!("rerun `ripr check --root {}`", top.display());
+    if !stderr.contains(&next_step) {
+        return Err(format!(
+            "the refusal does not name its next step `{next_step}`:\n{stderr}"
         ));
     }
     if backend.join("target").exists() {
