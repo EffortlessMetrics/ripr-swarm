@@ -55,7 +55,10 @@ impl OwnerOptOutReason {
 }
 
 /// Which scope carried the opt-out attribute (#13910).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum OwnerOptOutScope {
     /// The owner function itself, or a function whose body declares it.
     Fn,
@@ -93,7 +96,8 @@ impl OwnerOptOutScope {
 }
 
 /// One finding withheld because its owner opted out.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OwnerOptOut {
     /// The withheld finding's id.
     pub(crate) finding_id: String,

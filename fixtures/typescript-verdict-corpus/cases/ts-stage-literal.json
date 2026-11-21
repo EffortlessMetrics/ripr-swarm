@@ -1,0 +1,47 @@
+{
+  "case_id": "ts-stage-literal",
+  "subject_id": "authored-ts-stage-literal",
+  "diff": "cases/ts-stage-literal.diff",
+  "anchor": {
+    "file": "src/price.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "node_stage_literal",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test test/price.test.ts",
+    "toolchain": "Node.js v24.19.0, node:test (built in), x86_64-linux; original, edit, and both alternates executed",
+    "mutants": [
+      {
+        "replacement": "return 6;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: different fallback/literal value is hidden by the truthy assertion"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The edited positive literal/fallback leaves the collected truthy assertion passing. The edit is the single behavior-change mutant, so runtime truth is not_discriminated; static infection uncertainty remains independent.",
+  "labeling_observation": {
+    "ripr_commit": "7c1087709bdecb88f1fd25b0e813e86ffc2213dc",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "infection_unknown"
+  ]
+}

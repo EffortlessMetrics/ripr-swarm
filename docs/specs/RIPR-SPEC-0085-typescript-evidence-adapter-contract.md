@@ -185,6 +185,7 @@ bun test <file>
 <launch> vitest run <file>
 <launch> jest <file>
 <launch> ava <file>
+<launch> mocha <file>
 node --test <file>
 npm test -- <file>
 pnpm test -- <file>
@@ -199,6 +200,10 @@ resolved runner), `pnpm exec` (pnpm), `yarn` (Yarn), or `bun run` (Bun). A bare
 the package root. Each launcher runs only the installed binary: `npx` without
 `--no-install` and `bunx` fetch a missing package from the registry (npx skips
 its prompt in a non-interactive shell), which would run an unlocked version.
+
+`npm test -- <file>`, `pnpm test -- <file>` and `yarn test <file>` run the
+manifest's `scripts.test`, so they are never emitted when that script is the
+`npm init` placeholder (`echo "Error: no test specified" && exit 1`).
 
 An unresolved or ambiguous runner becomes the named limitation
 `typescript_test_runner_unresolved`. No command is ever synthesized from

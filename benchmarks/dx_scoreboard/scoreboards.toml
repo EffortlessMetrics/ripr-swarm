@@ -394,7 +394,8 @@ memory_ratchet = "2026-11-04: ceiling 1024 MB, ladder bar 512 MB; measured 457 M
 # when the analysis is the typed partial outcome and its only limitations are
 # of the declared kind. A complete result, or any other limitation kind
 # beside it, fails the row. The admitted row stays visibly partial and is
-# never scanned for contradictions.
+# never scanned for contradictions; its contradiction sample is not_measured
+# (out of declared scope), not a lost completion (#10809).
 # The ceilings stay (#12052).
 [[corpus]]
 id = "typescript-compiler"

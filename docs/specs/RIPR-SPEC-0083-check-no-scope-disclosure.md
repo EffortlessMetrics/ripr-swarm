@@ -304,9 +304,11 @@ section's path from its own header or rename/copy metadata, with the same
 quoting and side-prefix rules as any other section, and drops paths outside
 the requested `--path` or `--exclude` scope. ripr's own artifacts and a copy
 destination read whole as added source (#15121) are not named. Binary assets
-and deleted files keep their existing handling. Known limit: a `--no-prefix`
-patch has no section identity in the git header reader, so a binary section in
-one is not named; ripr's own git invocations always use `a/` and `b/`. Paths in both lines are written terminal-safe.
+and deleted files keep their existing handling. A `--no-prefix` binary section
+(`diff --git src/x.rs src/x.rs` with `Binary files src/x.rs and src/x.rs
+differ`) is read by its whole path only when the header and the sentinel
+repeat the same token, so a prefixed, mnemonic or renamed section is never
+respelled (#15665). Paths in both lines are written terminal-safe.
 
 ### Non-claims
 
@@ -394,6 +396,7 @@ one is not named; ripr's own git invocations always use `a/` and `b/`. Paths in 
 - `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_deleted_file_beside_another_change_is_named` (#15324: a deleted file beside another changed file is named on stderr; a diff with no deletion prints no deletion line)
 - `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete` (#15324: a binary-rendered `.rs` section, including a C-quoted name, makes the outcome incomplete with a typed limitation; a binary asset, a text-only diff, a binary source outside the `--path` scope or matched by an exact `--exclude` of its decoded name, and one under `target/ripr` stay complete)
 - `crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_binary_rendered_copy_read_as_added_source_is_not_named_unread` (#15324: a copy destination read whole as added source is not named)
+- `crates/ripr/src/analysis/diff/path.rs::tests::prefixless_binary_sections_read_only_on_exact_agreement` (#15665: root-level, nested and quoted prefixless sections are read; prefixed, renamed, deleted and traversal sections are not)
 - `crates/ripr/src/analysis/diff/parse.rs::tests::binary_sections_record_their_own_decoded_path` (#15324: modified, added, quoted, renamed and mnemonic binary sections record their decoded path; deleted and text sections do not)
 - `crates/ripr/src/analysis/diff_intake_disclosure.rs::tests::only_unread_routed_sources_are_named` (#15324: routed source paths are named, assets and paths already read are not)
 - `crates/ripr/tests/cli_smoke.rs::check_on_a_branch_its_base_already_contains_names_that_cause` (#14265: built binary on a branch behind `main`, both `HEAD~1` arms, explicit `--base`, and a feature-branch control)

@@ -1,0 +1,8 @@
+diff --git a/src/notify.js b/src/notify.js
+--- a/src/notify.js
++++ b/src/notify.js
+@@ -1,3 +1,3 @@
+ export function notify(id, sender) {
+-  sender.send(id * 2);
++  sender.send(2 * id);
+ }

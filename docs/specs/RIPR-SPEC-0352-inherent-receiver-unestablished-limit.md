@@ -37,32 +37,57 @@ another crate, so placement is unavailable and the binding cannot be verified.
 The refusal then dropped the relation to `weak_token_substring` and the finding
 to a gap, an actionable repair signal on a receiver never shown to differ.
 
-## Draft placement and unindexed members (#14260)
+## Draft placement and unindexed members (#14260, #14116)
 
-Placement (RIPR-SPEC-0240) is unavailable workspace-wide when a workspace
-member that the index omitted, as a Draft index omits members that are not the
-changed package or its reverse path-dependents, may compile an indexed file
-(#10149). An omitted member may do so when a crate root it declares or its
-default layout provides contains `include!`, or a `#[path]` that is not
-provably the member's own file. A `#[path]` is the member's own file when all
-of these hold, and any doubt keeps the unavailable result:
+A workspace member that the index omitted, as a Draft index omits members that
+are not the changed package or its reverse path-dependents, may compile an
+indexed file into a crate the index does not hold (#10149). Such a file cannot
+be charged to the one root the index records, so placement (RIPR-SPEC-0240)
+is withheld from it.
 
-1. It is exactly one plain string literal on a top-level out-of-line
-   `mod name;`, and every `#[path` in the file is such an attribute.
-2. Its target, resolved from the declaring file's directory with symlinks
-   followed, is an existing file inside the member's directory.
-3. The target is read under the same rule: it carries no `include!`, no inner
-   `#![path]`, no default-layout `mod child;` (whose file is not read), and
-   only own-file `#[path]` literals.
-4. At most 64 `#[path]`-named files are followed; crate roots, including every
-   explicitly declared target, are not counted.
+The omitted member is read as a whole: every `.rs` file under its directory,
+except its own `target/`. A file read that way needs no module edge to be seen,
+so a default-layout `mod child;`, a `#[path]` that stays inside the member and
+an `include!` of a member file compile nothing ripr has not read. Then:
 
-5. Once one own-file `#[path]` is accepted, the walk repeats strictly: the
-   roots Cargo discovers without a manifest entry (`src/bin`, `tests`,
-   `examples`, `benches`) are read too, and no file may declare a
-   default-layout `mod child;`, whose file the walk would not read.
-6. A crate root that is a symbolic link out of the member's directory is
-   another file's compilation context and keeps the unavailable result.
+1. Each `#[path]` must be exactly one plain string literal on a top-level
+   out-of-line `mod name;`, and every `#[path` in the file must be such an
+   attribute. Its target is resolved from the declaring file's directory with
+   symlinks followed and must be an existing file.
+2. A target inside the member's directory is the member's own file, read
+   under the same rules even when it is not `.rs`. A target outside it is a
+   **mounted** file.
+3. A mounted file must itself declare no `mod name;`, `#[path]` or
+   `include!`, which would resolve beside it into further files outside the
+   member.
+4. Each `include!` must be one plain string literal whose target, resolved
+   from the invoking file's directory, lies inside the member; a target that
+   is not `.rs` is read under the same rule. An included file names no
+   `#[path]` or `include!` itself, because pasted text resolves them from the
+   includer's context.
+5. Every crate target path the member's manifest names (`[lib]`, `[[bin]]`,
+   `[[test]]`, `[[bench]]`, `[[example]]`, `package.build`), resolved from the
+   member's directory, lies inside the member and is read under the same
+   rules.
+
+Every mounted file is unplaced, exactly like a file no recognized target
+places, and every other file keeps placement. For a test in a mounted file,
+placement counts as unavailable in the trigger below, so its receiver reads
+this limitation rather than a gap. Anything the reading cannot
+bound keeps placement unavailable workspace-wide: a symbolic link anywhere in
+the member, a file that is not a regular file (a FIFO or device named `.rs`, a
+directory named as a target), an unreadable or non-UTF-8 file, more than 8192
+distinct files in the closure read (listed `.rs` files, manifest targets,
+includes, in-member `#[path]` modules and mounts) or 64 MiB of source, a member
+`Cargo.toml` over 1 MiB, a member with no readable source root or closure (no `.rs` file and no existing
+declared target), a manifest target outside the member (its path is
+joined exactly as Cargo spells it, surrounding whitespace included), an
+inner `#![path]`, a raw-identifier `r#path`, a `cfg_attr` that may introduce a
+`path`, a `#[path]` on a nested module, and any shape that breaks a rule
+above. Each read is bounded before it happens: a file is opened only when it is
+a regular file and at most the remaining byte budget plus one byte is consumed
+from it, so an oversized or growing file is refused without its remainder being
+read. This bounds the bytes consumed, not the exact capacity of the read buffer.
 
 Ready mode indexes every member and is unchanged.
 

@@ -249,7 +249,7 @@ fn plain_dotted_name(expr: &Expr) -> Option<String> {
 }
 
 /// The truth of a literal condition (`if False:`, `while 0:`), when it is one.
-fn constant_truth(expr: &Expr) -> Option<bool> {
+pub(super) fn constant_truth(expr: &Expr) -> Option<bool> {
     let Expr::Constant(constant) = expr else {
         return None;
     };

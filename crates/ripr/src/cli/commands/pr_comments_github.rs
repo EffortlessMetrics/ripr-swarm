@@ -5,8 +5,9 @@
 
 use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
+use crate::output::ci_summary::gate_verdict::GateVerdict;
 use crate::output::pr_inline_comment_github::{existing_comments, publish_requests};
-use crate::output::pr_summary_comment::summary_request;
+use crate::output::pr_summary_comment::{GateState, summary_request};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -360,12 +361,20 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
         }
         Some(raw) => read_json(&options.root.join(raw), SUMMARY)?,
     };
+    // #15718: the job's gate mode, read raw as `reports ci-packet` reads it,
+    // and the verdict the gate stage left for that mode.
+    let gate_mode = std::env::var("RIPR_GATE_MODE").unwrap_or_default();
+    let gate = GateState {
+        verdict: GateVerdict::for_run(&options.root, &gate_mode),
+        mode: gate_mode,
+    };
     let request = summary_request(
         &guidance,
         &pages,
         &options.pull_request,
         &options.head_sha,
         &options.run_url,
+        &gate,
     );
 
     refuse_linked_out_dir(&options.root, &options.out_dir)?;
