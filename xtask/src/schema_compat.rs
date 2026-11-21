@@ -159,6 +159,46 @@ fn required_names_only(branch: &Value) -> bool {
             .all(|name| name.as_str().is_some_and(|name| seen.insert(name)))
 }
 
+/// A top-level property can add a receipt version by retaining its original
+/// local reference as one arm of an inclusive union. Check the legacy
+/// definition itself, and resolve every other arm before accepting the union.
+fn retains_local_reference(
+    prior: &Value,
+    candidate: &Value,
+    old_root: &serde_json::Map<String, Value>,
+    new_root: &serde_json::Map<String, Value>,
+) -> bool {
+    fn definition<'a>(root: &'a serde_json::Map<String, Value>, arm: &Value) -> Option<&'a Value> {
+        let arm = arm.as_object().filter(|arm| arm.len() == 1)?;
+        let name = arm.get("$ref")?.as_str()?.strip_prefix("#/$defs/")?;
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        {
+            return None;
+        }
+        root.get("$defs")?
+            .get(name)
+            .filter(|schema| schema.is_object() || schema.is_boolean())
+    }
+
+    let Some(legacy) = definition(old_root, prior) else {
+        return false;
+    };
+    let Some(arms) = candidate
+        .as_object()
+        .filter(|node| node.len() == 1)
+        .and_then(|node| node.get("anyOf"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    definition(new_root, prior) == Some(legacy)
+        && arms.contains(prior)
+        && arms.iter().all(|arm| definition(new_root, arm).is_some())
+}
+
 fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
     // Boolean schemas: `true` accepts everything, `false` nothing.
     match (old, new) {
@@ -237,6 +277,9 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
         let new_props = new.get("properties").and_then(Value::as_object);
         for (name, old_schema) in old_props {
             match new_props.and_then(|props| props.get(name)) {
+                Some(new_schema)
+                    if path == "#" && retains_local_reference(old_schema, new_schema, old, new) => {
+                }
                 Some(new_schema) => compare(
                     old_schema,
                     new_schema,
@@ -601,6 +644,40 @@ mod tests {
             Compat::Violations(found) => found,
             _ => Vec::new(),
         }
+    }
+
+    #[test]
+    fn top_level_receipt_union_preserves_the_whole_legacy_reference() -> Result<(), String> {
+        let legacy = json!({"$ref": "#/$defs/prior"});
+        let next = json!({"$ref": "#/$defs/next"});
+        let old = json!({"properties":{"receipt":legacy}, "$defs":{"prior":{"const":"old"}}});
+        let mut valid = old.clone();
+        valid["$defs"]["next"] = json!({"const":"new"});
+        valid["properties"]["receipt"] = json!({"anyOf":[next, legacy]});
+        if !matches!(assess(&old, &valid), Compat::Compatible { breaking: 0, .. }) {
+            return Err("union containing the original reference was refused".into());
+        }
+        for invalid in [
+            json!({"anyOf":[next]}),
+            json!({"oneOf":[next, legacy]}),
+            json!({"anyOf":[legacy, {"$ref":"#/$defs/absent"}]}),
+            json!({"anyOf":[legacy, {"$ref":"remote.json"}]}),
+            json!({"anyOf":[next, legacy], "not":legacy}),
+            json!({"anyOf":[next, {"$ref":"#/$defs/prior","const":"new"}]}),
+        ] {
+            let mut doc = valid.clone();
+            doc["properties"]["receipt"] = invalid;
+            if !matches!(assess(&old, &doc), Compat::Violations(_)) {
+                return Err(format!(
+                    "accepted a narrowed or unresolved receipt union: {doc}"
+                ));
+            }
+        }
+        valid["$defs"]["prior"] = json!({"const":"different"});
+        if !matches!(assess(&old, &valid), Compat::Violations(_)) {
+            return Err("replacement of the historic receipt target was accepted".into());
+        }
+        Ok(())
     }
 
     #[test]
