@@ -335,3 +335,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_shadowed_assert (27)
+
+Reason:
+RIPR-SPEC-0311: both the retained source and composed producer refuse a bounded repair start without owner identity; the shadowed assertion stays inert and the repair remains unavailable.
+
+Command:
+`cargo xtask goldens bless match_arm_shadowed_assert --reason "..."`
+
+Updated:
+- `expected/human.txt`

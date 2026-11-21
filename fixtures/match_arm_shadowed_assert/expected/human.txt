@@ -40,7 +40,7 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/match_arm_shadowed_assert/input --diff <cwd>/fixtures/match_arm_shadowed_assert/diff.patch --mode fast probe:src_lib.rs:match_arm:ea5b4163
   ripr context --root <cwd>/fixtures/match_arm_shadowed_assert/input --diff <cwd>/fixtures/match_arm_shadowed_assert/diff.patch --mode fast --at probe:src_lib.rs:match_arm:ea5b4163
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins which match arm runs; a test assertion that would fail if the changed behavior were wrong; follow the Next step above, then rerun `ripr check`
+  no repair start offered: the producer did not establish the owner identity for this bounded match-arm scope; inspect the current workspace and rerun `ripr check`
 No test stub here: the owner's tests live in an out-of-line `mod tests;` file
 Write this test by hand: call the function with an input that reaches the changed line and assert the exact value it returns; then rerun `ripr check`.
 

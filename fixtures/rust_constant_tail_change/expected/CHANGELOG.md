@@ -82,3 +82,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_constant_tail_change (8)
+
+Reason:
+RIPR-SPEC-0224: a direct assertion reads the removed guard owner's return; the same value on both sides keeps discrimination weak while the authenticated observation needs no unknown-observation marker.
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/check.json`

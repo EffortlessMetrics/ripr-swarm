@@ -940,9 +940,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(pick(0), Vec::<i32>::new());",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "relation_confidence": "high"
         }
       ],
       "stop_reasons": [],
