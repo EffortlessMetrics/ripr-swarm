@@ -909,18 +909,24 @@ fn verify_archived_roles(checkout: &Path, head: &str, tree: &Path) -> Result<(),
         .split(|byte| *byte == 0)
         .filter(|r| !r.is_empty())
     {
-        let (header, path) = std::str::from_utf8(record)
-            .map_err(|error| error.to_string())?
-            .split_once('\t')
+        let tab = record
+            .iter()
+            .position(|byte| *byte == b'\t')
             .ok_or("malformed git ls-tree role record")?;
-        if !(path == "docs"
-            || path == "docs/adr"
-            || path == "docs/proposals"
-            || path.starts_with("docs/adr/")
-            || path.starts_with("docs/proposals/"))
+        let (header, path) = record.split_at(tab);
+        let path = path
+            .strip_prefix(b"\t")
+            .ok_or("missing git ls-tree role path")?;
+        if !(path == b"docs"
+            || path == b"docs/adr"
+            || path == b"docs/proposals"
+            || path.starts_with(b"docs/adr/")
+            || path.starts_with(b"docs/proposals/"))
         {
             continue;
         }
+        let header = std::str::from_utf8(header).map_err(|error| error.to_string())?;
+        let path = std::str::from_utf8(path).map_err(|error| error.to_string())?;
         let fields: Vec<_> = header.split_ascii_whitespace().collect();
         let ["100644" | "100755", "blob", oid] = fields.as_slice() else {
             return Err(format!(
@@ -931,6 +937,9 @@ fn verify_archived_roles(checkout: &Path, head: &str, tree: &Path) -> Result<(),
             return Err(format!(
                 "ambiguous document-role path {path:?} requires full proof"
             ));
+        }
+        if crate::doc_roles::required_sections(Path::new(path)).is_none() {
+            continue;
         }
         files.push(tree.join(path));
         expected.push(*oid);

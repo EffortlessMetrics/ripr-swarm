@@ -80,6 +80,26 @@ fn scoped_docs_gate_checks_unchanged_document_roles_in_the_subject_tree() -> Tes
     if revision.violations != failed.violations {
         return Err(revision.render().into());
     }
+    fs::write(root.join("docs/adr/README.md"), "# Index\n")?;
+    fs::write(
+        root.join(".gitattributes"),
+        "docs/adr/README.md export-ignore\n",
+    )?;
+    git(&root, &["add", "docs/adr/README.md", ".gitattributes"])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "omit the excluded directory index"],
+    )?;
+    fs::write(root.join(note), "# Note\nFirst index control.\n")?;
+    git(&root, &["add", note])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "release note after index exclusion"],
+    )?;
+    let index_filtered = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !index_filtered.plan.is_docs_eligible() || index_filtered.violations != failed.violations {
+        return Err(index_filtered.render().into());
+    }
     fs::write(root.join(".gitattributes"), "docs/adr export-ignore\n")?;
     git(&root, &["add", ".gitattributes"])?;
     git(
@@ -92,6 +112,30 @@ fn scoped_docs_gate_checks_unchanged_document_roles_in_the_subject_tree() -> Tes
     let filtered = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
     if filtered.plan.is_docs_eligible() {
         return Err(filtered.render().into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unrelated_non_utf8_doc_name_keeps_the_scoped_role_verdict() -> TestResult {
+    use std::os::unix::ffi::OsStrExt;
+    let note = "docs/releases/note.md";
+    let root = fixture(&[(note, "# Note\n")])?;
+    fs::write(
+        root.join("docs")
+            .join(std::ffi::OsStr::from_bytes(b"other-\xff.txt")),
+        "ordinary bytes",
+    )?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "unrelated document"])?;
+    fs::write(root.join(note), "# Note\nUpdated note.\n")?;
+    git(&root, &["add", note])?;
+    git(&root, &["commit", "-q", "-m", "release notes only"])?;
+    let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !report.plan.is_docs_eligible() || !report.violations.is_empty() {
+        return Err(report.render().into());
     }
     Ok(())
 }

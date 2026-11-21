@@ -58,25 +58,16 @@ fn violations_at(
     list_files: impl Fn(&Path) -> Result<Vec<PathBuf>, String>,
 ) -> Result<Vec<String>, String> {
     let mut violations = Vec::new();
-    for (dir, kind, headings) in [
-        ("docs/proposals", "proposal", required_proposal_headings()),
-        ("docs/adr", "ADR", required_adr_headings()),
-    ] {
+    for dir in ["docs/proposals", "docs/adr"] {
         let dir = root.join(dir);
         let mut paths = list_files(&dir)?;
         paths.sort();
         for path in paths {
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
+            let Some((kind, headings)) = required_sections(relative) else {
                 continue;
             };
-            if !name.ends_with(".md")
-                || (kind == "proposal" && !name.starts_with("RIPR-PROP-"))
-                || (kind == "ADR" && name == "README.md")
-            {
-                continue;
-            }
-            let normalized =
-                normalize_path(path.strip_prefix(root).map_err(|error| error.to_string())?);
+            let normalized = normalize_path(relative);
             let text = read_text_lossy(&path)?;
             for heading in headings {
                 if !has_heading(&text, heading) {
@@ -88,6 +79,26 @@ fn violations_at(
         }
     }
     Ok(violations)
+}
+
+pub(crate) fn required_sections(path: &Path) -> Option<(&'static str, &'static [&'static str])> {
+    let name = path.file_name()?.to_str()?;
+    if !name.ends_with(".md") {
+        return None;
+    }
+    let (relative, role, headings) = if let Ok(relative) = path.strip_prefix("docs/proposals") {
+        if !name.starts_with("RIPR-PROP-") {
+            return None;
+        }
+        (relative, "proposal", required_proposal_headings())
+    } else {
+        let relative = path.strip_prefix("docs/adr").ok()?;
+        if name == "README.md" {
+            return None;
+        }
+        (relative, "ADR", required_adr_headings())
+    };
+    (!crate::should_skip_path(&normalize_path(relative))).then_some((role, headings))
 }
 
 fn required_proposal_headings() -> &'static [&'static str] {
