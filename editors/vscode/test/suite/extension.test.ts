@@ -426,25 +426,23 @@ suite('Extension Smoke', () => {
       undefined
     );
 
-    // The real settings read: unset stays undefined so ripr.toml [analysis]
-    // applies, and a workspace value is forwarded (#15897).
+    // The real settings read: an unset key is undefined, not the manifest
+    // default, so ripr.toml [analysis] applies; a workspace value is
+    // forwarded (#15897).
     const uri = workspaceFileUri('src/lib.rs');
-    const config = vscode.workspace.getConfiguration('ripr', uri);
-    const inspected = config.inspect<boolean>('includeUnchangedTests');
-    const previous = inspected?.workspaceValue;
-    const setElsewhere =
-      inspected?.globalValue !== undefined || inspected?.workspaceFolderValue !== undefined;
+    const inspect = () =>
+      vscode.workspace.getConfiguration('ripr', uri).inspect<boolean>('includeUnchangedTests');
+    const previous = inspect()?.workspaceValue;
     const update = (value: unknown) =>
-      config.update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
+      vscode.workspace
+        .getConfiguration('ripr', uri)
+        .update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
     try {
       await update(undefined);
-      if (!setElsewhere) {
-        assert.strictEqual(getConfig(uri).includeUnchangedTests, undefined);
-      }
+      assert.strictEqual(inspect()?.defaultValue, true);
+      assert.strictEqual(getConfig(uri).includeUnchangedTests, inspect()?.globalValue);
       await update(false);
-      if (inspected?.workspaceFolderValue === undefined) {
-        assert.strictEqual(getConfig(uri).includeUnchangedTests, false);
-      }
+      assert.strictEqual(getConfig(uri).includeUnchangedTests, false);
     } finally {
       await update(previous);
     }
