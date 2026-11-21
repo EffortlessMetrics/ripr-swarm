@@ -80,7 +80,9 @@ parsed expression instead of the whole changed line, so the id's last segment
 changes (for the boundary example, `8390dd91` under 0.10.0 and `c80557eb`
 under 0.11). A plain `ripr check` reports that it found
 `.ripr/suppressions.toml` and did not apply it. Apply the policy to see the
-migration warning, which names the current id for each stale 0.10 entry:
+migration warning. It names the current id for a stale 0.10 entry only when
+the analyzed diff contains the finding that entry used to match; an entry
+whose finding is not in this run gets the plain unmatched warning:
 
 ```bash
 ripr check --suppression-policy .ripr/suppressions.toml
@@ -113,8 +115,10 @@ the gap id contains no path separator. Every Rust gap whose file sits in a
 directory has one, and for those `--gap` reports the receipt as not found.
 The `--path` rejection (exit `2`) prints the `ripr receipt write` command, with the gap
 id, verify command and output path filled in, that writes a current receipt.
-Rerun the verify command, then run that printed command with the status you
-observed.
+The printed `--out` is the old receipt's own path, so running the command as
+printed replaces the 0.10 file. Copy the old receipt elsewhere first, or change
+`--out`, to keep it as history. Rerun the verify command, then run the command
+with the status you observed.
 
 When a receipt is rejected for predating HEAD binding, follow the diagnostic's
 fresh verification/receipt route. **Do not add a HEAD field or change a version
