@@ -440,8 +440,17 @@ pub(super) fn is_python_import_line(line: &str) -> bool {
     trimmed.starts_with("import ") || (trimmed.starts_with("from ") && trimmed.contains(" import"))
 }
 
+/// Import statement line ranges of the candidate file and of the base file,
+/// so a continuation row of a parenthesized import (`    normalize,`) is read
+/// as part of its import.
+pub(super) struct ImportLines<'a> {
+    pub(super) added: &'a [std::ops::RangeInclusive<usize>],
+    pub(super) removed: &'a [std::ops::RangeInclusive<usize>],
+}
+
 /// Drops from `counterparts` the pairs of an added run that holds no code:
-/// every line of the run is comment-only, blank, or an `import` statement.
+/// every line of the run is comment-only, blank, or part of an `import`
+/// statement.
 /// Such a run replaced nothing. A removed line the diff pairs with one of
 /// its comment or blank lines was deleted, so it keeps its own base-side
 /// record instead of lending its probe shape to the comment text; so does a
@@ -452,6 +461,7 @@ pub(super) fn is_python_import_line(line: &str) -> bool {
 pub(super) fn unpair_runs_without_code(
     changed: &super::ChangedFile,
     string_lines: Option<&[std::ops::RangeInclusive<usize>]>,
+    imports: ImportLines<'_>,
     counterparts: &mut std::collections::BTreeMap<usize, &ChangedLine>,
 ) {
     let Some(string_lines) = string_lines else {
@@ -466,7 +476,9 @@ pub(super) fn unpair_runs_without_code(
     };
     let codeless = changed.added_lines_in_quiet_runs(|added| {
         !super::line_is_in_ranges(added.line, string_lines)
-            && (is_comment_or_blank(&added.text) || is_python_import_line(&added.text))
+            && (is_comment_or_blank(&added.text)
+                || is_python_import_line(&added.text)
+                || super::line_is_in_ranges(added.line, imports.added))
     });
     if codeless.is_empty() {
         return;
@@ -479,7 +491,9 @@ pub(super) fn unpair_runs_without_code(
         .collect();
     counterparts.retain(|added_line, removed| {
         !codeless.contains(added_line)
-            || (!comment_or_blank.contains(added_line) && is_python_import_line(&removed.text))
+            || (!comment_or_blank.contains(added_line)
+                && (is_python_import_line(&removed.text)
+                    || super::line_is_in_ranges(removed.line, imports.removed)))
     });
 }
 

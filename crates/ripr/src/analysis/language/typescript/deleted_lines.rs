@@ -161,6 +161,41 @@ fn removed_runs<'a>(
     runs
 }
 
+/// New-side lines of every contiguous added run that holds no code: each
+/// line is blank, a lone bracket, or comment text, read with the block
+/// comment state the candidate file has where the run starts. A statement
+/// after a closed comment (`/* note */ return value;`) is code, and so is a
+/// line of an unreadable candidate file, so those runs keep their pairing
+/// (#15913).
+pub(super) fn added_lines_in_runs_without_code(
+    changed: &ChangedFile,
+    new_source: Option<&str>,
+) -> BTreeSet<usize> {
+    let Some(comment_open) = new_source.map(comment_open_at_line_start) else {
+        return BTreeSet::new();
+    };
+    let mut by_line: Vec<&ChangedLine> = changed.added_lines.iter().collect();
+    by_line.sort_by_key(|line| line.line);
+    let mut without_code: BTreeSet<usize> = BTreeSet::new();
+    let mut previous: Option<usize> = None;
+    let mut in_comment = false;
+    for line in by_line {
+        if previous.and_then(|last| last.checked_add(1)) != Some(line.line) {
+            in_comment = line
+                .line
+                .checked_sub(1)
+                .and_then(|index| comment_open.get(index))
+                .copied()
+                .unwrap_or(false);
+        }
+        previous = Some(line.line);
+        if should_ignore_typescript_changed_line(&code_only_from(&line.text, &mut in_comment)) {
+            without_code.insert(line.line);
+        }
+    }
+    changed.added_lines_in_quiet_runs(|added| without_code.contains(&added.line))
+}
+
 /// For each candidate line, whether a block comment is open where it starts.
 fn comment_open_at_line_start(source: &str) -> Vec<bool> {
     let mut in_comment = false;

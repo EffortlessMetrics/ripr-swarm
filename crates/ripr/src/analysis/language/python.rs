@@ -2203,10 +2203,29 @@ impl PythonAdapter {
             // and reading the pair as an edit reported the comment text as the
             // changed behavior (#15913). Its lines pair with nothing, so the
             // removed line keeps its own base-side record.
+            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
+                .as_deref()
+                .map(|source| {
+                    let old_facts = extract_source_facts(&changed.path, source);
+                    (
+                        old_facts.docstring_line_ranges,
+                        old_facts.import_line_ranges,
+                        old_facts.owners,
+                    )
+                })
+                .unwrap_or_default();
+            let import_ranges = import_ranges_by_file
+                .get(&changed.path)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             let mut counterparts = changed.aligned_counterparts();
             no_behavior::unpair_runs_without_code(
                 changed,
                 string_line_ranges.as_deref(),
+                no_behavior::ImportLines {
+                    added: import_ranges,
+                    removed: &old_import_ranges,
+                },
                 &mut counterparts,
             );
             let counterparts = counterparts;
@@ -2238,17 +2257,6 @@ impl PythonAdapter {
                 }
                 continue;
             }
-            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
-                .as_deref()
-                .map(|source| {
-                    let old_facts = extract_source_facts(&changed.path, source);
-                    (
-                        old_facts.docstring_line_ranges,
-                        old_facts.import_line_ranges,
-                        old_facts.owners,
-                    )
-                })
-                .unwrap_or_default();
             let compound_loop_owners = workspace_read
                 .sources
                 .get(&changed.path)
@@ -2288,10 +2296,6 @@ impl PythonAdapter {
                 })
                 .unwrap_or_default();
             let brackets = BracketEvidence::of(&workspace_read, &changed.path, &old_source);
-            let import_ranges = import_ranges_by_file
-                .get(&changed.path)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
             // An import line that replaces an import line re-points a name
             // (`from a import x` -> `from b import x`, or `old as x,` inside a
             // parenthesized import), so it is behavior of its own; any other

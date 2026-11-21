@@ -71,13 +71,18 @@ no end-to-end corpus a downstream consumer could run against.
     no code replaced nothing, so its lines pair with no removed line and
     the removed code keeps the removed-only record above, with the class
     the same deletion has when nothing is added. In Python the run is
-    comment-only lines, blank lines and `import` statements, read
+    comment-only lines, blank lines and `import` statements (the
+    continuation rows of a wrapped import included), read
     outside multi-line strings (a `#` line inside a string is content
     and keeps its pairing; an unlexable file unpairs nothing); a removed
     line an added `import` stands on is unpaired too unless it was an
     import itself. In
     TypeScript and JavaScript it is comment-only lines, blank lines and
-    lone brackets. A comment added beside replacement code keeps its
+    lone brackets, read with the block-comment state of the candidate
+    file: the body rows of a block comment are comment text, a statement
+    after a closed comment (`/* note */ return value;`) is code, and an
+    unreadable candidate file unpairs nothing. A comment line inside a
+    template literal is not told apart from a comment. A comment added beside replacement code keeps its
     pairing: the code line of the run carries the change. Before this
     rule Python reported the comment text as a changed `predicate` and
     could grade it `exposed`, and TypeScript recorded nothing for the
@@ -138,7 +143,9 @@ no end-to-end corpus a downstream consumer could run against.
 - `analysis/language/typescript/deleted_lines.rs` — TypeScript and
   JavaScript removed-only probes.
 - `analysis/diff/model.rs` `added_lines_in_quiet_runs` and
-  `analysis/language/python/no_behavior.rs` `unpair_runs_without_code` —
+  `analysis/language/python/no_behavior.rs` `unpair_runs_without_code`,
+  `analysis/language/typescript/deleted_lines.rs`
+  `added_lines_in_runs_without_code` —
   the added runs that pair with no removed line (#15913).
 - `fixtures/currentness_matrix_*` — the corpus.
 

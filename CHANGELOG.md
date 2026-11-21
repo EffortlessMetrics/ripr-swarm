@@ -3177,14 +3177,6 @@ entries below are the complete record.
 
 ### Fixed
 
-- Python and TypeScript: code replaced by a comment is read as deleted code.
-  The diff pairs the added comment with a removed line, and Python reported
-  the comment text as a changed `predicate` (`Changed behavior: # ...`) that
-  could be graded `exposed`, while TypeScript recorded nothing for the removed
-  line. An added run that holds no code now pairs with nothing, so the removed
-  line is `base_deleted` evidence naming the removed code, with the class the
-  same deletion has when nothing is added (#15913).
-
 - Security: a repository can no longer seed `ripr check` with its own cache.
   The seam-fact, classified-seam and file-fact caches protect entries with an
   unkeyed digest that anyone can recompute, so a committed

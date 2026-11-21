@@ -13353,6 +13353,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::hash_line_inside_a_multi_line_string_keeps_its_pairing",
   "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::code_replaced_by_a_comment_is_base_side_evidence",
   "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::comment_beside_replacement_code_leaves_no_base_side_record",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::block_comment_before_a_statement_keeps_its_pairing",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::code_replaced_by_a_multi_line_block_comment_is_base_side_evidence",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::code_replaced_by_a_comment_and_a_wrapped_import_is_base_side_evidence",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::wrapped_import_row_replacing_a_row_keeps_its_pairing",
 ]
 fixtures = [
   "fixtures/currentness_matrix_tail",

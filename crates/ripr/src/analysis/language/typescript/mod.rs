@@ -1399,9 +1399,12 @@ impl TypeScriptAdapter {
             // base-side record instead of leaving no record at all (#15913).
             let mut counterparts = changed.aligned_counterparts();
             if !counterparts.is_empty() {
-                let codeless = changed.added_lines_in_quiet_runs(|added| {
-                    should_ignore_typescript_changed_line(&added.text)
-                });
+                let codeless = deleted_lines::added_lines_in_runs_without_code(
+                    changed,
+                    source_by_normalized
+                        .get(&changed_norm)
+                        .map(|source| source.as_str()),
+                );
                 counterparts.retain(|added_line, _| !codeless.contains(added_line));
             }
             let counterparts = counterparts;

@@ -2034,3 +2034,55 @@ fn hash_line_inside_a_multi_line_string_keeps_its_pairing() -> Result<(), String
     );
     Ok(())
 }
+
+/// The continuation rows of a parenthesized import are part of the import,
+/// so a comment and a wrapped import that replace code hold no code.
+#[test]
+fn code_replaced_by_a_comment_and_a_wrapped_import_is_base_side_evidence() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Loaded late.\n    from textwrap import (\n        dedent,\n    )\n    return result\n";
+    let removed = || {
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+            line(5, 3, "    if result < 0:"),
+            line(6, 3, "        result = 0"),
+        ]
+    };
+    let findings = analyze_with_test(
+        "comment-and-wrapped-import-for-code",
+        source,
+        CAP_TEST_PY,
+        &[3, 4, 5, 6],
+        removed(),
+    )?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    // The same deletion with nothing added records the same removed code.
+    let bare = "def capped_total(total, cap):\n    result = total\n    return result\n";
+    let pure = analyze_with_test("wrapped-import-pure", bare, CAP_TEST_PY, &[], removed())?;
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        sorted(base_side_texts(&pure)),
+        "{findings:?}"
+    );
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A continuation row of a wrapped import that replaces one re-points a
+/// name: the pair stays an edit and the old row is no deletion.
+#[test]
+fn wrapped_import_row_replacing_a_row_keeps_its_pairing() -> Result<(), String> {
+    let source = "from textwrap import (\n    indent,\n)\n\n\ndef capped_total(total, cap):\n    return min(total, cap)\n";
+    let findings = analyze_with_test(
+        "wrapped-import-row-edit",
+        source,
+        CAP_TEST_PY,
+        &[2],
+        vec![line(2, 2, "    dedent,")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
