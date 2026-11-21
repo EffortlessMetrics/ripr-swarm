@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0185"
+code = [
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+]
+tests = [
+  "crates/ripr/tests/resource_cost_trace.rs::file_fact_receipt_names_one_failed_write_in_the_repo_exposure_child",
+]

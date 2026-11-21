@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
+const TOKEN_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN";
 const RECEIPT_PREFIX: &str = "ripr_resource_cost_receipt ";
 const FAMILY_RECEIPT_PREFIX: &str = "ripr_cache_family_store_receipt ";
 const FILE_FACT_RECEIPT_PREFIX: &str = "ripr_file_fact_cache_receipt ";
@@ -61,18 +62,26 @@ struct Run {
 }
 
 /// One spawn site. `trace` sets or clears the opt-in switch; every other
-/// variable is inherited except the experiment's explicit private cache.
-fn run_ripr(args: &[&str], trace: Option<&str>, cache: &Path) -> Result<Run, String> {
+/// variable is inherited except the private cache and the optional harness token.
+fn run_ripr(
+    args: &[&str],
+    trace: Option<&str>,
+    cache: &Path,
+    token: Option<&str>,
+) -> Result<Run, String> {
     let root = workspace_root()?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
     command
         .args(args)
         .current_dir(&root)
         .env_remove(TRACE_ENV)
-        .env_remove("RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN")
+        .env_remove(TOKEN_ENV)
         .env("RIPR_CACHE_DIR", cache);
     if let Some(value) = trace {
         command.env(TRACE_ENV, value);
+    }
+    if let Some(value) = token {
+        command.env(TOKEN_ENV, value);
     }
     let output = command
         .output()
@@ -168,10 +177,10 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
     let untraced_cache = scratch.0.join("untraced");
     let traced_cache = scratch.0.join("traced");
     for (phase, cache_status) in [("cold", "miss"), ("warm", "hit")] {
-        let untraced = run_ripr(CHECK_ARGS, None, &untraced_cache)?;
+        let untraced = run_ripr(CHECK_ARGS, None, &untraced_cache, None)?;
         // The switch is presence-based, so an explicitly empty value is still on.
         // That is the pre-existing contract and this test must not blur it.
-        let traced = run_ripr(CHECK_ARGS, Some("1"), &traced_cache)?;
+        let traced = run_ripr(CHECK_ARGS, Some("1"), &traced_cache, None)?;
         let observed =
             format!("ripr_repo_exposure_latency phase=cache_load status={cache_status} ");
         if !traced
@@ -260,7 +269,7 @@ fn assert_trace_parity(untraced: &Run, traced: &Run) -> Result<(), String> {
 #[test]
 fn tracing_on_emits_one_attributed_receipt_on_stderr() -> Result<(), String> {
     let scratch = CacheScratch::new()?;
-    let traced = run_ripr(CHECK_ARGS, Some("1"), &scratch.0.join("cache"))?;
+    let traced = run_ripr(CHECK_ARGS, Some("1"), &scratch.0.join("cache"), None)?;
     let receipts = receipts(&traced.stderr);
     if receipts.len() != 1 {
         return Err(format!(
@@ -551,5 +560,101 @@ fn trace_cache_scratch_owns_only_fresh_private_directories() -> Result<(), Strin
     {
         return Err("trace cache cleanup did not preserve the sibling experiment".into());
     }
+    Ok(())
+}
+
+#[test]
+fn file_fact_receipt_names_one_failed_write_in_the_repo_exposure_child()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A single source gives the entry discovered on the healthy run an
+    // independent identity, without copying the producer's key algorithm.
+    let args = [
+        "check",
+        "--root",
+        "fixtures/all_no_path_disclosure/input",
+        "--format",
+        "repo-exposure-json",
+    ];
+    let scratch = CacheScratch::new()?;
+    let healthy = scratch.0.join("healthy");
+    let blocked = scratch.0.join("blocked");
+    let observe = |cache: &Path| -> Result<_, String> {
+        let token = "fileFact3864";
+        let run = run_ripr(&args, Some("1"), cache, Some(token))?;
+        let prefix = format!("{FILE_FACT_RECEIPT_PREFIX}token={token} ");
+        if !run.status_ok {
+            return Err(format!("repo exposure failed:\n{}", run.stderr));
+        }
+        let document: serde_json::Value =
+            serde_json::from_slice(&run.stdout).map_err(|error| error.to_string())?;
+        let mut lines = run
+            .stderr
+            .lines()
+            .filter_map(|line| line.strip_prefix(prefix.as_str()));
+        let receipt = parse(
+            lines
+                .next()
+                .ok_or_else(|| format!("missing file-fact receipt:\n{}", run.stderr))?,
+        )?;
+        assert!(lines.next().is_none(), "duplicate file-fact receipt");
+        assert_eq!(receipt["schema_version"], "0.1");
+        assert_eq!(document["run_status"], "complete");
+        Ok((receipt, document))
+    };
+    let (cold, expected) = observe(&healthy)?;
+    assert_eq!(cold["stores"], 1, "{cold}");
+    assert_eq!(cold["store_errors"], 0);
+    assert_eq!(cold["store_failures"], serde_json::json!([]));
+    assert_eq!(cold["store_failures_dropped"], 0);
+    assert!(
+        expected["seams"]
+            .as_array()
+            .is_some_and(|seams| !seams.is_empty()),
+        "empty fixture"
+    );
+
+    // Mirror only the destination name in a fresh cache. A directory there
+    // permits parent creation and encoding, then refuses atomic replacement.
+    let mut entries = Vec::new();
+    for version in std::fs::read_dir(healthy.join("repo-file-facts"))? {
+        let version = version?;
+        if version.file_type()?.is_dir() {
+            for entry in std::fs::read_dir(version.path())? {
+                let entry = entry?;
+                if entry.file_type()?.is_file()
+                    && entry.path().extension().is_some_and(|ext| ext == "json")
+                {
+                    entries.push(entry.path());
+                }
+            }
+        }
+    }
+    let [entry] = entries.as_slice() else {
+        return Err(format!("expected one healthy file-fact entry, found {entries:?}").into());
+    };
+    std::fs::create_dir_all(blocked.join(entry.strip_prefix(&healthy)?))?;
+    let (failure, actual) = observe(&blocked)?;
+    assert_eq!(actual["seams"], expected["seams"]);
+    assert_eq!(failure["stores"], 0);
+    assert_eq!(failure["store_errors"], 1);
+    assert_eq!(failure["store_failures_dropped"], 0);
+    let rows = failure["store_failures"]
+        .as_array()
+        .ok_or("missing failure rows")?;
+    let [row] = rows.as_slice() else {
+        return Err(format!("expected one retained write failure: {failure}").into());
+    };
+    assert_eq!(row["path"], "src/lib.rs");
+    assert_eq!(row["stage"], "write");
+    let error = row["error"].as_str().ok_or("missing write error")?;
+    assert!(
+        error.starts_with("failed to finalize file fact cache:"),
+        "{error}"
+    );
+    assert!(error.contains("destination is a directory"), "{error}");
+    assert!(
+        !error.contains(['/', '\\']),
+        "host path in write error: {error}"
+    );
     Ok(())
 }
