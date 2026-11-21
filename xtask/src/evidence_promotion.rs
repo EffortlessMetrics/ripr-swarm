@@ -4609,8 +4609,8 @@ fn evidence_promotion_finding_languages(check_json: &Value) -> std::collections:
                     "rs" => Some("rust"),
                     "py" => Some("python"),
                     "js" | "mjs" | "cjs" | "jsx" => Some("javascript"),
-                    "ts" | "tsx" => Some("typescript"),
-                    "pl" | "pm" => Some("perl"),
+                    "ts" | "tsx" | "mts" | "cts" => Some("typescript"),
+                    "pl" | "pm" | "t" | "psgi" => Some("perl"),
                     _ => None,
                 };
                 if let Some(language) = language {
@@ -5954,6 +5954,26 @@ mod case_file_tests {
             "the corrected javascript label was still flagged: {relabeled:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn finding_languages_cover_every_router_extension_without_owner_or_summary() {
+        // Extension only derivation: no owner prefix and no summary entry,
+        // so each suffix the source router recognizes must map on its own.
+        for (file, expected) in [
+            ("src/app.mts", "typescript"),
+            ("src/app.cts", "typescript"),
+            ("src/app.t", "perl"),
+            ("src/app.psgi", "perl"),
+        ] {
+            let check_json = serde_json::json!({
+                "findings": [{"probe": {"file": file}}]
+            });
+            assert!(
+                evidence_promotion_finding_languages(&check_json).contains(expected),
+                "{file} did not derive {expected} from its extension alone"
+            );
+        }
     }
 
     #[test]
