@@ -278,6 +278,87 @@
       ]
     },
     {
+      "id": "python_boundary_star_args_rows",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_boundary_star_args_rows",
+      "vector": "star_args_rows_do_not_witness_a_boundary_flip",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:fmt/clamp.py::clamp"
+        }
+      ]
+    },
+    {
+      "id": "python_boundary_named_constant_rows",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_boundary_named_constant_rows",
+      "vector": "named_value_rows_do_not_witness_a_boundary_flip",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:fmt/tiers.py::tier"
+        }
+      ]
+    },
+    {
+      "id": "python_boundary_float_coercion",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_boundary_float_coercion",
+      "vector": "leading_float_coercion_reads_the_off_boundary_literal",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:fmt/stamp.py::seconds"
+        }
+      ]
+    },
+    {
       "id": "python_route_response_float_floor_division",
       "language": "python",
       "tier": "pure",
