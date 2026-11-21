@@ -213,7 +213,14 @@ alternative (it may overlap an existing one), or more `allOf` conjuncts; and any
 Widening edits pass, as does a new property on an object with
 `additionalProperties: false`, `const` widening to an `enum` that contains it,
 a dropped `pattern`, and annotation-only edits (`description`, `title`,
-`examples`, ...) at any depth. Changing the version pin accepts a breaking edit
+`examples`, ...) at any depth. A new root `anyOf` also passes when one properties-only alternative
+repeats earlier same-field scalar guards (`type`, `minLength`) and every
+other alternative either repeats those guards or supplies only a valid
+nonempty list of distinct required names. The compatibility tests
+`added_any_of_preserves_a_repeated_scalar_guard_only` and
+`published_check_root_widening_does_not_admit_overlapping_cache_receipts`
+cover this implication and an enclosing exclusive alternative.
+Changing the version pin accepts a breaking edit
 explicitly; deleting the pin does not. A schema with no pin (the Shields badge
 schema) cannot take a breaking edit at all. With no merge base the gate prints
 `schema compatibility not established`; it passes locally but fails when `CI`
@@ -1994,6 +2001,8 @@ which completed with findings. The published schemas keep `status` and
 `error` optional so `check` `0.2` and the timeout `0.3` generation stay
 compatible for existing readers; ripr always writes both on a refusal, and the
 pairing becomes a schema rule at the next `schema_version` bump.
+
+An explicit empty `--root` is echoed as an empty string in the 0.2 refusal. The schema accepts that value only with both refusal fields. Completed and bounded partial reports require a nonempty root.
 
 ### `cli_refusal` (schema `0.1`, #11584)
 

@@ -13,6 +13,10 @@
     "summary",
     "findings"
   ],
+  "anyOf": [
+    { "properties": { "root": { "type": "string", "minLength": 1 } } },
+    { "required": ["status", "error"] }
+  ],
   "properties": {
     "schema_version": { "const": "0.2" },
     "tool": { "const": "ripr" },
@@ -22,7 +26,10 @@
     },
     "error": { "$ref": "#/$defs/refusal_error" },
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
-    "root": { "type": "string", "minLength": 1 },
+    "root": {
+      "type": "string",
+      "description": "A completed or partial report names a nonempty root. A typed refusal can echo an explicitly empty --root argument."
+    },
     "config_path": { "type": "string", "minLength": 1 },
     "base": { "$ref": "#/$defs/nullable_string" },
     "base_commit": { "type": "string", "minLength": 1 },
