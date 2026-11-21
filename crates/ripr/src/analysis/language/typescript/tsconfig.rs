@@ -532,9 +532,11 @@ impl TsAliasMap {
     }
 
     /// Given a base candidate string (extension-stripped, slash-separated),
-    /// try each TS extension and collect the unique matching file.
+    /// try each TS extension, on the candidate and on its directory `index`,
+    /// and collect the unique matching file.
     ///
-    /// Returns `None` if zero files or more than one file match.
+    /// Returns `None` if zero files or more than one file match: `x.ts`
+    /// beside `x/index.ts` is a resolver-order question this does not model.
     ///
     /// Candidates containing `..` segments, rooted components, or prefixes
     /// (drive letters / UNC) are rejected BEFORE any filesystem probe: they
@@ -554,9 +556,20 @@ impl TsAliasMap {
             .join(&self.config_dir)
             .join(self.base_url.trim_matches('/'));
         let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
+        // A target naming a directory (`"@acme/*": ["packages/*/src"]`) loads
+        // that directory's `index` file. A `package.json` there would send
+        // the compiler to its entry fields instead, which this does not read,
+        // so such a directory keeps the import unresolved.
+        let directory = base_dir.join(candidate_base);
+        let index_base = (directory.is_dir() && !directory.join("package.json").exists())
+            .then(|| format!("{candidate_base}/index"));
         let mut found: Vec<PathBuf> = Vec::new();
-        for ext in &extensions {
-            let candidate = base_dir.join(format!("{candidate_base}{ext}"));
+        for (base, ext) in [Some(candidate_base), index_base.as_deref()]
+            .into_iter()
+            .flatten()
+            .flat_map(|base| extensions.iter().map(move |ext| (base, ext)))
+        {
+            let candidate = base_dir.join(format!("{base}{ext}"));
             if candidate.is_file() {
                 // Normalize to forward-slash workspace-relative path.
                 if let Ok(rel) = candidate.strip_prefix(&self.root) {
@@ -1955,6 +1968,81 @@ mod tests {
         // Normalize separators for assertion
         let resolved_str = resolved.to_string_lossy().replace('\\', "/");
         assert_eq!(resolved_str, "src/owner.ts");
+        Ok(())
+    }
+
+    /// The monorepo idiom `"@acme/*": ["packages/*/src"]` names a directory;
+    /// the compiler loads its `index` file. Pinned for a pattern key and an
+    /// exact key, with a sibling package as the wrong answer.
+    #[test]
+    fn directory_target_resolves_to_its_index_file() -> Result<(), String> {
+        let root = temp_dir("directory-index");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{
+                "@acme/*":["packages/*/src"],
+                "core":["packages/core/src"]
+            }}}"#,
+        );
+        write(&root, "packages/core/src/index.ts", "export {}");
+        write(&root, "packages/ui/src/index.tsx", "export {}");
+        write(&root, "packages/empty/src/other.ts", "export {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        let resolved = |specifier: &str| {
+            map.resolve(specifier)
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+        };
+        assert_eq!(
+            resolved("@acme/core").as_deref(),
+            Some("packages/core/src/index.ts")
+        );
+        assert_eq!(
+            resolved("@acme/ui").as_deref(),
+            Some("packages/ui/src/index.tsx")
+        );
+        assert_eq!(
+            resolved("core").as_deref(),
+            Some("packages/core/src/index.ts")
+        );
+        // A directory with no index file resolves nothing.
+        assert_eq!(resolved("@acme/empty"), None);
+        Ok(())
+    }
+
+    /// Fail-closed neighbors of the directory `index` probe: a file beside
+    /// the directory, two index files, and a directory whose `package.json`
+    /// would pick the entry instead.
+    #[test]
+    fn directory_target_with_a_competing_answer_fails_closed() -> Result<(), String> {
+        let root = temp_dir("directory-index-closed");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@acme/*":["packages/*"]}}}"#,
+        );
+        write(&root, "packages/both.ts", "export {}");
+        write(&root, "packages/both/index.ts", "export {}");
+        write(&root, "packages/twice/index.ts", "export {}");
+        write(&root, "packages/twice/index.js", "export {}");
+        write(
+            &root,
+            "packages/manifest/package.json",
+            r#"{"main":"lib.ts"}"#,
+        );
+        write(&root, "packages/manifest/index.ts", "export {}");
+        write(&root, "packages/plain/index.ts", "export {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert_eq!(map.resolve("@acme/both"), None);
+        assert_eq!(map.resolve("@acme/twice"), None);
+        assert_eq!(map.resolve("@acme/manifest"), None);
+        // The control: the same key resolves a plain directory.
+        assert_eq!(
+            map.resolve("@acme/plain"),
+            Some(PathBuf::from("packages/plain/index.ts"))
+        );
         Ok(())
     }
 
