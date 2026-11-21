@@ -4939,6 +4939,64 @@ fn loop_boundary_integer_list_is_infection_unknown() -> Result<(), String> {
 }
 
 #[test]
+fn loop_boundary_string_float_and_bool_pins_are_infection_unknown() -> Result<(), String> {
+    // Equal elements compare equal under `==` against any of these literals,
+    // so a value pin cannot tell which of two equal elements was selected.
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        "assert largest(['b', 'a', 'b']) == 'b'",
+        "assert largest([1.5, -2.5, 1.5]) == 1.5",
+        "assert largest([False, True]) == True",
+        "assert largest([1, True, 1.0]) == 1",
+        "result = largest(['pear', 'apple'])\n    assert result == 'pear'",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_non_literal_elements_or_pins_keep_prior_class() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        // `None` is not an ordered literal.
+        "assert largest([None, None]) == None",
+        // A container element is outside the literal rule.
+        "assert largest([(1, 'a'), (1, 'b')]) == (1, 'b')",
+        // Identity on equal strings can still tell `>` from `>=`.
+        "first, second = 'ab' * 1, ''.join(['a', 'b'])\n    assert largest([first, second]) is first",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_issue_repro_with_annotations_is_infection_unknown() -> Result<(), String> {
     // #12954's own repro: a generic annotated signature over the iterator
     // selector. The annotations do not change the closed body.
