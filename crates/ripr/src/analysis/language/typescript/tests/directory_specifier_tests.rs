@@ -441,6 +441,56 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
 }
 
 #[test]
+fn competing_package_index_withholds_build_source() -> Result<(), String> {
+    use crate::testing::fixture_git::fixture_git_ok;
+
+    let root = with_tree(
+        "build-entry-index-fallback",
+        &[
+            (
+                "package.json",
+                r#"{"name":"emitter","main":"dist/emitter.js","source":"src/emitter.ts"}"#,
+            ),
+            (
+                "src/emitter.ts",
+                "export default function emitter() {\n  return 42;\n}\n",
+            ),
+            (
+                "test/public.test.ts",
+                "import emitter from '..';\nit('calls the entry', () => { emitter(); });\n",
+            ),
+        ],
+    )?;
+    fixture_git_ok(&root, &["init", "-q"])?;
+    fixture_git_ok(&root, &["add", "."])?;
+    for extension in ["js", "json", "node"] {
+        let index = root.join(format!("index.{extension}"));
+        ts_write_file(&index, "")?;
+        if extension == "json" {
+            // The committed subject can contain a fallback removed on disk.
+            fixture_git_ok(&root, &["add", "index.json"])?;
+            std::fs::remove_file(&index).map_err(|error| error.to_string())?;
+        }
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/emitter.ts", &[(2, "  return 42;")])],
+        )?;
+        let finding = result.findings.first().ok_or("missing source finding")?;
+        assert!(
+            finding.related_tests.is_empty(),
+            "index.{extension}: {finding:?}"
+        );
+        if extension == "json" {
+            fixture_git_ok(&root, &["rm", "--cached", "index.json"])?;
+        } else {
+            std::fs::remove_file(index).map_err(|error| error.to_string())?;
+        }
+    }
+    crate::testing::fixture_git::remove_fixture_tree(&root)
+}
+
+#[test]
 fn before_each_factory_relation_is_specific_to_the_changed_method_and_receiver()
 -> Result<(), String> {
     use crate::testing::fixture_git::fixture_git_ok;

@@ -266,11 +266,20 @@ Own-package build entry (#15342): when a relative directory import names the
 importer's own package and its JavaScript `main` names unindexed build output,
 the adapter can attribute the import to the manifest's single `source` or a
 unique indexed `src/` counterpart with the same build stem. Both the source
-and manifest must be tracked. A competing module or root export, an ambiguous
-source, and a source owned by a nested package withhold the relation. An
-uncredited name-matched import reports the unread build entry. An explicit
+and manifest must be tracked. A competing module, package directory index,
+or root export, an ambiguous source, and a source owned by a nested package
+withhold the relation. An uncredited name-matched import reports the unread
+build entry. An explicit
 file import retains its file identity. This is static source attribution. The
 bundle's contents and the test runner's loaded code remain unverified.
+
+This fallback covers non-namespace imports and JavaScript outputs in a
+recognized build directory. A root-level bundle or a direct call through a
+CommonJS namespace binding gets no build-source link. A test file with mock
+declarations is excluded even when the mock names a different dependency.
+Stronger related-test candidates take precedence over this fallback. A dirty
+snapshot input beside the manifest can also withhold it during committed
+analysis.
 
 Build-output amendment (#4551): with a known workspace root, a relative
 import whose in-root join lies under the root `tsconfig.json`'s own

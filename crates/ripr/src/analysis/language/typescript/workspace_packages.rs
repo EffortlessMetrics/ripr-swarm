@@ -124,6 +124,7 @@ impl WorkspacePackages {
             if let Some(source) = &entry.source {
                 wanted.insert(source.clone());
                 wanted.insert(normalize(&dir.join("package.json")));
+                wanted.extend(package_indexes(dir).map(|index| normalize(&index)));
             }
         }
         if !wanted.is_empty() {
@@ -135,6 +136,14 @@ impl WorkspacePackages {
                     && !tracked.as_ref().is_some_and(|files| {
                         files.contains(&normalize(&dir.join("package.json")))
                             && files.contains(source)
+                            && !package_indexes(dir).any(|index| {
+                                // A directory can load its index when its main is
+                                // missing. Check the Git index as well as disk so
+                                // deleted, ignored, and symlinked alternatives count.
+                                files.contains(&normalize(&index))
+                                    || !matches!(std::fs::symlink_metadata(root.join(index)),
+                                        Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+                            })
                     })
                 {
                     entry.source = None;
@@ -307,6 +316,13 @@ impl WorkspacePackages {
 
 /// Build-output directory names a mirrored target drops before `src/`.
 const BUILD_DIRS: [&str; 8] = ["dist", "esm", "cjs", "lib", "build", "out", "es", "module"];
+
+fn package_indexes(dir: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    SOURCE_EXTENSIONS
+        .into_iter()
+        .chain([".json", ".node"])
+        .map(|extension| dir.join(format!("index{extension}")))
+}
 
 /// Only ordinary package-local build paths have a source counterpart.
 fn build_entry_stem(target: &str) -> Option<&str> {
