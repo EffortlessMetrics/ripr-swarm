@@ -56,7 +56,7 @@
       "resolution": "landed_and_accepted",
       "candidate_effect": "Cache status/clear help and scoped flag suggestions are in the cut.",
       "implementation_refs": [
-        "pr:3823"
+        "commit:012e2ab995fb3e00c42eb12f12f92f2874cc0eba"
       ],
       "proof_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/3786"
