@@ -23,9 +23,6 @@ impl<'a> From<&'a LanguageRepoResult> for RepoOutcomeInput<'a> {
 pub(super) struct LanguageDiffResult {
     pub findings: Vec<Finding>,
     pub skipped_files: usize,
-    // Existing helper records this input; outcome decisions never consume it.
-    #[allow(dead_code)]
-    pub changed_files: usize,
 }
 impl<'a> From<&'a LanguageDiffResult> for DiffOutcomeInput<'a> {
     fn from(r: &'a LanguageDiffResult) -> Self {

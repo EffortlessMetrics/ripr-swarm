@@ -390,9 +390,7 @@ fn inline_unwrap_err_error_read(line: &str) -> Option<String> {
     {
         return None;
     }
-    let Some(args) = equality_assertion_arguments(line) else {
-        return None;
-    };
+    let args = equality_assertion_arguments(line)?;
     let (Some(left), Some(right)) = (args.first(), args.get(1)) else {
         return None;
     };

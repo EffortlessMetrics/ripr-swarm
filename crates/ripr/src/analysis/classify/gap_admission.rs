@@ -275,7 +275,7 @@ fn compares_unwrapped_owner_error(
             };
             if call
                 .expr()
-                .is_none_or(|expr| expr.syntax().text().to_string() != callee)
+                .is_none_or(|expr| expr.syntax().text() != callee)
             {
                 return false;
             }

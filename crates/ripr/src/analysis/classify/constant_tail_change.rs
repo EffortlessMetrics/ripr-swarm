@@ -233,9 +233,9 @@ impl DeletedGuardReturn {
             let call_text = call.syntax().text().to_string();
             if same_statement.trim().trim_end_matches(';').trim()
                 != call_text.trim().trim_end_matches(';').trim()
-                || !self
+                || self
                     .compared_call(owner, &call_text)
-                    .is_some_and(|(_, baseline)| baseline == old_matches)
+                    .is_none_or(|(_, baseline)| baseline != old_matches)
             {
                 return false;
             }

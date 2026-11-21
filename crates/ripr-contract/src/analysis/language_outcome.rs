@@ -308,7 +308,7 @@ impl LanguageAnalysisOutcomeV1 {
             OutcomeMode::Repo,
             None,
             status,
-            count_findings(&result.findings),
+            count_findings(result.findings),
             resources,
             limitations,
         )

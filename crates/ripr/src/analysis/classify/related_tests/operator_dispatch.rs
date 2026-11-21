@@ -615,62 +615,6 @@ fn stands_alone(before: &str) -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn before(body: &str, op: &str) -> Option<String> {
-        let at = body.find(op)?;
-        operand_before(body, at).map(|(_, text)| text.to_string())
-    }
-
-    fn after(body: &str, op: &str) -> Option<String> {
-        let at = body.find(op)?;
-        operand_after(body, at + op.len()).map(|(_, text)| text.to_string())
-    }
-
-    #[test]
-    fn the_left_operand_is_a_whole_path_with_one_group() {
-        assert_eq!(
-            before("let s = Money(2) + x;", "+").as_deref(),
-            Some("Money(2)")
-        );
-        assert_eq!(before("let s = a + b;", "+").as_deref(), Some("a"));
-        assert_eq!(
-            before("f(Money { v: 1 } + x)", "+").as_deref(),
-            Some("Money { v: 1 }")
-        );
-        assert_eq!(before("a + b", "+").as_deref(), Some("a"));
-    }
-
-    #[test]
-    fn a_left_operand_that_is_only_a_tail_is_refused() {
-        for body in [
-            "let s = a * b + c;",
-            "let s = &m + n;",
-            "let s = x.y + n;",
-            "let s = x.m() + n;",
-            "let s = (a) + n;",
-            "let s = v[0] + n;",
-            "let ok = a == b + n;",
-        ] {
-            assert_eq!(before(body, "+ "), None, "{body}");
-        }
-    }
-
-    #[test]
-    fn the_unary_operand_is_a_whole_path() {
-        assert_eq!(after("let n = -m;", "-").as_deref(), Some("m"));
-        assert_eq!(
-            after("let n = -Money(2);", "-").as_deref(),
-            Some("Money(2)")
-        );
-        assert_eq!(after("let n = -m.abs();", "-"), None);
-        assert_eq!(after("let n = !m?;", "!"), None);
-        assert_eq!(after("let n = -m[0];", "-"), None);
-    }
-}
-
 /// Assertion-local value observation for the bounded named scalar Add return.
 /// The ordinary operator relation remains reach-only. This receipt additionally
 /// binds the whole asserted operation, a strict literal expectation and the
@@ -1132,4 +1076,60 @@ fn named_add_field_projection(
                 )
         })
         .then(|| call.syntax().text().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn before(body: &str, op: &str) -> Option<String> {
+        let at = body.find(op)?;
+        operand_before(body, at).map(|(_, text)| text.to_string())
+    }
+
+    fn after(body: &str, op: &str) -> Option<String> {
+        let at = body.find(op)?;
+        operand_after(body, at + op.len()).map(|(_, text)| text.to_string())
+    }
+
+    #[test]
+    fn the_left_operand_is_a_whole_path_with_one_group() {
+        assert_eq!(
+            before("let s = Money(2) + x;", "+").as_deref(),
+            Some("Money(2)")
+        );
+        assert_eq!(before("let s = a + b;", "+").as_deref(), Some("a"));
+        assert_eq!(
+            before("f(Money { v: 1 } + x)", "+").as_deref(),
+            Some("Money { v: 1 }")
+        );
+        assert_eq!(before("a + b", "+").as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn a_left_operand_that_is_only_a_tail_is_refused() {
+        for body in [
+            "let s = a * b + c;",
+            "let s = &m + n;",
+            "let s = x.y + n;",
+            "let s = x.m() + n;",
+            "let s = (a) + n;",
+            "let s = v[0] + n;",
+            "let ok = a == b + n;",
+        ] {
+            assert_eq!(before(body, "+ "), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn the_unary_operand_is_a_whole_path() {
+        assert_eq!(after("let n = -m;", "-").as_deref(), Some("m"));
+        assert_eq!(
+            after("let n = -Money(2);", "-").as_deref(),
+            Some("Money(2)")
+        );
+        assert_eq!(after("let n = -m.abs();", "-"), None);
+        assert_eq!(after("let n = !m?;", "!"), None);
+        assert_eq!(after("let n = -m[0];", "-"), None);
+    }
 }

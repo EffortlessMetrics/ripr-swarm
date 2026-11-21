@@ -10,10 +10,9 @@ fn finding_in(language: Option<LanguageId>) -> Result<Finding, String> {
     Ok(finding)
 }
 
-fn diff_result(findings: Vec<Finding>, changed_files: usize) -> LanguageDiffResult {
+fn diff_result(findings: Vec<Finding>) -> LanguageDiffResult {
     LanguageDiffResult {
         findings,
-        changed_files,
         ..LanguageDiffResult::default()
     }
 }
@@ -25,7 +24,7 @@ fn diff_ok(
 ) -> LanguageAnalysisOutcomeV1 {
     children(
         language,
-        &diff_result(findings, 1),
+        &diff_result(findings),
         &kept.iter().map(|k| k.to_string()).collect::<Vec<_>>(),
         &[language.as_str()],
         "full",
@@ -163,7 +162,7 @@ fn javascript_only_changes_stay_javascript() -> Result<(), String> {
     // counted as JavaScript under the adapter's own label.
     let ts_run = children(
         LanguageId::TypeScript,
-        &diff_result(vec![finding_in(Some(LanguageId::JavaScript))?], 1),
+        &diff_result(vec![finding_in(Some(LanguageId::JavaScript))?]),
         &[],
         &["javascript"],
         "full",
@@ -185,8 +184,8 @@ fn unavailable_not_selected_unsupported_no_scope_and_complete_zero_stay_distinct
     );
     let not_selected = LanguageAnalysisOutcomeV1::not_selected("python", 1, "disabled", "full");
     let unsupported = LanguageAnalysisOutcomeV1::unsupported("python", 1, "full");
-    let no_scope = only(LanguageId::Python, &diff_result(Vec::new(), 0), &[]);
-    let complete_zero = only(LanguageId::Python, &diff_result(Vec::new(), 1), &["python"]);
+    let no_scope = only(LanguageId::Python, &diff_result(Vec::new()), &[]);
+    let complete_zero = only(LanguageId::Python, &diff_result(Vec::new()), &["python"]);
     let all = [
         &unavailable,
         &not_selected,
@@ -314,7 +313,7 @@ fn empty_aggregate_and_scope_binding_fail_closed() -> Result<(), String> {
     let mut partial_scope = DiffLanguageAggregate::new("partial:sha256:x".to_string());
     for child in children(
         LanguageId::Rust,
-        &diff_result(vec![finding_in(Some(LanguageId::Rust))?], 1),
+        &diff_result(vec![finding_in(Some(LanguageId::Rust))?]),
         &[],
         &["rust"],
         "partial:sha256:x",
@@ -353,7 +352,7 @@ fn err_compat_run_is_the_adapter_reason_verbatim() {
 
 #[test]
 fn generated_skips_make_a_diff_run_partial() {
-    let mut run = diff_result(Vec::new(), 2);
+    let mut run = diff_result(Vec::new());
     run.skipped_files = 1;
     let outcome = only(LanguageId::Rust, &run, &["rust"]);
     assert_eq!(outcome.status, LanguageOutcomeStatus::Partial);
@@ -365,7 +364,7 @@ fn partial_scope_label_is_bound_into_the_child_scope() -> Result<(), String> {
     // `only` builds with scope "full"; a partial label must flow through.
     let child = children(
         LanguageId::Rust,
-        &diff_result(vec![finding_in(Some(LanguageId::Rust))?], 1),
+        &diff_result(vec![finding_in(Some(LanguageId::Rust))?]),
         &[],
         &["rust"],
         "partial:sha256:x",
@@ -379,14 +378,14 @@ fn partial_scope_label_is_bound_into_the_child_scope() -> Result<(), String> {
 fn nothing_but_no_current_scope_children_is_not_whole_diff_complete() {
     let idle = aggregate(vec![only(
         LanguageId::Python,
-        &diff_result(Vec::new(), 0),
+        &diff_result(Vec::new()),
         &[],
     )]);
     assert!(idle.blockers().is_empty());
     assert_eq!(idle.completeness(), DiffCompleteness::Incomplete);
     let evidenced = aggregate(vec![
-        only(LanguageId::Python, &diff_result(Vec::new(), 0), &[]),
-        only(LanguageId::Rust, &diff_result(Vec::new(), 1), &["rust"]),
+        only(LanguageId::Python, &diff_result(Vec::new()), &[]),
+        only(LanguageId::Rust, &diff_result(Vec::new()), &["rust"]),
     ]);
     assert_eq!(evidenced.completeness(), DiffCompleteness::Complete);
 }
@@ -395,7 +394,7 @@ fn nothing_but_no_current_scope_children_is_not_whole_diff_complete() {
 fn javascript_loop_over_typescript_only_files_is_no_current_scope() {
     let all = children(
         LanguageId::JavaScript,
-        &diff_result(Vec::new(), 1),
+        &diff_result(Vec::new()),
         &[],
         &["typescript"],
         "full",
@@ -418,16 +417,13 @@ fn javascript_loop_over_typescript_only_files_is_no_current_scope() {
 #[test]
 fn typescript_family_findings_split_by_finding_language_and_never_double_count()
 -> Result<(), String> {
-    let result = diff_result(
-        vec![
-            finding_in(Some(LanguageId::TypeScript))?,
-            finding_in(Some(LanguageId::JavaScript))?,
-            finding_in(Some(LanguageId::JavaScript))?,
-            finding_in(Some(LanguageId::Rust))?,
-            finding_in(None)?,
-        ],
-        3,
-    );
+    let result = diff_result(vec![
+        finding_in(Some(LanguageId::TypeScript))?,
+        finding_in(Some(LanguageId::JavaScript))?,
+        finding_in(Some(LanguageId::JavaScript))?,
+        finding_in(Some(LanguageId::Rust))?,
+        finding_in(None)?,
+    ]);
     let touched = ["typescript", "javascript"];
     let from_ts = children(LanguageId::TypeScript, &result, &[], &touched, "full");
     let from_js = children(LanguageId::JavaScript, &result, &[], &touched, "full");
