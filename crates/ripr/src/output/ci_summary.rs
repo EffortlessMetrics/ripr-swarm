@@ -178,11 +178,20 @@ fn repo_relative_for(root: &Path) -> RepoRelative {
     // Producers print command roots in their human display spelling
     // (`command_root_display`): on Windows that is forward-slashed without the
     // verbatim prefix, not the native canonical spelling. Match it too (#15858).
-    let display = canonical
+    let shown = canonical
         .as_deref()
         .map(crate::output::path::human_path)
-        .filter(|display| *display != physical)
         .unwrap_or_default();
+    // Command fields quote that spelling with `shell_arg` when it holds a
+    // shell metacharacter, so `/tmp/O'Brien/project` is printed as
+    // `'/tmp/O'\''Brien/project'`. Match the quoted form as well; a plain
+    // path needs no quoting and adds no spelling.
+    let quoted = quoted_root_opening(&shown);
+    let display = if shown == physical {
+        String::new()
+    } else {
+        shown
+    };
     // Like the shell, trust `$PWD` only while it still names the working
     // directory; otherwise the logical path is the physical one.
     let cwd = std::env::current_dir().ok();
@@ -207,7 +216,28 @@ fn repo_relative_for(root: &Path) -> RepoRelative {
     RepoRelative {
         physical: physical.into_bytes(),
         display: display.into_bytes(),
+        quoted,
         logical: logical.into_bytes(),
+    }
+}
+
+/// The opening of `shell_arg(root)` without its closing quote, when the
+/// producer quotes the root in one plain quote pair (`'…'` or Windows
+/// `"…"`); empty otherwise. `RepoRelative` replaces it with the quote and
+/// `.`, so `'<root>'` becomes `'.'` and `'<root>/x'` becomes `'./x'`.
+fn quoted_root_opening(root: &str) -> Vec<u8> {
+    if root.is_empty() {
+        return Vec::new();
+    }
+    let quoted = crate::agent::loop_commands::shell_arg(root);
+    let bytes = quoted.as_bytes();
+    match (bytes.first(), bytes.split_last()) {
+        (Some(open @ (b'\'' | b'"')), Some((close, opening)))
+            if opening.len() > 1 && open == close =>
+        {
+            opening.to_vec()
+        }
+        _ => Vec::new(),
     }
 }
 

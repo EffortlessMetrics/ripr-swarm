@@ -5700,6 +5700,88 @@ fn start_here_commands_in_the_summary_are_shown_from_the_repository_root()
     Ok(())
 }
 
+/// #15858: a checkout whose path the producer must shell-quote. The real
+/// `reports ci-packet` start-here step writes the missing-base fetch with
+/// `git -C '<checkout>'` (an apostrophe is escaped as `'\''`), and the real
+/// `reports ci-summary` shows that directory argument as `'.'` with the
+/// refspec unchanged. A space-only checkout is the control: its quoted form
+/// holds the raw path. The packet keeps the runner's own command.
+#[cfg(unix)]
+#[test]
+fn a_quoted_checkout_path_in_the_missing_base_fetch_is_shown_as_the_repository_root()
+-> Result<(), Box<dyn Error>> {
+    let refspec = "fetch origin -- '+refs/heads/main:refs/remotes/origin/main'";
+    for name in ["O'Brien", "two words"] {
+        let parent = replay::unique_temp_dir("quoted-checkout")?;
+        let root = parent.join(name).join("project");
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"quoted\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(root.join("src/lib.rs"), "pub fn one() -> u8 { 1 }\n")?;
+        replay::git(&root, &["init", "-q"])?;
+        replay::git(&root, &["add", "-A"])?;
+        replay::git(&root, &["commit", "-q", "-m", "initial"])?;
+        let checkout = fs::canonicalize(&root)?;
+        let abs = checkout.to_str().ok_or("checkout path is not UTF-8")?;
+        let quoted = format!("'{}'", abs.replace('\'', r"'\''"));
+        let removed = ["GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "RIPR_GATE_MODE"];
+        let packet = replay::ripr_with_env(
+            &root,
+            &[
+                "reports",
+                "ci-packet",
+                "--root",
+                ".",
+                "--step",
+                "Render RIPR first-pr start-here",
+            ],
+            &removed,
+            &[("GITHUB_BASE_REF", "main")],
+        )?;
+        if !packet.status.success() {
+            return Err(format!(
+                "ci-packet failed for {name}: {}",
+                String::from_utf8_lossy(&packet.stderr)
+            )
+            .into());
+        }
+        let start_here: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("target/ripr/reports/start-here.json"))?)?;
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &removed,
+            &[("GITHUB_BASE_REF", "main")],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "ci-summary failed for {name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let summary = String::from_utf8(output.stdout)?;
+        // The directory is kept when an assert fails, for inspection.
+        assert_eq!(
+            start_here["selected"]["next_command"].as_str(),
+            Some(format!("git -C {quoted} {refspec}").as_str()),
+            "{name}: {start_here}"
+        );
+        assert!(
+            summary.contains(&format!(
+                "- Safe next action command: `git -C '.' {refspec}`\n"
+            )),
+            "{name}: {summary}"
+        );
+        assert!(!summary.contains(&quoted), "{name}: {summary}");
+        assert!(!summary.contains(abs), "{name}: {summary}");
+        let _ = fs::remove_dir_all(&parent);
+    }
+    Ok(())
+}
+
 /// #14148: the real `reports ci-summary` reads the run's event from the
 /// environment, and a manual run says it has no pull request where a
 /// `pull_request` run of the same tree does not.

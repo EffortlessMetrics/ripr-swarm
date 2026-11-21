@@ -3,7 +3,9 @@
 id = "RIPR-SPEC-0038"
 tests = [
   "crates/ripr/tests/generated_review_workflow.rs::start_here_commands_in_the_summary_are_shown_from_the_repository_root",
+  "crates/ripr/tests/generated_review_workflow.rs::a_quoted_checkout_path_in_the_missing_base_fetch_is_shown_as_the_repository_root",
 ]
 code = [
   "crates/ripr/src/output/ci_summary.rs",
+  "crates/ripr/src/output/ci_summary/jq.rs",
 ]
