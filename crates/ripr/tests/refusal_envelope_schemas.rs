@@ -215,6 +215,11 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
         expected["properties"]["schema_version"]["const"] = json!(derived.version);
         expected["properties"]["analysis_scope"]["properties"]["scope"]["const"] =
             json!(derived.scope);
+        // The context parser accepts an explicitly empty root. A missing
+        // artifact still produces a typed refusal echoing that exact spelling.
+        if derived.path == CONTEXT_REFUSAL_SCHEMA {
+            expected["properties"]["root"] = json!({"type": "string"});
+        }
         if let Some(properties) = expected["properties"].as_object_mut() {
             if !derived.echoes_mode {
                 properties.remove("mode");
@@ -310,6 +315,16 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                     "unexpected mode or base in {format} artifact refusal"
                 ));
             }
+            let empty_root = refusal_json(&args, Path::new(""), 2)?;
+            if empty_root.get("root").and_then(Value::as_str) != Some("") {
+                return Err(format!(
+                    "{format} refused to echo the explicitly empty root"
+                ));
+            }
+            check_refusals(
+                CONTEXT_REFUSAL_SCHEMA,
+                &[("check_artifact_unusable", empty_root)],
+            )?;
             check_refusals(
                 CONTEXT_REFUSAL_SCHEMA,
                 &[("check_artifact_unusable", document)],

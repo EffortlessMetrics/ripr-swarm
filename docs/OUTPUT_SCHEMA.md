@@ -1895,7 +1895,8 @@ and
 [`schemas/ripr/agent-packet-refusal.schema.json`](../schemas/ripr/agent-packet-refusal.schema.json).
 The [context operational refusal](../schemas/ripr/context-refusal.schema.json)
 carries `schema_version: "1.1"`, a diff scope, the effective mode and a base
-when one was supplied. Both JSON presentations use this schema. A successful
+when one was supplied. An explicitly empty `--root` is echoed as the empty
+string. Both JSON presentations use this schema. A successful
 context packet uses its top-level `version` field. An explicit JSON selector
 miss uses the `cli_refusal` contract described below.
 `crates/ripr/tests/refusal_envelope_schemas.rs` checks each sibling against

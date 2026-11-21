@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "../common/published_schema.rs"]
+mod published_schema;
+
 /// #7873: artifact navigation must preserve CLI precedence even when the
 /// explicit winner equals the built-in default. Replaying the printed argv
 /// reloads repository policy, so losing Draft turns it back into Ready.
@@ -174,6 +177,13 @@ fn context_artifact_navigation_preserves_mode_precedence() -> Result<(), String>
 /// packets, structured failures and plain selector misses (#13356).
 #[test]
 fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
+    let schema = published_schema::read("schemas/ripr/context-refusal.schema.json")?;
+    let unsupported = published_schema::unsupported_keywords(&schema);
+    if !unsupported.is_empty() {
+        return Err(format!(
+            "context refusal schema uses unsupported keywords: {unsupported:?}"
+        ));
+    }
     let fixture = SampleDiffFixture::new("context-compact-雪")?;
     let root = fixture.0.display().to_string();
     let diff = fixture.0.join("example.diff").display().to_string();
@@ -223,6 +233,13 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
             "default bytes must remain stable"
         );
         assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+        let packet = serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
+        if published_schema::check(&packet, &schema, &schema, "packet").is_ok() {
+            return Err(format!(
+                "the operational refusal schema accepted a {} success packet",
+                source[0]
+            ));
+        }
     }
 
     let missing_root = fixture.0.join("missing-root").display().to_string();
@@ -311,6 +328,9 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
     let refusal: serde_json::Value =
         serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
     assert_eq!(refusal["error"]["code"], "selector_miss");
+    if published_schema::check(&refusal, &schema, &schema, "selector miss").is_ok() {
+        return Err("the operational refusal schema accepted a CLI selector miss".to_string());
+    }
     Ok(())
 }
 
