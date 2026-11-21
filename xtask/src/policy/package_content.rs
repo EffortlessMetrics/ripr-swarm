@@ -2,8 +2,8 @@
 //!
 //! `cargo package -p ripr --list` / `-p ripr-contract --list` must not carry
 //! test-only sources: the `src/testing/**` support tree, out-of-line unit-test
-//! modules (`tests.rs`, `tests/**`, `*_tests.rs`), corpus-test modules
-//! (`corpus_tests`) or Kani proof modules (`kani_proofs`, `*_kani.rs`,
+//! modules (`tests.rs`, `tests/**`, `*_tests.rs`, `*_tests/**`), corpus-test
+//! modules (`corpus_tests`) or Kani proof modules (`kani_proofs`, `*_kani.rs`,
 //! `kani_smoke.rs`). Those files inflate
 //! the crates.io upload, can push it over the size limit, and ship test
 //! scaffolding to downstream consumers. Fail-closed: a package list that
@@ -17,6 +17,14 @@
 //! `crates/ripr/Cargo.toml`. Any other `*_tests.rs` — including a new
 //! production module not yet allowlisted — is still flagged, so the gate
 //! stays fail-closed and adding an entry is a deliberate, reviewed act.
+//! The same exact-prefix care applies to directory modules: children of a
+//! `*_tests/` directory are test-only even when their own basenames are clean
+//! (a `#[cfg(test)] mod bool_oracle_tests;` ships its
+//! `bool_oracle_tests/*.rs` children past a basename-only rule), except
+//! children of an allowlisted production module's own directory
+//! (`related_tests/**`, `owners_tests/**` under their allowlisted
+//! `*_tests.rs` files), which are production submodules. Basename rules
+//! still fire inside those production directories.
 //! `tests/**` is likewise scoped to the crate root and `src/**`: the
 //! `examples/*/tests/**` trees are shipped deliberately (see the `ripr`
 //! manifest) as the analyzable sample workspace, not as this crate's tests.
@@ -102,7 +110,7 @@ fn report_spec() -> PolicyReportSpec<'static> {
     PolicyReportSpec {
         report_file: "package-content.md",
         check: "check-package-content",
-        why_it_matters: "the `.crate` Cargo ships must contain only production sources. Test-only modules (`src/testing/**`, `tests.rs`, `tests/**`, `*_tests.rs`, `corpus_tests`, `kani_proofs`, `*_kani.rs`) inflate the upload toward the crates.io size limit and ship test scaffolding downstream. Production modules named `*_tests.rs` are exempt only via the exact-path allowlist in package_content.rs.",
+        why_it_matters: "the `.crate` Cargo ships must contain only production sources. Test-only modules (`src/testing/**`, `tests.rs`, `tests/**`, `*_tests.rs`, `*_tests/**`, `corpus_tests`, `kani_proofs`, `*_kani.rs`) inflate the upload toward the crates.io size limit and ship test scaffolding downstream. Production modules named `*_tests.rs` (and their submodule directories) are exempt only via the exact-path allowlist in package_content.rs.",
         fix_kind: FixKind::AuthorDecisionRequired,
         recommended_fixes: &[
             "Exclude test-only paths from the crate `include` list in its Cargo.toml (negated patterns after the production includes), or move the test-only code behind the publish stage.",
@@ -132,19 +140,39 @@ pub(crate) fn package_content_violations(package: &str, package_list: &str) -> V
         .iter()
         .filter(|path| !is_allowlisted_production(package, path))
         .filter_map(|path| {
-            forbidden_rule(path).map(|rule| {
-                format!(
-                    "`cargo package -p {package} --list` includes forbidden test-only path `{path}` ({rule}); test-only sources must not ship in the published crate"
-                )
-            })
+            let rule = forbidden_rule(path)?;
+            // A `*_tests/` directory violation is waived only for children
+            // of an allowlisted production module's own directory; every
+            // other rule (including basename rules inside those dirs) fires.
+            if rule == TESTS_DIR_RULE && is_under_allowlisted_production_dir(package, path) {
+                return None;
+            }
+            Some(format!(
+                "`cargo package -p {package} --list` includes forbidden test-only path `{path}` ({rule}); test-only sources must not ship in the published crate"
+            ))
         })
         .collect()
 }
+
+const TESTS_DIR_RULE: &str = "*_tests/** directory";
 
 fn is_allowlisted_production(package: &str, path: &str) -> bool {
     PRODUCTION_ALLOWLIST
         .iter()
         .any(|(pkg, allowed, _reason)| *pkg == package && *allowed == path)
+}
+
+/// True when `path` lies inside the directory owned by an allowlisted
+/// production `*_tests.rs` module (`related_tests.rs` owns
+/// `related_tests/**`). Exact stem-plus-slash prefix, package-scoped: a
+/// sibling such as `related_tests_extra_tests/` does not match.
+fn is_under_allowlisted_production_dir(package: &str, path: &str) -> bool {
+    PRODUCTION_ALLOWLIST.iter().any(|(pkg, allowed, _reason)| {
+        *pkg == package
+            && allowed
+                .strip_suffix(".rs")
+                .is_some_and(|stem| path.starts_with(&format!("{stem}/")))
+    })
 }
 
 fn normalize_slashes(path: &str) -> String {
@@ -179,6 +207,18 @@ fn forbidden_rule(path: &str) -> Option<&'static str> {
     }
     if basename.ends_with("_tests.rs") {
         return Some("*_tests.rs module");
+    }
+    // Directory modules: children of a `*_tests/` directory are test-only
+    // even with clean basenames (`#[cfg(test)] mod bool_oracle_tests;` ->
+    // `bool_oracle_tests/parametrized_names.rs`). After the basename rules
+    // so `*_tests.rs`/`tests.rs` children keep their specific rule, and so
+    // the production-directory waiver in `package_content_violations` only
+    // ever waives this directory rule.
+    if components[..components.len().saturating_sub(1)]
+        .iter()
+        .any(|c| c.ends_with("_tests"))
+    {
+        return Some(TESTS_DIR_RULE);
     }
     // Only this crate's own test trees: a crate-root `tests/**` or a
     // `src/**/tests/**`. `examples/*/tests/**` is the deliberately shipped
@@ -278,6 +318,121 @@ tests/integration.rs
         let violations =
             package_content_violations("ripr", "src/analysis/classify/extra_tests.rs\n");
         assert_eq!(violations.len(), 1, "{violations:?}");
+    }
+
+    #[test]
+    fn cfg_test_directory_module_children_are_flagged() {
+        // `#[cfg(test)] mod bool_oracle_tests;` (python.rs) ships its
+        // directory children past the basename rules: neither basename ends
+        // in `_tests.rs`. The directory component must flag both.
+        let list = "\
+src/analysis/language/python/bool_oracle_tests/parametrized_names.rs
+src/analysis/language/python/bool_oracle_tests/patch_scope_controls.rs
+";
+        let violations = package_content_violations("ripr", list);
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(violations.iter().all(|v| v.contains(TESTS_DIR_RULE)));
+        // Nested clean-named children and other packages behave the same.
+        for (package, path) in [
+            (
+                "ripr",
+                "src/analysis/language/python/bool_oracle_tests/nested/deep.rs",
+            ),
+            ("ripr-contract", "src/domain/widget_tests/helper.rs"),
+            (
+                "ripr",
+                "src/lsp/backend/delivery_selection_parity_tests/helper.rs",
+            ),
+        ] {
+            assert_eq!(
+                package_content_violations(package, path).len(),
+                1,
+                "{package} {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn production_tests_directory_children_are_not_flagged() {
+        // Production `*_tests.rs` modules own same-stem directories whose
+        // clean-named children are production submodules and ship today.
+        let list = "\
+src/analysis/classify/related_tests/dispatch_target.rs
+src/analysis/classify/related_tests/fmt_live.rs
+src/analysis/language/python/owners_tests/route_body.rs
+src/analysis/language/python/related_tests/dunder_entries.rs
+src/analysis/language/python/related_tests/route_response.rs
+src/analysis/test_grip_evidence/related_tests/context.rs
+src/analysis/test_grip_evidence/related_tests/visibility.rs
+";
+        assert_eq!(
+            package_content_violations("ripr", list),
+            Vec::<String>::new()
+        );
+        // Exact-prefix care: a sibling `*_tests` directory that merely
+        // shares the allowlisted stem string is not the owned directory.
+        assert_eq!(
+            package_content_violations(
+                "ripr",
+                "src/analysis/language/python/related_tests_extra_tests/helper.rs\n"
+            )
+            .len(),
+            1
+        );
+        // Package scoping: the same production directory under the other
+        // crate is not allowlisted there.
+        assert_eq!(
+            package_content_violations(
+                "ripr-contract",
+                "src/analysis/classify/related_tests/dispatch_target.rs\n"
+            )
+            .len(),
+            1
+        );
+        // Basename rules still fire inside production directories.
+        for path in [
+            "src/analysis/language/python/owners_tests/tests.rs",
+            "src/analysis/language/python/related_tests/hidden_code_scan_tests.rs",
+            "src/analysis/classify/related_tests/dispatch_target/tests.rs",
+        ] {
+            assert_eq!(
+                package_content_violations("ripr", path).len(),
+                1,
+                "{path} must stay flagged by its basename rule"
+            );
+        }
+    }
+
+    #[test]
+    fn backslash_directory_module_paths_are_flagged() {
+        for (list, want) in [
+            (
+                "src\\analysis\\language\\python\\bool_oracle_tests\\parametrized_names.rs\n",
+                1,
+            ),
+            (
+                "src\\analysis\\language\\python\\bool_oracle_tests\\patch_scope_controls.rs\n",
+                1,
+            ),
+            (
+                "src\\analysis\\classify\\related_tests\\dispatch_target.rs\n",
+                0,
+            ),
+            (
+                "src\\analysis\\language\\python\\owners_tests\\route_body.rs\n",
+                0,
+            ),
+            (
+                "src\\analysis\\language\\python\\related_tests\\dunder_entries.rs\n",
+                0,
+            ),
+        ] {
+            assert_eq!(
+                package_content_violations("ripr", list).len(),
+                want,
+                "list={list:?}"
+            );
+        }
     }
 
     #[test]
