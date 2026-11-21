@@ -21,6 +21,8 @@
 //! unprovable shadow or impl keeps credit, because a missed shadow demotes a
 //! genuine relation and a wrong demotion hides a real call.
 
+mod macro_impl;
+
 use super::{
     RustIndex, TestSummary, assertion_arguments_resolve, base_type_name, is_ident_byte,
     mask_comments_and_strings, node_executes_in,
@@ -465,7 +467,9 @@ fn last_segment_name(self_ty: &str) -> &str {
 
 /// Scan every indexed file for an impl of `trait_name` (including empty ones)
 /// whose self type is std-headed or cannot be ruled out, or a macro that
-/// spells such an impl. A file that does not parse is treated as a match.
+/// spells such an impl (`macro_impl` rules out only a macro whose every impl
+/// of the trait names a user type it or an indexed file declares). A file
+/// that does not parse is treated as a match.
 fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str) -> bool {
     // This runs per resolved receiver of every related test, so keep it off
     // the whole-workspace AST: only a file that spells the trait name can hold
@@ -531,12 +535,8 @@ fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str)
                     || !is_declared(base);
             }
             // Tokens a macro expands into an impl are not parsed as an item.
-            let macro_text = (ast::MacroRules::can_cast(node.kind())
-                || ast::MacroCall::can_cast(node.kind()))
-            .then(|| node.text().to_string());
-            macro_text.is_some_and(|text| {
-                text.contains("impl") && text.contains(trait_name) && text.contains("for")
-            })
+            (ast::MacroRules::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind()))
+                && macro_impl::macro_may_implement_for_std(&node, trait_name, head, &is_declared)
         })
 }
 
