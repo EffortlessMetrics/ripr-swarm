@@ -215,8 +215,13 @@ Widening edits pass, as does a new property on an object with
 a dropped `pattern`, and annotation-only edits (`description`, `title`,
 `examples`, ...) at any depth. A new root `anyOf` also passes when one properties-only alternative
 repeats earlier same-field scalar guards (`type`, `minLength`) and every
-other alternative either repeats those guards or supplies only a valid
-nonempty list of distinct required names. The compatibility tests
+other alternative either repeats those guards or uses the bounded predicate
+accepted by the gate. That predicate supports literal `const` values, string
+`description`, `type: string`, boolean `additionalProperties`, and nonempty
+`required` lists of distinct names. It also accepts nonnegative integer
+`minItems` and `maxItems` bounds and recursively checks schemas under `items`
+and `properties`, up to 32 levels. References, combinators and other keywords
+fall outside this proof. The compatibility tests
 `added_any_of_preserves_a_repeated_scalar_guard_only` and
 `published_check_root_widening_does_not_admit_overlapping_cache_receipts`
 cover this implication and an enclosing exclusive alternative.
