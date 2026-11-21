@@ -2354,6 +2354,10 @@ struct TsInputClassTarget {
 struct TsInputClassChange {
     kind: TsInputClassKind,
     target: TsInputClassTarget,
+    /// The change removed `?.trim()`, whose semantics also differ for
+    /// `null`/`undefined` inputs (old result `undefined`, new result the
+    /// input itself), so those literals also witness it.
+    optional_trim: bool,
 }
 
 impl TsInputClassChange {
@@ -2416,7 +2420,10 @@ impl TsInputClassChange {
         };
         match self.kind {
             TsInputClassKind::FalsyNonNullish => ts_is_falsy_non_nullish_literal(&value),
-            TsInputClassKind::WhitespacePadded => ts_is_padded_string_literal(&value),
+            TsInputClassKind::WhitespacePadded => {
+                ts_is_padded_string_literal(&value)
+                    || (self.optional_trim && matches!(value.trim(), "null" | "undefined"))
+            }
             TsInputClassKind::OmittedDestructuredField { .. } => false,
         }
     }
@@ -2429,7 +2436,13 @@ fn ts_input_class_nested_value(argument: &str, target: &TsInputClassTarget) -> O
     if let Some(field) = &target.field {
         let inner = argument.strip_prefix('{')?.strip_suffix('}')?;
         let entries = balanced_call_arguments(&format!("{inner})"))?;
-        return entries.iter().find_map(|entry| {
+        // A spread entry can override the named field with an unreadable
+        // value; fail closed instead of reading the first entry.
+        if entries.iter().any(|entry| entry.trim().starts_with("...")) {
+            return None;
+        }
+        // Later entries override earlier ones in an object literal.
+        return entries.iter().rev().find_map(|entry| {
             let (key, value) = entry.split_once(':')?;
             (key.trim().trim_matches(['"', '\'']) == field.as_str())
                 .then(|| value.trim().to_string())
@@ -2470,13 +2483,24 @@ fn ts_is_padded_string_literal(value: &str) -> bool {
         return false;
     }
     let inner = &value[1..value.len() - 1];
-    !inner.is_empty() && inner.trim() != inner
+    if inner.is_empty() {
+        return false;
+    }
+    // Whitespace written as an escape (`\t`, `\n`, `\r`) pads the value
+    // exactly like a literal space.
+    inner.trim() != inner
+        || ["\\t", "\\n", "\\r"]
+            .iter()
+            .any(|escape| inner.starts_with(escape) || inner.ends_with(escape))
 }
 
 /// The call-argument target read by the trailing operand of `text` (the
 /// expression before a changed operator or `.trim()`).
 fn ts_input_class_target(text: &str, owner: &TypeScriptOwner) -> Option<TsInputClassTarget> {
-    let cut = text.rfind(['(', ',', ';']).map_or(0, |at| at + 1);
+    // Find the cut on the masked text so punctuation inside literals or
+    // comments cannot become the cut point; indices are length-preserving.
+    let masked = ts_mask_literals_and_comments(text);
+    let cut = masked.rfind(['(', ',', ';']).map_or(0, |at| at + 1);
     let mut tail = text[cut..].trim();
     for keyword in ["return ", "await ", "typeof ", "yield "] {
         if let Some(rest) = tail.strip_prefix(keyword) {
@@ -2484,6 +2508,14 @@ fn ts_input_class_target(text: &str, owner: &TypeScriptOwner) -> Option<TsInputC
         }
     }
     tail = tail.trim_start_matches(['(', '!']);
+    // A trailing operand after a binary `+` is the operand the changed
+    // operator or `.trim()` reads (`a.trim() + text.trim()` reads `text`).
+    if let Some(plus) = tail.rfind(" + ") {
+        let after = &tail[plus + 3..];
+        if !after.contains('(') {
+            tail = after.trim_start();
+        }
+    }
     let base_end = tail
         .find(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '$')))
         .unwrap_or(tail.len());
@@ -2554,9 +2586,14 @@ fn ts_remove_char_span(text: &str, at: usize, len: usize) -> Option<String> {
 /// Char position of `needle` in `masked` (literals blanked), mapped back to
 /// the original text by char count, so operators inside strings never match.
 fn ts_masked_find(masked: &str, needle: &str) -> Option<usize> {
-    masked
-        .find(needle)
-        .map(|byte_at| masked[..byte_at].chars().count())
+    ts_masked_find_from(masked, needle, 0)
+}
+
+/// [`ts_masked_find`] starting at char position `char_from`.
+fn ts_masked_find_from(masked: &str, needle: &str, char_from: usize) -> Option<usize> {
+    let tail: String = masked.chars().skip(char_from).collect();
+    tail.find(needle)
+        .map(|byte_at| char_from + tail[..byte_at].chars().count())
 }
 
 /// Detect the #15285 input-class shapes `old_line` -> `new_line`.
@@ -2566,41 +2603,49 @@ fn ts_input_class_change(
     owner: &TypeScriptOwner,
 ) -> Option<TsInputClassChange> {
     let (old_trim, new_trim) = (old_line.trim(), new_line.trim());
-    // `??` <-> `||` as the only change.
+    // `??` <-> `||` as the only change. Every occurrence is tried: an
+    // unchanged operator earlier in the line must not hide the edited one.
     for (from, to) in [("??", "||"), ("||", "??")] {
         let masked = ts_mask_literals_and_comments(old_trim);
-        if let Some(at) = ts_masked_find(&masked, from)
-            && ts_replace_char_span(old_trim, at, from.len(), to).as_deref() == Some(new_trim)
-        {
-            let operand_end = old_trim
-                .char_indices()
-                .nth(at)
-                .map_or(old_trim.len(), |(byte_at, _)| byte_at);
-            return ts_input_class_target(&old_trim[..operand_end], owner).map(|target| {
-                TsInputClassChange {
-                    kind: TsInputClassKind::FalsyNonNullish,
-                    target,
-                }
-            });
+        let mut search_from = 0usize;
+        while let Some(at) = ts_masked_find_from(&masked, from, search_from) {
+            if ts_replace_char_span(old_trim, at, from.len(), to).as_deref() == Some(new_trim) {
+                let operand_end = old_trim
+                    .char_indices()
+                    .nth(at)
+                    .map_or(old_trim.len(), |(byte_at, _)| byte_at);
+                return ts_input_class_target(&old_trim[..operand_end], owner).map(|target| {
+                    TsInputClassChange {
+                        kind: TsInputClassKind::FalsyNonNullish,
+                        target,
+                        optional_trim: false,
+                    }
+                });
+            }
+            search_from = at + from.len();
         }
     }
-    // A dropped (or added) `.trim()` as the only change.
+    // A dropped (or added) `.trim()` as the only change (all occurrences).
     for (with_trim, without_trim) in [(old_trim, new_trim), (new_trim, old_trim)] {
         let masked = ts_mask_literals_and_comments(with_trim);
         for needle in [".trim()", "?.trim()"] {
-            if let Some(at) = ts_masked_find(&masked, needle)
-                && ts_remove_char_span(with_trim, at, needle.len()).as_deref() == Some(without_trim)
-            {
-                let receiver_end = with_trim
-                    .char_indices()
-                    .nth(at)
-                    .map_or(with_trim.len(), |(byte_at, _)| byte_at);
-                return ts_input_class_target(&with_trim[..receiver_end], owner).map(|target| {
-                    TsInputClassChange {
-                        kind: TsInputClassKind::WhitespacePadded,
-                        target,
-                    }
-                });
+            let mut search_from = 0usize;
+            while let Some(at) = ts_masked_find_from(&masked, needle, search_from) {
+                if ts_remove_char_span(with_trim, at, needle.len()).as_deref() == Some(without_trim)
+                {
+                    let receiver_end = with_trim
+                        .char_indices()
+                        .nth(at)
+                        .map_or(with_trim.len(), |(byte_at, _)| byte_at);
+                    return ts_input_class_target(&with_trim[..receiver_end], owner).map(
+                        |target| TsInputClassChange {
+                            kind: TsInputClassKind::WhitespacePadded,
+                            target,
+                            optional_trim: needle.starts_with('?'),
+                        },
+                    );
+                }
+                search_from = at + needle.len();
             }
         }
     }
@@ -2616,10 +2661,13 @@ fn ts_destructured_default_change(
     owner: &TypeScriptOwner,
 ) -> Option<TsInputClassChange> {
     let parse = |line: &str| -> Option<(usize, usize, Vec<String>)> {
-        let open = line.find('{')?;
+        // Brace matching on the masked line: braces inside literals or
+        // comments (e.g. a `"}"` default) must not move the close.
+        let masked = ts_mask_literals_and_comments(line);
+        let open = masked.find('{')?;
         let mut depth = 0usize;
         let mut close = None;
-        for (index, ch) in line.char_indices().skip_while(|(at, _)| *at < open) {
+        for (index, ch) in masked.char_indices().skip_while(|(at, _)| *at < open) {
             match ch {
                 '{' => depth += 1,
                 '}' => {
@@ -2688,6 +2736,18 @@ fn ts_destructured_default_change(
             Some(between.matches(',').count())
         }
     };
+    // Only a destructuring position counts: a declaration/parameter
+    // pattern (`const { ... } = ...`, `{ ... } = ...`, or a parameter
+    // list). An object-literal comparison elsewhere is not a default.
+    let trimmed_start = old_line.trim_start();
+    let destructure_context = old_line.contains("} =")
+        || trimmed_start.starts_with("const ")
+        || trimmed_start.starts_with("let ")
+        || trimmed_start.starts_with("var ")
+        || (trimmed_start.starts_with('(') && old_line.contains('{'));
+    if !destructure_context {
+        return None;
+    }
     Some(TsInputClassChange {
         kind: TsInputClassKind::OmittedDestructuredField { field },
         target: TsInputClassTarget {
@@ -2695,6 +2755,7 @@ fn ts_destructured_default_change(
             field: None,
             position: None,
         },
+        optional_trim: false,
     })
 }
 
