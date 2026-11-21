@@ -2166,7 +2166,7 @@ fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
         "attempt root {} is not the exact Git top-level {}; repair attempts run from the top-level, so rerun `ripr check --root {}` and use the repair command it prints",
         requested.display(),
         top.display(),
-        top.display()
+        crate::agent::loop_commands::shell_arg(&top.display().to_string())
     )
 }
 

@@ -52,7 +52,9 @@ fn monorepo(label: &str) -> Result<(TempDirGuard, PathBuf, PathBuf), String> {
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     let guard = TempDirGuard(launch.clone());
-    let top = launch.join("repo");
+    // A space in the top-level path checks that the suggested `--root` stays
+    // one shell argument.
+    let top = launch.join("my repo");
     let backend = top.join("backend");
     copy_tree(&source.join("base"), &backend)?;
     fixture_git_ok(&top, &["init", "-q", "-b", "main"])?;
@@ -125,7 +127,10 @@ fn agent_repair_refuses_a_subdirectory_root_before_writing_anything() -> Result<
     }
     // The refusal names the next step: check from the top-level it found.
     let top = std::fs::canonicalize(&top).map_err(|error| format!("canonicalize top: {error}"))?;
-    let next_step = format!("rerun `ripr check --root {}`", top.display());
+    // Quoted as one argument: single quotes for POSIX shells, the Windows
+    // console form there (`shell_arg`).
+    let quote = if cfg!(windows) { '"' } else { '\'' };
+    let next_step = format!("rerun `ripr check --root {quote}{}{quote}`", top.display());
     if !stderr.contains(&next_step) {
         return Err(format!(
             "the refusal does not name its next step `{next_step}`:\n{stderr}"
