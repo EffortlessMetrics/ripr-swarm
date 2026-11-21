@@ -36938,13 +36938,19 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
         ("reports index", &["reports", "index"]),
         ("reports ci-summary", &["reports", "ci-summary"]),
     ];
+    // Each command runs from its own working directory, so a write under the
+    // CWD names the command that made it, and a refused command must print
+    // nothing to stdout: `reports ci-summary` writes only to stdout, so its
+    // root check placement is visible only there (#14626).
     let mut failures = Vec::new();
-    for (name, argv) in commands {
+    for (index, (name, argv)) in commands.into_iter().enumerate() {
+        let cwd = scratch.join(format!("cwd-{index}"));
+        std::fs::create_dir_all(&cwd)?;
         for root in [&missing, &file] {
             let root_text = root.display().to_string();
             let mut args = argv.to_vec();
             args.extend(["--root", root_text.as_str()]);
-            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &args)?;
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&cwd), &args)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             let expected = format!("{name} root {root_text} is not a directory");
             if output.status.code() != Some(2) || !stderr.contains(&expected) {
@@ -36953,17 +36959,27 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
                     output.status.code()
                 ));
             }
+            if !output.stdout.is_empty() {
+                failures.push(format!(
+                    "{name} --root {root_text}: printed {} bytes to stdout before refusing",
+                    output.stdout.len()
+                ));
+            }
+        }
+        if cwd.join("target").exists() {
+            failures.push(format!(
+                "{name}: a refused command wrote under the CWD (target/ripr)"
+            ));
+        }
+        // Checked per command, and removed so the next command starts from a
+        // missing root again, so a red names the command that created it.
+        if scratch.join("nope").exists() {
+            failures.push(format!("{name}: the mistyped --root was created"));
+            let _ = std::fs::remove_dir_all(scratch.join("nope"));
         }
     }
-    let created = scratch.join("nope").exists();
-    let wrote_target = scratch.join("target").exists();
     let file_kept = std::fs::read_to_string(&file)?;
     let _ = std::fs::remove_dir_all(&scratch);
-    assert!(!created, "the mistyped --root was created");
-    assert!(
-        !wrote_target,
-        "a refused command wrote under the CWD (target/ripr)"
-    );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
     Ok(())

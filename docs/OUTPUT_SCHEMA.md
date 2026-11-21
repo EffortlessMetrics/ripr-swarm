@@ -140,7 +140,7 @@ map is:
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr reports kani` | `schema_version` | `ripr_kani_report.v1` |
 | `ripr reports kani --binding` input | `schema_version` | `ripr_kani_binding.v1` |
-| `ripr help --json` | `schema_version` | `5` |
+| `ripr help --json` (published as `schemas/ripr/help.schema.json`; an integer) | `schema_version` | `5` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
@@ -177,6 +177,7 @@ records that distinction.
 | `schemas/ripr/cli-refusal.schema.json` | `0.1` | `crates/ripr/src/app.rs` and `crates/ripr/src/output/refusal.rs`; minimal usage-error / selector-miss refusal under an explicit JSON request (#11584) |
 | `schemas/ripr/diff.schema.json` | `0.1` | `crates/ripr/src/output/diff_report.rs`; `ripr_diff` report (`ripr diff --json`) |
 | `schemas/ripr/diff-refusal.schema.json` | `0.1` | `crates/ripr/src/cli/commands.rs`; the refusal envelope `ripr diff --json` writes when it cannot produce a report, keyed with the diff report's version |
+| `schemas/ripr/help.schema.json` | `5` | `crates/ripr/src/cli/help_json.rs` (`HELP_JSON_SCHEMA_VERSION`, an integer); command and workflow discovery (`ripr help --json`) |
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
@@ -20959,7 +20960,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.185",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.187",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21714,6 +21715,25 @@ that no real condition can produce (see #1130 adversarial review).
 
 Spec: `docs/specs/RIPR-SPEC-0075-pr-evidence-summary.md`.
 
+## Command discovery output
+
+`ripr help --json` prints one JSON line describing every catalog command and
+workflow (RIPR-SPEC-0190). It is published as
+[`schemas/ripr/help.schema.json`](../schemas/ripr/help.schema.json); its
+`schema_version` is the integer `5`. Each command row carries its class,
+discovery posture, relation, effects, flags parsed from its help body with
+their `flags_scope`, and a typed `exit` object whose codes follow
+[EXIT_CODES.md](EXIT_CODES.md). `catalog_digest` is the lowercase hex SHA-256
+of the command rows, the workflow rows and `catalog_contract_version`, so a
+release that only changes `product_version` keeps the digest.
+`crates/ripr/tests/help_json_schema.rs` validates the real command's bytes,
+asserts they reach every exit-contract kind, flag scope and workflow next-route
+kind, and checks that broken variants are rejected at the field and for the
+constraint each one breaks. Beyond field shapes the
+schema binds the exit codes of each contract kind, discovery to class and
+relation as the catalog validator derives it, an empty `flags` list for
+`no_help_body`, and no value set on a flag that takes no value.
+
 ## Targeted rerun output
 
 `ripr rerun --changed-test <path>[::<test_node>] [--before <path>] --json` and
@@ -21744,7 +21764,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.185",
+      "schema_version": "1.187",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
