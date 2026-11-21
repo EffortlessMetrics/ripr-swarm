@@ -59,6 +59,51 @@ pub(crate) fn read_metadata_toml(path: impl AsRef<Path>) -> std::io::Result<Stri
     read_metadata_toml_with_limit(path, MAX_METADATA_TOML_BYTES)
 }
 
+/// Read `relative_path` under `root` as repository metadata TOML, refusing
+/// any file that resolves outside the root through a link in the file or a
+/// parent directory. A link inside a checkout can point anywhere, so errors
+/// name only the configured relative path and the outside file is never read.
+/// The canonical path is what is read, and only as a regular file under the
+/// metadata TOML cap. A missing file is `Ok(None)`. `what` names the input in
+/// messages, for example `suppressions manifest` (#15546).
+pub(crate) fn read_root_metadata_toml(
+    root: &Path,
+    relative_path: &Path,
+    what: &str,
+) -> Result<Option<String>, String> {
+    let path = root.join(relative_path);
+    // Only a genuinely missing file is absent: a permission-denied lookup or
+    // a link loop reaches the sanitized resolution error below instead.
+    if matches!(
+        std::fs::metadata(&path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    ) {
+        return Ok(None);
+    }
+    let display = relative_path.display();
+    let (root, path) = match (root.canonicalize(), path.canonicalize()) {
+        (Ok(root), Ok(path)) => (root, path),
+        (Err(err), _) | (_, Err(err)) => {
+            return Err(format!(
+                "refusing to read {what} {display}: its location cannot be resolved ({}); check that it and its parent directories are readable and not a link loop",
+                err.kind()
+            ));
+        }
+    };
+    if !path.starts_with(&root) {
+        return Err(format!(
+            "refusing to read {what} {display}: it resolves outside the repository root; keep it as a regular file inside the repository"
+        ));
+    }
+    read_metadata_toml(&path)
+        .map(Some)
+        .map_err(|err| {
+            format!(
+                "failed to read {what} {display}: {err}; keep it as a readable regular file within the size limit"
+            )
+        })
+}
+
 pub(crate) fn read_metadata_toml_with_limit(
     path: impl AsRef<Path>,
     limit: u64,

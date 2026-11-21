@@ -78,4 +78,12 @@ mod tests {
         let _ = ratio(1, 0);
         let _ = ratio(3, 4);
     }
+
+    #[test]
+    fn mean_latency_smoke() {
+        let samples: [&[u64]; 3] = [&[5], &[3, 9], &[10, 20, 30]];
+        for s in samples {
+            let _ = mean_latency(s);
+        }
+    }
 }

@@ -1,0 +1,17 @@
+# Registers the alias sibling-field proofs (#14856) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::ts_fieldconstruction_alias_sibling_field_read_downgrades",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::ts_fieldconstruction_alias_changed_field_read_stays_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::ts_fieldconstruction_alias_bracket_and_optional_sibling_reads_downgrade",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::ts_fieldconstruction_alias_whole_object_and_foreign_local_stay",
+]
+fixtures = [
+  "fixtures/ts_field_construction_alias_sibling_field",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_value_observed_reads_sibling_field",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_sibling_base_is_owner_result",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_masked_reads_key_as_alias_member",
+]

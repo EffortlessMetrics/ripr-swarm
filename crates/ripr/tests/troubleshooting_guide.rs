@@ -205,6 +205,9 @@ const SITUATIONS: &[Situation] = &[
                 return Ok(None);
             }
             let repo = Scratch::repo()?;
+            // A root-level Python file now auto-enables Python (#13342), so the
+            // preview-not-enabled state needs an explicit Rust-only opt-in.
+            repo.write("ripr.toml", "[languages]\nenabled = [\"rust\"]\n")?;
             repo.write("over.py", "def over(qty):\n    return qty > 10\n")?;
             repo.git(&["add", "over.py"])?;
             repo.ripr(&["check"]).map(Some)

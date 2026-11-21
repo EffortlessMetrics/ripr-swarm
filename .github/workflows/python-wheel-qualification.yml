@@ -184,6 +184,21 @@ jobs:
           cargo xtask check-release-targets
           cargo test -p xtask --locked policy::distribution:: -- --nocapture
 
+      # Supplemental build-owner proof reuses the already compiled xtask test
+      # binary. Callable qualification retains its existing eight-minute scope.
+      - name: Verify private Cargo output ownership
+        if: ${{ github.event_name == 'pull_request' && !contains(toJSON(inputs), '"subject_sha"') }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="${GITHUB_WORKSPACE}/target/ripr/reports/private-cargo-output-source-contract.log"
+          mkdir -p "$(dirname "${evidence}")"
+          cargo test --locked -p xtask --bin xtask \
+            reports::fixtures::preparation::private_build_tests::private_build_owners_ \
+            -- --test-threads=1 --nocapture | tee "${evidence}"
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "${evidence}"
+
       - name: Stage the exact-source ordinary integration runner
         id: ordinary_runner
         shell: bash
