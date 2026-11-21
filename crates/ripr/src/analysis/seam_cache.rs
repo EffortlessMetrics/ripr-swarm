@@ -773,9 +773,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// summary without the token would lose its category.
 /// `1.184`: a macro-generated test takes no invocation scopes when its file or
 /// invocation scope rebinds an exempt std macro name (#12852).
-/// `1.185`: a macro-generated test carrying an unrecognised attribute macro takes
+/// `1.187`: a macro-generated test carrying an unrecognised attribute macro takes
 /// no invocation scopes (#12857).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.185";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.187";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1000,8 +1000,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.185";
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
 /// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
-/// `0.187`: same attribute-macro scope refusal as full `1.185` (#12857).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.187";
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.189";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1228,8 +1228,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.187";
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
 /// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
-/// `0.187`: same attribute-macro scope refusal as full `1.185` (#12857).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.187";
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.189";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5768,8 +5768,8 @@ mod tests {
         // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
         // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
         // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
-        // 1.184 -> 1.185: attribute-macro generated tests refuse invocation scopes (#12857).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.185");
+        // 1.184 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.187");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5934,9 +5934,10 @@ mod tests {
         // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
         // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
         // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
-        // 0.186 -> 0.187: same attribute-macro scope refusal as full 1.185 (#12857).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.187");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.187");
+        // 0.186 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
+        // 1.185 / 0.187 and 1.186 / 0.188 are taken by #15847 and #13041.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.189");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.189");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
