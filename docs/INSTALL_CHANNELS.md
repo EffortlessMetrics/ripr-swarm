@@ -75,9 +75,19 @@ before interpreting findings. An empty or limited analysis is not a clean bill
 of health.
 
 Run a fresh analysis before changing old suppressions or baselines. A 0.10
-`finding_id` may no longer identify a current finding. Where the migration
-warning supplies a replacement, inspect the current finding and suppression
-reason before adopting that ID. Unmatched old selectors do not suppress a new
+Rust `finding_id` no longer identifies the current finding: 0.11 hashes the
+parsed expression instead of the whole changed line, so the id's last segment
+changes (for the boundary example, `8390dd91` under 0.10.0 and `c80557eb`
+under 0.11). A plain `ripr check` reports that it found
+`.ripr/suppressions.toml` and did not apply it. Apply the policy to see the
+migration warning, which names the current id for each stale 0.10 entry:
+
+```bash
+ripr check --suppression-policy .ripr/suppressions.toml
+```
+
+Where the warning supplies a replacement, inspect the current finding and
+suppression reason before adopting that ID. Unmatched old selectors do not suppress a new
 finding; do not copy IDs from examples, mass-replace IDs, or broaden the policy
 just to reproduce an old count. Stricter evidence checks can legitimately
 change classifications. Review any adopted gate baseline and policy against
@@ -89,6 +99,22 @@ Regenerate the start-here/first-PR packet with the new binary, using
 `ripr first-pr --help` and its current printed instructions. Follow the new
 packet's root, scope, selected ID and continuation commands; do not reuse a
 0.10 command merely because its output path still exists.
+
+A receipt written by 0.10 does not record the repository HEAD. Check it by
+file, replacing `PATH` with the receipt (0.10 wrote it under
+`target/ripr/receipts/`, named by the raw gap id):
+
+```bash
+ripr receipt check --path PATH
+```
+
+`ripr receipt check --gap <canonical_gap_id>` finds a 0.10 receipt only when
+the gap id contains no path separator. Every Rust gap whose file sits in a
+directory has one, and for those `--gap` reports the receipt as not found.
+The rejection (exit `2`) prints the `ripr receipt write` command, with the gap
+id, verify command and output path filled in, that writes a current receipt.
+Rerun the verify command, then run that printed command with the status you
+observed.
 
 When a receipt is rejected for predating HEAD binding, follow the diagnostic's
 fresh verification/receipt route. **Do not add a HEAD field or change a version
@@ -142,9 +168,12 @@ No universal install-time or warm-analysis speed is promised by this guide.
 
 In VS Code, check the installed extension and the server version/path shown in
 RIPR's status/output. Updating the CLI does not update the extension, and an
-explicit `ripr.server.path` can keep selecting an older server. Check explicit
+explicit `ripr.server.path` can keep selecting an older server. The 0.11
+extension forwards `ripr.seamDiagnostics` and `ripr.diagnosticProfile` to the
+server only when a VS Code settings layer sets them, so `ripr.toml`
+`[lsp] seam_diagnostics = false` applies again. Check explicit
 user, workspace and folder settings when `[lsp]` configuration appears ignored;
-an explicit editor setting can override repository configuration. Preserve
+an explicit editor setting still overrides repository configuration. Preserve
 Workspace Trust and digest verification rather than disabling them to force an
 installation. See [editor setup](EDITOR_EXTENSION.md).
 
@@ -164,7 +193,7 @@ The CI row was checked against source on 2026-10-31; the other rows keep their o
 | GitHub Release server archives | 0.10.0 has all five targets plus `.sha256` | Rehearsed by `release-server-binaries.yml`; 0.11.0 assets do not exist yet | Release operator publishes from `EffortlessMetrics/ripr`. |
 | `cargo binstall ripr` | Falls back to a source build (0.10.0 carries no binstall metadata) | Metadata is in source; works once 0.11.0 assets exist | Verify with a real `cargo binstall ripr` after the release. |
 | CI (`ripr init --ci github`) | Compiles ripr each run | Downloads the release archive and verifies its checksum; falls back to `cargo install` when no archive exists for the runner (the `ripr-check` composite action in `.github/actions/ripr-check/action.yml`, which the generated workflow's install step runs; template in `init_workflow.rs`) | Landed in source. A repo that generated its workflow with an older ripr must regenerate it; the download only succeeds once the matching release archives exist. |
-| PyPI `ripr-rs` | Only `0.11.0a1`, Linux x86-64 wheel | `release-server-binaries.yml` wraps each qualified archive payload into a platform wheel for all five targets and installs each one with pip on its native runner (#5378) | Nothing beyond the Linux x86-64 alpha is public until the release operator uploads the rehearsed wheels. |
+| PyPI `ripr-rs` | Only `0.11.0a1`, Linux x86-64 wheel | `release-server-binaries.yml` wraps each qualified archive payload into a platform wheel for all five targets and installs each one with pip on its native runner (#5378) | Nothing beyond the Linux x86-64 alpha is public until the release operator uploads the rehearsed wheels. The PyPI name is `ripr-rs`: `pip install ripr` installs an unrelated project (read back from PyPI 2026-11-21, #10732). |
 | npm `@effortlessmetrics/ripr` | `0.11.0-alpha.2` on `next` (`latest` also points at the prerelease `0.11.0-alpha.1`, read back from the registry 2026-11-19), Linux x86-64 only; the launcher README says so | `release-server-binaries.yml` packs the five native packages from the qualified archive payloads plus the launcher, and installs them offline with npm on each native runner (#5378) | Platform payload packages (`ripr-darwin-arm64` and the others) do not exist on npm until the release operator publishes them, native packages before the launcher. |
 | VS Code Marketplace / Open VSX | Marketplace lists 0.10.0 (read back in a browser 2026-10-04; Open VSX not checked) | `publish-extension.yml` is source-owned | The listing's two continuation links omit `/blob/main/` and render "Not Found" (`github.com/EffortlessMetrics/ripr/docs/EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md` and `.../EDITOR_FIRST_PR_BRIDGE_WORKFLOW.md`); its description still says 0.8.x. A source docs merge does not change a published listing; the next authorized extension publication does. Installed-snippet and continuation work is owned by #4629. |
 | Homebrew | None | Formula draft below | Needs a tap repository and Steven's go-ahead. |
