@@ -1991,6 +1991,8 @@ impl FoldPlan {
 }
 
 mod branch_index;
+mod tuple_guard;
+pub(in crate::analysis) use tuple_guard::tuple_branch_reached;
 
 #[cfg(test)]
 mod fold_plan;
@@ -1998,7 +2000,7 @@ mod fold_plan;
 #[cfg(test)]
 thread_local! {
     /// How many function texts this thread has read for the fold.
-    static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::analysis::test_grip_evidence) static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// #14419: an owner whose whole body is one range-shaped tail the token fold

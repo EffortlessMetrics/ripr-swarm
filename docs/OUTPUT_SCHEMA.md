@@ -177,6 +177,7 @@ records that distinction.
 | `schemas/ripr/cli-refusal.schema.json` | `0.1` | `crates/ripr/src/app.rs` and `crates/ripr/src/output/refusal.rs`; minimal usage-error / selector-miss refusal under an explicit JSON request (#11584) |
 | `schemas/ripr/diff.schema.json` | `0.1` | `crates/ripr/src/output/diff_report.rs`; `ripr_diff` report (`ripr diff --json`) |
 | `schemas/ripr/diff-refusal.schema.json` | `0.1` | `crates/ripr/src/cli/commands.rs`; the refusal envelope `ripr diff --json` writes when it cannot produce a report, keyed with the diff report's version |
+| `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
 | `schemas/ripr/agent-packet-refusal.schema.json` | `0.5` | `crates/ripr/src/app.rs`; the refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet, keyed with the packet's version |
@@ -212,7 +213,14 @@ alternative (it may overlap an existing one), or more `allOf` conjuncts; and any
 Widening edits pass, as does a new property on an object with
 `additionalProperties: false`, `const` widening to an `enum` that contains it,
 a dropped `pattern`, and annotation-only edits (`description`, `title`,
-`examples`, ...) at any depth. Changing the version pin accepts a breaking edit
+`examples`, ...) at any depth. A new root `anyOf` also passes when one properties-only alternative
+repeats earlier same-field scalar guards (`type`, `minLength`) and every
+other alternative either repeats those guards or supplies only a valid
+nonempty list of distinct required names. The compatibility tests
+`added_any_of_preserves_a_repeated_scalar_guard_only` and
+`published_check_root_widening_does_not_admit_overlapping_cache_receipts`
+cover this implication and an enclosing exclusive alternative.
+Changing the version pin accepts a breaking edit
 explicitly; deleting the pin does not. A schema with no pin (the Shields badge
 schema) cannot take a breaking edit at all. With no merge base the gate prints
 `schema compatibility not established`; it passes locally but fails when `CI`
@@ -5349,9 +5357,15 @@ one. It is emitted between `tool` and `source_currentness`.
 ## Check Findings Artifact
 
 `ripr check --format check-findings-json` emits the complete diff-scoped
-`check --format json` document (the Output section above, never
+generic check JSON document (the Output section above, never
 findings-bounded) with one additive top-level member, `artifact`, as its
-first member (ADR 0020 amendment, #9103). The envelope is the same shared
+first member (ADR 0020 amendment, #9103). Because it is rendered by the
+generic renderer rather than the navigation-aware `--format json` adapter, it
+carries neither `finding_routes` nor `canonical_next_action`; every other
+member of the check document is present under the same conditions as in
+`--format json`. `schemas/ripr/check.schema.json` admits `artifact` as an
+optional member (the `check_findings_artifact` definition), so both documents validate
+against it. The envelope is the same shared
 projection `repo-exposure-json` carries with these token differences: `kind`
 is `"check_findings"` and `analysis.format` / `analysis.command` name
 `check-findings-json` / `ripr check --format check-findings-json`. The
@@ -14132,7 +14146,10 @@ Field contract:
 - `status` - `no_suppressions` when the manifest is missing or empty,
   `healthy` when all parsed records have complete policy metadata, `warning`
   when valid records need review, or `config_error` when the manifest is
-  malformed.
+  malformed. An explicitly named `--manifest` that does not exist, or is
+  unreadable or malformed, is refused with exit `2` instead of reporting
+  `no_suppressions` (the report is still written first for a `config_error`);
+  only the absent default manifest reads as `no_suppressions` (#15254).
 - `summary.missing_owner` and `summary.missing_reason` - parser-level
   structural errors. Owner and reason remain required for every durable
   suppression.
@@ -20942,7 +20959,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.184",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.185",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21714,7 +21731,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.63",
+    "schema_version": "1.64",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -21727,7 +21744,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.184",
+      "schema_version": "1.185",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -22029,6 +22046,37 @@ remain generic references and are never interpreted by position as seam IDs.
 When static evidence changes between incomparable same-rank classes, movement
 is `limited` with `movement_indeterminate` rather than being mislabeled as an
 incompatible before artifact.
+
+The report is published as
+[`schemas/ripr/rerun.schema.json`](../schemas/ripr/rerun.schema.json) (the
+refusal written with exit code 2 is `rerun-refusal.schema.json`).
+`crates/ripr/tests/rerun_json_schema.rs` validates the bytes the real command
+writes for both selectors, `--before` movement (unchanged, improved, regressed,
+closed, indeterminate, and an unusable or incompatible before artifact),
+`--check-parity` (matched and capped), a gap ledger whose records conflict, a
+ledger carrying the typed command specs `ripr agent packet` produced, a
+TypeScript gap rerun, and selectors that resolve to nothing, including an
+empty `--gap ""` and a `--changed-test` that names the root. Only text the
+producer is observed to leave empty stays a plain string: a TypeScript related
+test with no oracle or relation writes `""` for `evidence_summary`,
+`relation_reason` and `relation_confidence`; a blank legacy `verify_commands`
+display is kept as written; and the selector echoes an empty `--gap` value, or
+a `--changed-test` that normalizes to an empty path, as `""` in a `limited`
+report. Every other text field is non-empty. Beyond the field shapes, the schema binds these rules: `limitation`
+is present exactly when `state` is `limited`; a `movement` section carries the
+report `state` and the before/after `authority_boundary`, and a report without
+one is `current_state_only` or `limited`; a `limited` movement is
+`movement_indeterminate`, and a `movement_indeterminate` limitation always
+carries a movement section; an unusable before artifact makes no movement
+claim; `matched` parity has no mismatch of any kind, and `limited` parity is
+exactly the report's `full_pipeline_parity_*` limitation (each requires the
+other); at most 32 `cache.store_failures` rows are retained; a typed command
+spec's `working_directory` is relative, as in `repair-assurance.schema.json`; only a gap selector writes
+`route` or `scope_limitations`; a `receipt_command_conflict` leaves
+`receipt_command` null with no typed receipt spec. Analysis-wide vocabularies
+(`static_class`, oracle and relation names, the selector limitation kinds) are
+non-empty strings rather than closed lists, so a new analysis value does not
+break the schema.
 
 ## Targeted rerun benchmark receipt
 

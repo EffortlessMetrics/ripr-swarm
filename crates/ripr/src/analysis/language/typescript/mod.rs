@@ -1641,6 +1641,36 @@ impl TypeScriptAdapter {
                                 .to_string(),
                         );
                     }
+                    // The diff supplies both values. Take the binding only from the
+                    // parsed head whose line matches the diff, never a renderer reread.
+                    if let Some((lines, facts)) = &ast_probe_facts
+                        && let Some(binding) = facts.phase_two.default_bindings.get(&added.line)
+                        && lines
+                            .get(added.line.saturating_sub(1))
+                            .map(|line| line.trim())
+                            == Some(added.text.trim())
+                        && let Some(new) = standalone_decimal(&added.text)
+                    {
+                        // Only a lone replacement leaves the enclosing declaration
+                        // unchanged on both sides. Other edits can introduce the default.
+                        let previous = match (
+                            changed.added_lines.as_slice(),
+                            changed.removed_lines.as_slice(),
+                        ) {
+                            ([_], [removed]) if removed.new_side_line == added.line => {
+                                standalone_decimal(&removed.text).filter(|old| *old != new)
+                            }
+                            _ => None,
+                        };
+                        let detail = previous.map_or_else(
+                            || "default".to_string(),
+                            |old| format!("default was {old}"),
+                        );
+                        finding.evidence.push(format!(
+                            "{}{binding} = {new} ({detail})",
+                            crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX
+                        ));
+                    }
                     findings.push(finding);
                 } else if let Some(identity) = enum_member_lines.get(&added.line) {
                     let mut finding =
@@ -2375,4 +2405,12 @@ fn consulted_credit_gaps<'a>(
     gaps.iter()
         .filter(|gap| consulted_test_files.contains(&normalized_path(&gap.file)))
         .collect()
+}
+
+/// A whole decimal on a continuation line, optionally terminated as a
+/// declaration or parameter. A larger changed expression keeps its own text.
+fn standalone_decimal(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let value = text.strip_suffix([';', ',']).unwrap_or(text).trim_end();
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())).then_some(value)
 }

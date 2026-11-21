@@ -3574,18 +3574,22 @@ fn fragment_binds_no_assertion_macro(index: &RustIndex, source: &str) -> bool {
     sites.is_empty()
 }
 
-/// Whether `root` is an integration test, bench or example crate root: a
+/// Whether `root` is an integration test, bench or example crate root
+/// (`tests/NAME.rs`, or the multi-file `tests/NAME/main.rs`, #15327): a
 /// crate no other crate can depend on, so nothing it defines is importable.
 /// A manifest may move a library there (`[lib] path = "tests/lib.rs"`); that
 /// root is importable and answers no.
 fn root_is_unimportable_target(index: &RustIndex, root: &Path) -> bool {
-    !index.member_crates.is_custom_lib_path_root(root)
-        && root
-            .parent()
+    let target_directory = |directory: Option<&Path>| {
+        directory
             .and_then(Path::file_name)
-            .is_some_and(|directory| {
-                directory == "tests" || directory == "benches" || directory == "examples"
-            })
+            .is_some_and(|name| name == "tests" || name == "benches" || name == "examples")
+    };
+    let parent = root.parent();
+    !index.member_crates.is_custom_lib_path_root(root)
+        && (target_directory(parent)
+            || (root.file_name().is_some_and(|name| name == "main.rs")
+                && target_directory(parent.and_then(Path::parent))))
 }
 
 /// Whether source text may hold an out-of-line `mod name;`, read lexically
@@ -3767,10 +3771,11 @@ impl TargetRoots {
 }
 
 /// The crate root file `file` composes under: a recognized Cargo target root
-/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
-/// example or build script), a root the package manifest names (`[lib] path`,
-/// or an explicit `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
-/// `path`), or `None` when composition is unresolved, goes through
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`,
+/// an integration test, bench or example (`tests/NAME.rs` or
+/// `tests/NAME/main.rs` and kin) or build script), a root the package
+/// manifest names (`[lib] path`, or an explicit `[[bin]]`, `[[example]]`,
+/// `[[test]]` or `[[bench]]` `path`), or `None` when composition is unresolved, goes through
 /// `include!`, or ends at a file no target is known to root.
 pub(super) fn target_root(
     file: &Path,
@@ -3821,6 +3826,10 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
         | [.., "src", "bin", _]
         | [.., "src", "bin", _, "main.rs"] => true,
         [package @ .., "tests" | "benches" | "examples", _] => package_has_src(package),
+        // Cargo autodiscovers a multi-file integration test, bench or
+        // example as `tests/NAME/main.rs` (and kin), with its modules beside
+        // it (#15327).
+        [package @ .., "tests" | "benches" | "examples", _, "main.rs"] => package_has_src(package),
         [package @ .., "build.rs"] => package_has_src(package),
         _ => false,
     };
@@ -4396,6 +4405,9 @@ impl AssertionRefusal {
                         MacroBindingKind::MacroBody(macro_name) => format!(
                             "the body of `{macro_name}!` at {place} defines or imports `{name}`, so its expansion may rebind it"
                         ),
+                        MacroBindingKind::WrapperRedefinition(wrapper) => format!(
+                            "{place} defines its own `{wrapper}!`, which may replace the audited one for calls in its scope and paste their arguments where they can bring in a different `{name}!`"
+                        ),
                         MacroBindingKind::BodyBindsAny {
                             macro_name,
                             binding,
@@ -4544,6 +4556,7 @@ fn field_site_blocks(site: &MacroBindingSite) -> bool {
                 | MacroBindingKind::MacroArgument(_)
                 | MacroBindingKind::MacroBody(_)
                 | MacroBindingKind::BodyBindsAny { .. }
+                | MacroBindingKind::WrapperRedefinition(_)
                 | MacroBindingKind::ArgumentAttribute { .. }
         )
 }
@@ -11392,7 +11405,7 @@ fn derived_equality<'a>(
 /// - every one of them is a declared variant of `qualifier`, not an
 ///   associated constant or function that may build any variant;
 /// - its `==` is the derived one over fields that each compare by value
-///   ([`error_enum_compares_payload`]).
+///   ([`derived_fields_compare_by_value`]).
 fn error_enum_admits_variant_pin(
     qualifier: &str,
     variant: &str,
@@ -11406,7 +11419,7 @@ fn error_enum_admits_variant_pin(
                 .chain(siblings.iter().map(String::as_str))
                 .all(|name| facts.variants.iter().any(|declared| declared == name))
         })
-        && error_enum_compares_payload(qualifier, index)
+        && derived_fields_compare_by_value(qualifier, index)
 }
 
 /// #7063: whether the owner's file names the one workspace declaration of
@@ -11457,10 +11470,12 @@ fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustI
     })
 }
 
-/// #7063: whether `qualifier` names one workspace type whose `==` is the
-/// derived one over fields that each compare by value, so an equality
-/// against one constructed variant compares that variant's payload.
-pub(super) fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
+/// Whether the unique workspace type uses derived equality over fields that
+/// compare by value. A handwritten comparison can execute arbitrary code.
+pub(in crate::analysis) fn derived_fields_compare_by_value(
+    qualifier: &str,
+    index: &RustIndex,
+) -> bool {
     derived_equality(qualifier, index).is_some_and(|(facts, declaring)| {
         facts.fields.iter().all(|field| {
             !field.has_attributes && type_compares_by_value(&field.ty, declaring, index, 0)

@@ -161,27 +161,27 @@ pub(crate) use dogfood::{
     DogfoodReportPacketIndexRun, DogfoodRun, DogfoodSurfaceProjectionAlignmentRun,
     DogfoodTypescriptPreviewRepairLoopRun, DogfoodTypescriptPreviewRepairLoopScenario,
     DogfoodUserSurfaceProjectionRun, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR,
-    TypeScriptBunUbCalibrationCase, artifact_router_path_violation,
-    bun_ub_calibration_report_markdown, bun_ub_calibration_report_value,
-    bun_ub_preview_summary_markdown, bun_ub_preview_summary_report_value,
-    configured_bridge_inventory_markdown, configured_bridge_inventory_report_value,
-    cross_language_oracle_graph_cases, cross_language_oracle_graph_corpus_path,
-    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
-    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
-    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families,
-    dogfood_first_action_run, dogfood_first_action_scenarios, dogfood_first_pr_metrics,
-    dogfood_first_pr_run, dogfood_first_pr_scenarios, dogfood_gate_adoption_run,
-    dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_push_python_ranked_findings_json, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_ranked_findings, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_static_limit_eval_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, TypeScriptBunUbCalibrationCase,
+    artifact_router_path_violation, bun_ub_calibration_report_markdown,
+    bun_ub_calibration_report_value, bun_ub_preview_summary_markdown,
+    bun_ub_preview_summary_report_value, configured_bridge_inventory_markdown,
+    configured_bridge_inventory_report_value, cross_language_oracle_graph_cases,
+    cross_language_oracle_graph_corpus_path, dogfood_bun_ub_cross_language_scenarios,
+    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
+    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
+    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_first_action_run,
+    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
+    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_surfaces,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_push_python_ranked_findings_json,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_ranked_findings,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_static_limit_eval_scenarios,
+    dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
     front_panel_case_inputs, json_number_after, parse_bun_ub_preview_summary_args,
@@ -17540,77 +17540,9 @@ fn missing_anchor_violation(
     ))
 }
 
-/// The anchor GitHub gives a heading whose text is `text`.
-///
-/// GitHub lowercases the text, turns each space into `-`, and drops every other
-/// character that is not a letter, digit, `_` or `-`. Dropping rather than
-/// collapsing is load-bearing: an em-dash or a slash surrounded by spaces
-/// leaves both of those spaces behind and so produces a doubled dash, which
-/// links into this repository's own headings depend on.
-fn heading_slug(text: &str) -> String {
-    let mut slug = String::new();
-    for ch in text.chars() {
-        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
-            slug.extend(ch.to_lowercase());
-        } else if ch == ' ' {
-            slug.push('-');
-        }
-    }
-    slug
-}
-
-/// Every anchor the headings of `text` offer.
-///
-/// Headings that slugify the same way are numbered the way GitHub numbers them:
-/// the first keeps the bare slug and later ones gain `-1`, `-2`, and so on.
-fn heading_slugs(text: &str) -> BTreeSet<String> {
-    let mut slugs = BTreeSet::new();
-    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
-    let mut in_fence = false;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        let Some(title) = atx_heading_title(trimmed) else {
-            continue;
-        };
-        let base = heading_slug(title);
-        let count = seen.entry(base.clone()).or_insert(0);
-        let slug = if *count == 0 {
-            base
-        } else {
-            format!("{base}-{count}")
-        };
-        *count += 1;
-        slugs.insert(slug);
-    }
-    slugs
-}
-
-/// The heading text of an ATX heading line, or `None` when `trimmed` is not one.
-fn atx_heading_title(trimmed: &str) -> Option<&str> {
-    let rest = trimmed.trim_start_matches('#');
-    let level = trimmed.len() - rest.len();
-    if level == 0 || level > 6 {
-        return None;
-    }
-    if !rest.is_empty() && !rest.starts_with(' ') {
-        // `#hashtag` is body text, not a heading.
-        return None;
-    }
-    let title = rest.trim();
-    // A closing sequence of hashes is decoration when a space precedes it.
-    let without_closing = title.trim_end_matches('#');
-    if without_closing.len() < title.len() && without_closing.ends_with(' ') {
-        return Some(without_closing.trim_end());
-    }
-    Some(title)
-}
+#[cfg(test)]
+use repo_policy::markdown_headings::heading_slug;
+use repo_policy::markdown_headings::heading_slugs;
 
 fn next_checkpoints_from_capabilities(text: &str) -> Result<Vec<String>, String> {
     let mut checkpoints = Vec::new();

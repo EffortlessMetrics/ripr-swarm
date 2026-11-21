@@ -14,7 +14,7 @@ use super::capabilities::{
     workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
-use super::config::{LspAnalysisConfig, validated_pulled_options};
+use super::config::{LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
@@ -212,6 +212,11 @@ pub(super) struct Backend {
     diagnostic_refresh_support: Mutex<bool>,
     /// Negotiated `workspace.codeLens.refreshSupport` (#2032, RIPR-SPEC-0138).
     code_lens_refresh_support: Mutex<bool>,
+    /// Set at the start of `initialized`. tower-lsp-server refuses
+    /// server->client requests while `initialize` is handled (-32002), so a
+    /// lens refresh attempted then only fails; the client requests lenses
+    /// itself once the session starts (RIPR-SPEC-0138).
+    code_lens_refresh_armed: AtomicBool,
     /// The lens-view identity covered by the last `workspace/codeLens/refresh`
     /// request. Compared per committed snapshot; a request is sent only when
     /// the visible lens view changed. `None` until the first commit.
@@ -384,6 +389,7 @@ impl Backend {
             trace: Mutex::new(TraceValue::Off),
             diagnostic_refresh_support: Mutex::new(false),
             code_lens_refresh_support: Mutex::new(false),
+            code_lens_refresh_armed: AtomicBool::new(false),
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
             watched_files_relative_pattern_support: AtomicBool::new(false),
@@ -2098,8 +2104,13 @@ impl Backend {
     }
 
     /// Bare `workspace/codeLens/refresh` send with log-only failure, shared
-    /// by the view-changed and view-cleared paths.
+    /// by the view-changed and view-cleared paths. Nothing is sent before
+    /// `initialized`: the client would reject the request, and it requests
+    /// the current lenses itself once the session starts.
     async fn send_code_lens_refresh(&self) {
+        if !self.code_lens_refresh_armed.load(Ordering::SeqCst) {
+            return;
+        }
         if let Err(error) = self
             .bounded_client_request(self.client.code_lens_refresh())
             .await
@@ -3736,7 +3747,7 @@ impl Backend {
             return;
         }
         match result {
-            Ok(values) => match validated_pulled_options(&values) {
+            Ok(values) => match pulled_options_or_rejections(&values) {
                 Ok(pulled) => {
                     self.apply_pulled_configuration(pulled).await;
                     // The retained layer is scoped to the root it was pulled
@@ -3744,12 +3755,30 @@ impl Backend {
                     // whether a re-pull is needed.
                     self.config_pull.set_scope_root(root);
                 }
-                Err(message) => {
+                Err(rejections) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
                         kind: AnalysisFailureKind::ConfigPullInvalid,
-                        message: bounded_failure_message(&message),
+                        message: bounded_failure_message(&pulled_rejection_summary(&rejections)),
                     }));
                     self.publish_analysis_status().await;
+                    // #15312: the typed state lives only in
+                    // `ripr/analysisStatus`, which generic editors do not
+                    // render, so a rejected setting looked accepted. Say
+                    // which settings were rejected, what is accepted, and
+                    // that the last-known-good settings stay in effect. Each
+                    // rejection is bounded on its own (at most one per
+                    // governed key), so a long value cannot hide the keys
+                    // after it.
+                    let listed = rejections
+                        .iter()
+                        .map(|rejection| bounded_failure_message(&rejection.detail))
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    let warning = format!(
+                        "ripr ignored the editor's ripr settings: {listed}. The previous settings stay in effect."
+                    );
+                    self.disclose_configuration_reload_failure(warning.clone(), warning)
+                        .await;
                 }
             },
             Err(error) => {
@@ -6855,6 +6884,7 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         self.trace_inbound("notification", "initialized", None)
             .await;
+        self.code_lens_refresh_armed.store(true, Ordering::SeqCst);
         let supports_dynamic_registration = self
             .dynamic_file_watch_registration
             .lock()

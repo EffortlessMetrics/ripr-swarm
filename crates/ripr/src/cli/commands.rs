@@ -180,7 +180,7 @@ mod reports;
 pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
-pub(super) use first_pr::first_pr;
+pub(super) use first_pr::{first_pr, start_here};
 #[cfg(test)]
 pub(super) use reports::reports;
 pub(super) use reports::reports_command;
@@ -278,14 +278,10 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_evidence_health_options(args)?;
-    if !options.root.is_dir() {
-        return Err(format!(
-            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
-            options.root.display()
-        ));
-    }
-    // Analysis below writes the seam cache under `target/ripr/cache`.
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    // #15249: the shared root refusal (with its imperative next step); it also
+    // checks the output containment the analysis below needs, because it
+    // writes the seam cache under `target/ripr/cache`.
+    crate::cli::commands_context::ensure_command_root(&options.root, "evidence-health")?;
 
     let config = load_for_root(&options.root)?;
     // #13055: the whole-workspace walk can run for minutes on a very large
@@ -495,6 +491,7 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
         .recommendation_calibration
         .as_ref()
         .map(|path| output::ripr_zero_status::display_path(path));
+    let mut reads = SuppliedInputReads::default();
     let input = output::ripr_zero_status::RiprZeroStatusInput {
         root: ".".to_string(),
         generated_at: baseline_created_at()?,
@@ -507,8 +504,8 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
         baseline_json: options
             .baseline
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline", path)),
-        delta_json: read_optional_text_for_report("baseline debt delta", &options.delta),
+            .map(|path| reads.read_json("--baseline", "baseline", path)),
+        delta_json: reads.read_json("--delta", "baseline debt delta", &options.delta),
         gap_ledger_json: options
             .gap_ledger
             .as_ref()
@@ -537,7 +534,7 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     // (#9856): a run that routed from nothing must not look like a healthy
     // run in the terminal or in `2>&1` CI logs.
     emit_report_warnings(output::ripr_zero_status::ripr_zero_status_warnings(&report));
-    Ok(())
+    reads.finish("zero status")
 }
 
 fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
@@ -697,6 +694,12 @@ fn pr_comments_plan(args: &[String]) -> Result<(), String> {
 
 fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     let options = parse_pr_review_front_panel_options(args)?;
+    // #15249: the shared root refusal, before any artifact is read or a report
+    // is written. `--root` is the report's label; its outputs follow `--out`.
+    crate::cli::commands_context::ensure_command_root_dir(
+        Path::new(&options.root),
+        "pr-review front-panel",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -874,6 +877,35 @@ fn coverage_grip_frontier(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    // A supplied input the report could not use means the frontier could not
+    // complete (exit 2, docs/EXIT_CODES.md); the report is already written.
+    let failures = output::coverage_grip_frontier::coverage_grip_frontier_input_failures(&report);
+    if !failures.is_empty() {
+        let supplied = [
+            ("--coverage", &options.coverage),
+            ("--ledger", &options.ledger),
+            ("--baseline-delta", &options.baseline_delta),
+            ("--zero-status", &options.zero_status),
+        ]
+        .iter()
+        .filter_map(|(flag, path)| {
+            path.as_ref().map(|path| {
+                format!(
+                    "{flag} {}",
+                    output::coverage_grip_frontier::display_path(path)
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+        return Err(format!(
+            "coverage-grip frontier could not use {} supplied input{}: {}; the report was written as `{status}`. Pass a readable --coverage, --ledger, --baseline-delta or --zero-status file produced by its owning command, or drop the flag to leave that input out (supplied: {supplied})",
+            failures.len(),
+            if failures.len() == 1 { "" } else { "s" },
+            failures.join("; "),
+            status = output::coverage_grip_frontier::coverage_grip_frontier_status(&report),
+        ));
+    }
     Ok(())
 }
 
@@ -2021,6 +2053,56 @@ pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<
     })
 }
 
+/// Collects the explicitly supplied report inputs that could not be read, so a
+/// command can write its report and then refuse with exit 2 instead of
+/// printing only `Wrote ...` for a typo'd path. A flag whose file may
+/// legitimately be absent (an append-target history) reads without recording.
+#[derive(Default)]
+pub(super) struct SuppliedInputReads {
+    failures: Vec<String>,
+}
+
+impl SuppliedInputReads {
+    pub(super) fn read(&mut self, flag: &str, label: &str, path: &Path) -> Result<String, String> {
+        let read = read_optional_text_for_report(label, path);
+        if let Err(err) = &read {
+            self.failures.push(format!("{flag}: {err}"));
+        }
+        read
+    }
+
+    /// [`Self::read`] for a flag that must hold JSON: readable-but-malformed
+    /// text is recorded too. The text is still returned so the report builds
+    /// and discloses the input the way it always did.
+    pub(super) fn read_json(
+        &mut self,
+        flag: &str,
+        label: &str,
+        path: &Path,
+    ) -> Result<String, String> {
+        let read = self.read(flag, label, path)?;
+        if let Err(err) = serde_json::from_str::<serde_json::Value>(&read) {
+            self.failures.push(format!(
+                "{flag}: {label} {} is not valid JSON: {err}",
+                output::baseline_delta::display_path(path)
+            ));
+        }
+        Ok(read)
+    }
+
+    pub(super) fn finish(self, command: &str) -> Result<(), String> {
+        if self.failures.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+            "{command} could not read {} supplied input{}: {}; the report was still written with that input marked unavailable. Pass an existing file holding valid JSON (or the file type the flag names) to each flag named, or drop the flag to leave that input out",
+            self.failures.len(),
+            if self.failures.len() == 1 { "" } else { "s" },
+            self.failures.join("; ")
+        ))
+    }
+}
+
 /// Like `read_optional_text_for_report`, but a missing file reads `not found`
 /// (#9851 vocabulary) instead of the host's errno text. Kept separate because
 /// some policy reports still classify a missing input by that errno text.
@@ -2215,6 +2297,22 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
             &typed_root,
             options.base.as_deref(),
             crate::core_error::CoreError::from(error),
+        ));
+    }
+    // #15249: a missing or non-directory `--root` is the shared root refusal
+    // before config loading or default-base resolution, so it is not reported
+    // as an unresolvable base (which would misdirect the caller to `--base`).
+    if let Err(error) = crate::cli::commands_context::ensure_command_root(&options.root, "diff") {
+        if !json {
+            return Err(error);
+        }
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            crate::core_error::CoreError::repository_root_unusable(error),
         ));
     }
     // #7331: every post-argv-parse failure of a JSON diff run writes the
@@ -3782,6 +3880,7 @@ mod tests {
             Ok(PolicySuppressionHealthOptions {
                 root: PathBuf::from("."),
                 manifest: PathBuf::from(".ripr/suppressions.toml"),
+                manifest_explicit: true,
                 out: PathBuf::from("target/ripr/reports/suppression-health.json"),
                 out_md: PathBuf::from("target/ripr/reports/suppression-health.md"),
             })
@@ -4984,16 +5083,16 @@ language = "rust"
         assert!(rendered.contains("missing.json"), "{rendered}");
     }
     #[test]
-    fn zero_status_missing_delta_completes_with_warnings() -> Result<(), String> {
-        // Same #9856 contract as first-action: exit 0, report keeps its
-        // warnings, and stderr renders the same non-empty warning text.
+    fn zero_status_missing_delta_writes_report_then_refuses() -> Result<(), String> {
+        // Same as first-action (#15254): the report keeps its warnings and
+        // stderr renders them, but the unreadable input refuses with exit 2.
         let dir = unique_command_test_dir("zero-status-missing-delta");
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("create zero status missing-delta dir: {err}"))?;
         let missing = dir.join("missing-delta.json");
         let out = dir.join("ripr-zero-status.json");
         let out_md = dir.join("ripr-zero-status.md");
-        zero(&args(&[
+        let refusal = zero(&args(&[
             "status",
             "--delta",
             &missing.display().to_string(),
@@ -5002,7 +5101,12 @@ language = "rust"
             "--out-md",
             &out_md.display().to_string(),
         ]))
-        .map_err(|err| format!("missing-input zero status must complete (exit 0): {err}"))?;
+        .err()
+        .ok_or("missing-input zero status must refuse (exit 2, #15254)")?;
+        assert!(
+            refusal.contains("--delta") && refusal.contains("Pass an existing file"),
+            "{refusal}"
+        );
         let json =
             std::fs::read_to_string(&out).map_err(|err| format!("read zero status JSON: {err}"))?;
         let value: serde_json::Value = serde_json::from_str(&json)

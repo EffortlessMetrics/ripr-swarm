@@ -833,6 +833,8 @@ fn checkout_paths_become_the_repository_root_in_copied_commands() -> TestResult 
 fn repo_relative_rewrites_only_whole_path_tokens() {
     let relative = RepoRelative {
         physical: b"/w/repo".to_vec(),
+        display: Vec::new(),
+        quoted: Vec::new(),
         logical: b"/link/repo".to_vec(),
     };
     assert_eq!(

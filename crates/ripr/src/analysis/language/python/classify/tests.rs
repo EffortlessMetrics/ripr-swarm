@@ -1497,11 +1497,13 @@ fn predicate_boundary_scope_computed_and_non_relational_predicates() -> Result<(
 }
 
 /// Without any literal owner argument the gate cannot see the activating
-/// input in either direction (Rust's empty `call_values` rule). The verdict
-/// stays with the oracle rules and the finding names the limitation, so the
-/// unresolved activation stays visible rather than silently credited.
+/// input in either direction. #15287: a recognized owner call whose input the
+/// analysis cannot read (a reassigned test local, a `*` unpack) is not
+/// established to reach the changed boundary, so the strong oracle no longer
+/// credits `exposed`; the finding fails closed to `weakly_exposed` and says
+/// why, without naming a repair target the unread input may already meet.
 #[test]
-fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<(), String> {
+fn predicate_boundary_without_literal_inputs_fails_closed() -> Result<(), String> {
     for tests in [
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_local():\n    quantity = 150\n    quantity += 1\n    assert bulk_discount(quantity) == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_list():\n    assert bulk_discount(*[100]) == 0.15\n",
@@ -1514,15 +1516,222 @@ fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<()
             "    if quantity >= 100:",
         )?;
         assert_owner(&finding, "bulk_discount");
-        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
         assert!(finding.activation.observed_values.is_empty());
         assert!(
-            finding.evidence.iter().any(|line| line
-                == "boundary_activation_unresolved: no strong related test call to `bulk_discount` binds a literal argument, so static evidence cannot place an input at the changed boundary of `quantity >= 100`"),
-            "{:?}",
+            finding.activation.missing_discriminators.is_empty(),
+            "an unreadable input names no repair target: {:?}",
+            finding.activation.missing_discriminators
+        );
+        assert!(
+            format!("{finding:?}").contains(
+                "no strong related test call to `bulk_discount` binds a literal argument, and some pass inputs in a form static evidence cannot read (a `*args` unpack, a test local, a parametrize row naming a value), so no call is established to reach the changed boundary of `quantity >= 100`"),
+            "{finding:?}"
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+            "a weak finding carries no unresolved-credit note: {:?}",
             finding.evidence
         );
     }
+    Ok(())
+}
+
+/// #15287 shape 1 (humanize `clamp`): parametrized rows called as
+/// `clamp(*args)` hide every input from the reader, so a `<` -> `<=` flip with
+/// no row on the boundary must not read `exposed`. Controls: the same owner
+/// called with inline literals keeps its on-boundary `exposed` and its
+/// off-boundary `weakly_exposed`.
+#[test]
+fn star_args_parametrized_rows_do_not_credit_a_boundary_flip() -> Result<(), String> {
+    let source = "def clamp(value, floor=None):\n    if floor is not None and value < floor:\n        return f\"<{floor}\"\n    return str(value)\n";
+    let (old, new) = (
+        "    if floor is not None and value < floor:",
+        "    if floor is not None and value <= floor:",
+    );
+    let star = classify_case(
+        source,
+        "import pytest\nfrom src.subject import clamp\n\n@pytest.mark.parametrize(\"args, expected\", [([1], \"1\"), ([0.0001, 0.01], \"<0.01\"), ([5, 1], \"5\")])\ndef test_clamp(args, expected):\n    assert clamp(*args) == expected\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(star.class, ExposureClass::WeaklyExposed, "{star:?}");
+    let off = classify_case(
+        source,
+        "from src.subject import clamp\n\ndef test_clamp_off():\n    assert clamp(0.0001, 0.01) == \"<0.01\"\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(off.class, ExposureClass::WeaklyExposed, "{off:?}");
+    let on = classify_case(
+        source,
+        "from src.subject import clamp\n\ndef test_clamp_on():\n    assert clamp(0.01, 0.01) == \"0.01\"\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(on.class, ExposureClass::Exposed, "{on:?}");
+    Ok(())
+}
+
+/// #15287 shape 2 (packaging `_musllinux`): parametrize rows that name
+/// test-module constants are not read as cases, so they are unread inputs,
+/// not witnesses. Control: the same constants passed directly are read, and
+/// the one on the boundary keeps `exposed`.
+#[test]
+fn named_constant_rows_do_not_credit_a_boundary_flip() -> Result<(), String> {
+    let rows = classify_case(
+        DISCOUNT_SOURCE,
+        "import pytest\nfrom src.subject import bulk_discount\n\nBELOW = 50\nABOVE = 150\n\n@pytest.mark.parametrize(\"quantity, rate\", [(BELOW, 0.0), (ABOVE, 0.15)])\ndef test_bulk_discount_named(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_eq!(rows.class, ExposureClass::WeaklyExposed, "{rows:?}");
+    assert!(
+        rows.activation.missing_discriminators.is_empty(),
+        "{rows:?}"
+    );
+    let direct = classify_case(
+        DISCOUNT_SOURCE,
+        "from src.subject import bulk_discount\n\nBELOW = 50\nAT = 100\n\ndef test_bulk_discount_named():\n    assert bulk_discount(BELOW) == 0.0\n    assert bulk_discount(AT) == 0.15\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_eq!(direct.class, ExposureClass::Exposed, "{direct:?}");
+    Ok(())
+}
+
+/// #15287 shape 3 (marshmallow `from_timestamp`): a first-statement
+/// `value = float(value)` leaves a numeric literal argument equal, so the
+/// `-10` the test passes is read through the conversion. It sits off the `0`
+/// boundary, so the flip reads weak and names `value == 0`; an on-boundary
+/// `0` keeps `exposed`. An `int` conversion of a float literal truncates, so
+/// it stays a rebinding the rule cannot see through (the oracle verdict
+/// stands with the named limitation).
+#[test]
+fn coerced_parameter_reads_the_literal_through_the_conversion() -> Result<(), String> {
+    let source = "def from_timestamp(value):\n    value = float(value)\n    if value < 0:\n        raise ValueError(\"neg\")\n    return value\n";
+    let negative = "import pytest\nfrom src.subject import from_timestamp\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(-10)\n";
+    let (old, new) = ("    if value < 0:", "    if value <= 0:");
+    let off = classify_edit_case(source, negative, 3, old, new)?;
+    // marshmallow's suite also passes an integer above 2**53; `float` may
+    // round it, but never onto the `0` bound, so it does not block the read.
+    let with_overflow = negative.replace(
+        "        from_timestamp(-10)\n",
+        "        from_timestamp(-10)\n\ndef test_large():\n    assert from_timestamp(9223372036854775) == 9223372036854776.0\n",
+    );
+    let overflow = classify_edit_case(source, &with_overflow, 3, old, new)?;
+    assert_eq!(overflow.class, ExposureClass::WeaklyExposed, "{overflow:?}");
+    assert_eq!(
+        overflow
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["value == 0"],
+        "the large strong row is read, not refused: {overflow:?}"
+    );
+    // An `int` coercion of an integer literal is read through too.
+    let int_source = source.replace("float(value)", "int(value)");
+    let int_off = classify_edit_case(&int_source, negative, 3, old, new)?;
+    assert_eq!(int_off.class, ExposureClass::WeaklyExposed, "{int_off:?}");
+    // A rebound operand fed through a `*` unpack is unread test input: it
+    // fails closed instead of keeping the oracle verdict.
+    let star = classify_edit_case(
+        &source.replace("float(value)", "abs(value)"),
+        "import pytest\nfrom src.subject import from_timestamp\n\n@pytest.mark.parametrize(\"args\", [[-10]])\ndef test_negative(args):\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(*args)\n",
+        3,
+        old,
+        new,
+    )?;
+    assert_eq!(star.class, ExposureClass::WeaklyExposed, "{star:?}");
+    assert!(
+        star.activation.missing_discriminators.is_empty(),
+        "{star:?}"
+    );
+    // The real owner passes `value` on as a keyword-adjacent argument
+    // (`fromtimestamp(value, tz=...)`), which the line reader takes for a
+    // tuple target; the parsed body shows it is not a binding.
+    let marshmallow = "import datetime as dt\n\n\ndef from_timestamp(value):\n    value = float(value)\n    if value < 0:\n        raise ValueError(\"neg\")\n    try:\n        return dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)\n    except OverflowError as exc:\n        raise ValueError(\"big\") from exc\n";
+    let real = classify_edit_case(marshmallow, negative, 6, old, new)?;
+    assert_eq!(real.class, ExposureClass::WeaklyExposed, "{real:?}");
+    // A float literal whose spelling is not the stored value
+    // (`1.0000000000000001` is `1.0`) is refused, so an on-boundary call is
+    // never reported as missing the boundary.
+    let rounded = classify_edit_case(
+        &source.replace("value < 0", "value < 1"),
+        "from src.subject import from_timestamp\n\ndef test_one():\n    assert from_timestamp(1.0000000000000001) == 1.0\n",
+        3,
+        "    if value < 1:",
+        "    if value <= 1:",
+    )?;
+    assert!(
+        rounded.activation.missing_discriminators.is_empty(),
+        "{rounded:?}"
+    );
+    assert_eq!(rounded.class, ExposureClass::Exposed, "{rounded:?}");
+    // Controls that keep the rebinding unreadable: a second binding, a
+    // module that shadows `float`, and a parameter that shadows it.
+    for refused in [
+        source.replace(
+            "    return value\n",
+            "    value = abs(value)\n    return value\n",
+        ),
+        format!("float = int\n{source}"),
+        source.replace("(value):", "(value, float=abs):"),
+    ] {
+        let line = refused
+            .lines()
+            .position(|text| text == old)
+            .map_or(0, |i| i + 1);
+        let finding = classify_edit_case(&refused, negative, line, old, new)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{refused}: {finding:?}"
+        );
+    }
+    assert_eq!(off.class, ExposureClass::WeaklyExposed, "{off:?}");
+    assert_eq!(
+        off.activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["value == 0"],
+        "{off:?}"
+    );
+    let on = classify_edit_case(
+        source,
+        "from src.subject import from_timestamp\n\ndef test_zero():\n    assert from_timestamp(0) == 0.0\n",
+        3,
+        old,
+        new,
+    )?;
+    assert_eq!(on.class, ExposureClass::Exposed, "{on:?}");
+    let truncating = classify_edit_case(
+        &source.replace("float(value)", "int(value)"),
+        "import pytest\nfrom src.subject import from_timestamp\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(-10.5)\n",
+        3,
+        old,
+        new,
+    )?;
+    assert_eq!(truncating.class, ExposureClass::Exposed, "{truncating:?}");
+    assert!(
+        truncating
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+        "{truncating:?}"
+    );
     Ok(())
 }
 
@@ -1661,11 +1870,11 @@ fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
-/// Shapes whose cases are not statically certain keep the pre-#4559
-/// unresolved verdict: argvalues named by a variable and an argname the test
-/// body rebinds before the call.
+/// Shapes whose cases are not statically certain bind no case value:
+/// argvalues named by a variable and an argname the test body rebinds before
+/// the call. Since #15287 that unread input fails closed to weak.
 #[test]
-fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
+fn uncertain_parametrize_cases_fail_closed() -> Result<(), String> {
     for tests in [
         "import pytest\nfrom src.subject import bulk_discount\n\nCASES = [(50, 0.0)]\n\n@pytest.mark.parametrize(\"quantity, rate\", CASES)\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50])\ndef test_bulk_discount(quantity):\n    quantity = quantity * 2\n    assert bulk_discount(quantity) == 0.0\n",
@@ -1678,15 +1887,9 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
             "    if quantity >= 100:",
         )?;
         assert_owner(&finding, "bulk_discount");
-        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
-        assert!(
-            finding
-                .evidence
-                .iter()
-                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
-            "{tests}: {:?}",
-            finding.evidence
-        );
+        // #15287: argvalues the reader cannot certify are unreadable inputs,
+        // which fail closed instead of keeping the oracle's `exposed`.
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
     }
     Ok(())
 }
@@ -4809,6 +5012,102 @@ fn loop_boundary_full_list_loop_keeps_identity_and_other_bodies() -> Result<(), 
         finding.class,
         ExposureClass::InfectionUnknown,
         "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_none_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = None` takes the first element through `best is None`, then
+    // compares the rest like the `xs[0]` forms, so equal integers select an
+    // equal value under either operator.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    for (before, after, expected) in [
+        (
+            "        if best is None or x > best:",
+            "        if best is None or x >= best:",
+            5,
+        ),
+        (
+            "        if best is None or x < best:",
+            "        if best is None or x <= best:",
+            1,
+        ),
+    ] {
+        let source = source.replace("        if best is None or x >= best:", after);
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_none_guard_needs_its_own_seed_and_shape() -> Result<(), String> {
+    let edit = (
+        "        if best is None or x > best:",
+        "        if best is None or x >= best:",
+    );
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    for (label, source) in [
+        // Seeded from the list, the guard never holds, but the shape is not
+        // the one the guard belongs to; it is left to the prior reading.
+        (
+            "xs[0] seed",
+            "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // A guard on another name than the accumulator is a different test.
+        (
+            "guard on another name",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if x is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // The guard spelled with `and` is not a selector at all.
+        (
+            "and instead of or",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None and x >= best:\n            best = x\n    return best\n",
+        ),
+        // The iterator form has its own seed; the guard does not belong there.
+        (
+            "iterator form",
+            "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+    ] {
+        let (before, after) = if label == "guard on another name" {
+            (
+                "        if x is None or x > best:",
+                "        if x is None or x >= best:",
+            )
+        } else if label == "and instead of or" {
+            (
+                "        if best is None and x > best:",
+                "        if best is None and x >= best:",
+            )
+        } else {
+            edit
+        };
+        let line = if label == "iterator form" { 8 } else { 4 };
+        let finding = classify_edit_case(source, tests, line, before, after)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // Identity still tells `>` from `>=` on equal keys.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(source, identity, 4, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "identity: {finding:?}"
     );
     Ok(())
 }
