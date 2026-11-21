@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: no gap selected for repair
-  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable
+  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 no test path, 1 unclear. Rerun with --format human-full to read whether a test would notice the removal
 
 Hidden:
   All 2 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
