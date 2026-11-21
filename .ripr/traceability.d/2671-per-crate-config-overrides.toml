@@ -5,6 +5,7 @@ tests = [
   "crates/ripr/src/config.rs::override_tests::omitted_overrides_keep_repo_wide_severity_byte_identical",
   "crates/ripr/src/config.rs::override_tests::two_path_overrides_yield_different_severity",
   "crates/ripr/src/config.rs::override_tests::unknown_crate_name_is_a_config_diagnostic",
+  "crates/ripr/tests/cli_smoke.rs::config_validate_rejects_an_override_for_an_excluded_package",
   "crates/ripr/src/config.rs::override_tests::crate_name_outranks_overlapping_path_glob",
   "crates/ripr/src/config.rs::override_tests::bound_crate_name_matches_package_directory",
   "crates/ripr/src/config.rs::override_tests::both_crate_and_path_on_one_row_is_rejected",

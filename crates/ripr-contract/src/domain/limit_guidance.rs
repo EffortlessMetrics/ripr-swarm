@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests and closed consumers (for example the renderer
     /// category set in #14965, which must not shadow a typed token) can walk
     /// the vocabulary. The ordinal test keeps this list in step with the enum.
-    pub const ALL: [StaticLimitKind; 36] = [
+    pub const ALL: [StaticLimitKind; 37] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -54,6 +54,7 @@ impl StaticLimitKind {
         StaticLimitKind::TypescriptWorkspaceReadLimited,
         StaticLimitKind::RustFutureNeverPolled,
         StaticLimitKind::ActivationBoundaryInputUnresolved,
+        StaticLimitKind::RustGatedDoctestUnread,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -216,6 +217,11 @@ impl StaticLimitKind {
                  boundary and asserts on its exact result; ripr cannot map the computed operand \
                  to test inputs, so it does not name those inputs for you."
             }
+            StaticLimitKind::RustGatedDoctestUnread => {
+                "Check the doc examples and tests that run under the owner's cfg (for example a \
+                 nightly-only example) for an assertion on the changed behavior; ripr does not \
+                 read examples behind that gate. Add a test only if none asserts on it."
+            }
         }
     }
 }
@@ -278,8 +284,9 @@ impl StopReason {
                  only spawning it."
             }
             StopReason::NoChangedRustLine => {
-                "Make sure the changed line sits inside a function (not a macro body or item \
-                 attribute); if it does, report the shape in an issue."
+                "Check the tests that use the macro, attribute or item holding the change, since \
+                 ripr cannot trace a change outside a function; if the line is inside an \
+                 ordinary function, report the shape in an issue."
             }
             StopReason::InfectionEvidenceUnknown => {
                 "Add a test input that reaches the changed value, such as a boundary value, \
@@ -383,9 +390,10 @@ mod tests {
                 StaticLimitKind::TypescriptWorkspaceReadLimited => 33,
                 StaticLimitKind::RustFutureNeverPolled => 34,
                 StaticLimitKind::ActivationBoundaryInputUnresolved => 35,
+                StaticLimitKind::RustGatedDoctestUnread => 36,
             }
         }
-        const COUNT: usize = 36;
+        const COUNT: usize = 37;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
@@ -441,6 +449,19 @@ mod tests {
             assert!(is_actionable(step), "{}: {step}", reason.as_str());
             assert!(!step.contains("  "), "{}: {step}", reason.as_str());
         }
+    }
+
+    #[test]
+    fn no_changed_rust_line_step_does_not_ask_the_user_to_move_the_line() {
+        let step = StopReason::NoChangedRustLine.next_step();
+        assert!(!step.contains("Make sure"), "{step}");
+        assert!(!step.contains("sits inside"), "{step}");
+        assert!(
+            step.contains("cannot trace")
+                && step.contains("Check the tests")
+                && step.contains("report the shape in an issue"),
+            "{step}"
+        );
     }
 
     #[test]

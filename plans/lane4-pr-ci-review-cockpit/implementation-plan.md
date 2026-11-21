@@ -309,7 +309,7 @@ policy report without changing docs automatically.
 Proof commands:
 
 ```bash
-cargo test -p xtask doc_roles
+cargo test -p repo-policy doc_roles
 cargo xtask check-doc-roles
 cargo xtask check-pr
 git diff --check

@@ -451,6 +451,14 @@ impl AnalysisRecovery {
     }
 }
 
+/// Limitation detail for a well-formed diff with only binary or file-mode
+/// changes. The schema token stays `malformed_diff`; this detail is what
+/// tells the plain-word label that the diff was parsed (#15862).
+pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+
+/// Plain words for a well-formed diff with only binary or mode changes.
+pub(crate) const NON_TEXT_ONLY_LABEL: &str = "the diff has only binary or file-mode changes";
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) struct AnalysisLimitation {
     pub(crate) kind: AnalysisLimitationKind,
@@ -478,6 +486,23 @@ impl AnalysisLimitation {
             bounded_detail: None,
             recovery,
         }
+    }
+
+    /// Plain words for human surfaces. A well-formed binary- or mode-only
+    /// diff keeps the `malformed_diff` token for schema stability but must
+    /// not read "the diff could not be parsed" (#15862).
+    pub(crate) fn plain_label(&self) -> &'static str {
+        if self.is_non_text_only() {
+            return NON_TEXT_ONLY_LABEL;
+        }
+        self.kind.plain_label()
+    }
+
+    /// The one classification of a well-formed binary- or mode-only diff:
+    /// the stderr zero-findings hedge and the plain-word label both key on it.
+    pub(crate) fn is_non_text_only(&self) -> bool {
+        self.kind == AnalysisLimitationKind::MalformedDiff
+            && self.bounded_detail.as_deref() == Some(NON_TEXT_ONLY_DETAIL)
     }
 
     pub(crate) fn with_path(mut self, path: impl AsRef<str>) -> Result<Self, String> {
@@ -673,7 +698,7 @@ impl AnalysisOutcome {
         for limitation in scoping.iter().take(MAX_INCOMPLETE_SENTENCE_LIMITATIONS) {
             sentence.push_str(&format!(
                 " Limitation: {} during {}",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label()
             ));
             if let Some(path) = &limitation.path {

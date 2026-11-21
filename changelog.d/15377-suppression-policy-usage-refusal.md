@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check --suppression-policy` with a format that cannot apply it (`agent`, `json-terse`, `sarif`, `sarif-compact`, badge and repo formats) is now a usage error that names the requested format, instead of an `agent`/`json-terse` record labeled `run_status=analysis_failed`; `ripr check --help` lists the refusing formats and which formats read `[suppressions] path` from `ripr.toml` instead (#15377).

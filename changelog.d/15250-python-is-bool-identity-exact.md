@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python `assert f(x) is True` / `is False` is graded as an exact identity pin (`exact_value` / strong) like `== True|False`, so a mutant that flips the returned bool is no longer reported as weakly exposed (#15250). `is None`, `is not ...` and truthiness forms are unchanged. An exact pin on a function's result no longer credits an edit that only rewrites a logging call's message or level; only the captured-output (`caplog`) reading decides it.

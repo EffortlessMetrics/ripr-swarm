@@ -90,6 +90,16 @@ required result.
 
 - Open Drafts early and use the shared
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff).
+- For changes to the evidence-promotion corpus or analyzer cache schema, run
+  `cargo xtask check-evidence-promotion-honesty --pre-label <PR> <target-branch>`
+  from a trusted development checkout with `origin` pointing to the base repository.
+  This uses the local `xtask` build. A fresh checkout incurs its usual first build. Compare
+  the printed head with the reviewed commit. The command checks every report
+  against the schema and historical pins in the published merge tree. It refuses
+  a missing merge ref or parents that differ from the observed target and PR head.
+  On refusal, refresh the composition or genuinely recapture the named reports on
+  the updated branch, then rerun before labeling. Repeat after a rebase. The
+  hosted PR and queue jobs still run the full honesty gate on their own trees.
 - Apply lane-selecting labels such as `full-ci` before `merge-ready`.
 - A push after a request needs affected review/proof refreshed. Inspect current
   request and run state before any new request, using the shared handoff. Preserve
