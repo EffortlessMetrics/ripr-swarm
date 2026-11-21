@@ -2729,6 +2729,19 @@ pub(super) fn unresolved_loop_list_boundary(
                 ]
                 .contains(&initial.trim().to_string())
                     && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else if initial.trim().starts_with(&format!("{right} = "))
+                && initial.trim().ends_with("math.inf")
+            {
+                // `best = -math.inf` (`math.inf` for a minimum) is the same
+                // infinity once nothing in the module can rebind `math`.
+                let infinity = if new_op.starts_with('>') {
+                    "-math.inf"
+                } else {
+                    "math.inf"
+                };
+                initial.trim() == format!("{right} = {infinity}")
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+                    && super::math_infinity::stdlib_math_unrebound(source)
             } else {
                 initial.trim() == format!("{right} = {}[0]", parameter.name)
                     // `for x in xs:` also visits `xs[0]` first; comparing it

@@ -382,6 +382,7 @@ mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+mod math_infinity;
 // The may-reach graph is built and measured by tests and the corpus report
 // only; no verdict reads it yet (#11425), so it is not part of the shipped
 // build.

@@ -5200,6 +5200,95 @@ fn loop_boundary_infinity_seed_needs_its_own_sign_and_shape() -> Result<(), Stri
 }
 
 #[test]
+fn loop_boundary_math_infinity_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = -math.inf` (`math.inf` for a minimum) is the same seed as
+    // `float("-inf")` when the module imports `math` once and never rebinds it.
+    for (seed, before, after, expected, extra) in [
+        (
+            "    best = -math.inf",
+            "        if x > best:",
+            "        if x >= best:",
+            5,
+            "",
+        ),
+        (
+            "    best = math.inf",
+            "        if x <= best:",
+            "        if x < best:",
+            1,
+            "",
+        ),
+        // Reading another attribute of `math` elsewhere is not a rebinding.
+        (
+            "    best = -math.inf",
+            "        if x >= best:",
+            "        if x > best:",
+            5,
+            "\n\ndef root(v):\n    return math.sqrt(v)\n",
+        ),
+    ] {
+        let source = format!(
+            "import math\n\ndef largest(xs):\n{seed}\n    for x in xs:\n{after}\n            best = x\n    return best\n{extra}"
+        );
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 6, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{seed}: {before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_math_infinity_seed_needs_an_unrebound_stdlib_math() -> Result<(), String> {
+    let edit = ("        if x > best:", "        if x >= best:");
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let selector = "def largest(xs):\n    best = -math.inf\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    for (label, prefix) in [
+        // Without the import, or with `math` bound to something else, the
+        // seed is not known to be an infinity.
+        ("no import", "\n\n"),
+        ("aliased import", "import numpy as math\n"),
+        ("from import", "from mymod import math\n"),
+        ("star import", "import math\nfrom mymod import *\n"),
+        ("rebound name", "import math\nmath = object()\n"),
+        ("patched attribute", "import math\nmath.inf = 3\n"),
+        ("setattr", "import math\nsetattr(math, 'inf', 3)\n"),
+        (
+            "conditional import",
+            "try:\n    import math\nexcept ImportError:\n    pass\n",
+        ),
+    ] {
+        let source = format!("{prefix}{selector}");
+        let line = source
+            .lines()
+            .position(|text| text == edit.1)
+            .map(|index| index + 1)
+            .ok_or("condition line")?;
+        let finding = classify_edit_case(&source, tests, line, edit.0, edit.1)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // A maximum seeded with `+math.inf` keeps its prior reading too.
+    let source = "import math\n\ndef largest(xs):\n    best = math.inf\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    let finding = classify_edit_case(source, tests, 6, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "wrong sign: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_none_guard_needs_its_own_seed_and_shape() -> Result<(), String> {
     let edit = (
         "        if best is None or x > best:",
