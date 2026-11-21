@@ -104,7 +104,12 @@ test requires all six and zero skips. Ordinary tests invoke no model or network.
 
 The collection/reference tools and retained datasets from #13071 build on this
 core; this safe prefix does not claim that those tools or cohorts have landed.
-Model/provider/executable pinning, harder representative tasks, planned-attempt
-accounting, randomized order, a second provider and a fresh qualified experiment
-remain separate acceptance. Historical receipts are not rewritten or upgraded by
-reading them. Passing instrument tests does not establish that RIPR saves tokens.
+The additive [frozen experiment layer](EXPERIMENT_CONTRACT.md) now declares
+model/provider/executable identities, planned attempts, balanced seeded order,
+reserved partitions and matched comparisons. It consumes this core's quality
+and accounting owners. Its hashes validate declared identity agreement, not
+actual provider provenance or precollection timing. Collector integration,
+representative qualified tasks, a second provider and a fresh qualified
+experiment remain separate acceptance. Historical receipts are not rewritten or
+upgraded by reading them. Passing instrument tests does not establish that RIPR
+saves tokens.
