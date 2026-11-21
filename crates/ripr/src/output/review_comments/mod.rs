@@ -580,9 +580,10 @@ pub(crate) fn gap_ledger_analysis_scope_json(
     records: &[crate::output::gap_decision_ledger::GapRecord],
     coverage: Option<&Value>,
     refusal: &[String],
+    owner_opt_outs: Option<&Value>,
 ) -> Value {
-    if let Some(coverage) = coverage {
-        return json!({
+    let mut scope = if let Some(coverage) = coverage {
+        json!({
             "scope": "rust_workspace_complete",
             "run_status": "complete",
             "basis": "repo_exposure_complete_run",
@@ -590,13 +591,21 @@ pub(crate) fn gap_ledger_analysis_scope_json(
             "records_total": records.len(),
             "records_digest": coverage.get("records_digest").cloned().unwrap_or(Value::Null),
             "downstream_consumable": true,
-        });
-    }
-    let mut scope = analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
-    // Why a disclosed workspace coverage was refused (additive, inert to
-    // consumers): the input classes that differ from the ledger's disclosure.
-    if !refusal.is_empty() {
-        scope["coverage_refused"] = json!(refusal);
+        })
+    } else {
+        let mut scope =
+            analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
+        // Why a disclosed workspace coverage was refused (additive, inert to
+        // consumers): the input classes that differ from the ledger's disclosure.
+        if !refusal.is_empty() {
+            scope["coverage_refused"] = json!(refusal);
+        }
+        scope
+    };
+    // #14898: what the analyzed scope withheld by an owner opt-out, verbatim
+    // from the ledger. A baseline entry it names is withheld, not resolved.
+    if let Some(disclosure) = owner_opt_outs {
+        scope["owner_opt_outs"] = disclosure.clone();
     }
     scope
 }
