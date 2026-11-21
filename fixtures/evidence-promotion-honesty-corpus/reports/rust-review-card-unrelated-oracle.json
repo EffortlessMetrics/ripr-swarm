@@ -1,0 +1,33 @@
+{
+  "comments": [
+    {
+      "seam_id": "e49f8011f2288c94",
+      "seam": {
+        "expression": "n >= 5",
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "suggested_test": {
+        "near_test": null,
+        "related_test": null
+      }
+    },
+    {
+      "seam_id": "1077a643e5ccaff8",
+      "seam": {
+        "expression": "n >= 5",
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "suggested_test": {
+        "near_test": null,
+        "related_test": null
+      }
+    }
+  ],
+  "summary_only": []
+}

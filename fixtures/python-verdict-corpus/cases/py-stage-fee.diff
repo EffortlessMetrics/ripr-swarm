@@ -1,0 +1,10 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -1,5 +1,5 @@
+ def fee_for(tier):
+-    return 2
++    return 5
+ 
+ 
+ def total_for(amount, tier):

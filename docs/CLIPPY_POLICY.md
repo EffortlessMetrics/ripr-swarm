@@ -53,7 +53,8 @@ A panic-family call site is acceptable only if it satisfies **both rails**.
 
 ## Required feature coverage
 
-The required Rust lane keeps two strict Clippy invocations:
+The required Rust lane keeps two strict Clippy invocations, plus a Rust-only
+library lint described below:
 
 ```bash
 cargo clippy -p ripr --all-targets --all-features -- -D warnings
@@ -69,6 +70,20 @@ The second retains default-feature workspace coverage. Both are necessary:
 an all-features build omits `#[cfg(not(feature = "lang-perl"))]` branches
 that still need linting in the default build. Warning denial applies to both
 commands, and both include test and example targets.
+
+Neither covers code that only a preview language uses, which compiles in both
+of those builds and goes unused in the supported Rust-only build. That build
+reached 38 warnings before #14263 gated the helpers, so the required run also
+lints its library:
+
+```bash
+cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings
+```
+
+Hosted routes run it in shard 2 of `rust-test-shards.yml`, off the gates job's
+critical path; routes that run tests in `rust-gates.yml` run it there.
+`xtask/tests/rust_gate_workflow_contract.rs` pins one step in each workflow and
+its condition. Rust-only test targets are not linted and still warn.
 
 This does not execute optional-feature tests, lint every possible feature
 combination, or establish native-platform coverage beyond the runner used.
@@ -241,6 +256,17 @@ A `blocked_by` that only names an MSRV or Rust version is treated as missing.
 `reason` is narrative and does not satisfy the gate. The values are not
 verified available-since (`clippy::manual_pop_if` records `1.95` while
 `blocked_by` says pinned 1.95.0 Clippy does not recognize the lint).
+
+The lint ledger is decoded as TOML, so comments after table headers and
+multiline strings retain their meaning (#13217). Known fields (`name`,
+`level`, `activate_when_msrv`, `reason`, and `blocked_by`) must be strings;
+the last three remain optional. Invalid TOML, duplicate keys, unsupported
+levels, invalid lint identities, and duplicate identities across active or
+planned rows fail both the lint-policy and debt-policy consumers.
+Each identity is either a bare Rust lint name or a `clippy::<name>`;
+equal bare names in those namespaces still require separate ledger entries.
+Levels are `allow`, `warn`, `deny`, or `forbid`. Unknown documentary fields,
+including `note`, remain supported as established in #3990.
 
 When promoting a planned lint, move the entry from `[[planned]]` to
 `[[active.<group>]]`, add the matching `Cargo.toml` line, and update

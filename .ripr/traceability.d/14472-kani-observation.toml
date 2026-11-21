@@ -1,7 +1,9 @@
 [[extend]]
 id = "RIPR-SPEC-0371"
-code = ["xtask/src/kani_lane.rs", "xtask/src/kani_lane/machine.rs"]
+code = ["xtask/src/kani_lane.rs", "xtask/src/kani_lane/machine.rs", "crates/ripr/src/cli/commands/kani_report.rs"]
 tests = [
+  "xtask/tests/kani_lane_process/producer_aliases.rs::both_kani_producers_journal_then_import",
+  "xtask/tests/kani_lane_process/producer_aliases.rs::both_kani_producers_import_then_journal",
   "xtask/src/kani_lane/machine.rs::tests::missing_tool_keeps_expected_subject_and_refuses_success",
   "xtask/src/kani_lane/machine.rs::tests::partial_timeout_preserves_native_row_without_lane_success",
   "xtask/src/kani_lane/machine.rs::tests::native_extra_subject_is_not_silently_dropped",

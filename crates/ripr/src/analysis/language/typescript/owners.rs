@@ -2188,7 +2188,7 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
 /// literal spelling `require("<literal>")["member"]`), for `const f =
 /// require("./y").f` (#9188). `None` for any other initializer, so a call on
 /// the member, a computed key and a dynamic `require` argument stay unread.
-fn require_member_source(
+pub(super) fn require_member_source(
     expr: &Expression<'_>,
     namespaces: &std::collections::HashMap<String, String>,
 ) -> Option<(String, String)> {
@@ -2407,6 +2407,8 @@ pub(crate) struct PhaseTwoFacts {
     /// each covered line carries exactly one shape. Lines with no fact
     /// keep the classifier's line-text fallback.
     pub(crate) probe_shapes: Vec<ProbeShapeFact>,
+    /// Bindings with a numeric initializer or nullish fallback on a later line.
+    pub(crate) default_bindings: std::collections::BTreeMap<usize, String>,
 }
 
 impl PhaseTwoFacts {
@@ -2515,7 +2517,7 @@ pub(crate) fn phase_two_facts_from_program(
     }
     collect_enum_members(&program.body, source, &text, &mut facts.enum_members);
     collect_ambient_ranges(&program.body, &text, &mut facts.ambient_ranges);
-    facts.probe_shapes = collect_probe_shapes(program, &text);
+    facts.probe_shapes = collect_probe_shapes(program, &text, &mut facts.default_bindings);
     facts
 }
 
@@ -2650,15 +2652,29 @@ pub(crate) fn inside_private_member_boundary(ranges: &[(usize, usize)], line: us
 fn collect_probe_shapes(
     program: &oxc_ast::ast::Program<'_>,
     source: &SourceText<'_>,
+    default_bindings: &mut std::collections::BTreeMap<usize, String>,
 ) -> Vec<ProbeShapeFact> {
-    struct Collector<'s> {
+    struct Collector<'s, 'facts> {
+        default_bindings: &'facts mut std::collections::BTreeMap<usize, String>,
         source: &'s SourceText<'s>,
         candidates: Vec<(u8, usize, usize, usize, TypeScriptProbeShape)>,
         concise_arrow_depth: usize,
         keep_concise_arrow_body: bool,
         top_start: usize,
     }
-    impl Collector<'_> {
+    impl Collector<'_, '_> {
+        fn record_default(&mut self, binding: &BindingPattern<'_>, init: &Expression<'_>) {
+            let Some(name) = binding_identifier_name(binding) else {
+                return;
+            };
+            if let Expression::NumericLiteral(literal) = init {
+                let line = self.source.line_for_offset(literal.span.start as usize);
+                if line > self.source.line_for_offset(binding.span().start as usize) {
+                    self.default_bindings.insert(line, name.to_owned());
+                }
+            }
+        }
+
         fn push(&mut self, span: oxc_span::Span, shape: TypeScriptProbeShape) {
             self.candidates.push((
                 1,
@@ -2726,7 +2742,7 @@ fn collect_probe_shapes(
             _ => TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
         }
     }
-    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_> {
+    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_, '_> {
         fn visit_program(&mut self, it: &oxc_ast::ast::Program<'a>) {
             for statement in &it.body {
                 self.top_start = oxc_span::GetSpan::span(statement).start as usize;
@@ -2878,7 +2894,19 @@ fn collect_probe_shapes(
             );
             oxc_ast_visit::walk::walk_assignment_expression(self, it);
         }
+        fn visit_formal_parameter(&mut self, it: &oxc_ast::ast::FormalParameter<'a>) {
+            if let Some(init) = &it.initializer {
+                self.record_default(&it.pattern, init);
+            }
+            oxc_ast_visit::walk::walk_formal_parameter(self, it);
+        }
+
         fn visit_variable_declarator(&mut self, it: &oxc_ast::ast::VariableDeclarator<'a>) {
+            if let Some(Expression::LogicalExpression(init)) = &it.init
+                && init.operator.as_str() == "??"
+            {
+                self.record_default(&it.id, &init.right);
+            }
             // An object property needs no own candidate: a returned object
             // already carries FieldConstruction from its return node, and
             // a standalone property line keeps the line-text field shape.
@@ -2906,6 +2934,7 @@ fn collect_probe_shapes(
     }
     let mut collector = Collector {
         source,
+        default_bindings,
         candidates: Vec::new(),
         concise_arrow_depth: 0,
         keep_concise_arrow_body: false,
@@ -3192,31 +3221,31 @@ fn collect_ambient_ranges(
     }
 }
 
+/// The binding that owns a member chain, including optional and TS-wrapped accesses.
+pub(super) fn member_root_name<'a>(mut expr: &'a Expression<'_>) -> Option<&'a str> {
+    loop {
+        match expr.get_inner_expression() {
+            Expression::Identifier(id) => return Some(id.name.as_str()),
+            Expression::StaticMemberExpression(member) => expr = &member.object,
+            Expression::ComputedMemberExpression(member) => expr = &member.object,
+            Expression::ChainExpression(chain) => match &chain.expression {
+                oxc_ast::ast::ChainElement::StaticMemberExpression(member) => expr = &member.object,
+                oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                    expr = &member.object
+                }
+                _ => return None,
+            },
+            _ => return None,
+        }
+    }
+}
+
 /// Every identifier whose members the statements may replace: the root of a
 /// member assignment target (`lib.f = v`, `lib.a.b = v`, `lib[k] = v`), of a
 /// `delete lib.f`, or any use of the bare namespace beyond a member read
 /// (`Object.assign(lib, ...)`, `Object.defineProperty(lib, ...)`).
 fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
     use oxc_ast::ast::Expression;
-    fn root(mut expr: &Expression<'_>) -> Option<String> {
-        loop {
-            match expr.get_inner_expression() {
-                Expression::Identifier(id) => return Some(id.name.to_string()),
-                Expression::StaticMemberExpression(member) => expr = &member.object,
-                Expression::ComputedMemberExpression(member) => expr = &member.object,
-                Expression::ChainExpression(chain) => match &chain.expression {
-                    oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
-                        expr = &member.object
-                    }
-                    oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
-                        expr = &member.object
-                    }
-                    _ => return None,
-                },
-                _ => return None,
-            }
-        }
-    }
     // A namespace used any way but as the object of a member read or a
     // destructuring initializer (`const again = lib`, `f(lib)`, `{ lib }`)
     // escapes, and what it reaches can replace members.
@@ -3233,23 +3262,29 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
         ) {
             match target {
                 oxc_ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => {
-                    self.mutated.extend(root(&member.object));
+                    self.mutated
+                        .extend(member_root_name(&member.object).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
-                    self.mutated.extend(root(&member.object));
+                    self.mutated
+                        .extend(member_root_name(&member.object).map(str::to_owned));
                 }
                 // `(lib.f as any) = stub`: the member read underneath is a write.
                 oxc_ast::ast::SimpleAssignmentTarget::TSAsExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSSatisfiesExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSNonNullExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSTypeAssertion(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 _ => {}
             }
@@ -3258,7 +3293,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
 
         fn visit_unary_expression(&mut self, unary: &oxc_ast::ast::UnaryExpression<'a>) {
             if unary.operator == oxc_ast::ast::UnaryOperator::Delete {
-                self.mutated.extend(root(&unary.argument));
+                self.mutated
+                    .extend(member_root_name(&unary.argument).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_unary_expression(self, unary);
         }
@@ -3271,7 +3307,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 call.callee.get_inner_expression(),
                 Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
             ) {
-                self.mutated.extend(root(&call.callee));
+                self.mutated
+                    .extend(member_root_name(&call.callee).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_call_expression(self, call);
         }
@@ -3286,7 +3323,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 tagged.tag.get_inner_expression(),
                 Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
             ) {
-                self.mutated.extend(root(&tagged.tag));
+                self.mutated
+                    .extend(member_root_name(&tagged.tag).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_tagged_template_expression(self, tagged);
         }

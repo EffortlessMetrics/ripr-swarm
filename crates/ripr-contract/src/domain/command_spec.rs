@@ -407,7 +407,7 @@ impl CommandSpec {
         for argument in &self.args {
             validate_no_nul("args", argument)?;
         }
-        validate_root_relative_path("cwd", &self.cwd)?;
+        validate_working_directory(&self.cwd)?;
         for path in &self.expected_writes {
             validate_root_relative_path("expected_writes", path)?;
         }
@@ -450,6 +450,23 @@ fn validate_no_nul(field: &'static str, value: &str) -> Result<(), CommandSpecVa
     } else {
         Ok(())
     }
+}
+
+fn validate_working_directory(value: &str) -> Result<(), CommandSpecValidationError> {
+    validate_root_relative_path("cwd", value)?;
+    // The published working_directory pattern excludes ECMAScript line
+    // terminators and a nonempty scheme prefix before the first separator.
+    let has_scheme_prefix = value
+        .split(['/', '\\'])
+        .next()
+        .is_some_and(|first| first.chars().skip(1).any(|ch| ch == ':'));
+    if has_scheme_prefix || value.contains(['\r', '\n', '\u{2028}', '\u{2029}']) {
+        return Err(CommandSpecValidationError::InvalidRelativePath {
+            field: "cwd",
+            value: value.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_root_relative_path(
@@ -801,6 +818,31 @@ mod tests {
     }
 
     #[test]
+    fn working_directory_matches_published_line_and_scheme_rules() -> Result<(), String> {
+        for cwd in [
+            "a\n",
+            "a\rb",
+            "a\u{2028}b",
+            "a\u{2029}b",
+            "src:gen/x",
+            ":x:y",
+        ] {
+            let expected = Err(Refusal::InvalidRelativePath {
+                field: "cwd",
+                value: cwd.into(),
+            });
+            if validated(|spec| spec.cwd = cwd.into()) != expected {
+                return Err(format!("unexpected working_directory verdict for {cwd:?}"));
+            }
+        }
+        for cwd in [":literal", "src/gen:x", "src\\gen:x"] {
+            validated(|spec| spec.cwd = cwd.into()).map_err(|err| err.to_string())?;
+        }
+        validated(|spec| spec.expected_writes = vec!["src:gen/x".into()])
+            .map_err(|err| err.to_string())
+    }
+
+    #[test]
     fn the_timeout_is_bounded_on_both_sides() {
         assert_eq!(
             validated(|spec| spec.timeout_ms = 0),
@@ -1066,6 +1108,52 @@ mod tests {
                 !verify_command_is_unbounded_repo_exposure_snapshot_compare(partial),
                 "{partial:?}"
             );
+        }
+    }
+
+    #[test]
+    fn pytest_display_admits_only_the_listed_interpreters() {
+        for interpreter in crate::domain::PYTEST_VERIFY_INTERPRETERS {
+            assert_eq!(
+                python_pytest_verify_display_for(interpreter, "t.py", "test_a", false),
+                Some(format!("{interpreter} -m pytest t.py::test_a"))
+            );
+        }
+        for refused in ["python3", "", "/usr/bin/python", "env/bin/python"] {
+            assert_eq!(
+                python_pytest_verify_display_for(refused, "t.py", "test_a", false),
+                None,
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unittest_module_accepts_either_separator_and_an_extensionless_path() {
+        for path in ["tests\\test_cart.py", "tests/test_cart"] {
+            assert_eq!(
+                python_unittest_verify_display(path, "TestCart.test_total", false),
+                Some("python -m unittest tests.test_cart.TestCart.test_total".to_string()),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_two_spec_sources_are_actionable_verify_provenance() {
+        assert!(actionable_verify_source_is_supported(
+            "canonical_item.verify_command"
+        ));
+        assert!(actionable_verify_source_is_supported(
+            "related_test_or_observer.name"
+        ));
+        for other in [
+            "",
+            "canonical_item",
+            "related_test_or_observer",
+            "verify_command",
+        ] {
+            assert!(!actionable_verify_source_is_supported(other), "{other:?}");
         }
     }
 }

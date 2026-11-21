@@ -1,0 +1,10 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -1,5 +1,5 @@
+ def rate_for(region):
+-    return 1
++    return 3
+ 
+ 
+ def tax_for(amount, region):

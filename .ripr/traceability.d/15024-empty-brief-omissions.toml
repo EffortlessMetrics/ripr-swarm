@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0010"
+tests = [
+  "crates/ripr/src/output/agent_brief.rs::tests::empty_brief_discloses_scoped_selection_omissions",
+]

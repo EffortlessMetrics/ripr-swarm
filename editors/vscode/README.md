@@ -71,6 +71,14 @@ describes that release. A development extension needs a compatible local server
 until matching release assets are available. Do not assume an unreleased server
 can be downloaded.
 
+### Behind a proxy
+
+The managed server download uses VS Code's proxy support: set `http.proxy`
+(or `HTTPS_PROXY` in the environment VS Code starts from), list hosts that
+should go direct in `http.noProxy`, and leave `http.proxySupport` on. The
+download still verifies the archive checksum. If no proxy route works, set
+`ripr.server.path` to a `ripr` binary or install `ripr` on `PATH`.
+
 ## What ripr Does
 
 A test can execute the changed code without checking the behavior that changed.
@@ -139,6 +147,7 @@ The development extension also exposes the following commands:
 - `ripr: Select Workspace Root`
 - `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
+- `ripr: Start or Continue Repair`
 - `ripr: Copy Current Repair Packet`
 - `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`

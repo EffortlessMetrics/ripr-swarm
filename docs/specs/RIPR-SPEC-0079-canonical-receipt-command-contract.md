@@ -148,6 +148,16 @@ a resolvable HEAD, fails closed.
 This is format/provenance validation only; the checker does not yet compare a
 transported receipt's head with a selected repository root.
 
+`ripr receipt check` also requires the identity fields to name exactly the
+record this ripr writes (#14291): `kind` is `"receipt"`, `tool` is `"ripr"`
+and `schema_version` is `"0.1"`, the same values the receipt lifecycle reader
+requires. Any other value (a future or unknown schema, a number, another
+record kind such as an agent receipt, or another tool) is rejected with a
+non-zero exit and a message naming the field, the expected value and the next
+step. The message echoes the found value only when it is a short printable
+string and otherwise names its shape, because the file is untrusted input.
+There is one receipt schema; reading another is a separate decision.
+
 This is the first provenance floor for the receipt writer. It does not yet
 bind the receipt to an analysis artifact, configuration digest, executed
 command result, or a repository-root identity that can be checked after the
@@ -362,6 +372,7 @@ Unit tests (app layer) — `crates/ripr/src/app/receipt.rs`:
 - `receipt_write_invalid_status_exits_nonzero`
 - `receipt_write_missing_verify_command_exits_nonzero`
 - `receipt_check_valid_receipt_exits_zero`
+- `receipt_check_rejects_foreign_identity_fields` (#14291)
 - `receipt_check_missing_file_exits_nonzero`
 - `receipt_check_malformed_json_exits_nonzero`
 - `receipt_check_missing_required_field_exits_nonzero`

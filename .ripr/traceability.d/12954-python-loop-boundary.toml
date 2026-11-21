@@ -29,4 +29,11 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_condition_with_a_further_conjunct_keeps_prior_class",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_unspaced_comparison_is_still_the_closed_selector",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::indirect_loop_boundary_does_not_borrow_an_earlier_tests_call",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_issue_repro_with_annotations_is_infection_unknown",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_full_list_loop_from_the_first_element_is_infection_unknown",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_full_list_loop_keeps_identity_and_other_bodies",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_none_seeded_selector_is_infection_unknown",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_none_guard_needs_its_own_seed_and_shape",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_infinity_seeded_selector_is_infection_unknown",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_infinity_seed_needs_its_own_sign_and_shape",
 ]

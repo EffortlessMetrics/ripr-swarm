@@ -247,7 +247,7 @@ pub(super) fn receipt_status_from_ledger(
 ) -> (serde_json::Value, serde_json::Value) {
     let not_available = "not_available".to_string();
 
-    let contents = match fs::read_to_string(ledger_path) {
+    let contents = match crate::bounded_input::read_repository_artifact(ledger_path) {
         Ok(c) => c,
         Err(_) => {
             return (
@@ -327,7 +327,7 @@ pub(super) fn read_latest_attempt_outcome(
     let not_available = serde_json::Value::String("not_available".to_string());
 
     // Artifact absent → not_available (do not fabricate).
-    let contents = match fs::read_to_string(ledger_path) {
+    let contents = match crate::bounded_input::read_repository_artifact(ledger_path) {
         Ok(c) => c,
         Err(_) => return not_available,
     };
@@ -377,7 +377,7 @@ pub(super) fn read_latest_attempt_outcome(
 pub(super) fn read_route_quality_summary(path: &std::path::Path) -> serde_json::Value {
     let not_available = serde_json::Value::String("not_available".to_string());
 
-    let contents = match fs::read_to_string(path) {
+    let contents = match crate::bounded_input::read_repository_artifact(path) {
         Ok(c) => c,
         Err(_) => return not_available,
     };

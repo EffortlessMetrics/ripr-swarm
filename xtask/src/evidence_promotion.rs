@@ -10,7 +10,9 @@
 
 use super::*;
 
+mod digest_delta;
 mod partial_analysis;
+mod pre_label;
 #[cfg(test)]
 mod python_coarse_tests;
 mod repo_seam_reports;
@@ -282,6 +284,9 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         detail: ExpectedRepairPacketDetail,
     },
     MustNotHaveContradictoryPacketMessaging,
+    UnobservedReviewCard {
+        seam_id: String,
+    },
     ExpectedOracle {
         kind: String,
         strength: String,
@@ -800,6 +805,11 @@ fn evidence_promotion_parse_assertion(
             kind: evidence_promotion_required_assertion_string(case_id, index, assertion, "kind")?,
             strength: evidence_promotion_required_assertion_string(
                 case_id, index, assertion, "strength",
+            )?,
+        }),
+        "unobserved_review_card" => Ok(EvidencePromotionSemanticAssertion::UnobservedReviewCard {
+            seam_id: evidence_promotion_required_assertion_string(
+                case_id, index, assertion, "seam_id",
             )?,
         }),
         "expected_related_test" => {
@@ -1692,6 +1702,22 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                             "{case_label}: finding `{finding_id}` promoted to exposed (classification `exposed`) but `must_not_promote` is asserted"
                         ));
                     }
+                }
+            }
+            EvidencePromotionSemanticAssertion::UnobservedReviewCard { seam_id } => {
+                let mut cards = ["comments", "summary_only"]
+                    .into_iter()
+                    .filter_map(|lane| check_json.get(lane).and_then(Value::as_array))
+                    .flatten()
+                    .filter(|card| card.get("seam_id").and_then(Value::as_str) == Some(seam_id));
+                let honest = cards.next().is_some_and(|card| {
+                    card.get("oracle_kind").and_then(Value::as_str) == Some("unknown")
+                        && card.get("oracle_strength").and_then(Value::as_str) == Some("none")
+                        && card.pointer("/suggested_test/near_test") == Some(&Value::Null)
+                        && card.pointer("/suggested_test/related_test") == Some(&Value::Null)
+                });
+                if !honest || cards.next().is_some() {
+                    violations.push(format!("{case_label}: expected exactly one unobserved review card for {seam_id} with unknown/none and null test suggestions"));
                 }
             }
             EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {
@@ -4295,6 +4321,11 @@ fn write_evidence_promotion_corpus_summary_report(
 }
 
 pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), String> {
+    if let Some((flag, rest)) = args.split_first()
+        && flag == "--pre-label"
+    {
+        return pre_label::check(Path::new("."), rest);
+    }
     let options = parse_evidence_promotion_honesty_args(args)?;
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let mut pure_violations = Vec::new();
@@ -4562,6 +4593,57 @@ fn evidence_promotion_non_empty_string_field<'a>(case: &'a Value, field: &str) -
     case.get(field)
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
+}
+
+/// Languages a finding can carry, via its probe owner prefix, its probe
+/// file extension, or the report's changed-files-by-language summary. A
+/// corpus `language` label that is none of these is a mislabel: the case
+/// would be counted and parity-checked under the wrong language.
+fn evidence_promotion_finding_languages(check_json: &Value) -> std::collections::BTreeSet<String> {
+    const KNOWN: [&str; 5] = ["rust", "python", "typescript", "javascript", "perl"];
+    let mut languages = std::collections::BTreeSet::new();
+    if let Some(entries) = check_json
+        .get("summary")
+        .and_then(|s| s.get("changed_files_by_language"))
+        .and_then(Value::as_array)
+    {
+        for entry in entries {
+            if entry.get("files").and_then(Value::as_u64).unwrap_or(0) > 0
+                && let Some(language) = entry.get("language").and_then(Value::as_str)
+            {
+                languages.insert(language.to_string());
+            }
+        }
+    }
+    if let Some(findings) = check_json.get("findings").and_then(Value::as_array) {
+        for finding in findings {
+            let Some(probe) = finding.get("probe") else {
+                continue;
+            };
+            if let Some(owner) = probe.get("owner").and_then(Value::as_str)
+                && let Some(prefix) = owner.split(':').next()
+                && KNOWN.contains(&prefix)
+            {
+                languages.insert(prefix.to_string());
+            }
+            if let Some(file) = probe.get("file").and_then(Value::as_str)
+                && let Some(ext) = Path::new(file).extension().and_then(|e| e.to_str())
+            {
+                let language = match ext.to_ascii_lowercase().as_str() {
+                    "rs" => Some("rust"),
+                    "py" => Some("python"),
+                    "js" | "mjs" | "cjs" | "jsx" => Some("javascript"),
+                    "ts" | "tsx" | "mts" | "cts" => Some("typescript"),
+                    "pl" | "pm" | "t" | "psgi" => Some("perl"),
+                    _ => None,
+                };
+                if let Some(language) = language {
+                    languages.insert(language.to_string());
+                }
+            }
+        }
+    }
+    languages
 }
 
 fn evidence_promotion_positive_u64_field(case: &Value, field: &str) -> bool {
@@ -4898,6 +4980,22 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
                 normalize_path(&check_json_path)
             )
         })?;
+        // Fail closed on a corpus language label that matches no finding
+        // language in its own report/golden. No finding language (empty
+        // findings, repo-seam reports) leaves the label unconstrained.
+        let finding_languages = evidence_promotion_finding_languages(&check_json);
+        if !finding_languages.is_empty() && !finding_languages.contains(language) {
+            violations.push(format!(
+                "evidence promotion honesty case `{id}`: corpus language `{language}` \
+                 does not match finding language(s) `{}` in `{source_artifact}`; \
+                 relabel the case to the finding language",
+                finding_languages
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
         let source_human_text = if source_fixture.is_empty() {
             None
         } else {
@@ -5839,6 +5937,67 @@ mod case_file_tests {
             "a split case with an invalid tier went unflagged: {violations:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_corpus_language_that_matches_no_finding_language_is_a_violation() -> Result<(), String> {
+        let dir = temp_dir("promotion-language-label");
+        let fixture = dir.join("fixture");
+        write(
+            &fixture.join("expected/check.json"),
+            r#"{"summary":{"findings":1,"changed_files_by_language":[{"language":"javascript","files":1}]},"findings":[{"id":"f1","classification":"weakly_exposed","probe":{"file":"src/index.js","owner":"javascript:src/index.js::nanoid"}}]}"#,
+        );
+        let corpus = dir.join("corpus.json");
+        let write_corpus = |language: &str| -> Result<(), String> {
+            write(
+                &corpus,
+                &format!(
+                    r#"{{"cases":[{{"id":"js_mislabeled","language":"{language}","tier":"pure","source_fixture":{},"assertions":[{{"type":"must_not_report_clean"}},{{"type":"must_not_promote"}}]}}]}}"#,
+                    serde_json::to_string(&fixture.to_string_lossy()).map_err(|e| e.to_string())?
+                ),
+            );
+            Ok(())
+        };
+        write_corpus("typescript")?;
+        let mut violations = Vec::new();
+        validate_evidence_promotion_honesty_corpus_at(&corpus, &mut violations)?;
+        assert!(
+            violations.iter().any(|v| v.contains("js_mislabeled")
+                && v.contains("does not match finding language")
+                && v.contains("javascript")),
+            "a typescript label on a javascript finding went unflagged: {violations:?}"
+        );
+        write_corpus("javascript")?;
+        let mut relabeled = Vec::new();
+        validate_evidence_promotion_honesty_corpus_at(&corpus, &mut relabeled)?;
+        assert!(
+            !relabeled
+                .iter()
+                .any(|v| v.contains("js_mislabeled")
+                    && v.contains("does not match finding language")),
+            "the corrected javascript label was still flagged: {relabeled:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn finding_languages_cover_every_router_extension_without_owner_or_summary() {
+        // Extension only derivation: no owner prefix and no summary entry,
+        // so each suffix the source router recognizes must map on its own.
+        for (file, expected) in [
+            ("src/app.mts", "typescript"),
+            ("src/app.cts", "typescript"),
+            ("src/app.t", "perl"),
+            ("src/app.psgi", "perl"),
+        ] {
+            let check_json = serde_json::json!({
+                "findings": [{"probe": {"file": file}}]
+            });
+            assert!(
+                evidence_promotion_finding_languages(&check_json).contains(expected),
+                "{file} did not derive {expected} from its extension alone"
+            );
+        }
     }
 
     #[test]

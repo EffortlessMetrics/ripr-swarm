@@ -1,0 +1,8 @@
+diff --git a/src/settings.ts b/src/settings.ts
+--- a/src/settings.ts
++++ b/src/settings.ts
+@@ -1,3 +1,3 @@
+ export function f(n: number): boolean {
+-  return n >= 100;
++  return n > 100;
+ }

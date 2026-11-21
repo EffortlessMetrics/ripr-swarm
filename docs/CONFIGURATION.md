@@ -48,6 +48,39 @@ adoption contract in
 [RIPR-SPEC-0009](specs/RIPR-SPEC-0009-defaults-first-adoption.md) defines the
 missing-config and generated-config behavior that must remain advisory.
 
+## Cargo build temporary directories
+
+For source builds of this repository, [`.cargo/config.toml`](../.cargo/config.toml)
+keeps `force = true` for `TEMP`, `TMP`, and `TMPDIR` so build children that
+honor those variables use the checkout's `target/` for scratch space. This
+keeps linker scratch off the system temp volume when the checkout is on a
+different volume.
+
+Cargo itself starts with the values supplied by its launcher. When Cargo loads
+the checkout's config, it supplies all three values as the absolute path to
+`<checkout>/target` to build processes such as rustc and build scripts. The
+linker inherits them from rustc, and programs launched by `cargo run` or
+`cargo test` also receive them. Shell exports still reach Cargo itself, but
+`force = true` replaces those values for these children. For example, the
+`target/tmp/check-pr` values that `cargo xtask check-pr` passes to its nested
+Cargo invocations reach those Cargo processes, whose build children receive
+`<checkout>/target` again.
+
+Cargo discovers this config when invoked from the checkout root or a
+subdirectory. A `--manifest-path` pointing into the checkout from an unrelated
+working directory does not load the checkout's config by itself.
+[Cargo resolves `relative = true` against the parent of `.cargo/`](https://doc.rust-lang.org/cargo/reference/config.html#env).
+`CARGO_TARGET_DIR` moves Cargo's build output, while these three paths still
+resolve to the checkout's `target/`. Create that directory before building with
+a separate output directory, especially in a fresh worktree.
+
+On Windows, if a deep checkout makes a linker temp path too long, clone or
+add a worktree in a short directory such as `ripr` directly under the root of
+a drive with enough space. From that checkout root, create `target` if needed
+and run Cargo there. This shortens the forced temp path while keeping scratch
+under the checkout. For the missing-directory failure, see the
+[workspace linker temp notes](agent-context/validation.md#workspace-linker-temp-redirect).
+
 ## Defaults-first operator profile
 
 The built-in missing-config profile and the `ripr init` generated profile are
@@ -204,7 +237,7 @@ rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text
-ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
+ripr init [--root PATH] [--ci github|gitlab] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 ```
 
 After writing, `init` prints `doctor` and `check` commands with the selected
@@ -317,7 +350,7 @@ Runs the static exposure analysis and renders findings.
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
 | `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON, JSON-compact, GitHub and missed-txt formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
-| `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. Python truthiness findings that require a live physical audit refuse `--from`; run explain/context without it. A local, disposable derivative: never a gate, badge, or proof input. |
+| `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v2`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. Python truthiness findings that require a live physical audit refuse `--from`; run explain/context without it. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
 | `--output-dir DIR` | _(unset)_ | With a named `--diff` file, write native `badge.json`, `detail.json` and `human.txt` from one analysis plus a `manifest.json`. `DIR` must be new (its parent must exist). Does not combine with `--format`/`--json`, scope switches, `--gap-ledger`, `--write-artifact` or `--suppression-policy`. See [Output schema](OUTPUT_SCHEMA.md). |
 | `--quiet` | _(off)_ | Suppress analysis progress and heartbeats on stderr. Does not change machine stdout, exit codes, or error reporting. |
@@ -350,7 +383,7 @@ that needs the tuning.
 | `RIPR_MODULE_TREE_SCAN_CACHE_BYTES` | `33554432` (32 MiB) | Load ceiling for the single module-tree scan bundle (`scans.json`). A bundle above the ceiling is never allocated whole; the load degrades to a cold rebuild, so analysis output stays correct and only the warm-run benefit is lost. Raise this only for workspaces whose legitimate bundle exceeds 32 MiB. Must be a positive integer; an invalid value falls back to the default ceiling rather than failing the load. This is a load-path bound, not a process RSS guarantee. |
 | `RIPR_QUIET` | unset | Silences the stderr `ripr progress:` stream exactly like `--quiet` for `ripr check`, `explain`, `context` and `pilot` (#11580), and the progress narration and `wrote <path>` lines of `ripr repair`, `ripr continue` and `ripr agent repair` (#11598). Unset, empty, `0` and `false` (any case) keep progress; any other value silences it. Stdout, exit codes, result lines and refusal/error prose are unchanged. Intended for agent harnesses that merge stderr into the model's view. |
 | `RIPR_VERBOSE` | unset | Turns on the stderr diagnostics of the global `-v`/`--verbose` flag for every command, for harnesses that cannot edit argv (editor server, MCP host, Git hook, CI): analyzed languages, mode and diff scope, per-phase timings (`ripr: timing [worktree] analyzing took 412 ms`), and one `ripr: verdict` line per reported finding (at most 50) naming its class, stage states and the first stage that is not `yes` with its recorded reason. Unset, empty, `0` and `false` (any case) leave it off; any other value turns it on. It prints no notice of its own and is ignored on `ripr help --json` and on any `--version` query. Unlike the `-v` flag, which also widens `ripr doctor`, `ripr agent card`, `ripr agent status` and the file-cache fields of `ripr check --format json` and writes the `ripr pilot` timings file, the variable never changes stdout, JSON or exit codes. See [Troubleshooting](TROUBLESHOOTING.md#attach-a-verbose-log) for attaching the log to a bug report. |
-| `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal and the human formats always keep progress. |
+| `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal keeps progress. A human format on a non-terminal stderr holds it for the first 2s (a run that finishes sooner prints nothing); `RIPR_PROGRESS=1` makes those lines immediate. |
 | `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. `ripr mcp` refreshes read it from the server's environment with the same default and parser; there an invalid value fails the refresh with `config_invalid`. |
 | `RIPR_CHECK_TIMEOUT` | `600` | Wall-clock budget in seconds for one `ripr check` diff or worktree analysis (#5369). Past the budget the run is stopped and refuses with `analysis_timeout` (exit non-zero, no findings, never a clean pass). `0` disables the budget. Must be a non-negative integer; an invalid value fails closed with an error naming the variable. An explicit `ripr check --timeout SECS` overrides the environment value. |
 | `RIPR_ALLOW_REPO_PERL_EXECUTABLE` | unset | Only the exact value `1` lets `[perl].executable` from `ripr.toml` run as the Perl facts exporter. Otherwise ripr ignores the key, says so, and runs the exporter from `PATH`, so a cloned repository cannot choose a program for ripr to run. |
@@ -362,7 +395,7 @@ that needs the tuning.
 | `RIPR_PILOT_REPO_EXPOSURE_BYTES` | `8000000` | Byte budget for the `seams[]` entries of the `ripr pilot` `repo-exposure.json` (#12108). `RIPR_PILOT_SEAM_BUDGET` bounds the seam count only: at the default 2000 seams the file measured 13.1 MB on this repository (about 6.6 KB per seam, mostly each seam's `evidence_record`). When the entries exceed the budget, the file keeps the current-change seams first, then the remaining seams in pilot ranking order, then the rest in inventory order (written in inventory order); a seam that does not fit is skipped (counted in `seams_skipped_over_budget` when a later seam of its group was kept), and a group that skipped a seam ends the selection. It sets `run_status = "limited_repo_exposure_bytes"` (a seam limit keeps `seam_limit_applied`), adds a `limitations[]` entry `pilot_repo_exposure_byte_bound_applied` with `seams_rendered`, `seams_total`, `seam_bytes_rendered`, `byte_budget`, `limit_source`, `control` and `repair_route`, drops the `artifact` identity, and `pilot-summary.json` carries `repo_exposure_byte_bound`. A bounded file is not a comparable snapshot: `ripr outcome` and `ripr agent verify` refuse it by name. `agent-seam-packets.json`, `repo-exposure.md` and the ranking still cover every seam. Set to `0` to write every seam; any other value that is not a positive integer exits `2` and names the variable. Agents should read `pilot-summary.json` and `agent-seam-packets.json` first, and treat `repo-exposure.json` as the bounded seam listing. The budget counts each kept entry's bytes plus the 2-byte `,\n` separator the writer adds between entries, so the written `seams[]` content never exceeds it; the document adds a few KB of metadata and array framing. Sizing renders every seam once before the cut (the same per-seam serialization the writer performs), so the control bounds output bytes, not analysis time. Because a bounded file is not a comparable baseline, `ripr pilot` then prints `before_snapshot_command` (`ripr check --format repo-exposure-json` to `before.repo-exposure.json`) and points `outcome_command` at that file; `ripr calibrate cargo-mutants` also refuses a bounded file. |
 | `RIPR_PILOT_SEAM_BUDGET` | `2000` | Maximum seams written to `ripr pilot` artifacts (`repo-exposure.json`, `agent-seam-packets.json`). Set to `0` to disable the budget and write all seams, which may produce very large files; any other value that is not a positive integer exits `2` and names the variable. When the budget applies, both artifacts carry a `limitations[]` disclosure naming the variable and a repair route. The budget bounds seam count, not bytes: measured on this repository (181,217 seams, budget 2000) `repo-exposure.json` is 13.1 MB (about 6.6 KB per seam on disk, dominated by each seam's `evidence_record`), so size scales roughly as 6.6 KB times the budget (#11951). It is the `ripr outcome --before/--after` snapshot, not a file to read end to end; an agent should follow `next.inspect_packet` to `agent-seam-packets.json` (bounded by `RIPR_PILOT_PACKET_BUDGET`) or `pilot-summary.json`. `RIPR_PILOT_REPO_EXPOSURE_BYTES` now bounds the bytes of `repo-exposure.json` `seams[]` (#12108); a byte-bounded file is no longer a comparable `ripr outcome` snapshot. A file cut by this budget (or by `RIPR_REPO_EXPOSURE_SEAM_LIMIT`) keeps a prefix of the inventory, so `ripr outcome`, `ripr agent verify` and `ripr calibrate cargo-mutants` refuse it by name and control (#12150); `ripr pilot` then points `outcome_command` at a full `before.repo-exposure.json` baseline. |
 | `RIPR_CHECK_FINDINGS_BYTES` | `1000000` | Byte budget for the findings array in `ripr check --format json`. When it engages, the document carries a `limited_findings_bound` run limitation naming the variable and `analysis_outcome.document_complete: false` with rendered/total counts. The budget keeps the highest-priority findings (candidate-current, then the strongest gap classes) and the limitation names the dropped counts per class and file. Set to `0` to remove the cap; an unparseable value fails the run. |
-| `RIPR_SARIF_RESULTS_BYTES` | `1000000` | Byte budget for the results array in `ripr check --format sarif` and `--format repo-sarif`. When it engages, the run properties carry `results_rendered`, `results_total`, `results_omitted`, `results_byte_budget`, `limited_results_bound: true` and `document_complete: false`; the first result always renders. Set to `0` to remove the cap; an unparseable value fails the run. |
+| `RIPR_SARIF_RESULTS_BYTES` | `1000000` | Byte budget for the results array in `ripr check --format sarif` and `--format repo-sarif`. When it engages, the run properties carry `results_rendered`, `results_total`, `results_omitted`, `results_byte_budget`, `limited_results_bound: true` and `document_complete: false`; results are kept by level (errors, then warnings, then notes) and rendered in their original order; the first admitted result always renders. Set to `0` to remove the cap; an unparseable value fails the run. |
 | `RIPR_PYTHON_MAX_WORKSPACE_FILES` | `4000` | Maximum `.py` files discovered in one diff-mode Python walk; exceeding it produces a named limitation, and changed `.py` files are kept past it (the byte budgets still apply). Sized so a Django-sized workspace (about 2,900 files) completes in diff mode; separate from the repo-mode `RIPR_MAX_REPO_INDEX_FILES` working set. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_FILE_READ_BYTES` | `16777216` (16 MiB) | Maximum bytes accepted from one Python source file; an oversized file is refused with a named limitation. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES` | `67108864` (64 MiB) | Aggregate Python source-read budget per analysis run. Invalid or zero values use the default bound. |
@@ -631,6 +664,16 @@ example, Python project markers in a binary built without the `lang-python`
 feature), validate still succeeds and carries the detection note in its
 output, because there is no user-written file to fail.
 
+`config validate` also checks the suppressions manifest that the config
+selects, resolved against `--root` as `ripr check` resolves it. A configured
+`[suppressions] path` that does not exist fails, naming the path, and so does
+a manifest path, default or configured, that is a dangling link; an absent
+default `.ripr/suppressions.toml` stays silent. A present manifest, default or
+configured, is parsed with the same parser as `check`, its line-numbered
+violations fail the command, and a valid one adds
+`✓ suppressions valid (<path>, N entries)` (#15308). The Python-marker
+advisory case above loads no config, so it does not check the manifest.
+
 ### `ripr lsp`
 
 ```text
@@ -746,9 +789,9 @@ download), see
 
 | Setting | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `ripr.check.mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Editor-side analysis mode. Forwarded as `initializationOptions.checkMode`. |
+| `ripr.check.mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Editor-side analysis mode. Forwarded as `initializationOptions.checkMode` and the `workspace/configuration` pull only when set in a VS Code settings layer; otherwise `ripr.toml` `analysis.mode` applies. |
 | `ripr.baseRef` | string | `""` | Git base ref used by editor diagnostics and the context commands. Forwarded as `initializationOptions.baseRef`; empty resolves the repository default branch like `ripr check`, and the context commands omit `--base`. |
-| `ripr.includeUnchangedTests` | boolean | `true` | Include unchanged tests as static evidence. Forwarded as `initializationOptions.includeUnchangedTests` and the `workspace/configuration` pull. |
+| `ripr.includeUnchangedTests` | boolean | `true` | Include unchanged tests as static evidence. Forwarded as `initializationOptions.includeUnchangedTests` and the `workspace/configuration` pull only when set in a VS Code settings layer; otherwise `ripr.toml` `analysis.include_unchanged_tests` applies. |
 | `ripr.seamDiagnostics` | boolean | `true` | Enable saved-workspace repository seam diagnostics in addition to diff-derived findings. Forwarded as `initializationOptions.seamDiagnostics` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.seam_diagnostics` applies. |
 | `ripr.diagnosticProfile` | enum: `actionable` \| `full` | `actionable` | Select the bounded actionable or audit/debug diagnostic projection. Forwarded as `initializationOptions.diagnosticProfile` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.diagnostic_profile` applies. |
 | `ripr.gitTimeoutMs` | number | `30000` | Cooperative per-invocation git deadline for the server refresh path. Served to the server through the `workspace/configuration` pull; an exceeded deadline commits a limited snapshot naming `git_invocation_timeout`. |
@@ -756,6 +799,14 @@ download), see
 
 The editor default matches the CLI and direct LSP missing-config default:
 `draft`.
+
+The four settings forwarded "only when set" (`ripr.check.mode`,
+`ripr.includeUnchangedTests`, `ripr.seamDiagnostics`,
+`ripr.diagnosticProfile`) have one consequence in the Settings editor: choosing
+the value shown as the default there removes the setting instead of saving it,
+so the `ripr.toml` value applies. To hold the default value against a different
+`ripr.toml` value, write it in `settings.json`, for example
+`"ripr.check.mode": "draft"` (#15930).
 
 ### Diagnostics
 
@@ -1042,7 +1093,7 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | `path` repo-relative, slash-separated | Absolute paths and backslash paths fail at parse time. |
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | `created_at`, `last_seen`, `review_by` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
-| Unknown fields rejected | Catches typos. |
+| Unknown fields and table headers rejected | Catches typos. A near-miss field, `kind` or header (`[[suppression]]`, `[suppressions]`) names the valid spelling; keys under an unknown header are not reported again. `[[ suppressions ]]` and a trailing `# comment` after the header are accepted. |
 | Duplicate fields rejected | Repeated `schema_version` headers or fields within one entry fail with the original and repeated declaration lines, including empty first values. Fields reused in separate entries remain valid. |
 | Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`, or `(path, function)`) twice fails. This check does not reject duplicate path-glob selectors. |
 | Unmatched selectors surface as warnings | Selector that matches no current finding is reported but does not fail the badge. |
@@ -1177,8 +1228,9 @@ and differs from the loaded config, naming the skipped directory entry and
 normal and preserves current built-in defaults. Unknown keys are errors so
 policy typos do not silently change analysis intent.
 
-Enumerated values (`mode`, the oracle strengths, the severities and
-`[languages] enabled`) are lowercase and case-sensitive: `mode = "Draft"` is
+Enumerated values (`mode`, the oracle strengths, the severities,
+`[languages] enabled`, `[lsp] diagnostic_profile` and `[perl] producer`) are
+lowercase and case-sensitive: `mode = "Draft"` is
 an error, not `draft`. When a rejected value is an accepted one in another
 case, padded with spaces, or a small typo, the error ends with
 `(did you mean ...?)` naming the accepted spelling.
@@ -1350,7 +1402,7 @@ card refuse it); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found, plus `typescript` when a `tsconfig.json` or `jsconfig.json`, or detectable non-generated, non-declaration `.ts`, `.tsx`, `.mts` or `.cts` files under `src/` or `tests/`, are found at the root, in a directory one level below it, or in a `packages/*`, `apps/*`, `libs/*` or `libraries/*` package (vendored and excluded directories never count; below the root, hidden directories do not count either; `package.json` alone, or tooling config files such as `eslint.config.js`, does not select it; a root with a `package.json` and JavaScript or TypeScript source at the root or under `src/`, `test/` or `tests/` does, including beside a Python project; beside a `Cargo.toml`, only the root and `src/` count, because Rust `tests/` hold integration tests and fixtures). Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off, and TypeScript preview off too. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `javascript` (alias for `typescript`; listing both is a duplicate), `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
+| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found, plus `typescript` when a `tsconfig.json`, `jsconfig.json`, `deno.json` or `deno.jsonc` (a Deno project, with or without a `package.json`), or detectable non-generated, non-declaration `.ts`, `.tsx`, `.mts` or `.cts` files under `src/` or `tests/`, are found at the root, in a directory one level below it, or in a `packages/*`, `apps/*`, `libs/*` or `libraries/*` package (vendored and excluded directories never count; below the root, hidden directories do not count either; `package.json` alone, or tooling config files such as `eslint.config.js`, does not select it; a root with a `package.json` and JavaScript or TypeScript source at the root or under `src/`, `test/` or `tests/` does, including beside a Python project; beside a `Cargo.toml`, only the root and `src/` count, because Rust `tests/` hold integration tests and fixtures). Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off, and TypeScript preview off too. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `javascript` (alias for `typescript`; listing both is a duplicate), `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
 
 `[languages.rust]` configures the stable Rust adapter:
 
