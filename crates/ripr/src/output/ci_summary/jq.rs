@@ -408,8 +408,19 @@ fn rewrite_to(text: &[u8], root: &[u8], dot: &[u8], ends: &[u8]) -> Vec<u8> {
     while let Some(start) = find(rest, root) {
         let (pre, tail) = rest.split_at(start);
         let after_root = tail.get(root.len()..).unwrap_or_default();
-        let before_ok = pre.last().is_none_or(|byte| b" '\"`=(".contains(byte));
-        let after_ok = after_root.first().is_none_or(|byte| ends.contains(byte));
+        let before = pre.last().copied();
+        let before_ok = before.is_none_or(|byte| b" '\"`=(".contains(&byte));
+        let after = after_root.first().copied();
+        let after_ok = match before {
+            // A root that opens a shell-quoted span ends at that span's
+            // closing quote, a separator or a `:line` suffix: in
+            // `'<root> x'` the quotes name another directory whose path only
+            // starts with the root. Markdown backticks keep the plain rule.
+            Some(quote @ (b'\'' | b'"')) => {
+                after.is_some_and(|byte| byte == quote || byte == b'/' || byte == b':')
+            }
+            _ => after.is_none_or(|byte| ends.contains(&byte)),
+        };
         out.extend_from_slice(pre);
         if before_ok && after_ok {
             out.extend_from_slice(dot);
@@ -772,5 +783,42 @@ mod tests {
             let sibling = crate::agent::loop_commands::shell_arg_for(&sibling, false);
             assert_eq!(relative.value(&sibling), sibling);
         }
+    }
+
+    #[test]
+    fn repo_relative_keeps_a_quoted_sibling_that_only_starts_with_the_root() {
+        // A space-only root is quoted without escapes, so the raw spelling
+        // occurs inside the quotes; a following space names another
+        // directory, not the root (#15858).
+        let root = "/w/two words/repo";
+        let quoted = crate::agent::loop_commands::shell_arg_for(root, false);
+        let relative = RepoRelative {
+            physical: root.as_bytes().to_vec(),
+            display: Vec::new(),
+            quoted: quoted
+                .strip_suffix('\'')
+                .unwrap_or_default()
+                .as_bytes()
+                .to_vec(),
+            logical: Vec::new(),
+        };
+        let sibling = "git -C '/w/two words/repo x' fetch origin";
+        assert_eq!(relative.value(sibling), sibling);
+        assert_eq!(
+            relative.value("git -C '/w/two words/repo' fetch origin"),
+            "git -C '.' fetch origin"
+        );
+        assert_eq!(
+            relative.value("cat '/w/two words/repo/file'"),
+            "cat './file'"
+        );
+        // Unquoted and double-quoted spans follow the same rule.
+        let plain = RepoRelative {
+            physical: b"/w/repo".to_vec(),
+            ..RepoRelative::default()
+        };
+        assert_eq!(plain.value("\"/w/repo more\""), "\"/w/repo more\"");
+        assert_eq!(plain.value("'/w/repo'x"), "'.'x");
+        assert_eq!(plain.value("ls /w/repo more"), "ls . more");
     }
 }
