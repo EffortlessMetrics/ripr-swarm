@@ -21,6 +21,7 @@ export async function withHostUserData(action: (userData: string) => Promise<voi
   // mkdtemp atomically creates a new private (0700) directory for every case.
   const userData = fs.mkdtempSync('/tmp/ripr-vsc-');
   try {
+    assert.strictEqual(fs.statSync(userData).mode & 0o077, 0, 'VS Code user data must be private');
     checkHostSocketPath(userData);
     await action(userData);
   } finally {
