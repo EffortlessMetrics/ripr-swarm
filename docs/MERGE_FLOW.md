@@ -165,7 +165,8 @@ Do not issue the call while a required result is pending so that the PR lands
 later on its own: that is the armed wait this route excludes, and a finding
 that arrives during the wait would not stop it. Read back that the PR entered
 the queue. If it shows auto-merge armed without a queue entry, a requirement
-was not met: disarm it, verify the readback, and reconcile before trying again.
+was not met: disarm it with `-X DELETE` on the same path, verify the readback,
+and reconcile before trying again.
 The ruling covers `ripr-swarm` only and changes no setting, required check or
 release authority.
 
