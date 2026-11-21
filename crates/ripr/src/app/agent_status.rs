@@ -35,6 +35,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod complete_summary;
 pub(crate) mod test_run;
 
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
@@ -3869,6 +3870,28 @@ pub(crate) fn render_agent_attempt_status_json(
         .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
+/// The one-line receipt reading shared by the status page and the
+/// already-complete `continue` summary (#15282).
+fn receipt_summary(receipt: &AgentStatusAttemptReceipt) -> String {
+    match receipt {
+        AgentStatusAttemptReceipt::Issued { path, reading } => format!(
+            "issued (`{}`, status `{}`, movement `{}`)",
+            path,
+            reading.status.as_deref().unwrap_or("unknown"),
+            reading.movement.as_deref().unwrap_or("unknown")
+        ),
+        AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
+        AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
+        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
+            format!("superseded by `{by_attempt_id}`")
+        }
+        AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
+        AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
+            format!("unavailable: {reason}")
+        }
+    }
+}
+
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
     let attempt = &report.attempt;
     let mut rendered = String::new();
@@ -3903,24 +3926,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         ));
     }
     if let Some(receipt) = &attempt.receipt {
-        let summary = match receipt {
-            AgentStatusAttemptReceipt::Issued { path, reading } => format!(
-                "issued (`{}`, status `{}`, movement `{}`)",
-                path,
-                reading.status.as_deref().unwrap_or("unknown"),
-                reading.movement.as_deref().unwrap_or("unknown")
-            ),
-            AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
-            AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
-            AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
-                format!("superseded by `{by_attempt_id}`")
-            }
-            AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
-            AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
-                format!("unavailable: {reason}")
-            }
-        };
-        rendered.push_str(&format!("Receipt: {summary}\n"));
+        rendered.push_str(&format!("Receipt: {}\n", receipt_summary(receipt)));
     }
 
     if let Some(next) = &report.next_action {
