@@ -37,17 +37,31 @@ pub(super) fn deleted_line_findings(
         .iter()
         .map(|added| (added.line, added.text.as_str()))
         .collect();
-    // A statement replaced by an empty statement (`queue.clear();` -> `;`)
-    // or a blank line is removed all the same, so that counterpart does not
-    // stand in for it and the line stays a base-side record (#15335). A
-    // bracket-only counterpart (`b);` -> `);`) still pairs: that is a
-    // reflowed call, not a removal.
+    // A statement replaced by an empty statement (`queue.clear();` -> `;`,
+    // `; // no-op`) or a blank line is removed all the same, so that
+    // counterpart does not stand in for it and the line stays a base-side
+    // record (#15335). The pairing holds when the removed code still stands
+    // inside an added line: `const cap =` / `getCap();` reflowed to
+    // `const cap = getCap();` leaves a blank where `getCap();` was, but the
+    // call still runs. A bracket-only counterpart (`b);` -> `);`) still
+    // pairs: that is a reflowed call, not a removal.
+    let added_code: Vec<String> = changed
+        .added_lines
+        .iter()
+        .map(|added| code_only(&added.text))
+        .collect();
     let paired: BTreeSet<usize> = counterparts
         .iter()
-        .filter(|(added_line, _)| {
-            added_text
-                .get(added_line)
-                .is_some_and(|text| !is_empty_statement(text))
+        .filter(|(added_line, removed)| {
+            let Some(text) = added_text.get(added_line) else {
+                return false;
+            };
+            if !is_empty_statement(&code_only(text)) {
+                return true;
+            }
+            let removed_code = code_only(&removed.text);
+            let removed_code = removed_code.trim();
+            !removed_code.is_empty() && added_code.iter().any(|code| code.contains(removed_code))
         })
         .map(|(_, removed)| removed.line)
         .collect();

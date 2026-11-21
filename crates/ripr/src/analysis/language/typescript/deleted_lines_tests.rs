@@ -222,12 +222,30 @@ fn statement_replaced_by_an_empty_statement_is_base_side_evidence() -> Result<()
         Some("total = Math.min(total, CAP);")
     );
     assert!(!finding.is_candidate_actionable());
+    let commented = analyze(
+        "commented-empty-statement",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "+  ; // no clamp for now",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&commented),
+        vec![record(3, "cappedTotal")],
+        "{commented:?}"
+    );
     Ok(())
 }
 
 /// A replacement that still runs behavior keeps the pairing, a reflowed
-/// call whose last argument line becomes a bare `);` keeps it too, and a
-/// removed comment replaced by `;` was never behavior: none leaves a record.
+/// call whose last argument line becomes a bare `);` keeps it too, an
+/// initializer joined onto its declaration line leaves a blank behind but
+/// still runs, and a removed comment replaced by `;` was never behavior:
+/// none leaves a record.
 #[test]
 fn empty_statement_counterpart_needs_a_removed_behavior_line() -> Result<(), String> {
     let reflowed = analyze(
@@ -244,6 +262,20 @@ fn empty_statement_counterpart_needs_a_removed_behavior_line() -> Result<(), Str
         ],
     )?;
     assert_eq!(base_side(&reflowed), Vec::new(), "{reflowed:?}");
+    let joined = analyze(
+        "joined-initializer",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  const cap =",
+            "-    Math.min(total, 100);",
+            "+  const cap = Math.min(total, 100);",
+            "+",
+            "   return cap;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&joined), Vec::new(), "{joined:?}");
     let behavior = analyze(
         "behavior-replacement",
         &[

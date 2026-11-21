@@ -66,10 +66,13 @@ no end-to-end corpus a downstream consumer could run against.
     an added header replaces (a type-only edit) keeps its owner live. A
     removed import, re-export, comment or closing bracket records
     nothing, and a module-level deletion has no owner and records
-    nothing. An added empty statement (`;`) or blank line does not
-    pair with the removed line it replaces, so a statement replaced by
-    `;` is still a removed-only probe (#15335); a bracket-only added
-    line (`);` from a reflowed call) still pairs.
+    nothing. An added empty statement (`;`, with or without a trailing
+    comment) or blank line does not pair with the removed line it
+    replaces, so a statement replaced by `;` is still a removed-only
+    probe (#15335). The pairing holds when the removed code still stands
+    inside an added line (an initializer joined onto its declaration),
+    and a bracket-only added line (`);` from a reflowed call) still
+    pairs.
 
 ## Required Evidence
 
