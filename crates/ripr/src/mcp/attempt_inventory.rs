@@ -117,6 +117,13 @@ pub(super) fn list_document(
             "restart the server with `ripr mcp --stdio --root <repository>` and retry",
         )
     })?;
+    if !root.is_dir() {
+        return Err(AttemptFailure::new(
+            "workspace_unavailable",
+            "the workspace root no longer exists; the durable attempt store cannot be read",
+            super::workspace::RESTART_ROOT_GONE_RECOVERY,
+        ));
+    }
     let inventory = inventory_repair_attempts_from(root, None).map_err(|_error| AttemptFailure::new(
         CODE_ATTEMPT_INVALID,
         "the shared repair-attempt authority could not read this workspace's durable store",
@@ -358,6 +365,23 @@ mod tests {
     fn missing_workspace_root_is_a_typed_workspace_unavailable_failure() -> Result<(), String> {
         let failure = refusal(list_document(None, None, None, 0, None, ROOMY))?;
         assert_eq!(failure.code, "workspace_unavailable");
+        assert!(failure.recovery.contains("--root"), "{}", failure.recovery);
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_workspace_root_is_workspace_unavailable_with_restart_recovery() -> Result<(), String>
+    {
+        let root = Root::new("deleted")?;
+        let path = root.0.clone();
+        std::fs::remove_dir_all(&path).map_err(|error| error.to_string())?;
+        let failure = refusal(list_document(Some(&path), None, None, 0, None, ROOMY))?;
+        assert_eq!(failure.code, "workspace_unavailable");
+        assert!(
+            failure.recovery.contains("restart the server"),
+            "{}",
+            failure.recovery
+        );
         assert!(failure.recovery.contains("--root"), "{}", failure.recovery);
         Ok(())
     }
