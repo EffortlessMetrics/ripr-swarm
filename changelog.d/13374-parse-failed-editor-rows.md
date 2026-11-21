@@ -1,6 +1,0 @@
-<!-- section: Fixed -->
-- Files with a parse failure withhold finding diagnostics that could suggest an
-  unsupported repair, and show one file-level related-tests uncertainty lens
-  instead of repeating it on each finding line. Mixed test-evidence wording in
-  editor diagnostics is now plain language. Parse-failed files no longer suggest
-  switching diagnostic profiles to recover withheld findings (#13374).

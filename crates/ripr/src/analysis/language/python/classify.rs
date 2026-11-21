@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod property_tests;
+
 use super::approx_band::{
     PythonBandReading, PythonBandSource, PythonBandVerdict, python_band_reading,
 };
@@ -9,6 +12,7 @@ use super::assertion_selection::{
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::call_chain::call_chain_credits;
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
+use super::class_attr_pin;
 use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
@@ -128,7 +132,7 @@ pub(super) fn classify_change_with_source(
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct PythonNoBehaviorContext {
+pub(super) struct PythonNoBehaviorContext<'a> {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
     /// The changed line lies in the body of `if TYPE_CHECKING:`, which never
@@ -141,7 +145,7 @@ pub(super) struct PythonNoBehaviorContext {
     /// comment-looking change there edits the string (#10706).
     pub(super) new_line_in_multiline_string: bool,
     /// Bracket-continuation facts for the changed line (#13875).
-    pub(super) brackets: BracketLine,
+    pub(super) brackets: BracketLine<'a>,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -207,7 +211,7 @@ pub(super) fn classify_change_with_context(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &[PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
 ) -> Option<Finding> {
     classify_change_full(
@@ -235,7 +239,7 @@ pub(super) fn classify_change_with_value_origins<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     origins: &mut crate::value_origins::ValueOrigins,
     related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -269,7 +273,7 @@ fn classify_change_full<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -429,7 +433,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     mut value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -486,7 +490,7 @@ fn classify_change_for_owner_inner<'a>(
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
-    no_behavior: PythonNoBehaviorContext,
+    no_behavior: PythonNoBehaviorContext<'_>,
     owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
@@ -515,8 +519,7 @@ fn classify_change_for_owner_inner<'a>(
     {
         return None;
     }
-    let statement_text =
-        bare_string_statement_text(line_text, no_behavior.brackets.span, owner_source);
+    let statement_text = bare_string_statement_text(line_text, no_behavior.brackets, owner_source);
     let (family, delta) = classify_probe_shape_with_old(
         statement_text.as_deref().unwrap_or(line_text),
         old_line_text,
@@ -535,14 +538,25 @@ fn classify_change_for_owner_inner<'a>(
     };
     // Only when no test relates to the owner itself: a test that calls a
     // same-module caller of the owner earns a weak `helper_owner_call` row
-    // (#4568), never an oracle.
-    let helper_callers = if !related_candidates.is_empty() {
+    // (#4568), never an oracle. A related candidate whose relation is already
+    // `helper_owner_call` reaches the owner only through a same-file value
+    // helper (#15350); it is reach-only too, so it does not hide the callers'
+    // rows, and a test both reach keeps one row.
+    let reached_directly = related_candidates
+        .iter()
+        .any(|candidate| candidate.relation != PythonRelationKind::HelperOwnerCall);
+    let mut helper_callers = if reached_directly {
         Vec::new()
     } else if let Some(memo) = related.as_deref_mut() {
         memo.helper_candidates(owner, owners, all_tests)
     } else {
         helper_owner_call_candidates(owner, owners, all_tests)
     };
+    helper_callers.retain(|helper| {
+        !related_candidates
+            .iter()
+            .any(|candidate| std::ptr::eq(candidate.test, helper.candidate.test))
+    });
     // #12955: with no related test at all, whether too many cross-module
     // callers went unfollowed decides between `no_static_path` and unknown.
     let cross_module_over_cap = related_candidates.is_empty()
@@ -925,6 +939,36 @@ fn classify_change_for_owner_inner<'a>(
         },
         None => alignment,
     };
+    // A strong exact read of a plain builtin `@property` owner (#15490): the
+    // same credit that lifts its `decorator_indirection` limit.
+    let property_read = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            owner_source.and_then(|source| {
+                super::property_read::property_read_credit(
+                    owner,
+                    source,
+                    line_text,
+                    &focus,
+                    &related_candidates,
+                )
+            })
+        })
+        .flatten();
+    let alignment = match property_read {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_property_read".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
     let log_evidence = python_log_evidence(
         old_line_text,
         line_text,
@@ -1261,6 +1305,37 @@ fn classify_change_for_owner_inner<'a>(
                 &related_candidates,
                 &focus,
             )
+            .or_else(|| {
+                // #15356: a raised-class swap that no assertion names exactly.
+                // The credited exception-variant read (below) already granted
+                // its own exact assertion, so it is not repeated here.
+                exception_variants.is_empty().then(|| {
+                    message_pin::python_raised_type_pin_gap(
+                        line_text,
+                        old_line_text,
+                        owner,
+                        owner_source,
+                        &related_candidates,
+                        &focus,
+                    )
+                })?
+            })
+        })
+        .flatten();
+    // Class-attribute text gate (#15294): a changed class-body string constant
+    // is exposed only when a related assertion carries a literal that the old
+    // text accepts and the new text rejects. Other shapes fail open.
+    let class_attr_gap = static_limit
+        .is_none()
+        .then(|| {
+            class_attr_pin::python_class_attr_pin_gap(
+                line_text,
+                old_line_text,
+                owner,
+                owner_source,
+                line,
+                &related_candidates,
+            )
         })
         .flatten();
     // #13622: an old-type exact assertion after a raised-type replacement is
@@ -1282,6 +1357,7 @@ fn classify_change_for_owner_inner<'a>(
         Vec::new()
     };
     let mut message_pin_downgraded = false;
+    let mut class_attr_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
     // The same gate evaluates simple integer arithmetic per row so a 20xx
@@ -1549,6 +1625,7 @@ fn classify_change_for_owner_inner<'a>(
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
         && message_pin_gap.is_none()
+        && class_attr_gap.is_none()
         && unvaried_table.is_none()
         && band_gap.is_none()
     {
@@ -1650,6 +1727,23 @@ fn classify_change_for_owner_inner<'a>(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
+        && let Some(gap) = class_attr_gap.as_ref()
+    {
+        // A strong oracle reaches the class, but no related assertion carries
+        // a literal that tells the old attribute text from the new (#15294).
+        class_attr_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}. Add an assertion (for example `pytest.raises(..., match=...)`) that the old text satisfies and the new text does not.",
+                owner.name, gap.reason,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
         && let Some(gap) = message_pin_gap.as_ref()
     {
         // A strong error-variant oracle reaches the raise, but every message
@@ -1662,8 +1756,8 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}. Add a `match=` pattern that the old message does not satisfy.",
-                owner.name, gap.reason,
+                "A strong Python oracle reaches `{}`, but {}. {}",
+                owner.name, gap.reason, gap.action,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -1827,7 +1921,21 @@ fn classify_change_for_owner_inner<'a>(
     };
 
     let related_count = related.len();
-    let reach_summary = if module_constant.unresolved_string_read {
+    let unbound_dunder_reach = related_count == 0
+        && static_limit
+            .as_ref()
+            .is_some_and(super::static_limits::is_implicit_dunder_dispatch_limit);
+    let reach_state = if unbound_dunder_reach {
+        StageState::Unknown
+    } else {
+        reach_state
+    };
+    let reach_summary = if unbound_dunder_reach {
+        format!(
+            "`{}` may be reached through a dunder method Python invokes by syntax; the preview adapter cannot bind a test instance to its class, so test reach is not established.",
+            owner.name
+        )
+    } else if module_constant.unresolved_string_read {
         "The preview adapter could not resolve the module string's consumer path.".to_string()
     } else if related_count == 0 {
         format!("0 related Python test(s) found for owner `{}`", owner.name)
@@ -1953,6 +2061,18 @@ fn classify_change_for_owner_inner<'a>(
             // input would need to satisfy, with the reason listing the values
             // the strong related calls actually bind.
             guarded_arm_gap
+                .as_ref()
+                .map(|gap| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        gap.discriminator.clone(),
+                        gap.reason.clone(),
+                        flow_sink.clone(),
+                    )
+                })
+                .into_iter()
+                .collect()
+        } else if class_attr_downgraded {
+            class_attr_gap
                 .as_ref()
                 .map(|gap| {
                     MissingDiscriminatorFact::equality_spelled(

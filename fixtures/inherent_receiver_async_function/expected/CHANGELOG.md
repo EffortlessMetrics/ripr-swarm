@@ -158,7 +158,19 @@ Updated:
 ## Pending — inherent_receiver_async_function (14)
 
 Reason:
-RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_function --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — inherent_receiver_async_function (15)
+
+Reason:
+RIPR-SPEC-0224: project the eligible test into the headline while preserving current-main reach limits, base-side guidance, and JSX owner calls (#15347).
 
 Command:
 `cargo xtask goldens bless inherent_receiver_async_function --reason "..."`

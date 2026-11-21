@@ -368,6 +368,7 @@ mod tests {
 
         fn stage(state: StageState) -> StageEvidence {
             StageEvidence {
+                static_limit_kind: None,
                 state,
                 confidence: Confidence::Low,
                 summary: String::new(),
@@ -498,6 +499,7 @@ mod tests {
 
         fn stage(state: StageState) -> StageEvidence {
             StageEvidence {
+                static_limit_kind: None,
                 state,
                 confidence: Confidence::Low,
                 summary: String::new(),

@@ -1156,7 +1156,7 @@ The copyable self-hosted proof runbook is in
 Use it to record CX43 primary proof, CPX42/CX53 fallback proof, or the bounded
 runner availability blocker without exposing runner tokens or secrets.
 
-The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e on admitted `merge-ready` and native merge-group requests (#12122, #12252, #8082). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted PR diff or the complete merge-group event base-to-head diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. A queue request tests `github.sha`, the admitted composition G, so an earlier constituent's extension change is included even when the tip PR is Rust-only. Admission supplies the union of constituent labels. The Result lists both jobs in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it. `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). Missing merge-group identities never fall back to the tip PR's diff. The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Manual-dispatch results do not require it. This closes the extension prerequisite for #8082; it does not retire the legacy PR qualification trigger or complete the queue-only cutover. The `CI` workflow retains manual dispatch and its frozen `subject_sha` callable path; its ordinary PR and main-push triggers are retired.
+The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e on admitted `merge-ready` and native merge-group requests (#12122, #12252, #8082). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted PR diff or, for merge groups, the diff from G's unique common ancestor with a freshly fetched destination tip, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. A queue request tests `github.sha`, the admitted composition G, so an earlier constituent's extension change is included even when the tip PR is Rust-only. Admission supplies the union of constituent labels. The Result lists both jobs in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it. `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). Missing merge-group identities never fall back to the tip PR's diff. The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Manual-dispatch results do not require it. This closes the extension prerequisite for #8082; it does not retire the legacy PR qualification trigger or complete the queue-only cutover. The `CI` workflow retains manual dispatch and its frozen `subject_sha` callable path; its ordinary PR and main-push triggers are retired.
 
 Hosted gates set `CARGO_PROFILE_DEV_DEBUG=0` before cache restore and Cargo,
 matching the test profile. Dev artifacts lose file/line debug metadata; assertions,
@@ -1404,7 +1404,7 @@ npm run package
 xvfb-run -a npm run test:e2e
 ```
 
-The extension e2e (`vscode-e2e.yml`) runs as a job of an admitted `merge-ready` or merge-group routed run when the selected diff changes `editors/vscode/**`, `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, or admission supplies the `vscode` or `full-ci` label. PRs use the admitted PR diff; merge groups use the whole event base-to-group diff and test the queued composition. The `vscode surface` job selects on any classification failure. Other PRs and groups skip it. The legacy `CI` workflow runs it on manual dispatch or a validated frozen-subject call selecting `run_vscode`; its main-push subscription is retired. A skipped selected e2e fails the required routed result (#12122, #8082).
+The extension e2e (`vscode-e2e.yml`) runs as a job of an admitted `merge-ready` or merge-group routed run when the selected diff changes `editors/vscode/**`, `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, or admission supplies the `vscode` or `full-ci` label. PRs use the admitted PR diff. Merge groups compare G with its unique common ancestor with a freshly fetched destination tip, then test the queued composition. The event base may itself be an unlanded lower G, so it is not a complete comparison baseline. A lower prefix landed with the same commit identity becomes part of the destination; unreadable, shallow, disconnected or ambiguous destination history keeps extension proof selected. The `vscode surface` job selects on any classification failure. Other PRs and groups skip it. The legacy `CI` workflow runs it on manual dispatch or a validated frozen-subject call selecting `run_vscode`; its main-push subscription is retired. A skipped selected e2e fails the required routed result (#12122, #8082).
 
 The `test:e2e` step launches a headless VS Code instance via `@vscode/test-electron`, activates the extension in a fixture Rust workspace, and runs the smoke test suite. `xvfb-run` provides the virtual display required on Linux CI runners. The runner pins host user-data at `target/ripr/vscode-test-user-data` (logs under `logs/`). If the host fails — including before Mocha starts — it copies a size-capped, redacted log subset into `target/ripr/vscode-test-host-diagnostics/`. The vscode job uploads that directory only on `failure()`, with 5-day retention. Diagnostic collection cannot change the original test exit status and is not a root-cause fix.
 
@@ -1528,15 +1528,16 @@ and must not be qualified by a lighter branch-head dispatch (which skips the
 `pull_request`-scoped PR-evidence steps). Before re-applying the label, check
 merge conflicts first: query the PR's `mergeable_state`; `dirty` means repair
 the conflict, then re-apply `merge-ready` for the composed head. That handoff also governs recovery from a
-dropped delivery. The required check, not run existence, is the
-discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
-real qualification attempt on that exact head. That check run is created only
-when the `result` job starts, after every implementation job (up to 120
-minutes), so before calling a head dark the watchdog also lists
-`routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
-in-progress run is reported as in flight. Re-applying `merge-ready` on such a
-head would cancel the real run, so the watchdog never recommends it. This uses
-`actions: read` only. Mergeability is read once per head and never retried
+dropped delivery. The watchdog lists `routed-rust.yml` PR runs for the head
+SHA and matches each request to the target PR. It reports queued or in-progress
+requests as in flight because re-applying the label would cancel them. For the
+newest completed request, it reads one page of jobs from the current attempt
+and verifies the Result job's exact check-run ID, head and suite. The commit
+check listing can omit older suites, and an older attempt in the same suite
+can retain its Result. An unreadable or ambiguous read defers the head. When
+preparing a re-apply notice, the watchdog finishes its comment census and final
+eligibility read before publishing the verdict or writing on that head
+(#15577). Mergeability is read once per head and never retried
 in-sweep (#14636): `mergeable_state` is not resolved for heads in the merge
 queue, which read `unknown` on repeated polls, and the former in-sweep retry
 spent 10 s of sleep per queued head, which alone exceeded the job cap once most
@@ -1951,17 +1952,23 @@ published) or a commit SHA of `EffortlessMetrics/ripr`, not a branch. The defaul
 `pull_request` event the Action fetches the base branch and deepens a shallow
 checkout in doubling steps (50, 100, ... 1,600 commits, then the rest) until
 HEAD meets the base, so the diff has a merge base (#14800). A full checkout is
-not touched. On other events, or with an explicit `base`, use
-`fetch-depth: 0`. If history is still missing, `ripr check` names the repair.
+not touched. An explicit branch `base` (`origin/main` or `main`) or full
+commit SHA is fetched and deepened the same way; a `base` starting with `-` is
+refused with exit 2 (#15399). On a `push` event to the default branch the base
+is the commit before the push, so the pushed commits are what ripr checks; on
+a push to any other branch it is the default branch. Elsewhere, or with a base
+such as a tag or `origin/main~1`, use `fetch-depth: 0`. If history is still
+missing, `ripr check` names the repair.
 
 Inputs: `install-only` (`true` installs ripr onto PATH and skips `ripr check`
 and the cache step; the generated workflow uses this), `version` (default: the release pinned in the Action at that tag; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
-exists), `mode` (`draft`, `deep`, `ready`), `format` (any `ripr check` format,
+exists), `mode` (`instant`, `draft`, `fast`, `deep`, `ready`), `format` (any `ripr check` format,
 for example `human`, `json`, `sarif` or `github` for file annotations), `base`
 and `cache`. An empty `base` uses the pull request base branch on
-`pull_request` events and ripr's own default-branch detection elsewhere.
+`pull_request` events, the push bases above on `push` events, and ripr's own
+default-branch detection elsewhere.
 `cache` (default `true`) restores and saves ripr's analysis cache under the
 runner's temp directory with `actions/cache` pinned to a commit SHA, so later
 pushes re-analyze only changed files. ripr checks each entry against file
@@ -1973,7 +1980,9 @@ to the job summary (cut at 60 KB). Step outputs are `exit-code` and `report`
 are advisory: a completed check exits 0 whatever it found. A check that could
 not complete (exit 2, or 3 when ripr declines) fails the step. It also emits one
 error annotation and a job-summary line that give the exit meaning and ripr's
-own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report and stderr
+own reason (up to eight lines, so a configuration error keeps its fix hint;
+the Action sets `RIPR_QUIET` so progress lines stay out of it) ([exit
+codes](EXIT_CODES.md)). Replayed report and stderr
 text cannot issue workflow commands, except the report of `format: github`,
 whose annotations are the point. To block on new gaps,
 use the generated workflow's gate modes ([adopting in CI](ADOPTING_IN_CI.md)).
@@ -2212,7 +2221,11 @@ configure the workflow, so changing a mode never means editing the file:
   say the findings are gone. It is skipped for fork and Dependabot pull
   requests, whose token cannot write; those still get the job summary, check
   annotations and SARIF. Only the comment `github-actions[bot]` posted is ever
-  updated.
+  updated. When `RIPR_GATE_MODE` lets the gate fail the job (any value other
+  than empty or `visible-only`), the comment's footer says the check can block
+  merging instead of calling the result advisory, and a blocked gate, a gate
+  configuration error or an unknown mode is stated at the top of the comment
+  (#15718).
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning. Code scanning is free on public repositories; a private repository

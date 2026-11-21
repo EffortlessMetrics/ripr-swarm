@@ -636,16 +636,28 @@ pub(super) mod tests {
         let b = related("b", RelationReason::SameModule);
         // Same test under another relation is a distinct record, not a repeat.
         let a_direct = related("a", RelationReason::DirectOwnerCall);
-        let seams = vec![
+        let mut seams = vec![
             seam(1, vec![a.clone(), b.clone()]),
             seam(2, vec![b.clone(), a.clone(), a_direct]),
             seam(3, Vec::new()),
             seam(4, vec![a]),
         ];
+        seams[0].evidence.activate.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::ActivationBoundaryInputUnresolved);
         let encoded = serde_json::to_value(Body {
             seams: seams.clone(),
         })
         .map_err(|err| err.to_string())?;
+        let encoded_seams = &encoded["seams"]["seams"];
+        assert_eq!(
+            encoded_seams[0]["evidence"]["activate"]["static_limit_kind"],
+            "activation_boundary_input_unresolved"
+        );
+        assert!(
+            encoded_seams[1]["evidence"]["activate"]
+                .get("static_limit_kind")
+                .is_none()
+        );
         let table = encoded["seams"]["related_tests"]
             .as_array()
             .ok_or("missing related test table")?;
@@ -655,6 +667,11 @@ pub(super) mod tests {
             serde_json::json!([1, 0, 2])
         );
         let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
+        assert_eq!(
+            decoded.seams[0].evidence.activate.static_limit_kind,
+            seams[0].evidence.activate.static_limit_kind
+        );
+        assert_eq!(decoded.seams[1].evidence.activate.static_limit_kind, None);
         assert_eq!(
             serde_json::to_value(&decoded.seams).map_err(|err| err.to_string())?,
             serde_json::to_value(&seams).map_err(|err| err.to_string())?

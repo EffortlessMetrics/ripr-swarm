@@ -21,8 +21,7 @@ Start here:
   Next step: Tests cannot close this static-analysis limitation: ripr cannot trace entry
     `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named
     path and existing assertions through the public API; add a test only for an independently
-    confirmed gap. This limitation does not establish a missing test. Route analyzer work to
-    `analysis/rust-public-api-transitive-reach`
+    confirmed gap. This limitation does not establish a missing test
   Evidence: reach weak · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

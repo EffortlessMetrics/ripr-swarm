@@ -364,7 +364,20 @@ Updated:
 ## Pending — rust_slice_table_boundary (29)
 
 Reason:
-RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+RIPR-SPEC-0224: distinguish the file-proximity miss from an assertion-free direct caller (#14808).
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_boundary (30)
+
+Reason:
+RIPR-SPEC-0224: project the eligible test into the headline while preserving current-main reach limits, base-side guidance, and JSX owner calls (#15347).
 
 Command:
 `cargo xtask goldens bless rust_slice_table_boundary --reason "..."`

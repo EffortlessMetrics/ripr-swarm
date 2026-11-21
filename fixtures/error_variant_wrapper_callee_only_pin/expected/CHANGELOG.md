@@ -624,7 +624,18 @@ Updated:
 ## Pending — error_variant_wrapper_callee_only_pin (48)
 
 Reason:
-RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (49)
+
+Reason:
+RIPR-SPEC-0224: project the eligible test into the headline while preserving current-main reach limits, base-side guidance, and JSX owner calls (#15347).
 
 Command:
 `cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`

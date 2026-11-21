@@ -1,7 +1,7 @@
 //! Check-artifact reuse for `explain` / `context` (RIPR-SPEC-0140, #2107).
 //!
 //! `ripr check --write-artifact <path>` writes a full-fidelity
-//! [`CheckArtifactV1`] envelope (the complete `Finding` set plus an input
+//! [`CheckArtifactV2`] envelope (the complete `Finding` set plus an input
 //! identity block) so a later `ripr explain --from <path>` or
 //! `ripr context --from <path>` can select and render from the recorded
 //! findings instead of re-running the whole pipeline. Both directions are
@@ -19,6 +19,7 @@
 use super::CheckInput;
 use super::check::options_builder::analysis_options_from_input_and_config;
 use crate::analysis::AnalysisOptions;
+use crate::analysis::owner_opt_out::OwnerOptOut;
 use crate::config::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, RiprConfig, bytes_fingerprint,
     check_artifact_config_identity_hash, config_fingerprint,
@@ -29,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 /// Artifact envelope schema version. Bump on any envelope shape change; old
 /// artifacts fail closed at load instead of being misread.
-pub(crate) const CHECK_ARTIFACT_SCHEMA_VERSION: &str = "ripr-check-artifact-v1";
+pub(crate) const CHECK_ARTIFACT_SCHEMA_VERSION: &str = "ripr-check-artifact-v2";
 
 /// Full-fidelity check artifact written by `ripr check --write-artifact`.
 ///
@@ -37,7 +38,7 @@ pub(crate) const CHECK_ARTIFACT_SCHEMA_VERSION: &str = "ripr-check-artifact-v1";
 /// feed a support-tier row, gate, badge, or proof route.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CheckArtifactV1 {
+pub(crate) struct CheckArtifactV2 {
     pub(crate) schema_version: String,
     pub(crate) tool: String,
     /// Build identity of the writing binary (version plus commit or source
@@ -47,6 +48,8 @@ pub(crate) struct CheckArtifactV1 {
     /// The complete finding set: uncapped related-tests lists and probe
     /// owners included, exactly as the producing run computed them.
     pub(crate) findings: Vec<Finding>,
+    /// Post-policy withholding decisions made by the producing check.
+    pub(crate) owner_opt_outs: Vec<OwnerOptOut>,
 }
 
 /// Input identity recorded at check time and re-verified at reuse time.
@@ -163,56 +166,32 @@ pub(crate) fn write_check_artifact(
     input: &CheckInput,
     config: &RiprConfig,
     findings: &[Finding],
+    owner_opt_outs: &[OwnerOptOut],
     worktree: bool,
 ) -> Result<(), String> {
     let identity = build_identity_at_write(input, config, worktree)?;
-    let artifact = CheckArtifactV1 {
+    let artifact = CheckArtifactV2 {
         schema_version: CHECK_ARTIFACT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),
         analyzer_version: crate::build_identity::cache_identity().to_string(),
         identity,
         findings: rewrite_non_utf8_finding_paths(findings),
+        owner_opt_outs: owner_opt_outs.to_vec(),
     };
     let json = serde_json::to_string_pretty(&artifact)
         .map_err(|err| format!("failed to serialize check artifact: {err}; this is a ripr bug, report it with the command you ran"))?;
     crate::atomic_file::write(path, json.as_bytes(), "check artifact")
 }
 
-/// Load an artifact and verify its identity against the current invocation,
-/// returning the recorded findings. Fail-closed: any structural deviation,
-/// unresolvable recorded diff source, or identity mismatch is a typed error;
-/// there is no silent fallback to recompute.
-///
-/// String compatibility wrapper around [`load_findings_for_reuse_core`];
-/// the typed core owns the refusal family (`check_artifact_unusable`,
-/// #7331) and Display is a pure projection of `detail`, so stderr prose is
-/// unchanged either way.
-///
-/// `asserted_base` is the explicitly passed `--base` value, when any; an
-/// explicitly passed `--diff` is read from `input.diff_file`. Both are
-/// assertions verified against the recorded diff source, not overrides.
-pub(crate) fn load_findings_for_reuse(
+/// Verify the recorded scope, identity and findings before exposing any of
+/// the artifact, including its withholding decisions. Scope flags are
+/// assertions against the recording. A failed check never reruns analysis.
+pub(crate) fn load_for_reuse(
     path: &Path,
     input: &CheckInput,
     config: &RiprConfig,
     asserted_base: Option<&str>,
-) -> Result<Vec<Finding>, String> {
-    load_findings_for_reuse_core(path, input, config, asserted_base).map_err(Into::into)
-}
-
-/// Typed core of [`load_findings_for_reuse`]: every fail-closed branch
-/// constructs its refusal family directly (#7331). A named artifact that is
-/// unreadable, malformed, foreign, or identity-mismatched is one family —
-/// `check_artifact_unusable` — with the exact human diagnostic as `detail`,
-/// so a `ripr context --json --from` refusal names the family instead of the
-/// honest fallback. Consumers match [`crate::core_error::CheckFailureKind`]
-/// structurally, never message text.
-pub(crate) fn load_findings_for_reuse_core(
-    path: &Path,
-    input: &CheckInput,
-    config: &RiprConfig,
-    asserted_base: Option<&str>,
-) -> Result<Vec<Finding>, crate::core_error::CoreError> {
+) -> Result<CheckArtifactV2, crate::core_error::CoreError> {
     // Bounded, and phrased without the host errno (#9851): `not found` for a
     // missing file, a plain cause for a directory, then the command that
     // writes the artifact.
@@ -259,7 +238,7 @@ pub(crate) fn load_findings_for_reuse_core(
             ));
         }
     }
-    let artifact: CheckArtifactV1 = serde_json::from_value(value).map_err(|err| {
+    let artifact: CheckArtifactV2 = serde_json::from_value(value).map_err(|err| {
         crate::core_error::CoreError::check_artifact_unusable(format!(
             "check artifact at {} is malformed: {err}",
             path.display()
@@ -293,7 +272,7 @@ pub(crate) fn load_findings_for_reuse_core(
             "Python truthiness evidence requires a fresh physical source audit; run `ripr explain` or `ripr context` without `--from`",
         ));
     }
-    Ok(artifact.findings)
+    Ok(artifact)
 }
 
 /// Identity built at check time from the resolved input and config.
@@ -370,7 +349,7 @@ fn build_identity_at_load(
 /// swapped between the artifact's write and read execs is self-describing
 /// (#11197).
 fn verify_identity(
-    artifact: &CheckArtifactV1,
+    artifact: &CheckArtifactV2,
     current: &CheckArtifactIdentityV1,
     path: &Path,
 ) -> Result<(), String> {

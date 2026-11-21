@@ -940,7 +940,19 @@ Updated:
 ## Pending — typescript_probe_facts (45)
 
 Reason:
-RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+RIPR-SPEC-0243: component owners with only a heuristic test link advise rendering the component (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_probe_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_probe_facts (46)
+
+Reason:
+RIPR-SPEC-0224: project the eligible test into the headline while preserving current-main reach limits, base-side guidance, and JSX owner calls (#15347).
 
 Command:
 `cargo xtask goldens bless typescript_probe_facts --reason "..."`

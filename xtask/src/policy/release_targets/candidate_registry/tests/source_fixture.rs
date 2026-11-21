@@ -2198,10 +2198,13 @@ fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> R
         AdmittedSource, AttributedArchive, QualificationInput,
     };
     let harness = fixture_help_harness();
-    let extra = harness
-        .iter()
-        .map(|(path, text)| (*path, text.as_str()))
-        .collect::<Vec<_>>();
+    // This fixture's executable answers `--version` separately from its
+    // normal output, so a substitute can keep the version and change behavior.
+    let mut extra = vec![(
+        "src/main.rs",
+        "fn main() {\n    if std::env::args().nth(1).as_deref() == Some(\"--version\") {\n        println!(\"ripr 0.11.0\");\n    } else {\n        println!(\"fixture source A\");\n    }\n}\n",
+    )];
+    extra.extend(harness.iter().map(|(path, text)| (*path, text.as_str())));
     let fixture = create_source_fixture_with(&extra)?;
     let input = QualificationInput::new(
         fixture.controller.clone(),
@@ -2222,12 +2225,18 @@ fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> R
             return Err(format!("fixture package carries {}", path.display()));
         }
     }
-    let installed = archive.install(&owned)?;
+    let mut installed = archive.install(&owned)?;
+    // Freeze the candidate as the qualified corpus does before binding its
+    // path into the compiled harness.
+    let slot = owned.join(format!("candidate-witness{}", std::env::consts::EXE_SUFFIX));
+    installed.freeze_into(&slot)?;
+    let frozen = fs::read(&slot).map_err(|error| error.to_string())?;
     let receipt = installed.run_help_contract(&owned.join("help-contract"))?;
     if receipt["cases_declared"] != 2
         || receipt["cases_listed"] != 2
         || receipt["cases_passed"] != 2
-        || receipt["executable"].as_str() != installed.binary().to_str()
+        || receipt["executable"].as_str() != slot.to_str()
+        || receipt["executable_sha256"].as_str() != Some(sha256_hex(&frozen).as_str())
         || receipt["harness_sources"].as_array().map(Vec::len) != Some(3)
     {
         return Err(format!("unexpected help contract receipt: {receipt}"));
@@ -2237,6 +2246,121 @@ fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> R
         installed.run_help_contract(&owned.join("help-contract")),
         "create owned help harness root",
     )?;
+    // A substitute of the same length that advertises the same version but
+    // behaves differently: the normal-output marker A becomes B.
+    let marker = b"fixture source A";
+    let at = frozen
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .ok_or("frozen fixture binary lacks its output marker")?;
+    let mut substitute = frozen.clone();
+    *substitute
+        .get_mut(at + marker.len() - 1)
+        .ok_or("frozen fixture marker out of range")? = b'B';
+    // Execute both identities first: equal version, distinct output and digest.
+    let substitute_path = owned.join(format!("substitute-b{}", std::env::consts::EXE_SUFFIX));
+    fs::write(&substitute_path, &substitute).map_err(|error| error.to_string())?;
+    fs::set_permissions(
+        &substitute_path,
+        fs::metadata(&slot)
+            .map_err(|error| error.to_string())?
+            .permissions(),
+    )
+    .map_err(|error| error.to_string())?;
+    let observe = |program: &Path, args: &[&str]| -> Result<String, String> {
+        let args = args
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect::<Vec<_>>();
+        let output = crate::run::capture_bytes_in_dir_with_timeout(
+            program,
+            &args,
+            &owned,
+            &[],
+            &[],
+            Duration::from_secs(30),
+            "help fixture identity",
+        )?;
+        if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+            return Err(format!(
+                "help fixture identity {program:?} {args:?} did not run"
+            ));
+        }
+        String::from_utf8(output.stdout).map_err(|error| error.to_string())
+    };
+    let frozen_version = observe(&slot, &["--version"])?;
+    let substitute_version = observe(&substitute_path, &["--version"])?;
+    let frozen_output = observe(&slot, &[])?;
+    let substitute_output = observe(&substitute_path, &[])?;
+    if frozen_version != "ripr 0.11.0\n"
+        || substitute_version != frozen_version
+        || frozen_output != "fixture source A\n"
+        || substitute_output != "fixture source B\n"
+        || sha256_hex(&substitute) == sha256_hex(&frozen)
+    {
+        return Err(format!(
+            "substitute identity not established: versions {frozen_version:?}/{substitute_version:?}, outputs {frozen_output:?}/{substitute_output:?}"
+        ));
+    }
+    installed.revalidate()?;
+    let captured_mtime = fs::metadata(&slot)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| error.to_string())?;
+    let distinct_mtime = captured_mtime + Duration::from_mins(2);
+    // Write `bytes` into the frozen slot, set its mtime, and verify the mtime.
+    let rewrite = |bytes: &[u8], mtime: SystemTime| -> Result<(), String> {
+        fs::write(&slot, bytes).map_err(|error| error.to_string())?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&slot)
+            .and_then(|file| file.set_modified(mtime))
+            .map_err(|error| error.to_string())?;
+        let observed = fs::metadata(&slot)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|error| error.to_string())?;
+        if observed != mtime {
+            return Err(format!("frozen slot mtime is {observed:?}, not {mtime:?}"));
+        }
+        Ok(())
+    };
+    for (label, bytes, mtime, expected) in [
+        // Captured length, mtime and identity: only the byte check can refuse.
+        (
+            "substitute-same-metadata",
+            &substitute,
+            captured_mtime,
+            "frozen executable bytes changed after capture",
+        ),
+        (
+            "substitute-new-metadata",
+            &substitute,
+            distinct_mtime,
+            "frozen executable snapshot changed after capture",
+        ),
+        // The original bytes with witnessed metadata that differs.
+        (
+            "original-new-metadata",
+            &frozen,
+            distinct_mtime,
+            "frozen executable snapshot changed after capture",
+        ),
+    ] {
+        rewrite(bytes, mtime)?;
+        let root = owned.join(format!("help-contract-{label}"));
+        let refusal = installed.run_help_contract(&root);
+        if root.exists()
+            || !refusal
+                .as_ref()
+                .is_err_and(|error| error.contains(expected))
+        {
+            return Err(format!(
+                "{label} was not refused before compile with {expected}: {refusal:?}"
+            ));
+        }
+    }
+    // The original bytes with the captured metadata restore custody.
+    rewrite(&frozen, captured_mtime)?;
+    installed.revalidate()?;
     fixture.guard.finish()?;
 
     // Without the harness in the admitted commit, qualification refuses.

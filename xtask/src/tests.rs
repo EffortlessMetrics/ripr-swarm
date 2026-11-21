@@ -887,6 +887,29 @@ fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> 
     Ok(())
 }
 
+fn seed_honesty_git_base() -> Result<(), String> {
+    run("git", &["init", "--quiet"])?;
+    run(
+        "git",
+        &["add", "fixtures/evidence-promotion-honesty-corpus"],
+    )?;
+    run(
+        "git",
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ],
+    )?;
+    run("git", &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    Ok(())
+}
+
 #[test]
 fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cases()
 -> Result<(), String> {
@@ -911,7 +934,8 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
             write_evidence_promotion_check(fixture, classification)?;
         }
 
-        let corpus_json = serde_json::json!({
+        let mut corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -963,11 +987,70 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
                 }
             ]
         });
+        // Seed a required, stamped report and a real consumer in the accepted base.
+        write(
+            &root.join("crates/ripr/src/analysis/seam_cache.rs"),
+            "pub(crate) const CACHE_SCHEMA_VERSION: &str = \"1.0\";\n",
+        );
+        let report = "fixtures/evidence-promotion-honesty-corpus/reports/retained.json";
+        let placeholder = format!("sha256:{}", "0".repeat(64));
+        let report_json = serde_json::json!({
+            "artifact": {"canonicalization": "raw_json_placeholder_v1", "content_sha256": placeholder},
+            "summary": {"findings": 1},
+            "findings": [{"id": "retained", "classification": "weakly_exposed"}]
+        });
+        let template = serde_json::to_string_pretty(&report_json).map_err(|err| err.to_string())?;
+        let stamped = template.replace(
+            &placeholder,
+            &format!("sha256:{}", sha256_hex(template.as_bytes())),
+        );
+        write(&root.join(report), &stamped);
+        corpus_json["report_digest_required"] = serde_json::json!([report]);
+        corpus_json["cases"]
+            .as_array_mut()
+            .ok_or("no cases")?
+            .push(serde_json::json!({
+                "id": "retained_report", "language": "python", "tier": "pure",
+                "source_report": report, "must_remain_non_promoted": true
+            }));
         write(
             &corpus,
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
+        super::check_evidence_promotion_honesty(&[])?;
+        // Remove both the requirement and the stamp while retaining the report.
+        corpus_json["report_digest_required"] = serde_json::json!([]);
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
+        let mut unstamped = report_json;
+        unstamped
+            .as_object_mut()
+            .ok_or("report object")?
+            .remove("artifact");
+        write(
+            &root.join(report),
+            &serde_json::to_string_pretty(&unstamped).map_err(|err| err.to_string())?,
+        );
+        let error = super::check_evidence_promotion_honesty(&[])
+            .expect_err("retained report omission must fail");
+        assert!(
+            error.contains("required digest entry removed while report still exists"),
+            "{error}"
+        );
+        // Actual deletion and removal of its case is an allowed retirement.
+        fs::remove_file(root.join(report)).map_err(|err| err.to_string())?;
+        corpus_json["cases"]
+            .as_array_mut()
+            .ok_or("no cases")?
+            .retain(|case| case["id"] != "retained_report");
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
         super::check_evidence_promotion_honesty(&[])?;
         let summary_path = root.join("target/ripr/reports/corpus-summary.json");
         let summary_text = fs::read_to_string(&summary_path)
@@ -1148,6 +1231,7 @@ fn evidence_promotion_corpus_summary_reports_pinned_external_setup_failure() -> 
         }
 
         let corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -1203,6 +1287,7 @@ fn evidence_promotion_corpus_summary_reports_pinned_external_setup_failure() -> 
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
         let err = super::check_evidence_promotion_honesty(&["--pinned-external".to_string()])
             .expect_err("malformed pinned_external case should fail");
         assert!(
@@ -1831,6 +1916,7 @@ fn evidence_promotion_honesty_pass_report_names_clean_guard() -> Result<(), Stri
         }
 
         let corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -1876,6 +1962,7 @@ fn evidence_promotion_honesty_pass_report_names_clean_guard() -> Result<(), Stri
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
         super::check_evidence_promotion_honesty(&[])?;
         let report =
             fs::read_to_string(root.join("target/ripr/reports/evidence-promotion-honesty.md"))
@@ -5717,6 +5804,24 @@ fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
             .read_to_string(&mut binary_contents)
             .map_err(|err| format!("read ripr.exe entry: {err}"))?;
         assert_eq!(binary_contents, "binary");
+
+        // Only the executable carries an execute bit; licenses and the notice
+        // are plain data files.
+        for (name, expected) in [
+            ("ripr.exe", 0o755),
+            ("LICENSE-MIT", 0o644),
+            ("LICENSE-APACHE", 0o644),
+            ("README-server.txt", 0o644),
+        ] {
+            let entry = archive
+                .by_name(name)
+                .map_err(|err| format!("locate {name} entry: {err}"))?;
+            assert_eq!(
+                entry.unix_mode().map(|mode| mode & 0o777),
+                Some(expected),
+                "{name}"
+            );
+        }
         Ok(())
     })
 }
@@ -6590,6 +6695,25 @@ fn non_rust_programming_policy_requires_retention_rule() {
     );
     assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
     assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+}
+
+#[test]
+fn installed_wheel_identity_retention_is_exact() -> Result<(), String> {
+    for (file, retained) in [
+        ("verify_installed_wheel.py", true),
+        ("test_verify.py", true),
+        ("other.py", false),
+        ("nested/test_verify.py", false),
+    ] {
+        let path = format!("tools/python/installed-wheel-identity/{file}");
+        let observed = non_rust_programming_retention_reason(&path);
+        if observed.is_some() != retained {
+            return Err(format!(
+                "unexpected installed wheel retention for {path}: {observed:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -7645,6 +7769,66 @@ fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() ->
             );
         }
         Ok(())
+    })
+}
+
+#[test]
+fn unguarded_allow_requires_its_own_reason() {
+    let source = r####"
+        #![allow(clippy::never_loop)]
+        // #[allow(comment_only)]
+        const SAMPLE: &str = "#[allow(string_only)]";
+        #[cfg_attr(unix, cfg_attr(test, allow(clippy::never_loop)), allow(other, reason = "conditional"))]
+        #[allow(clippy::documented, reason /* explanation */ = r#"conditional"#)]
+        #[allow(clippy::mixed, GUARDED)]
+        #[r#cfg_attr(test, cfg_attr(windows, r#allow(clippy::raw_missing)))]
+        #[r#allow(clippy::raw_documented, r#reason = "documented")]
+        #[expect(clippy::outside_budget)]
+        fn example() {}
+    "####;
+    let findings = super::unguarded_allows_without_reason(
+        &source.replace("GUARDED", "dead_code"),
+        &guarded_allow_attribute_lints(),
+    );
+    assert_eq!(
+        findings,
+        vec![
+            (2, "clippy::never_loop".to_owned()),
+            (5, "clippy::never_loop".to_owned()),
+            (7, "clippy::mixed".to_owned()),
+            (8, "clippy::raw_missing".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attributes_gate_requires_a_reason_outside_the_budget() -> Result<(), String> {
+    with_temp_cwd("allow-attributes-unguarded", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        let source = "#[cfg_attr(windows, allow(clippy::never_loop))]\nfn example() {}";
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            source,
+        );
+        write(&root.join("fixtures/demo/src/lib.rs"), source);
+        badge_fixture_git(&["add", "."])?;
+        assert!(super::check_allow_attributes_impl().is_err());
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            report.contains("xtask/src/reports/fixtures/preparation.rs:1 allow(clippy::never_loop) needs a written reason"),
+            "{report}"
+        );
+        assert!(!report.contains("fixtures/demo"), "{report}");
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            &source.replace(
+                "never_loop)",
+                "never_loop, reason = \"platform-specific loop\")",
+            ),
+        );
+        super::check_allow_attributes_impl()
     })
 }
 
@@ -20594,6 +20778,7 @@ fn dogfood_pr_review_front_panel_scenarios_have_checked_receipts() -> Result<(),
             ("baseline_resolved", "already_improved"),
             ("blocked", "actionable"),
             ("missing_proof", "missing_required_input"),
+            ("absent_optional_guidance", "missing_required_input"),
             ("advisory_only", "no_actionable_seam"),
             ("coverage_flat_grip_improved", "already_improved"),
         ] {
@@ -54361,6 +54546,37 @@ fn check_nextest_hang_window_budget(config: &str, shard_workflow: &str) -> Resul
                     "{name}: ci hang window {window}s + measured {phase} {measured}s = {bound}s is not below the shard test step cap {cap}s; reduce terminate-after so a late hang is terminated and named instead of ending at the step cap"
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+/// The analytics timeout covers the entire partition job. Both measured
+/// phases consume its budget before a late hang can be named (#14946).
+#[test]
+fn nextest_hang_window_fits_the_analytics_job_budget() -> Result<(), String> {
+    let workflow = include_str!("../../.github/workflows/test-analytics.yml");
+    let (_, job) = workflow
+        .split_once("\n  rust-tests:\n")
+        .ok_or("missing analytics rust-tests job")?;
+    let minutes: u32 = job
+        .lines()
+        .take_while(|line| {
+            line.trim().is_empty() || line.starts_with("    ") || line.trim_start().starts_with('#')
+        })
+        .find_map(|line| line.strip_prefix("    timeout-minutes: "))
+        .ok_or("missing analytics rust-tests job timeout")?
+        .trim()
+        .parse()
+        .map_err(|err| format!("invalid analytics job timeout: {err}"))?;
+    let cap = u64::from(minutes) * 60;
+    let (default, overrides) = nextest_ci_hang_windows(include_str!("../../.config/nextest.toml"))?;
+    for (name, window) in std::iter::once(("ci profile".to_owned(), default)).chain(overrides) {
+        let elapsed = NEXTEST_CI_MEASURED_BUILD_SECONDS + NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS;
+        if window >= cap.saturating_sub(elapsed) {
+            return Err(format!(
+                "{name}: {elapsed}s of measured build and test time plus a {window}s hang window reaches the analytics job cap of {cap}s"
+            ));
         }
     }
     Ok(())

@@ -713,6 +713,184 @@ fn async_owner_refusal_names_the_stub_refusal_on_both_surfaces() -> Result<(), S
     Ok(())
 }
 
+/// The `ripr agent stub` command quoted in `text`, as argv words after `ripr`.
+fn quoted_stub_command(text: &str) -> Option<Vec<String>> {
+    text.split('`')
+        .find(|part| part.starts_with("ripr agent stub "))
+        .map(|command| {
+            command
+                .split_whitespace()
+                .skip(1)
+                .map(str::to_string)
+                .collect()
+        })
+}
+
+/// Runs a printed stub command (from `root`, with `--json`) and returns the
+/// stub's seam id, or the refusal document when it refuses.
+fn replay_stub(root: &Path, words: &[String]) -> Result<String, String> {
+    let output = ripr()
+        .current_dir(root)
+        .args(words)
+        .arg("--json")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let doc: Value = serde_json::from_str(&stdout).map_err(|e| format!("{e}: {stdout}"))?;
+    if !doc["refusal"].is_null() {
+        return Err(format!(
+            "printed command {words:?} refused: {}",
+            doc["refusal"]
+        ));
+    }
+    doc["seam_id"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("stub named no seam: {stdout}"))
+}
+
+/// #15641: one changed field on a construction line that holds two
+/// field seams. The stub command `ripr repair` prints and the one
+/// `ripr_prepare_repair` carries, run exactly as printed, produce the changed
+/// field's stub, not its sibling's; the location form for that line refuses as
+/// ambiguous (control), and the lone return seam keeps the runnable location
+/// form.
+#[test]
+fn ambiguous_field_line_stub_commands_run_and_target_the_changed_field() -> Result<(), String> {
+    let lib = |n: u32| {
+        format!(
+            "pub struct Config {{\n    pub retries: u32,\n    pub verbose: bool,\n}}\n\npub fn new() -> Config {{\n    Config {{ retries: {n}, verbose: false }}\n}}\n"
+        )
+    };
+    let fixture = Fixture::create(
+        "ambiguous-field-line",
+        &[
+            ("Cargo.toml", CARGO_TOML.to_string()),
+            ("src/lib.rs", lib(3)),
+            (
+                "tests/c.rs",
+                "use fx::new;\n#[test]\nfn builds() {\n    let _c = new();\n}\n".to_string(),
+            ),
+            (".gitignore", "target/\n.ripr/\n".to_string()),
+        ],
+        &[("src/lib.rs", lib(5))],
+    )?;
+    let root = fixture.0.as_path();
+    // Control: the location form refuses and names both field seams.
+    let at = ripr()
+        .current_dir(root)
+        .args([
+            "agent",
+            "stub",
+            "--root",
+            ".",
+            "--at",
+            "src/lib.rs:7",
+            "--kind",
+            "field_construction",
+            "--json",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let at: Value = serde_json::from_slice(&at.stdout).map_err(|e| e.to_string())?;
+    assert_eq!(at["refusal"]["kind"], "selector_ambiguous", "{at}");
+    let reason = at["refusal"]["reason"].as_str().unwrap_or_default();
+    let field_ids: Vec<&str> = reason
+        .split("--seam-id ")
+        .skip(1)
+        .filter_map(|rest| rest.split([',', ' ']).next())
+        .collect();
+    assert_eq!(
+        field_ids.len(),
+        2,
+        "precondition, two field seams: {reason}"
+    );
+
+    let mut mcp = Mcp::spawn(root)?;
+    let refresh = mcp.tool("ripr_refresh", json!({}))?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("refresh did not complete: {refresh}"));
+    }
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let items = gaps["items"].as_array().ok_or("gap list omitted items")?;
+    let mut field_seen = false;
+    let mut return_seen = false;
+    for item in items {
+        let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        let finding_id = item["finding_id"].as_str().unwrap_or(canonical_id);
+        let field = canonical_id.contains(":field_construction:");
+        let prepare = mcp.tool(
+            "ripr_prepare_repair",
+            json!({ "canonical_id": canonical_id }),
+        )?;
+        let detail = prepare["ineligibility"]["detail"]
+            .as_str()
+            .unwrap_or_default();
+        let repair = ripr()
+            .current_dir(root)
+            .args(["repair", finding_id, "--root", "."])
+            .output()
+            .map_err(|e| e.to_string())?;
+        let repair_text = String::from_utf8_lossy(&repair.stderr).to_string();
+        let gap_seam = repair_text
+            .split("names gap `")
+            .nth(1)
+            .and_then(|rest| rest.split('`').next())
+            .ok_or_else(|| format!("repair named no gap: {repair_text}"))?
+            .to_string();
+        let cli = quoted_stub_command(&repair_text)
+            .ok_or_else(|| format!("repair printed no stub command: {repair_text}"))?;
+        let from_mcp = quoted_stub_command(detail)
+            .ok_or_else(|| format!("prepare carried no stub command: {prepare}"))?;
+        let mut commands = vec![cli.clone(), from_mcp.clone()];
+        if let Some(route) = prepare["next"]["stub_route"]["command"].as_str() {
+            commands.push(
+                route
+                    .split_whitespace()
+                    .skip(1)
+                    .map(str::to_string)
+                    .collect(),
+            );
+        }
+        for words in &commands {
+            let stubbed = replay_stub(root, words)?;
+            assert_eq!(stubbed, gap_seam, "{words:?} must stub the gap's own seam");
+        }
+        if field {
+            field_seen = true;
+            assert!(cli.contains(&"--seam-id".to_string()), "{cli:?}");
+            assert!(from_mcp.contains(&"--seam-id".to_string()), "{from_mcp:?}");
+            assert!(
+                field_ids.contains(&gap_seam.as_str()),
+                "{gap_seam} vs {field_ids:?}"
+            );
+            let sibling = field_ids
+                .iter()
+                .find(|id| **id != gap_seam)
+                .ok_or("no sibling")?;
+            assert!(
+                !cli.contains(&(*sibling).to_string()),
+                "the sibling {sibling} must not be named"
+            );
+            assert!(
+                canonical_id.contains("retries"),
+                "the changed field is retries: {canonical_id}"
+            );
+        } else {
+            return_seen = true;
+            assert!(
+                cli.contains(&"--at".to_string()),
+                "lone seam keeps --at: {cli:?}"
+            );
+        }
+    }
+    assert!(
+        field_seen && return_seen,
+        "fixture must yield the field and return gaps: {gaps}"
+    );
+    Ok(())
+}
+
 // The Python fixture needs the Python adapter compiled in to yield a listed
 // item at all (the Rust-only feature lane builds without it).
 #[cfg(feature = "lang-python")]

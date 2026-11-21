@@ -142,7 +142,50 @@ fn already_folded_entry_is_refused_not_duplicated() -> Result<(), String> {
     let err = fold_in(&root, &opts(true, None))
         .err()
         .ok_or("expected refusal")?;
-    assert!(err.contains("a-one.md") && err.contains("already"), "{err}");
+    assert!(
+        err.contains("a-one.md") && err.contains("duplicates an entry in CHANGELOG.md Unreleased"),
+        "{err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn mixed_already_folded_and_new_entries_are_refused_before_writing() -> Result<(), String> {
+    let name = "b-mixed.md";
+    let mixed = frag(
+        "Changed",
+        "- Old  fix (#2). continued here.\n- Genuinely new (#12).\n",
+    );
+    let fresh = frag("Fixed", "- Another new fix (#11).\n");
+    let fragments = [("a-first.md", fresh), (name, mixed)];
+
+    for flags in [
+        &["--write", "--limit", "150"][..],
+        &["--write", "--release-cut"],
+    ] {
+        let root = root_with(&fragments)?;
+        let result = fold_in(&root, &parse_args(&args(flags))?);
+        let changelog = fs::read(root.join("CHANGELOG.md"));
+        let fragment_bytes: Vec<_> = fragments
+            .iter()
+            .map(|(name, _)| fs::read(root.join("changelog.d").join(name)))
+            .collect();
+
+        let err = result
+            .err()
+            .ok_or("expected mixed fragment to be refused")?;
+        assert!(
+            err.contains("changelog.d/b-mixed.md")
+                && err.contains("- Old fix (#2). continued here.")
+                && err.contains("duplicates an entry in CHANGELOG.md Unreleased"),
+            "{flags:?}: {err}"
+        );
+        assert_eq!(changelog.map_err(|e| e.to_string())?, CHANGELOG.as_bytes());
+        for (actual, (_, original)) in fragment_bytes.into_iter().zip(&fragments) {
+            assert_eq!(actual.map_err(|e| e.to_string())?, original.as_bytes());
+        }
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

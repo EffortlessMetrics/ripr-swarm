@@ -425,6 +425,57 @@ pub(crate) fn target_manifest_directories(workspace_root: &Path) -> Option<Vec<P
         .then_some(listing.manifest_dirs)
 }
 
+/// Manifest directories in the requested Cargo workspaces when the bounded
+/// path inventory is covered by the caller's index. A symlink can hide a
+/// source or give it another spelling.
+pub(crate) fn covered_rust_source_manifest_dirs(
+    analysis_root: &Path,
+    workspace_dirs: &BTreeSet<PathBuf>,
+    indexed: impl Fn(&Path) -> bool,
+) -> Option<Vec<PathBuf>> {
+    let root = lexical(&normalize(analysis_root));
+    let in_workspace = |relative: &Path| workspace_dirs.iter().any(|dir| relative.starts_with(dir));
+    let listing = list_workspace(analysis_root)?;
+    if !listing.symlink_targets.is_empty()
+        || !listing.rust_files.iter().all(|file| {
+            file.strip_prefix(&root)
+                .is_ok_and(|relative| !in_workspace(relative) || indexed(relative))
+        })
+    {
+        return None;
+    }
+    Some(
+        listing
+            .manifest_dirs
+            .into_iter()
+            .filter_map(|dir| dir.strip_prefix(&root).ok().map(Path::to_path_buf))
+            .filter(|dir| in_workspace(dir))
+            .collect(),
+    )
+}
+
+/// A standalone package can autodiscover a symlink as a crate root even
+/// though source discovery omits it. Inspect only the candidate packages
+/// with the same entry limit and output exclusions as the workspace scan.
+pub(crate) fn standalone_packages_have_no_source_aliases(
+    analysis_root: &Path,
+    packages: &BTreeSet<PathBuf>,
+) -> bool {
+    let root = lexical(&normalize(analysis_root));
+    let directories = packages
+        .iter()
+        .filter(|package| {
+            !package
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| packages.contains(ancestor))
+        })
+        .map(|package| root.join(package))
+        .collect();
+    list_workspace_from(analysis_root, false, directories)
+        .is_some_and(|listing| listing.symlink_targets.is_empty())
+}
+
 /// Lists the workspace, or `None` when the listing is cut short or cannot
 /// describe the tree the analysis reads: under a committed-source overlay,
 /// a Rust file or manifest that exists only at `HEAD` is missing from the
@@ -437,6 +488,18 @@ fn list_workspace_including_targets(
     workspace_root: &Path,
     include_targets: bool,
 ) -> Option<WorkspaceListing> {
+    list_workspace_from(
+        workspace_root,
+        include_targets,
+        vec![lexical(&normalize(workspace_root))],
+    )
+}
+
+fn list_workspace_from(
+    workspace_root: &Path,
+    include_targets: bool,
+    mut pending: Vec<PathBuf>,
+) -> Option<WorkspaceListing> {
     if !crate::analysis::committed_source::committed_workspace_paths_missing_on_disk(workspace_root)
         .is_empty()
     {
@@ -447,7 +510,6 @@ fn list_workspace_including_targets(
         manifest_dirs: Vec::new(),
         symlink_targets: Vec::new(),
     };
-    let mut pending = vec![lexical(&normalize(workspace_root))];
     let mut visited_entries = 0usize;
     while let Some(dir) = pending.pop() {
         // A workspace root given as the current directory normalizes to the

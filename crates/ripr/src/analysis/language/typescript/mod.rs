@@ -79,6 +79,7 @@ mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod commonjs_default_class;
+mod commonjs_reexports;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -121,6 +122,7 @@ mod infection_shape;
 mod infection_shape_tests;
 mod instance_class_guard;
 mod instance_factories;
+mod jsx_render;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_eval;
@@ -192,6 +194,7 @@ mod tests;
 mod typeof_kind;
 #[cfg(test)]
 mod typeof_kind_tests;
+mod unused_default_guard;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
