@@ -325,12 +325,17 @@ fn scalar_constant(text: &str) -> Option<ArmConstant> {
     }
 }
 
+/// The owner's own returns, each as (0-based line within `source`, its value
+/// when a scalar literal), and whether a declaration or parameter in scope
+/// binds the name `undefined`.
+type OwnerReturns = (Vec<(usize, Option<ArmConstant>)>, bool);
+
 /// Every return statement at the owner's own function level, as (0-based
 /// line within `source`, its value when a scalar literal), and whether a
 /// top-level declaration binds the name `undefined`. `None` when the owner
 /// does not parse, is a generator or a concise arrow, or declares no
 /// function body this reader can locate.
-fn owner_returns(file: &Path, source: &str) -> Option<(Vec<(usize, Option<ArmConstant>)>, bool)> {
+fn owner_returns(file: &Path, source: &str) -> Option<OwnerReturns> {
     for (prefix, suffix) in WRAPPERS {
         let wrapped = format!("{prefix}{source}{suffix}");
         let prefix_lines = prefix.matches('\n').count();
@@ -425,25 +430,23 @@ impl ReturnCollector<'_> {
                     self.binds_undefined = true;
                 }
             }
-            AstKind::ArrowFunctionExpression(arrow) => {
+            AstKind::ArrowFunctionExpression(arrow)
                 if owner_level
                     && arrow
                         .params
                         .items
                         .iter()
-                        .any(|param| pattern_binds_undefined(&param.pattern))
-                {
-                    self.binds_undefined = true;
-                }
+                        .any(|param| pattern_binds_undefined(&param.pattern)) =>
+            {
+                self.binds_undefined = true;
             }
-            AstKind::Class(class) => {
+            AstKind::Class(class)
                 if class
                     .id
                     .as_ref()
-                    .is_some_and(|id| id.name.as_str() == "undefined")
-                {
-                    self.binds_undefined = true;
-                }
+                    .is_some_and(|id| id.name.as_str() == "undefined") =>
+            {
+                self.binds_undefined = true;
             }
             AstKind::CatchClause(catch) => {
                 if let Some(param) = &catch.param
