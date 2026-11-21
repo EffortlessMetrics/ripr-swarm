@@ -2474,8 +2474,10 @@ impl RepairStartGate {
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
         // #15488: the root gate applies to gap-bound subjects too; a start
         // under a subdirectory root refuses at the before phase regardless
-        // of subject namespace.
-        if self.apply_root_gate
+        // of subject namespace. Seam subjects reach the same gate in
+        // check_state below.
+        if super::gap_bound_repair::is_gap_bound_subject(seam_id)
+            && self.apply_root_gate
             && let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&self.root)
         {
             return Some(RepairStartRefusal {
