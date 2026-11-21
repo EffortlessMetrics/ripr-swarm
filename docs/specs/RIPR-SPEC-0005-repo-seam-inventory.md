@@ -365,7 +365,11 @@ what test is missing and why:
   diff-mode rule, `weak` when something could run the owner unseen (a
   doctest or caller names it, a trait impl, a test macro, an unresolved
   transitive path) and `no` otherwise, so the seam never reads
-  `strongly_gripped` from them (#5335)
+  `strongly_gripped` from them (#5335). A test that captures a call to the
+  seam's converted callee carries that call fact as its relation
+  (`seam_callee_call`) even when its name or file also matches the owner:
+  a captured call outranks name and file proximity for the single emitted
+  reason, while still establishing no reach to the owner itself (#5335)
 - activate evidence: does any test supply the triggering input?
 - propagate evidence: does the test observe the changed state downstream?
 - observe evidence: does the test assert on the visible sink?

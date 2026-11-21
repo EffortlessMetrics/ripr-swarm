@@ -985,8 +985,8 @@ fn find_related_tests_with_candidates<'a>(
         .filter(|token| !RUST_KEYWORDS.contains(&token.as_str()))
         .collect();
     // #3714: the converted callee of a wrapper error seam, if any. A test
-    // whose captured calls name it relates weakly (SeamCalleeCall) even when
-    // no name-affinity signal fires.
+    // whose captured calls name it relates as SeamCalleeCall; the captured
+    // call outranks name and file proximity (#5335).
     let seam_callee = wrapper_seam_callee(probe);
     // Module identity, not the bare file stem: `serialize/mod.rs` is module
     // `serialize`, and a crate root (`lib.rs`, `main.rs`) names no module, so
@@ -1909,6 +1909,11 @@ fn find_related_tests_with_candidates<'a>(
         } else if assertions_reference_owner {
             // Struct/field probe whose tokens appear in assertion observed_tokens.
             RelationReason::AssertionTargetAffinity
+        } else if calls_seam_callee {
+            // #5335 residual: a captured call to the seam's converted callee
+            // is a call fact, so it outranks the name and file proximity
+            // below; it still never establishes reach to the owner.
+            RelationReason::SeamCalleeCall
         } else if owner_name_in_test {
             // Test name contains the owner function name.
             RelationReason::OwnerNamedTest
@@ -1916,15 +1921,6 @@ fn find_related_tests_with_candidates<'a>(
             // Test file uses the probe's source stem or one of the canonical
             // `_test`/`_tests` companion conventions.
             RelationReason::SameTestFile
-        } else if calls_seam_callee {
-            // #3714: the test calls the wrapper seam's converted callee —
-            // a direct captured call fact, but the attribution to THIS
-            // seam is weaker than every name-anchored signal, so it ranks
-            // last: only when no name affinity fired (the generic-name
-            // witness the weak-signal gate used to skip) does the reason
-            // surface, still above the bare WeakTokenSubstring fallback in
-            // the priority order.
-            RelationReason::SeamCalleeCall
         } else {
             // A path or test-name token substring is the broadest, least
             // precise match branch. `same_file_or_named` guarantees that one
@@ -17142,6 +17138,69 @@ let r = try_parse_summary();",
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::SeamCalleeCall);
+    }
+
+    #[test]
+    fn given_owner_named_same_file_test_calling_seam_callee_when_wrapper_probe_then_seam_callee_call()
+     {
+        // #5335 residual: a captured call to the seam's converted callee is
+        // a call fact, while the test's owner-shaped name and shared file
+        // are only proximity. The call must win the single emitted reason;
+        // naming the test after the owner must not hide it behind
+        // `owner_named_test` / `same_test_file`.
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "parse_summary_rejects_bad_input",
+                "let result = try_parse_summary(\"@bad;\");",
+                "try_parse_summary",
+            )],
+            ..Default::default()
+        });
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall, "{related:?}");
+        assert!(
+            !related[0].1.establishes_reach(true),
+            "a seam-callee call runs the callee, never the owner"
+        );
+    }
+
+    #[test]
+    fn given_owner_named_same_file_test_calling_nothing_relevant_when_wrapper_probe_then_name_relation_stays()
+     {
+        // Should-stay-negative control for #5335: the same owner-shaped name
+        // and shared file without a seam-callee call keep their proximity
+        // relation and gain no callee-call relation.
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "try_parse_summary"),
+            ],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "parse_summary_rejects_bad_input",
+                "other_helper();",
+                "other_helper",
+            )],
+            ..Default::default()
+        });
+        let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert_eq!(related[0].1, RelationReason::OwnerNamedTest, "{related:?}");
+        assert!(!related[0].1.establishes_reach(true), "{related:?}");
     }
 
     #[test]
