@@ -479,8 +479,15 @@ pub(crate) fn render_human_triage(
                     Some(finding)
                         if let Some(blocker) = typescript_dynamic_blocker_for(finding) =>
                     {
+                        let advice = if blocker.contains("expects `undefined`") {
+                            "check by hand that the test covers this change"
+                        } else if blocker.contains("contains variables") {
+                            "pin the member values as literals, or check by hand that the test covers this change"
+                        } else {
+                            "replace that expected value with a literal, or check by hand that the test covers this change"
+                        };
                         out.push_str(&format!(
-                            "  Safe next action: {blocker}; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
+                            "  Safe next action: {blocker}; {advice}, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
                         ));
                     }
                     // #7384: TypeScript named limitations deliberately leave
@@ -550,7 +557,10 @@ pub(crate) fn render_human_triage(
                     ));
                 }
             } else if let Some(base) = output.base.as_deref()
-                && head_is_on_branch(&output.root, base)
+                && (head_is_on_branch(&output.root, base)
+                    // #15326: a clone's `origin/<branch>` base at HEAD's own
+                    // commit, under the shared #7644 identity rule.
+                    || crate::analysis::base_is_checked_out_head(&output.root, base, None))
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
                 // last commit", so print that command instead of leaving it to

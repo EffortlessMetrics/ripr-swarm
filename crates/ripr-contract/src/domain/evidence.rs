@@ -524,4 +524,124 @@ mod tests {
             assert!(!reason.establishes_reach(false), "{reason:?}");
         }
     }
+
+    const ALL_REASONS: [RelationReason; 11] = [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::AssertionTargetAffinity,
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::OwnerNamedTest,
+        RelationReason::ImportPathAffinity,
+        RelationReason::FixtureOwnerAffinity,
+        RelationReason::WeakTokenSubstring,
+        RelationReason::ReExportChainFollowed,
+        RelationReason::SeamCalleeCall,
+    ];
+
+    /// Only a captured path to running the owner is reach; an assertion
+    /// affinity counts only for an owner with no function body.
+    #[test]
+    fn only_call_paths_establish_reach_for_a_function_owner() {
+        let reach_for = |owner_is_function: bool| -> Vec<&str> {
+            ALL_REASONS
+                .iter()
+                .filter(|reason| reason.establishes_reach(owner_is_function))
+                .map(|reason| reason.as_str())
+                .collect()
+        };
+        assert_eq!(
+            reach_for(true),
+            [
+                "direct_owner_call",
+                "helper_owner_call",
+                "re_export_chain_followed"
+            ]
+        );
+        assert_eq!(
+            reach_for(false),
+            [
+                "direct_owner_call",
+                "helper_owner_call",
+                "assertion_target_affinity",
+                "re_export_chain_followed"
+            ]
+        );
+    }
+
+    #[test]
+    fn proximity_only_reasons_are_file_module_or_token_nearness() {
+        let proximity: Vec<&str> = ALL_REASONS
+            .iter()
+            .filter(|reason| reason.is_proximity_only())
+            .map(|reason| reason.as_str())
+            .collect();
+        assert_eq!(
+            proximity,
+            ["same_test_file", "same_module", "weak_token_substring"]
+        );
+        for reason in ALL_REASONS {
+            assert!(
+                !(reason.is_proximity_only() && reason.establishes_reach(false)),
+                "{} cannot be both proximity and reach",
+                reason.as_str()
+            );
+        }
+    }
+
+    /// Sorting by priority puts owner-anchored signals first, a seam callee
+    /// call below every owner-anchored signal, and token substrings last;
+    /// import affinity and a followed re-export chain tie.
+    #[test]
+    fn relation_reasons_sort_strongest_first() {
+        let mut reasons = ALL_REASONS;
+        reasons.sort_by_key(|reason| (reason.priority(), reason.as_str()));
+        let order: Vec<&str> = reasons.iter().map(|reason| reason.as_str()).collect();
+        assert_eq!(
+            order,
+            [
+                "direct_owner_call",
+                "helper_owner_call",
+                "assertion_target_affinity",
+                "same_test_file",
+                "same_module",
+                "owner_named_test",
+                "import_path_affinity",
+                "re_export_chain_followed",
+                "fixture_owner_affinity",
+                "seam_callee_call",
+                "weak_token_substring",
+            ]
+        );
+        assert_eq!(
+            RelationReason::ImportPathAffinity.priority(),
+            RelationReason::ReExportChainFollowed.priority()
+        );
+        let mut priorities: Vec<u8> = ALL_REASONS.iter().map(|reason| reason.priority()).collect();
+        priorities.sort_unstable();
+        priorities.dedup();
+        assert_eq!(priorities.len(), ALL_REASONS.len() - 1, "exactly one tie");
+    }
+
+    #[test]
+    fn relation_confidence_ranks_sort_highest_first() {
+        let mut ranked = [
+            RelationConfidence::Opaque,
+            RelationConfidence::Low,
+            RelationConfidence::High,
+            RelationConfidence::Medium,
+        ];
+        ranked.sort_by_key(|confidence| confidence.rank());
+        assert_eq!(
+            ranked,
+            [
+                RelationConfidence::High,
+                RelationConfidence::Medium,
+                RelationConfidence::Low,
+                RelationConfidence::Opaque,
+            ]
+        );
+        assert_eq!(RelationConfidence::High.rank(), 0);
+        assert_eq!(RelationConfidence::Opaque.rank(), 3);
+    }
 }

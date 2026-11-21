@@ -1401,7 +1401,9 @@ fn nothing_fits_error(files: &[OverLimitFile]) -> String {
          was not run to protect runner memory before probe expansion. Repair route: reduce the \
          diff scope, split the extraction PR, run a narrower diff, or raise the limit via {}. \
          To analyze a subset, pass `--path <glob>` and/or `--exclude <glob>` to `ripr check` \
-         (repeatable, repository-relative; files left out are reported as not analyzed).",
+         (repeatable, repository-relative; files left out are reported as not analyzed). From \
+         a pre-commit hook, set those flags in the hook's `args:`, or skip this hook for one \
+         commit with `SKIP=ripr git commit ...`.",
         files.len(),
         largest.changed_lines,
         largest.limit_env,
@@ -1751,7 +1753,9 @@ fn enforce_changed_rust_line_limit(
          PR, run a narrower diff, or raise the limit via \
          {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>. To analyze a subset, pass \
          `--path <glob>` and/or `--exclude <glob>` to `ripr check` (repeatable, \
-         repository-relative; files left out are reported as not analyzed)."
+         repository-relative; files left out are reported as not analyzed). From a \
+         pre-commit hook, set those flags in the hook's `args:`, or skip this hook for one \
+         commit with `SKIP=ripr git commit ...`."
     ))
 }
 
@@ -1883,6 +1887,9 @@ fn apply_probe_and_oracle_limits(
     classify::withhold_mixed_refusal_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
+    // #15237: after every limit and gap decision, so the rewritten row miss
+    // never feeds one; it only withdraws a false "has no assertion" claim.
+    oracles::name_unread_assertion_macro_rows(finding, index);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a

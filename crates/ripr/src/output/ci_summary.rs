@@ -111,6 +111,9 @@ pub(crate) struct CiSummaryInput {
     pub(crate) root: PathBuf,
     /// The PR base branch the missing-start-here route names.
     pub(crate) base_ref: String,
+    /// `GITHUB_EVENT_NAME`, empty outside GitHub Actions. A set event other
+    /// than `pull_request` has no pull request to analyze (#14148).
+    pub(crate) event_name: String,
     /// `RIPR_UPLOAD_SARIF == "true"`.
     pub(crate) upload_sarif: bool,
     /// `github.event_name == "pull_request"`. The packet renders the diff
@@ -143,7 +146,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     };
     summary.headline(&input.gate_mode);
     summary.start_here();
-    summary.first_run_status(&input.base_ref);
+    summary.first_run_status(&input.base_ref, &input.event_name);
     summary.language_preview(&input.configured_languages);
     summary.front_panel();
     summary.recommended_next_test();
@@ -453,8 +456,28 @@ impl Summary {
         self.line("- Retry note: per-file facts computed before the deadline are written to `target/ripr/cache`; when the workflow restores that directory between runs, the retry resumes from them. Later whole-repo stages are not cached and can still need the larger deadline.");
     }
 
-    fn first_run_status(&mut self, base_ref: &str) {
+    /// A run with no pull request, named before the states it causes
+    /// (#14148). The packet runs its pull-request stages only for a
+    /// `pull_request` event, so a manual or push run has no PR repair cards
+    /// and the start-here packet reports them missing; without this line a
+    /// first manual run reads as broken. An unset event (a local run) and a
+    /// `pull_request` event print nothing.
+    fn no_pull_request(&mut self, event_name: &str) {
+        if event_name.is_empty() || event_name == "pull_request" {
+            return;
+        }
+        self.line(&format!(
+            "- No pull request in this run: the event is {}, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.",
+            code_span(event_name)
+        ));
+        self.line(
+            "- Next step: open or update a pull request to get changed-behavior findings for it.",
+        );
+    }
+
+    fn first_run_status(&mut self, base_ref: &str, event_name: &str) {
         self.line("#### First-run status");
+        self.no_pull_request(event_name);
         // #11161: when the producer refused to run, the downstream packets
         // carry missing/blocked states whose regeneration commands cannot
         // succeed — the author sees an unexplained "blocked". The refusal
@@ -481,7 +504,7 @@ impl Summary {
                 self.line("- Safe next action: no base is derivable from the event payload (base_ref and default_branch are both empty); re-run with an event JSON that names the repository's default branch, or resolve the base commit and pass `ripr first-pr --base <ref>` explicitly.");
             } else {
                 self.line(&format!(
-                    "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`."
+                    "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`."
                 ));
             }
             self.line("- Fallback safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.");
@@ -580,6 +603,13 @@ impl Summary {
         }
         self.status_row(&status, &format!("- Status: `{status}`"));
         self.status_row(&state, &format!("- Selected state: `{state}`"));
+        // #14148: a blocked packet carries its own reason; without it the
+        // reader sees a state token and a command, and the sentence that
+        // explains both is only in the start-here report in the uploaded artifact.
+        let reason = doc.optional(&["selected.message"]);
+        if !reason.is_empty() {
+            self.line(&format!("- Reason: {}", code_span(&reason)));
+        }
         self.status_row(&gap, &format!("- Canonical gap: `{gap}`"));
         self.status_row(&language, &format!("- Language: `{language}`"));
         self.status_row(&kind, &format!("- Top gap/no-action: `{kind}`"));

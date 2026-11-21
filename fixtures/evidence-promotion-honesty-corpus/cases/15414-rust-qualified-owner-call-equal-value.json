@@ -1,0 +1,20 @@
+{
+  "id": "rust_qualified_owner_call_equal_value_at_the_asserted_input",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/invisible_change_qualified_owner_call",
+  "vector": "path_qualified_owner_call_returns_the_baseline_value_at_every_asserted_input",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    }
+  ]
+}

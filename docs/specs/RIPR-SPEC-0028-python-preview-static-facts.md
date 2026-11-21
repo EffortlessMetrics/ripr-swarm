@@ -32,8 +32,13 @@ families as the Rust adapter and tags each finding with
 When `ripr.toml` is absent, Python project detection may also enable the
 adapter for roots with markers such as `pyproject.toml`, `setup.py`,
 `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`, or
-Python files under `src/` or `tests/`. An explicit `ripr.toml` remains
-authoritative and can keep Python disabled.
+non-generated regular Python files directly at the root or under `src/` or
+`tests/`. `ripr init` preserves this selection when Python is compiled in and
+warns when it is unavailable. Detection reads file presence, not contents, and
+does not descend into arbitrary root child directories. An explicit `ripr.toml` remains
+authoritative and can keep Python disabled. The LSP requests nonrecursive,
+root-anchored Python presence events so creating, deleting or renaming the last
+root source file reloads those defaults; generated names remain excluded.
 
 The adapter is syntax-first. It must not depend on `mypy`, `pyright`, a
 runtime test runner, or an import graph. When syntax-first analysis
@@ -216,7 +221,9 @@ Test discovery:
   With no project venv the command keeps PATH `python` at its existing
   confidence: a static producer cannot know whether system Python has pytest,
   and a runtime probe would make reports and goldens host-dependent, so
-  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  `ripr doctor` checks PATH `python -m pytest` instead when there is no
+  project venv; with a venv, doctor reads the same static venv facts
+  (RIPR-SPEC-0007). The
   unittest route is unchanged. JSON (`evidence`, `repair_placement`,
   `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
   carry this one decision; renderers never read the filesystem, and the
@@ -244,7 +251,10 @@ mock expectations, and custom `assert_*` helpers.
   - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
-    or non-literal argument stays smoke. The patch veto is narrowed
+    or non-literal argument stays smoke, except a plain name that is a direct,
+    settled pytest parametrize argname of the test with recorded cases, rebound
+    nowhere in the body (no statement binding and no `:=`) and not a
+    Hypothesis input (#15310), which counts as the row's literal. The patch veto is narrowed
     only to a closed allow-list (#10391): a test file keeps the credit when
     every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
     `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
@@ -315,8 +325,9 @@ mock expectations, and custom `assert_*` helpers.
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
 - `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
-  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
-  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `assert f(..) is True|False` (one `is`, either operand order) is an exact
+  identity pin for any owner and arguments (#15250), like `== True|False`.
+  Bool-owner exception (#13620): `self.assertTrue(f(lit, ..))`,
   `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
   are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
   unique function owner that provably returns a `bool` (annotated `-> bool`,
@@ -325,7 +336,9 @@ mock expectations, and custom `assert_*` helpers.
   defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
   class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
   `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
-  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  truthiness on a non-bool owner and non-literal arguments stay uncredited
+  (the pytest `is True` / `is False` forms take the #15310 parametrize-argname
+  exception above; the unittest forms never do).
   `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’

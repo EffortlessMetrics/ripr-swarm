@@ -79,9 +79,38 @@ pub(crate) fn reconcile_root(
     Ok(PathBuf::from(value))
 }
 
+/// Place an implicit default output under the selected root (#15378).
+///
+/// Report readers (`reports ci-summary --root`, the gate report's hints and
+/// the agent commands) look under `<root>/target/ripr`, so a writer's
+/// *default* destination follows `--root` too. An explicit relative output
+/// keeps its documented invoking-directory meaning; only defaults move. The
+/// implicit `.` root keeps the bare relative spelling so existing messages
+/// and reports are unchanged.
+pub(crate) fn default_output_under_root(root: &Path, default: &str) -> PathBuf {
+    if root == Path::new(".") || root.as_os_str().is_empty() {
+        PathBuf::from(default)
+    } else {
+        root.join(default)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_output_follows_a_named_root_and_keeps_the_dot_spelling() {
+        let default = "target/ripr/review/comments.json";
+        assert_eq!(
+            default_output_under_root(Path::new("."), default),
+            PathBuf::from(default)
+        );
+        assert_eq!(
+            default_output_under_root(Path::new("crates/itoa"), default),
+            Path::new("crates/itoa").join(default)
+        );
+    }
 
     #[test]
     fn first_root_sets_the_value_from_the_implicit_default() -> Result<(), String> {

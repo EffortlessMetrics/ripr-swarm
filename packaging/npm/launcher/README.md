@@ -3,8 +3,10 @@
 This package is the npm distribution adapter for the native **ripr** CLI.
 It is not the VS Code extension and does not implement a JavaScript analyzer.
 
-> Status: source package under development. No npm release is claimed by this
-> repository state.
+> Status: the launcher needs the native package for your platform at the same
+> exact version. Check that `@effortlessmetrics/ripr-<platform>` exists on npm
+> for the version you install; where it does not, the launcher fails closed and
+> the GitHub release archive is the prebuilt route.
 
 The intended installed command is:
 

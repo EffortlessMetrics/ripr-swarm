@@ -181,6 +181,12 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
 }
 
 pub(crate) fn render_pilot_timeout_terminal(context: PilotSummaryContext<'_>) -> String {
+    // #14285: the timed-out terminal prints root, config and artifact paths,
+    // so it gets the same terminal escape as the completed-run terminal.
+    crate::output::human::terminal_safe(render_pilot_timeout_terminal_unescaped(context))
+}
+
+fn render_pilot_timeout_terminal_unescaped(context: PilotSummaryContext<'_>) -> String {
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();

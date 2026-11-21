@@ -8783,6 +8783,55 @@ fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Resu
 }
 
 #[test]
+fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no()
+-> Result<(), String> {
+    // #15339: the dynamic_dispatch limit says ripr "does not claim that no
+    // test reaches the owner"; the reach stage must not claim it either.
+    let owner_file = Path::new("src/cachetools/__init__.py");
+    let owner_source = "class FIFOCache:\n    def __setitem__(self, key, value):\n        self.data[key] = value\n\n\ndef plain_helper(x):\n    return x + 1\n";
+    let owners = extract_owners(owner_file, owner_source);
+    let tests = extract_tests(
+        Path::new("tests/test_fifo.py"),
+        "import cachetools\n\n\nclass TestFifo:\n    Cache = cachetools.FIFOCache\n\n    def test_insert(self):\n        cache = self.Cache(maxsize=2)\n        cache[1] = 1\n        assert cache[1] == 1\n",
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse the test");
+    let finding = classify_change(
+        owner_file,
+        3,
+        "        self.data[key] = value",
+        &owners,
+        &tests,
+    )
+    .ok_or("dunder edit must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|l| l.contains("dynamic_dispatch")),
+        "limit must be present: {:?}",
+        finding.missing
+    );
+    let reach = &finding.ripr.reach;
+    assert_eq!(reach.state, StageState::Unknown, "{}", reach.summary);
+    assert!(!reach.summary.contains("0 related"), "{}", reach.summary);
+    // The limit abstains; the summary must not assert that a test reaches the owner.
+    assert!(
+        reach.summary.contains("may be reached"),
+        "{}",
+        reach.summary
+    );
+    assert!(!reach.summary.contains(" is reached"), "{}", reach.summary);
+
+    // Negative control: an ordinary unexercised function keeps `reach no`.
+    let finding = classify_change(owner_file, 7, "    return x + 1", &owners, &tests)
+        .ok_or("plain edit must produce a finding")?;
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.ripr.reach.summary.contains("0 related"));
+    Ok(())
+}
+
+#[test]
 fn structural_lines_of_a_multi_line_def_header_carry_no_behavior() {
     use super::no_behavior::{is_structural_def_header_line, is_structural_def_header_text};
     // cachetools c0fdf6a reflowed `TLRUCache.__setitem__`'s signature.
@@ -11082,6 +11131,103 @@ fn caplog_absence_reads_the_edit_keeps_absent_stay_a_gap() -> Result<(), String>
         }
     }
     Ok(())
+}
+
+// #15250: a message-only logging edit is observed only through the captured
+// output. An exact pin on the owner's result (`== False`, `is False`) passes
+// on both versions, so it never credits the edit nor hides the caplog reading.
+#[test]
+fn caplog_an_exact_return_pin_does_not_credit_a_message_only_log_edit() -> Result<(), String> {
+    for pin in [
+        "assert check_balance(5) is False",
+        "assert check_balance(5) == False",
+        "result = check_balance(5)\n        assert result is False",
+    ] {
+        let kept = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {pin}\n    assert \"deprecated warning\" not in caplog.text\n"
+        );
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &kept
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{pin}"
+        );
+        let unread = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {pin}\n"
+        );
+        assert_ne!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &unread
+            )?
+            .0,
+            ExposureClass::Exposed,
+            "{pin}"
+        );
+    }
+    Ok(())
+}
+
+// #15250 review: a strong result pin conjoined with a caplog read (or a
+// `caplog` mention only in the failure message) must not grade a
+// logging-only edit; the finding abstains.
+#[test]
+fn a_result_pin_beside_a_caplog_mention_abstains_on_a_message_only_log_edit() -> Result<(), String>
+{
+    for assertion in [
+        "assert check_balance(5) is False and \"deprecated warning\" not in caplog.text",
+        "assert check_balance(5) is False, \"see caplog\"",
+    ] {
+        let test = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {assertion}\n"
+        );
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn only_an_inert_logger_call_is_a_message_only_log_edit() {
+    use super::caplog_text::is_message_only_log_call_edit as log_only;
+    let old = Some("        log.warning(\"low balance: %s\", balance)");
+    // Message, level, keyword and inert-argument rewrites on a logger.
+    for new in [
+        "        log.warning(\"balance low: %s\", balance)",
+        "        log.info(\"low balance: %s\", balance + 1)",
+        "        log.exception(\"low: %s\", self.balance, exc_info=True)",
+    ] {
+        assert!(log_only(old, new), "{new}");
+    }
+    assert!(log_only(
+        None,
+        "        self._logger.error(\"x %s\", items[0])"
+    ));
+    // A call in an argument, another receiver, a non-logger object or a
+    // replaced non-log line can change what the owner returns.
+    for (old, new) in [
+        (old, "        log.warning(\"low balance: %s\", pop())"),
+        (old, "        audit.warning(\"low balance: %s\", balance)"),
+        (None, "        parser.error(\"missing argument\")"),
+        (None, "        math.log(balance)"),
+        (Some("        balance -= 1"), "        log.warning(\"x\")"),
+    ] {
+        assert!(!log_only(old, new), "{old:?} -> {new}");
+    }
 }
 
 #[test]
