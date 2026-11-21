@@ -4882,7 +4882,7 @@ fn is_inert_attribute_path(path: &str) -> bool {
 /// prelude and cannot be rebound by an import; a bare built-in name can be, by
 /// a `use` or `extern crate .. as`, exactly as `test` can.
 fn builtin_attribute_holds(path: &str, module: &SyntaxNode) -> bool {
-    path.contains("::") || builtin_name_holds(path, module)
+    path.contains("::") || builtin_name_holds(path, module, true)
 }
 
 /// Whether a bare `#[test]` in `module` is libtest's built-in attribute. An
@@ -4892,12 +4892,12 @@ fn builtin_attribute_holds(path: &str, module: &SyntaxNode) -> bool {
 /// crate is refused by the macro-binding authority, and one of the
 /// workspace's own modules is not seen into.
 fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
-    builtin_name_holds("test", module)
+    builtin_name_holds("test", module, true)
 }
 
 /// Whether no import in `module` (or an enclosing module of this file reached
 /// by `use super::*`) rebinds the built-in attribute name `name`.
-fn builtin_name_holds(name: &str, module: &SyntaxNode) -> bool {
+fn builtin_name_holds(name: &str, module: &SyntaxNode, allow_unresolved_globs: bool) -> bool {
     !extern_crate_binds_name(module, name)
         && module_use_leaves(module)
             .iter()
@@ -4905,15 +4905,27 @@ fn builtin_name_holds(name: &str, module: &SyntaxNode) -> bool {
                 UseBinding::Name(binding) => unraw(binding) != name,
                 UseBinding::Glob => {
                     let Some(levels) = super_glob_levels(leaf) else {
-                        return true;
+                        return allow_unresolved_globs;
                     };
                     let mut parent = Some(module.clone());
                     for _ in 0..levels {
                         parent = parent.and_then(|items| enclosing_module_items(&items));
                     }
-                    parent.is_none_or(|parent| builtin_name_holds(name, &parent))
+                    parent.map_or(allow_unresolved_globs, |parent| {
+                        builtin_name_holds(name, &parent, allow_unresolved_globs)
+                    })
                 }
             })
+}
+
+/// An item in a reconstructed source revision has no workspace provider for
+/// glob imports. Follow parent globs in the actual syntax tree and refuse
+/// other globs that could introduce this name from outside the proven source.
+pub(crate) fn source_item_builtin_name_holds(name: &str, item: &SyntaxNode) -> bool {
+    item.parent().is_some_and(|scope| {
+        (ast::ItemList::can_cast(scope.kind()) || ast::SourceFile::can_cast(scope.kind()))
+            && builtin_name_holds(name, &scope, false)
+    })
 }
 
 /// Whether a direct `extern crate .. as test;` of `module` rebinds `test`.

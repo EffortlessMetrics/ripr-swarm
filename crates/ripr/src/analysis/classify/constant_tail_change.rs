@@ -441,10 +441,18 @@ fn guard_prelude_identity(source: &str, line: usize, owner: &str) -> bool {
     !parsed.tree().syntax().descendants().any(|node| {
         ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_none())
             || ast::Attr::cast(node.clone()).is_some_and(|attr| {
-                let target = attr.syntax().parent().map(|parent| parent.kind());
+                let target = attr.syntax().parent();
                 match compact(&attr.syntax().text().to_string()).as_str() {
-                    "#[cfg(test)]" => !target.is_some_and(ast::Module::can_cast),
-                    "#[test]" => !target.is_some_and(ast::Fn::can_cast),
+                    "#[cfg(test)]" => !target.is_some_and(|item| {
+                        ast::Module::can_cast(item.kind())
+                            && crate::analysis::syntax::source_item_builtin_name_holds("cfg", &item)
+                    }),
+                    "#[test]" => !target.is_some_and(|item| {
+                        ast::Fn::can_cast(item.kind())
+                            && crate::analysis::syntax::source_item_builtin_name_holds(
+                                "test", &item,
+                            )
+                    }),
                     _ => true,
                 }
             })
@@ -1534,6 +1542,20 @@ mod tests {
             "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,1 @@\n-use helper::vec;\n pub mod a;\n",
         )?;
         assert!(base_side_may_rebind_trusted_macros(&files, &index));
+        // A removed assertion import can also substitute the old observer.
+        for (import, rebound) in [
+            ("use observer::assert_eq;", true),
+            ("use observer::{check as assert_eq};", true),
+            ("use observer::*;", true),
+            ("use observer::check as unrelated;", false),
+        ] {
+            let files = changed(&format!(
+                "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,1 @@\n-{import}\n pub mod a;\n"
+            ))?;
+            if base_side_may_rebind_trusted_macros(&files, &index) != rebound {
+                return Err(format!("unexpected base assertion identity for {import}"));
+            }
+        }
         // Control: an unrelated removed line rebinds nothing.
         let files = changed(
             "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,1 @@\n-pub fn gone() {}\n pub mod a;\n",
@@ -1810,6 +1832,21 @@ mod tests {
             ("use std::fmt::Debug;", true),
             (
                 "#[cfg(test)] mod tests { use super::*; #[test] fn run() { assert_eq!(pick(0), vec![9]); } }",
+                true,
+            ),
+            ("use inject::emit_vec as test; #[test] fn seed() {}", false),
+            (
+                "use inject::{emit_vec as r#test}; #[test] fn seed() {}",
+                false,
+            ),
+            ("use inject::test; #[test] fn seed() {}", false),
+            ("mod inner { use inject::*; #[test] fn seed() {} }", false),
+            (
+                "use inject::emit_vec as test; mod inner { use super::*; #[test] fn seed() {} }",
+                false,
+            ),
+            (
+                "mod inner { use inject::emit_vec as test; } #[test] fn seed() {}",
                 true,
             ),
             ("use std::vec::Vec;", true),
