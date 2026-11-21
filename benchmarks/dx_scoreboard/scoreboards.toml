@@ -985,10 +985,10 @@ source = "ingest:mutation-spot-check"
 [[metric]]
 id = "trust.mutation_recall_of_missed"
 board = "trust"
-title = "Runtime-missed mutants ripr flags ungripped (strict recall of missed)"
+title = "Runtime-missed mutants ripr flags ungripped (strict recall of missed, informational)"
 unit = "ratio"
 direction = "higher_is_better"
-target = 0.8
+target = 0
 regression_pct = 0
 regression_floor = 0.05
 runner_dependent = false

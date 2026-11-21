@@ -261,7 +261,11 @@ These native receipts are also accepted as-is:
   `ungripped` (strict) and flagged-or-unknown shares of runtime-missed
   mutants, and the no-seam share of every recorded mutant — each generated
   from the receipt's `recall_of_missed` and `seam_coverage` counts, never
-  hand-derived (#12900). These compare static claims
+  hand-derived (#12900). The strict `ungripped` recall is informational
+  only: it carries no target bar (`target = 0`, regression floor only),
+  because a strict ungripped flag is a stronger claim than flagging a gap
+  or an honest unknown. The 0.8 recall target belongs only to
+  `trust.mutation_recall_flagged_or_unknown`. These compare static claims
   with real mutation outcomes on a sample; they are evidence about ripr's
   calibration, not a mutation result for the corpus. A
   `ripr-mutation-spot-check-v1` receipt is refused: its `seam_precise`

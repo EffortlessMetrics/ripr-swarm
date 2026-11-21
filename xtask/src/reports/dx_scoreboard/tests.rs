@@ -1477,6 +1477,37 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 }
 
 #[test]
+fn strict_recall_of_missed_is_informational_and_flagged_carries_the_target() -> Result<(), String> {
+    // The 0.8 bar belongs only to flagged-or-unknown recall; strict ungripped
+    // recall is informational (target 0, regression floor only), so its
+    // ~11% checked-in value is never reported as below target (#12900).
+    let config = load_config(&committed_config())?;
+    let metric = |id: &str| {
+        config
+            .metric
+            .iter()
+            .find(|metric| metric.id == id)
+            .ok_or_else(|| format!("{id} missing from scoreboards.toml"))
+    };
+    let strict = metric("trust.mutation_recall_of_missed")?;
+    assert!(
+        strict.target.abs() < f64::EPSILON,
+        "strict recall must carry no target bar, got {}",
+        strict.target
+    );
+    assert!(
+        strict.title.contains("informational"),
+        "strict recall title must note it is informational: {}",
+        strict.title
+    );
+    assert!((strict.regression_floor - 0.05).abs() < 1e-9);
+    let flagged = metric("trust.mutation_recall_flagged_or_unknown")?;
+    assert!((flagged.target - 0.8).abs() < 1e-9);
+    assert!((flagged.regression_floor - 0.05).abs() < 1e-9);
+    Ok(())
+}
+
+#[test]
 fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(), String> {
     // Small fixture mirroring the checked-in receipt's shape (#12900): the
     // rows must be computed from counts, so removing or miscomputing the
@@ -1559,15 +1590,23 @@ fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(),
     // A stored share that disagrees with the counts is hand-derived drift.
     let mut drifted = receipt.clone();
     drifted["recall_of_missed"]["ungripped_share_of_missed"] = json!(0.5);
-    assert!(mutation_spot_check_to_input(&drifted).is_err());
+    assert!(
+        mutation_spot_check_to_input(&drifted).is_err_and(|err| err.contains("disagrees with"))
+    );
     let mut drifted = receipt.clone();
     drifted["seam_coverage"]["no_containing_seam"] = json!(2000);
-    assert!(mutation_spot_check_to_input(&drifted).is_err());
+    assert!(
+        mutation_spot_check_to_input(&drifted)
+            .is_err_and(|err| err.contains("counts 2000 of only 1745"))
+    );
     let mut missing = receipt.clone();
     missing["recall_of_missed"]
         .as_object_mut()
         .map(|map| map.remove("ungripped_missed"));
-    assert!(mutation_spot_check_to_input(&missing).is_err());
+    assert!(
+        mutation_spot_check_to_input(&missing)
+            .is_err_and(|err| err.contains("needs ungripped_missed"))
+    );
 
     // Older receipts without the sections simply omit the rows.
     let mut older = receipt.clone();
@@ -1600,6 +1639,22 @@ fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(),
         rows.iter()
             .all(|row| row["id"] != "trust.mutation_recall_of_missed")
     }));
+    // A positive numerator over a zero denominator is impossible, not a
+    // figure to omit: 0/0 above is omitted, 1/0 must fail ingest.
+    let mut impossible = receipt.clone();
+    impossible["recall_of_missed"]["missed_total"] = json!(0);
+    impossible["recall_of_missed"]["ungripped_missed"] = json!(1);
+    assert!(
+        mutation_spot_check_to_input(&impossible)
+            .is_err_and(|err| err.contains("counts 1 of only 0"))
+    );
+    let mut impossible = receipt.clone();
+    impossible["seam_coverage"]["mutants_total"] = json!(0);
+    impossible["seam_coverage"]["no_containing_seam"] = json!(1);
+    assert!(
+        mutation_spot_check_to_input(&impossible)
+            .is_err_and(|err| err.contains("counts 1 of only 0"))
+    );
     Ok(())
 }
 

@@ -2120,9 +2120,10 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
 
 /// One generated ratio from a spot-check receipt section's counts.
 /// Returns `(share, numerator, denominator)`, or `None` when the section is
-/// absent (older receipts omit the row) or its denominator is zero (no figure
-/// is claimed). A present section with missing, impossible or
-/// share-inconsistent counts is an error, never a silent omission.
+/// absent (older receipts omit the row) or both counts are zero (no figure
+/// is claimed). A present section with missing, impossible (including a
+/// positive numerator over a zero denominator) or share-inconsistent counts
+/// is an error, never a silent omission.
 fn spot_check_ratio(
     section: &Value,
     numerator_key: &str,
@@ -2140,13 +2141,13 @@ fn spot_check_ratio(
     };
     let numerator = count(numerator_key)?;
     let denominator = count(denominator_key)?;
-    if denominator == 0 {
-        return Ok(None);
-    }
     if numerator > denominator {
         return Err(format!(
             "mutation spot-check `{section_name}` counts {numerator} of only {denominator} for {numerator_key}"
         ));
+    }
+    if denominator == 0 {
+        return Ok(None);
     }
     let share = numerator as f64 / denominator as f64;
     // The receipt's stored share is rounded to three decimals; a larger gap
