@@ -85,6 +85,16 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr help --json`, versioned with an integer: the prefix ends at
+        // `= ` and the reconciliation reads the value up to its semicolon.
+        "help",
+        &[producer(
+            "crates/ripr/src/cli/help_json.rs",
+            "pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = ",
+            1,
+        )],
+    ),
+    (
         // The targeted rerun report of `ripr rerun --json`.
         "rerun",
         &[producer(
@@ -613,6 +623,18 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["analysis_scope.scope", "run_limitations"],
+    },
+    // `ripr help --json`. The fixture is a capture of the real document
+    // trimmed to ten command rows and one workflow (the whole document
+    // exceeds the validator's evaluation budget); the producer-byte
+    // authority is `help_json_schema.rs`, which checks every row.
+    VerificationContract {
+        schema_path: "schemas/ripr/help.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/help.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["catalog_digest", "flags_scope"],
     },
     // `ripr rerun --json`. The fixture is a capture of a gap-selector run
     // whose ledger carries typed command specs, with host paths made
@@ -1143,14 +1165,12 @@ fn version_authority_violations(
             continue;
         }
         let schema = read_json(root.join(&schema_path))?;
-        let pinned = schema
-            .pointer("/properties/schema_version/const")
-            .and_then(Value::as_str);
+        let pinned = pinned_version(&schema);
         for producer in *producers {
             let source = read_source(producer.source_path)?;
             if let Some(violation) = version_mismatch(
                 &schema_path,
-                pinned,
+                pinned.as_deref(),
                 producer.source_path,
                 &source,
                 producer.prefix,
@@ -1162,6 +1182,17 @@ fn version_authority_violations(
         }
     }
     Ok(registered)
+}
+
+/// The schema's pinned `schema_version`: a string const as written, or an
+/// unsigned integer const (`ripr help --json` versions with an integer) as
+/// its decimal spelling, which is how its producer constant reads.
+fn pinned_version(schema: &Value) -> Option<String> {
+    match schema.pointer("/properties/schema_version/const")? {
+        Value::String(version) => Some(version.clone()),
+        Value::Number(version) => version.as_u64().map(|version| version.to_string()),
+        _ => None,
+    }
 }
 
 fn version_mismatch(
@@ -1176,7 +1207,9 @@ fn version_mismatch(
     let producers = source
         .split(prefix)
         .skip(1)
-        .filter_map(|rest| rest.split_once('"').map(|(version, _)| version))
+        // A string constant ends at its closing quote; an integer constant
+        // (a prefix ending in `= `) ends at its semicolon.
+        .filter_map(|rest| rest.split_once(['"', ';']).map(|(version, _)| version))
         .collect::<Vec<_>>();
     let doc_row_prefix = format!("| `{schema_path}` | `");
     let documented = version_doc
@@ -3467,6 +3500,42 @@ mod tests {
                 doc,
             )
             .is_some()
+        );
+    }
+
+    /// An integer `schema_version` (`ripr help --json`) reconciles through
+    /// the same row: the schema's integer const, the producer's integer
+    /// constant read up to its semicolon, and the documented decimal.
+    #[test]
+    fn integer_schema_versions_reconcile_and_drift_is_rejected() {
+        let path = "schemas/ripr/example.schema.json";
+        let prefix = "const VERSION: u64 = ";
+        let source = "const VERSION: u64 = 5;";
+        let doc = "| `schemas/ripr/example.schema.json` | `5` | producer |";
+        let pinned =
+            pinned_version(&serde_json::json!({"properties": {"schema_version": {"const": 5}}}));
+        assert_eq!(pinned.as_deref(), Some("5"));
+        let check = |pinned: Option<&str>, source: &str, doc: &str| {
+            version_mismatch(path, pinned, "producer.rs", source, prefix, 1, doc)
+        };
+        assert!(check(pinned.as_deref(), source, doc).is_none());
+        assert!(check(Some("6"), source, doc).is_some());
+        assert!(check(pinned.as_deref(), "const VERSION: u64 = 6;", doc).is_some());
+        assert!(
+            check(
+                pinned.as_deref(),
+                source,
+                "| `schemas/ripr/example.schema.json` | `6` | producer |"
+            )
+            .is_some()
+        );
+        assert_eq!(
+            pinned_version(&serde_json::json!({"properties": {"schema_version": {"const": -1}}})),
+            None
+        );
+        assert_eq!(
+            pinned_version(&serde_json::json!({"properties": {"schema_version": {"const": true}}})),
+            None
         );
     }
 
