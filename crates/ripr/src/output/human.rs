@@ -4231,7 +4231,7 @@ mod tests {
         // #15335: a removal-only run names why nothing is selected.
         assert!(
             rendered.contains(
-                "  State: the diff only removes code, and removed code is never an edit target\n"
+                "  State: every finding left is on removed code, which is never an edit target\n"
             ),
             "{rendered}"
         );

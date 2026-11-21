@@ -10,7 +10,7 @@ use crate::domain::{ExposureClass, Finding, SourceCurrentness};
 /// to look at"; this names why nothing is selected. The state id
 /// (`no_actionable_gap`) is unchanged.
 pub(super) const REMOVAL_ONLY_STATE: &str =
-    "the diff only removes code, and removed code is never an edit target";
+    "every finding left is on removed code, which is never an edit target";
 
 /// True when the omitted set is non-empty and every finding in it is a
 /// removed line (`base_deleted`). Moved or renamed code, unresolved
