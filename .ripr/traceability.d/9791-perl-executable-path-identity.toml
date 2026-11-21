@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0140"
+tests = [
+  "crates/ripr/src/config/perl_executable_tests.rs::perl_executable_identity_uses_native_separators",
+]

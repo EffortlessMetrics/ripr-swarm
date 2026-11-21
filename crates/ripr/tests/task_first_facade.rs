@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "common/printed_words.rs"]
+mod printed_words;
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_temp_workspace(label: &str) -> PathBuf {
@@ -2115,6 +2118,108 @@ fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), Strin
         !stderr.contains("no finding matched"),
         "an undecided lookup must not render a clean miss:\n{stderr}"
     );
+    Ok(())
+}
+
+/// #15269: use the real diff and replay its scoped navigation. The return
+/// expression on line six must never become a repair for the loop on line three.
+#[test]
+fn static_unknown_range_id_routes_to_inspection() -> Result<(), String> {
+    let fixture = Fixture::empty("static-unknown-range")?;
+    let root = &fixture.root;
+    let lib = root.join("src/lib.rs");
+    let base = "pub fn sum_to(n: u32) -> u32 {\n    let mut total = 0;\n    for i in 0..n {\n        total += i;\n    }\n    total\n}\n";
+    std::fs::write(&lib, base).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "base with an exclusive range")?;
+    std::fs::write(&lib, base.replace("0..n", "0..=n")).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "include the upper bound")?;
+    let check = run_ripr(
+        root,
+        &["check", "--quiet", "--base", "HEAD~1", "--format", "agent"],
+    )?;
+    assert_exit(&check, 0, "check the committed range change");
+    let report = stdout_text(&check);
+    let header = report.lines().next().ok_or("missing check header")?;
+    assert!(
+        header.split_whitespace().any(|field| field == "gaps=1"),
+        "{header}"
+    );
+    let row = report
+        .lines()
+        .find(|line| line.starts_with("no_static_path|src/lib.rs:3|"))
+        .ok_or_else(|| format!("missing changed range row:\n{report}"))?;
+    let (_, id) = row.rsplit_once("|id=").ok_or("missing range id")?;
+    assert_eq!(id, "probe:src_lib.rs:static_unknown:af53f993");
+    assert!(
+        !report.contains("ripr repair ") && !report.contains("repairable=1"),
+        "{report}"
+    );
+    let next = report
+        .lines()
+        .find_map(|line| line.strip_prefix("next="))
+        .ok_or("missing inspection command")?;
+    let words = printed_words::printed_words(next)?;
+    let args: Vec<_> = words.iter().map(String::as_str).collect();
+    assert!(
+        args.starts_with(&["ripr", "explain"]) && args.last() == Some(&id),
+        "{next}"
+    );
+    let explain = run_ripr(root, &args[1..])?;
+    assert_exit(&explain, 0, "replay the exact command check printed");
+    assert!(
+        stdout_text(&explain)
+            .lines()
+            .any(|line| line.contains("|src/lib.rs:3|for i in 0..=n {") && line.ends_with(id)),
+        "{}",
+        stdout_text(&explain)
+    );
+
+    for args in [
+        vec!["repair", id],
+        vec!["agent", "repair", "--seam-id", id, "--phase", "before"],
+    ] {
+        let refused = run_ripr(root, &args)?;
+        assert_exit(&refused, 3, "static_unknown cannot start a repair");
+        let message = stderr_text(&refused);
+        assert!(
+            message.contains("static_unknown finding ID has no repair seam")
+                && message.contains("ripr explain")
+                && !message.contains("stale")
+                && !message.contains("ripr pilot"),
+            "{message}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "no attempt for the nearby return"
+    );
+    Ok(())
+}
+
+#[test]
+fn startable_predicate_routes_to_the_printed_repair() -> Result<(), String> {
+    let fixture = Fixture::boundary("startable-predicate")?;
+    let root = &fixture.root;
+    weaken_boundary_predicate(root)?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let check = run_ripr(root, &["check", "--quiet", "--base", "HEAD~1"])?;
+    assert_exit(&check, 0, "check the committed predicate");
+    let report = stdout_text(&check);
+    let start = report
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr repair "))
+        .ok_or_else(|| format!("missing predicate repair command:\n{report}"))?;
+    let words = printed_words::printed_words(start)?;
+    let args: Vec<_> = words.iter().skip(1).map(String::as_str).collect();
+    let repair = run_ripr(root, &args)?;
+    assert_exit(&repair, 0, "run the repair command check printed");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1);
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
     Ok(())
 }
 
@@ -7197,6 +7302,8 @@ fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<
     Ok(())
 }
 
+#[path = "task_first_facade/brief_line_ranges.rs"]
+mod brief_line_ranges;
 /// #11584: `ripr repair --json` prints the packet envelope with the additive
 /// `repair_attempt.attempt_id` on stdout and nothing but that document; a
 /// repeated start prints the existing attempt's status document; without
@@ -7455,7 +7562,7 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
             "not_started",
         ),
         // A caller-supplied item shaped like a command never becomes a
-        // runnable `next` (the loop asserts `next` is null for every case).
+        // runnable `next` (the loop asserts `next` is null except for `no_current_attempt`).
         (
             root,
             vec![
@@ -7492,11 +7599,21 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
             document["error"]["disposition"], disposition,
             "{document:#}"
         );
-        assert_eq!(
-            document["error"].get("next"),
-            Some(&serde_json::Value::Null),
-            "next must be present and null: {document:#}"
-        );
+        // #15260: only `no_current_attempt` names its one step, composed from
+        // the bound root; every other typed refusal keeps `next` null.
+        if code == "no_current_attempt" {
+            assert_eq!(
+                document["error"]["next"]["command"],
+                format!("ripr status --root {root_arg}"),
+                "{document:#}"
+            );
+        } else {
+            assert_eq!(
+                document["error"].get("next"),
+                Some(&serde_json::Value::Null),
+                "next must be present and null: {document:#}"
+            );
+        }
         let message = document["error"]["message"]
             .as_str()
             .filter(|message| !message.trim().is_empty())

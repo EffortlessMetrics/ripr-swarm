@@ -13,7 +13,8 @@ tests execute the non-boundary inputs 50/100 and 10_000/100, so neither
 discriminates the boundary. A third test is the `ripr agent stub --write`
 template: it binds `let expected: i32 = todo!("ripr: write the value ...")`
 and asserts `assert_eq!(discounted_total(amount, threshold), expected)` with
-the placeholder still in place.
+the placeholder still in place. A fourth test reads its unfilled local through
+`format!(r"{expected}")` at the same boundary (#14897).
 
 ## When
 

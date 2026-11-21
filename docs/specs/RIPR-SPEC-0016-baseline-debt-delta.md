@@ -265,7 +265,19 @@ bucket:
 - `acknowledged` - a current decision is visible and acknowledged by label or
   policy.
 - `suppressed` - a current decision is suppressed or configured off and remains
-  visible in the report.
+  visible in the report. A baseline entry absent from current evidence because
+  the current side withheld its owner by an owner opt-out (a
+  `#[mutants::skip]` added after the baseline, disclosed as
+  `analysis_scope.owner_opt_outs` and copied from the gap ledger by `gate
+  evaluate`) is also `suppressed`, carries `"withheld_by":
+  "owner_mutants_skip"`, and is never `resolved` (issue #14898). The entry
+  matches by its seam id, or by the `changed_owner` the baseline recorded from
+  the decision's `repair_route.changed_owner`, because the inserted attribute
+  line gives the owner's seams new ids. A line-suffixed same-named owner
+  (`#L<line>`), a legacy entry with no `changed_owner` in a withheld owner's
+  file, or a malformed disclosure cannot establish identity: that entry is
+  `stale_baseline_entry` with `"evaluation": "not_evaluated"`. `baseline update
+  --remove-resolved` keeps both through the same predicate.
 - `stale_baseline_entry` - a baseline record can be parsed but no longer joins
   cleanly because its identity is ambiguous, obsolete, or incompatible,
   including analyzer-version identity discontinuity across an upgrade. A

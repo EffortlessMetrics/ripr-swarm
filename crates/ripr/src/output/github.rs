@@ -3025,6 +3025,7 @@ mod tests {
 
     fn stage(state: StageState, reason: &str) -> StageEvidence {
         StageEvidence {
+            static_limit_kind: None,
             state,
             confidence: Confidence::Low,
             summary: reason.to_string(),

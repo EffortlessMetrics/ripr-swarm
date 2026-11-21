@@ -102,10 +102,31 @@ fn nested_result_bytes(rendered: &str) -> usize {
     rendered.len() + 8 * (rendered.matches('\n').count() + 1)
 }
 
-/// Keep the leading results that fit `budget` final-form bytes (plus
-/// separators), always keeping the first result so a nonempty analysis
-/// never yields an empty bounded subset. Returns the kept results and the
-/// disclosed bound when results were omitted; `None` budget renders all.
+/// Admission rank of a SARIF result by `level`: errors first, then
+/// warnings, then notes, then `none` or anything else (including a missing
+/// level).
+fn sarif_level_rank(result: &Value) -> u8 {
+    match result.get("level").and_then(Value::as_str) {
+        Some("error") => 0,
+        Some("warning") => 1,
+        Some("note") => 2,
+        _ => 3,
+    }
+}
+
+/// Keep the highest-priority results that fit `budget` final-form bytes
+/// (plus separators), always keeping the first admitted result so a
+/// nonempty analysis never yields an empty bounded subset. Results are
+/// admitted by level rank (error, warning, note, anything else) with the
+/// original index as the tiebreak, so a cut drops notes before warnings
+/// instead of dropping whatever happens to sit late in file order (a
+/// dropped warning would be closed as "fixed" by code scanning). Admission
+/// stops at the first result that does not fit (a strict priority prefix;
+/// skipping ahead to smaller lower-priority rows would make the subset
+/// depend on row sizes). The kept results are emitted in their original
+/// relative order, so output is unchanged when nothing is cut. Returns the
+/// kept results and the disclosed bound when results were omitted; `None`
+/// budget renders all.
 fn bound_sarif_results(
     results: Vec<Value>,
     budget: Option<usize>,
@@ -114,29 +135,39 @@ fn bound_sarif_results(
         return (results, None);
     };
     let total = results.len();
-    let mut kept: Vec<Value> = Vec::new();
+    let mut order: Vec<usize> = (0..total).collect();
+    order.sort_by_key(|&index| (sarif_level_rank(&results[index]), index));
+    let mut admitted: Vec<usize> = Vec::new();
     // Nonempty arrays add `[` + newline and newline + six spaces + `]`
     // around the indented results. Count that framing before admitting rows.
     let mut array_bytes = 10usize;
-    for result in results {
-        let payload_bytes = serde_json::to_string_pretty(&result)
+    for index in order {
+        let payload_bytes = serde_json::to_string_pretty(&results[index])
             .map(|rendered| nested_result_bytes(&rendered))
             .unwrap_or(usize::MAX);
         let next_bytes = array_bytes
             .saturating_add(payload_bytes)
-            .saturating_add(if kept.is_empty() { 0 } else { 2 });
+            .saturating_add(if admitted.is_empty() { 0 } else { 2 });
         // Hard cap: only the first result may cross the budget (a nonempty
         // analysis never yields an empty subset); later results that would
         // cross it are omitted and disclosed, not kept.
-        if next_bytes > budget && !kept.is_empty() {
+        if next_bytes > budget && !admitted.is_empty() {
             break;
         }
         array_bytes = next_bytes;
-        kept.push(result);
+        admitted.push(index);
         if array_bytes > budget {
             break;
         }
     }
+    admitted.sort_unstable();
+    let kept: Vec<Value> = {
+        let mut slots: Vec<Option<Value>> = results.into_iter().map(Some).collect();
+        admitted
+            .iter()
+            .filter_map(|&index| slots.get_mut(index).and_then(Option::take))
+            .collect()
+    };
     if kept.len() < total {
         let bound = SarifResultsBound {
             rendered: kept.len(),
@@ -2093,6 +2124,61 @@ mod tests {
         assert_eq!(props["limited_results_bound"], true);
         assert_eq!(props["document_complete"], false);
         Ok(())
+    }
+
+    fn bound_probe(level: &str, id: usize) -> Value {
+        json!({"id": id, "level": level, "pad": "x".repeat(64)})
+    }
+
+    fn bound_ids(results: &[Value]) -> Vec<u64> {
+        results
+            .iter()
+            .filter_map(|result| result.get("id").and_then(Value::as_u64))
+            .collect()
+    }
+
+    // RIPR-SPEC-0008: the results byte bound admits by level (error,
+    // warning, note, other), original index as the tiebreak (#15373).
+    #[test]
+    fn sarif_results_bound_keeps_warning_before_earlier_note() {
+        let results = vec![bound_probe("note", 0), bound_probe("warning", 1)];
+        let one_row =
+            nested_result_bytes(&serde_json::to_string_pretty(&results[1]).unwrap_or_default())
+                + 10;
+        let (kept, bound) = bound_sarif_results(results, Some(one_row));
+        assert_eq!(bound_ids(&kept), vec![1], "warning must outrank the note");
+        assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((1, 2)));
+    }
+
+    #[test]
+    fn sarif_results_bound_orders_error_warning_note_then_index() {
+        let results = vec![
+            bound_probe("note", 0),
+            bound_probe("warning", 1),
+            bound_probe("error", 2),
+            bound_probe("warning", 3),
+        ];
+        let row =
+            nested_result_bytes(&serde_json::to_string_pretty(&results[1]).unwrap_or_default());
+        // Room for three rows (framing 10 + two separators), not four; sized
+        // from a warning, the longest level.
+        let (kept, bound) = bound_sarif_results(results, Some(10 + 3 * row + 4));
+        // Error, then warnings by index; the note is cut. Original order kept.
+        assert_eq!(bound_ids(&kept), vec![1, 2, 3]);
+        assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((3, 4)));
+    }
+
+    #[test]
+    fn sarif_results_bound_leaves_order_unchanged_when_everything_fits() {
+        let results = vec![
+            bound_probe("note", 0),
+            bound_probe("error", 1),
+            bound_probe("warning", 2),
+            json!({"id": 3}),
+        ];
+        let (kept, bound) = bound_sarif_results(results, Some(usize::MAX));
+        assert_eq!(bound_ids(&kept), vec![0, 1, 2, 3]);
+        assert!(bound.is_none());
     }
 
     #[test]
@@ -4141,6 +4227,7 @@ weakly_gripped = "note"
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,

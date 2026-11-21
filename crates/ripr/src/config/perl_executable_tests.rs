@@ -45,3 +45,20 @@ fn perl_executable_preserves_valid_paths_and_the_opt_in_boundary() -> Result<(),
     assert!(parse_config("[perl]\n")?.perl().executable.is_none());
     Ok(())
 }
+
+#[test]
+fn perl_executable_identity_uses_native_separators() -> Result<(), String> {
+    let identity = |value: &str| {
+        let config = parse_config(&format!("[perl]\nexecutable = '{value}'\n"))?;
+        Ok::<_, String>(super::check_artifact_config_identity_hash(&config))
+    };
+    let nested = identity("tools/Exporter")?;
+    let backslash = identity(r"tools\Exporter")?;
+    if cfg!(windows) {
+        assert_eq!(backslash, nested);
+    } else {
+        assert_ne!(backslash, nested);
+    }
+    assert_ne!(identity("tools/exporter")?, nested);
+    Ok(())
+}

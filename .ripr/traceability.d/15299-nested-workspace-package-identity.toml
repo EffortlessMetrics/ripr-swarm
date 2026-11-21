@@ -1,0 +1,7 @@
+# Registers the nested-workspace package-identity controls for #15299 under RIPR-SPEC-0172.
+[[extend]]
+id = "RIPR-SPEC-0172"
+tests = [
+  "crates/ripr/tests/nested_workspace_package_identity.rs::a_member_of_a_workspace_below_the_root_keeps_its_own_test",
+  "crates/ripr/tests/nested_workspace_package_identity.rs::the_same_crate_path_in_two_workspaces_names_two_packages",
+]

@@ -317,6 +317,9 @@ valid-ledger control that yields no reasons.
   `touching_a_span_boundary_line_is_a_product_change`,
   `an_escaped_quote_char_literal_is_blanked_whole`,
   `cfg_test_on_a_field_or_parameter_is_not_an_item_span`.
+- `xtask/src/reports/release_ledger/inline_tests/batch/tests.rs`:
+  `batch_frames_preserve_raw_bytes_and_reject_incomplete_responses` and
+  `real_batch_and_fallback_preserve_sides_and_original_git_errors`.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
   `inline_test_edits_are_detected_per_hunk_from_real_git`,
   `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,
@@ -336,7 +339,8 @@ valid-ledger control that yields no reasons.
   `failed_derivation_leaves_an_existing_output_untouched`,
   `xtask_only_commits_share_the_control_disposition_under_their_own_theme`,
   `inline_test_only_product_paths_count_as_evidence`,
-  `path_inventories_bind_the_captured_record_partition`.
+  `path_inventories_bind_the_captured_record_partition`,
+  `recorded_provisional_overrides_resolve_only_the_reviewed_rows`.
 - `xtask/src/reports/release_ledger/tests.rs`: `finalize_defaults_to_the_pinned_base_and_output_directory`,
   `finalize_requires_the_frozen_cut_as_a_full_sha`,
   `finalize_requires_cut_packet_and_audit`,
