@@ -15228,13 +15228,10 @@ fn doctor_json_reports_an_unpinned_generated_workflow_as_advisory() -> Result<()
 fn doctor_verifies_mcp_json_in_human_and_json_without_changing_exit() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
-    let mcp_check = |report: &serde_json::Value| {
-        report["checks"].as_array().and_then(|checks| {
-            checks
-                .iter()
-                .find(|check| check["name"] == "mcp_config")
-                .cloned()
-        })
+    let named_check = |report: &serde_json::Value, name: &str| {
+        report["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == name).cloned())
     };
     let json_of = |output: &std::process::Output| -> Result<serde_json::Value, String> {
         serde_json::from_slice(&output.stdout)
@@ -15248,7 +15245,8 @@ fn doctor_verifies_mcp_json_in_human_and_json_without_changing_exit() -> Result<
         !String::from_utf8_lossy(&absent_human.stdout).contains(".mcp.json"),
         "absent .mcp.json must add no line"
     );
-    assert!(mcp_check(&absent_json).is_none());
+    assert!(named_check(&absent_json, "mcp_config").is_none());
+    assert!(named_check(&absent_json, "mcp_stdio_executable").is_none());
 
     // The entry `ripr init --mcp` writes: ✓ line, pass check.
     std::fs::write(
@@ -15260,13 +15258,92 @@ fn doctor_verifies_mcp_json_in_human_and_json_without_changing_exit() -> Result<
     let ok_json = json_of(&run_ripr(&["doctor", "--root", &root, "--json"]))?;
     let ok_text = String::from_utf8_lossy(&ok_human.stdout).to_string();
     assert!(
-        ok_text.contains("✓ .mcp.json: `ripr` MCP server runs `ripr mcp --stdio`"),
+        ok_text.contains("✓ .mcp.json: `ripr` server entry specifies `ripr mcp --stdio`"),
         "{ok_text}"
     );
     assert_eq!(
-        mcp_check(&ok_json).map(|check| check["status"].clone()),
+        named_check(&ok_json, "mcp_config").map(|check| check["status"].clone()),
         Some(serde_json::json!("pass"))
     );
+
+    // Hold the file fixed and vary only local executable lookup. Invoking doctor
+    // by absolute path lets the empty directory stand in for a missing PATH ripr.
+    let empty_bin = workspace.join("empty-bin");
+    std::fs::create_dir(&empty_bin).map_err(|err| format!("create empty bin: {err}"))?;
+    let empty_path = empty_bin.to_str().ok_or("empty bin path is not UTF-8")?;
+    let args = ["doctor", "--root", &root, "--json"];
+    let missing = json_of(&run_ripr_with_env(&args, &[("PATH", empty_path)]))?;
+    let check = named_check(&missing, "mcp_stdio_executable").ok_or("missing executable check")?;
+    assert_eq!(check["status"], "advisory");
+    assert_eq!(
+        named_check(&missing, "mcp_config").ok_or("missing config")?["status"],
+        "pass"
+    );
+    let message = check["evidence"].as_str().ok_or("missing recovery")?;
+    assert!(message.contains("this shell's PATH") && message.contains("directory"));
+    let human = run_ripr_with_env(&["doctor", "--root", &root], &[("PATH", empty_path)]);
+    assert!(String::from_utf8_lossy(&human.stdout).contains(&format!("~ {message}")));
+
+    let built = Path::new(env!("CARGO_BIN_EXE_ripr"));
+    let (_, found) = doctor_json_with_path_prefix(
+        built,
+        &workspace,
+        &[built.parent().ok_or("missing binary directory")?],
+    )?;
+    assert_eq!(
+        named_check(&found, "mcp_stdio_executable").ok_or("missing executable check")?["status"],
+        "pass"
+    );
+
+    // An unreachable stdio command is a PATH problem only for a local
+    // registration. A valid sibling may still need the same executable.
+    for (servers, expects_warning) in [
+        (
+            serde_json::json!({"ripr":{"type":"http","command":"ripr","args":["mcp","--stdio"]}}),
+            false,
+        ),
+        (
+            serde_json::json!({"ripr":{"url":"https://example.invalid","command":"ripr","args":["mcp","--stdio"]}}),
+            false,
+        ),
+        (
+            serde_json::json!({"ripr":{"type":"http","command":"ripr","args":["mcp","--stdio"]},
+                           "other":{"type":"stdio","command":"ripr","args":["mcp","--stdio"]}}),
+            true,
+        ),
+    ] {
+        let document = serde_json::json!({"mcpServers": servers});
+        std::fs::write(workspace.join(".mcp.json"), document.to_string())
+            .map_err(|err| format!("write .mcp.json: {err}"))?;
+        let report = json_of(&run_ripr_with_env(&args, &[("PATH", empty_path)]))?;
+        assert_eq!(
+            named_check(&report, "mcp_config").ok_or("missing config")?["status"],
+            "advisory"
+        );
+        assert!(named_check(&report, "mcp_stdio_executable").is_none());
+        let warnings = report["binary"]["warnings"]
+            .as_array()
+            .ok_or("missing binary warnings")?;
+        let path_advisory = "not on this shell's PATH";
+        assert_eq!(
+            warnings
+                .iter()
+                .any(|warning| warning.as_str().is_some_and(|s| s.contains(path_advisory))),
+            expects_warning,
+            "{document}: {warnings:?}"
+        );
+        let human = run_ripr_with_env(&["doctor", "--root", &root], &[("PATH", empty_path)]);
+        let text = String::from_utf8_lossy(&human.stdout);
+        assert!(
+            text.contains("specifies a URL or a transport other than stdio"),
+            "{text}"
+        );
+        assert_eq!(
+            text.contains(path_advisory),
+            expects_warning,
+            "{document}: {text}"
+        );
+    }
 
     // A different server only: ~ line, advisory check, same exit status.
     std::fs::write(
@@ -15277,14 +15354,15 @@ fn doctor_verifies_mcp_json_in_human_and_json_without_changing_exit() -> Result<
     let bad_human = run_ripr(&["doctor", "--root", &root]);
     let bad_json = json_of(&run_ripr(&["doctor", "--root", &root, "--json"]))?;
     let bad_text = String::from_utf8_lossy(&bad_human.stdout).to_string();
-    let bad_check =
-        mcp_check(&bad_json).ok_or_else(|| format!("missing mcp_config: {bad_json}"))?;
+    let bad_check = named_check(&bad_json, "mcp_config")
+        .ok_or_else(|| format!("missing mcp_config: {bad_json}"))?;
     std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
     assert!(
         bad_text.contains("~ .mcp.json: has no `ripr` server entry"),
         "{bad_text}"
     );
     assert_eq!(bad_check["status"], "advisory");
+    assert!(named_check(&bad_json, "mcp_stdio_executable").is_none());
     assert!(
         bad_check["evidence"]
             .as_str()
