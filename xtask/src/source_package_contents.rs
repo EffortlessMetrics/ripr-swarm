@@ -120,13 +120,13 @@ pub(crate) fn check_source_package(
             refused.insert(path.clone(), "data read by no production include");
         }
     }
-    for path in members.keys().filter(|path| is_library_source(path)) {
+    for path in members.keys() {
         if graph.compiled.contains(path) {
             continue;
         }
         if graph.is_test_only(path) {
             refused.insert(path.clone(), "module compiled only in test or kani builds");
-        } else {
+        } else if is_library_source(path) {
             refused.insert(path.clone(), "declared by no packaged production module");
         }
     }
@@ -351,7 +351,7 @@ fn production_includes(node: &ra_ap_syntax::SyntaxNode) -> Result<Vec<String>, S
                 .map(|name| name.text().to_string());
             if is_include_macro(name.as_deref().unwrap_or_default()) {
                 files.extend(string_literal_argument(&tree));
-            } else {
+            } else if name.as_deref() != Some("stringify") {
                 // An include nested in another macro's arguments, such as
                 // `format!("{}", include_str!("x"))`, is plain tokens in a
                 // token tree, not a `MacroCall` node.
@@ -384,25 +384,30 @@ fn string_literal_argument(tree: &ast::TokenTree) -> Option<String> {
 /// Collects `include!`/`include_str!`/`include_bytes!` invocations
 /// (`IDENT ! TokenTree`) in a macro's argument tokens, nested trees included.
 fn nested_includes(tree: &ra_ap_syntax::SyntaxNode, files: &mut Vec<String>) {
-    let elements: Vec<_> = tree
+    let mut elements = tree
         .children_with_tokens()
         .filter(|element| !element.kind().is_trivia())
-        .collect();
-    for (index, element) in elements.iter().enumerate() {
+        .peekable();
+    while let Some(element) = elements.next() {
         match element {
-            ra_ap_syntax::NodeOrToken::Token(token) => {
+            ra_ap_syntax::NodeOrToken::Token(token)
                 if token.kind() == ra_ap_syntax::SyntaxKind::IDENT
-                    && is_include_macro(token.text())
+                    && (token.text() == "stringify" || is_include_macro(token.text()))
                     && elements
-                        .get(index + 1)
-                        .is_some_and(|bang| bang.kind() == ra_ap_syntax::SyntaxKind::BANG)
-                    && let Some(ra_ap_syntax::NodeOrToken::Node(args)) = elements.get(index + 2)
+                        .next_if(|next| next.kind() == ra_ap_syntax::SyntaxKind::BANG)
+                        .is_some() =>
+            {
+                if let Some(ra_ap_syntax::NodeOrToken::Node(args)) = elements.peek()
                     && let Some(args) = ast::TokenTree::cast(args.clone())
                 {
-                    files.extend(string_literal_argument(&args));
+                    elements.next();
+                    if token.text() != "stringify" {
+                        files.extend(string_literal_argument(&args));
+                    }
                 }
             }
-            ra_ap_syntax::NodeOrToken::Node(node) => nested_includes(node, files),
+            ra_ap_syntax::NodeOrToken::Node(node) => nested_includes(&node, files),
+            _ => {}
         }
     }
 }
@@ -476,6 +481,7 @@ fn absent_from_production(module: &impl HasAttrs) -> Result<bool, String> {
             .strip_prefix("#[cfg(")
             .and_then(|rest| rest.strip_suffix(")]"))
         {
+            let predicate = predicate.strip_suffix(',').unwrap_or(predicate);
             absent |= production_value(predicate)? == Some(false);
         }
     }
@@ -568,6 +574,54 @@ mod tests {
             Ok(()) => Err(format!("{files:?} must be refused")),
             Err(error) => Ok(error),
         }
+    }
+
+    #[test]
+    fn path_gated_module_outside_src_requires_production_use() -> Result<(), String> {
+        let gated = r#"#[cfg(test)] #[path = "../test_support.rs"] mod helpers;"#;
+        let shared = format!(
+            r#"{gated}
+            #[path = "../test_support.rs"] mod production;"#
+        );
+        let path = ("test_support.rs", "pub fn helper() {}");
+        let error = refusal("ripr", &[("src/lib.rs", gated), path])?;
+        if !error.contains("test_support.rs (module compiled only") {
+            return Err(error);
+        }
+        check_source_package("ripr", &members(&[("src/lib.rs", &shared), path]))
+    }
+
+    #[test]
+    fn quoted_include_tokens_do_not_claim_an_archive_member() -> Result<(), String> {
+        let lib = r#"const TEXT: &str = stringify!(include_str!("fixture.txt"));
+            pub fn banner() -> String {
+                format!("{} {}", stringify!(include_str!("nested.txt")), include_str!("live.txt"))
+            }"#;
+        let live = ("src/live.txt", "yes");
+        check_source_package("ripr", &members(&[("src/lib.rs", lib), live]))?;
+        for path in ["src/fixture.txt", "src/nested.txt"] {
+            let error = refusal("ripr", &[("src/lib.rs", lib), live, (path, "unused")])?;
+            if !error.contains(&format!("{path} (data read by no production include)")) {
+                return Err(error);
+            }
+        }
+        let error = refusal("ripr", &[("src/lib.rs", lib)])?;
+        if !error.contains("src/live.txt") {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_accepts_the_optional_trailing_comma() -> Result<(), String> {
+        let gated = "#[cfg(test,)] mod helpers;";
+        let helpers = ("src/helpers.rs", "");
+        let error = refusal("ripr", &[("src/lib.rs", gated), helpers])?;
+        if !error.contains("helpers.rs (module compiled only") {
+            return Err(error);
+        }
+        let live = "#[cfg(not(test),)] mod helpers;";
+        check_source_package("ripr", &members(&[("src/lib.rs", live), helpers]))
     }
 
     #[test]
