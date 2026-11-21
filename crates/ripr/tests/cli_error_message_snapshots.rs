@@ -229,12 +229,38 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: unknown check argument \"--al\". Run `ripr check --help --all`.\n",
     },
+    // #15898: a switch given a value names a flag that exists, so the refusal
+    // says it is a switch and which spellings work.
+    Case {
+        args: &["check", "--quiet=false"],
+        exit: 2,
+        stderr: "ripr: unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: pass `--quiet` alone to turn it on, or leave it out to keep it off. Run `ripr check --help --all`.\n",
+    },
+    Case {
+        args: &["cache", "status", "--json=true"],
+        exit: 2,
+        stderr: "ripr: unknown cache status argument \"--json=true\". `--json` is a switch and takes no value: pass `--json` alone to turn it on, or leave it out to keep it off. Run `ripr cache status --help`.\n",
+    },
+    // A value-taking flag still splits at `=` and reaches its own validation.
+    Case {
+        args: &["pilot", "--format=yaml"],
+        exit: 2,
+        stderr: "ripr: unknown format \"yaml\". Accepted: human, json.\n",
+    },
     Case {
         args: &["-x", "check"],
         exit: 2,
         stderr: "ripr: unknown command \"-x\"; options go after the command, and `ripr check` has no `-x` option. Run `ripr --help`.\n",
     },
 ];
+
+/// The built binary, run from `dir`. Shared by the cases that need more
+/// than fixed arguments in an empty directory.
+fn ripr_in(dir: &std::path::Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(dir);
+    command
+}
 
 #[test]
 fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
@@ -267,9 +293,8 @@ fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
     // pr-evidence outside a git repository: the refusal names the directory,
     // so it is assembled here rather than listed in `CASES`. It must not show
     // git's argv or tell the reader to check a ref spelling.
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+    let output = ripr_in(&dir)
         .args(["pr-evidence", "--base", "main", "--head", "HEAD"])
-        .current_dir(&dir)
         // The scratch directory can sit inside a checkout (the workspace
         // points TMPDIR at `target`), so stop git's upward discovery at its
         // parent to make this a real non-repository run.
@@ -303,6 +328,82 @@ fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
         failures.push(format!(
             "refusals wrote into the working directory: {leftovers:?}"
         ));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// #15898: a `ripr.toml` value of the wrong TOML shape. `ripr config
+/// validate` names the shape in TOML terms and gives one line on how to write
+/// it; the deserializer's own words (`usize`, `a sequence`, an internal
+/// `struct` name) do not appear. The same next step reaches `ripr doctor`,
+/// whose config line carries no source excerpt.
+#[test]
+fn wrong_shape_config_values_say_what_to_write() -> Result<(), String> {
+    const CONFIGS: &[(&str, &str, &str)] = &[
+        (
+            "[reports]\nmax_related_tests = \"five\"\n",
+            "invalid type: string \"five\", expected a whole number of 0 or more",
+            "write a whole number of 0 or more with no quotes, for example `5`",
+        ),
+        (
+            "[languages]\nenabled = \"rust\"\n",
+            "invalid type: string \"rust\", expected a list",
+            "write a list in square brackets, for example `[\"value\"]`",
+        ),
+        (
+            "analysis = 5\n",
+            "invalid type: integer `5`, expected a table",
+            "write it as a table header on its own line, for example `[analysis]`, with its keys on the lines below",
+        ),
+    ];
+    let dir = std::env::temp_dir().join(format!("ripr-config-shape-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch: {error}"))?;
+    let ceiling = dir.parent().unwrap_or(dir.as_path()).to_path_buf();
+    let mut failures = Vec::new();
+    for (config, reason, next) in CONFIGS {
+        std::fs::write(dir.join("ripr.toml"), config)
+            .map_err(|error| format!("write ripr.toml: {error}"))?;
+        let validate = ripr_in(&dir)
+            .args(["config", "validate"])
+            .env("GIT_CEILING_DIRECTORIES", &ceiling)
+            .output()
+            .map_err(|error| format!("run ripr config validate: {error}"))?;
+        let stderr = String::from_utf8_lossy(&validate.stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        let reason_at = lines.iter().position(|line| line == reason);
+        let followed = reason_at.is_some_and(|at| lines.get(at + 2) == Some(next));
+        let jargon = ["usize", "a sequence", "struct ", "Raw"]
+            .iter()
+            .any(|word| stderr.contains(word));
+        if validate.status.code() != Some(2) || !followed || jargon {
+            failures.push(format!(
+                "config validate for {config:?}: exit {:?}\n{stderr}",
+                validate.status.code()
+            ));
+        }
+        let doctor = ripr_in(&dir)
+            .args(["doctor", "--root", "."])
+            .env("GIT_CEILING_DIRECTORIES", &ceiling)
+            .output()
+            .map_err(|error| format!("run ripr doctor: {error}"))?;
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&doctor.stdout),
+            String::from_utf8_lossy(&doctor.stderr)
+        );
+        let named = report
+            .lines()
+            .any(|line| line.contains("TOML parse error at line ") && line.ends_with(next));
+        if !named {
+            failures.push(format!(
+                "doctor for {config:?} lost the next step:\n{report}"
+            ));
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
     if failures.is_empty() {

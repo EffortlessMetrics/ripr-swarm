@@ -876,12 +876,103 @@ pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<Conf
         let hint = misplaced_key_hint(err.message())
             .or_else(|| retired_key_hint(err.message()))
             .or_else(|| did_you_mean_hint(err.message()))
+            .or_else(|| value_shape_hint(err.message()))
             .unwrap_or_default();
+        let rendered = plain_value_shape_reason(&err.to_string(), err.message());
         Box::new(ConfigDiagnostic::structural(format!(
-            "invalid ripr.toml: {err}{hint}"
+            "invalid ripr.toml: {rendered}{hint}"
         )))
     })?;
     RiprConfig::from_raw(raw, text)
+}
+
+/// What a rejected value should have been, in TOML terms rather than the
+/// deserializer's (`usize`, `a sequence`, `struct RawAnalysisConfig`), and how
+/// to write it. Each entry is serde's fixed expectation, the plain wording
+/// that replaces it in the reason, and the fixed next-step line.
+struct ValueShape {
+    plain: &'static str,
+    next: &'static str,
+}
+
+const WHOLE_NUMBER_SHAPE: ValueShape = ValueShape {
+    plain: "a whole number of 0 or more",
+    next: "write a whole number of 0 or more with no quotes, for example `5`",
+};
+const BOOLEAN_SHAPE: ValueShape = ValueShape {
+    plain: "true or false",
+    next: "write `true` or `false` with no quotes",
+};
+const STRING_SHAPE: ValueShape = ValueShape {
+    plain: "a quoted string",
+    next: "write the value in double quotes, for example `\"value\"`",
+};
+const LIST_SHAPE: ValueShape = ValueShape {
+    plain: "a list",
+    next: "write a list in square brackets, for example `[\"value\"]`",
+};
+const TABLE_LIST_SHAPE: ValueShape = ValueShape {
+    plain: "a list of tables",
+    next: "write each entry under a double-bracket header, for example `[[overrides]]`",
+};
+const TABLE_SHAPE: ValueShape = ValueShape {
+    plain: "a table",
+    next: "write it as a table header on its own line, for example `[analysis]`, with its keys on the lines below",
+};
+const VALUE_SHAPES: &[&ValueShape] = &[
+    &WHOLE_NUMBER_SHAPE,
+    &BOOLEAN_SHAPE,
+    &STRING_SHAPE,
+    &LIST_SHAPE,
+    &TABLE_LIST_SHAPE,
+    &TABLE_SHAPE,
+];
+
+/// The shape serde wanted, read only from the end of its reason: the text
+/// after the last `, expected ` is serde's own, while everything before it
+/// can echo a value from the file.
+fn expected_value_shape(error: &str) -> Option<(&str, &'static ValueShape)> {
+    let (found, expected) = error.rsplit_once(", expected ")?;
+    if !(found.starts_with("invalid type: ") || found.starts_with("invalid value: ")) {
+        return None;
+    }
+    let shape = match expected {
+        "usize" => &WHOLE_NUMBER_SHAPE,
+        "a boolean" => &BOOLEAN_SHAPE,
+        "a string" => &STRING_SHAPE,
+        // A `[name]` table where a `[[name]]` array of tables belongs.
+        "a sequence" if found == "invalid type: map" => &TABLE_LIST_SHAPE,
+        "a sequence" => &LIST_SHAPE,
+        _ if is_serde_struct_name(expected) => &TABLE_SHAPE,
+        _ => return None,
+    };
+    Some((expected, shape))
+}
+
+/// `struct RawAnalysisConfig`: an internal Rust type name, never file text.
+fn is_serde_struct_name(expected: &str) -> bool {
+    expected.strip_prefix("struct ").is_some_and(|name| {
+        !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    })
+}
+
+/// The fixed next-step line for a value of the wrong TOML shape.
+fn value_shape_hint(error: &str) -> Option<String> {
+    let (_, shape) = expected_value_shape(error)?;
+    Some(format!("\n{}", shape.next))
+}
+
+/// The parser's rendered error with the deserializer's expectation replaced
+/// by its TOML wording. `rendered` ends in `reason`; anything else is left
+/// exactly as the parser wrote it.
+fn plain_value_shape_reason(rendered: &str, reason: &str) -> String {
+    let rewritten = expected_value_shape(reason).and_then(|(expected, shape)| {
+        let body = rendered.trim_end_matches('\n');
+        let tail = &rendered[body.len()..];
+        let head = body.strip_suffix(expected)?;
+        Some(format!("{head}{}{tail}", shape.plain))
+    });
+    rewritten.unwrap_or_else(|| rendered.to_string())
 }
 
 /// Keys that belong to exactly one table, so a key found anywhere else was
@@ -1011,6 +1102,7 @@ fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
             || retired
                 .iter()
                 .any(|entry| line == retired_key_hint_line(entry))
+            || VALUE_SHAPES.iter().any(|shape| line == shape.next)
     };
     let hint = error
         .lines()
@@ -2165,8 +2257,12 @@ fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSev
             "{field} cannot be `off`; use suppressions for accepted debt"
         )),
         _ => Err(format!(
-            "{field} `{value}` is not supported; expected info, warning, or note{}{}",
-            if allow_off { ", or off" } else { "" },
+            "{field} `{value}` is not supported; expected {}{}",
+            if allow_off {
+                "info, warning, note, or off"
+            } else {
+                "info, warning, or note"
+            },
             near_value_hint(
                 value,
                 if allow_off {

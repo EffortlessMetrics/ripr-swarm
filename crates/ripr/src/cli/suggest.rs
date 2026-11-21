@@ -67,6 +67,15 @@ fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
              working tree). Run `{pointer}`."
         );
     }
+    // A switch given a value (`--quiet=false`, `--json=true`) is refused, but
+    // "unknown argument" reads as if the flag did not exist. Say that it is a
+    // switch and which two spellings work.
+    if let Some(switch) = switch_given_value(command, arg) {
+        return format!(
+            "unknown {command} argument {arg:?}. `{switch}` is a switch and takes no value: \
+             pass `{switch}` alone to turn it on, or leave it out to keep it off. Run `{pointer}`."
+        );
+    }
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
             "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `{pointer}`."
@@ -168,6 +177,36 @@ pub(crate) fn flag_placement(command: &str, arg: &str) -> FlagPlacement {
     }
 }
 
+/// The switch `arg` names when it is `--switch=value` and `command`'s help
+/// documents `--switch` as taking no value, or the global `--verbose`.
+fn switch_given_value<'a>(command: &str, arg: &'a str) -> Option<&'a str> {
+    let (name, _) = arg.split_once('=')?;
+    if !name.starts_with("--") {
+        return None;
+    }
+    if name == "--verbose" {
+        return Some(name);
+    }
+    let command = flag_owner(command);
+    let help_text = help::help_text_for(command)?;
+    super::help_flags::flags_for(command, help_text)
+        .iter()
+        .any(|flag| flag.name == name && !flag.takes_value)
+        .then_some(name)
+}
+
+/// Flags on a bare `ripr gate` are `gate evaluate`'s (#7740), and its
+/// errors keep the `gate` label. Mining under that label would own both
+/// usage lines and so propose `gate check`'s `--base` to a parser that
+/// rejects it (#14086).
+fn flag_owner(command: &str) -> &str {
+    if command == "gate" {
+        "gate evaluate"
+    } else {
+        command
+    }
+}
+
 fn closest_flag(command: &str, arg: &str) -> Option<String> {
     // Only flag-shaped input gets a flag suggestion. A stray positional value
     // is a different mistake, and proposing `--out` for `report.json` would be
@@ -175,15 +214,7 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
     if !arg.starts_with('-') {
         return None;
     }
-    // Flags on a bare `ripr gate` are `gate evaluate`'s (#7740), and its
-    // errors keep the `gate` label. Mining under that label would own both
-    // usage lines and so propose `gate check`'s `--base` to a parser that
-    // rejects it (#14086).
-    let command = if command == "gate" {
-        "gate evaluate"
-    } else {
-        command
-    };
+    let command = flag_owner(command);
     let help_text = help::help_text_for(command)?;
     // #2583 review: never answer a rejected flag with itself. Section scoping
     // removes the known way this happened (a shared help body offering a
@@ -476,6 +507,61 @@ mod tests {
             message.contains("Did you mean `--candidate-tree`?"),
             "{message}"
         );
+    }
+
+    /// #15898: `--quiet=false` names a flag that exists. The refusal says it
+    /// is a switch and which spellings work, for a per-command switch, a
+    /// nested command path and the global `--verbose`.
+    #[test]
+    fn a_switch_given_a_value_is_named_as_a_switch() {
+        for (command, arg, switch, pointer) in [
+            (
+                "check",
+                "--quiet=false",
+                "--quiet",
+                "ripr check --help --all",
+            ),
+            ("doctor", "--json=1", "--json", "ripr doctor --help"),
+            (
+                "agent status",
+                "--json=false",
+                "--json",
+                "ripr agent status --help",
+            ),
+            (
+                "check",
+                "--verbose=1",
+                "--verbose",
+                "ripr check --help --all",
+            ),
+        ] {
+            assert_eq!(
+                unknown_argument(command, arg),
+                format!(
+                    "unknown {command} argument {arg:?}. `{switch}` is a switch and takes no value: \
+                     pass `{switch}` alone to turn it on, or leave it out to keep it off. Run `{pointer}`."
+                ),
+            );
+        }
+    }
+
+    /// Only a switch the command itself documents is named: a sibling
+    /// command's switch, an undocumented name and a value-taking flag keep
+    /// the plain refusal.
+    #[test]
+    fn a_value_on_a_flag_that_is_not_this_commands_switch_is_not_named_a_switch() {
+        for (command, arg) in [
+            ("gate", "--quiet=1"),
+            ("check", "--bogus=1"),
+            ("check", "--format=json"),
+            ("check", "-q=1"),
+        ] {
+            let message = unknown_argument(command, arg);
+            assert!(
+                !message.contains("is a switch"),
+                "{command} {arg}: {message}"
+            );
+        }
     }
 
     #[test]
