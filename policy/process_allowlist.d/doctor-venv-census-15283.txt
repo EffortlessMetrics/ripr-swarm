@@ -1,0 +1,2 @@
+crates/ripr/tests/doctor_venv_census.rs|Command::new|1|doctor-census-tests|#15283: one helper runs the built CLI `ripr doctor --root <temp>` against an isolated temporary project to prove the unanalyzed-language census skips virtualenvs. No shell, network, descendants, or user-repository mutation.
+crates/ripr/tests/doctor_venv_census.rs|use std::process::Command|1|doctor-census-tests|#15283: the import for that single spawn site, kept beside the row above.

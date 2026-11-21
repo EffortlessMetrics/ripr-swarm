@@ -16,21 +16,42 @@ fn finding_for(
     added: &str,
     test: &str,
 ) -> Result<Finding, String> {
+    finding_for_replacement_hunk(label, source, line, &[removed], &[added], line, test)
+}
+
+fn finding_for_replacement_hunk(
+    label: &str,
+    source: &str,
+    start: usize,
+    removed: &[&str],
+    added: &[&str],
+    line: usize,
+    test: &str,
+) -> Result<Finding, String> {
+    use crate::analysis::diff::ChangedLine;
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/price.ts"), source)?;
     ts_write_file(&root.join("tests/price.test.ts"), test)?;
     let changed = ChangedFile {
         path: PathBuf::from("src/price.ts"),
-        added_lines: vec![crate::analysis::diff::ChangedLine {
-            line,
-            text: added.to_string(),
-            new_side_line: line,
-        }],
-        removed_lines: vec![crate::analysis::diff::ChangedLine {
-            line,
-            text: removed.to_string(),
-            new_side_line: line,
-        }],
+        added_lines: added
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: start + offset,
+                new_side_line: start + offset,
+                text: (*text).to_owned(),
+            })
+            .collect(),
+        removed_lines: removed
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: start + offset,
+                new_side_line: start,
+                text: (*text).to_owned(),
+            })
+            .collect(),
     };
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -107,6 +128,74 @@ fn an_arm_some_test_input_enters_stays_weakly_exposed() -> Result<(), String> {
             .iter()
             .any(|e| e.starts_with("typescript_infection: "))
     );
+    Ok(())
+}
+
+#[test]
+fn isolated_throw_message_after_a_nonzero_return() -> Result<(), String> {
+    let source = "export function price(b: number): number {\n  if (b !== 0) return b;\n  throw new Error(\"nope\");\n}\n";
+    let classify_source = |label: &str, source: &str, assertion: &str| {
+        let test = format!(
+            "import {{ price }} from '../src/price';\ntest('price', () => {{\n  {assertion}\n}});\n"
+        );
+        finding_for(
+            label,
+            source,
+            3,
+            "  throw new Error(\"zero\");",
+            "  throw new Error(\"nope\");",
+            &test,
+        )
+    };
+    let classify = |label: &str, assertion: &str| classify_source(label, source, assertion);
+    let missed = classify("throw-after-return", "expect(price(2)).toBe(2);")?;
+    assert_eq!(missed.class, ExposureClass::ReachableUnrevealed);
+    assert_eq!(missed.ripr.infect.state, StageState::No);
+    assert!(missed.ripr.infect.summary.contains("b !== 0"));
+    assert!(missed.activation.missing_discriminators.is_empty());
+
+    let observed = classify(
+        "throw-message-observed",
+        "expect(() => price(0)).toThrow('nope');",
+    )?;
+    assert_eq!(observed.class, ExposureClass::Exposed);
+    assert_ne!(observed.ripr.infect.state, StageState::No);
+
+    let broad = classify("throw-message-broad", "expect(() => price(0)).toThrow();")?;
+    assert_eq!(broad.class, ExposureClass::WeaklyExposed);
+    assert_ne!(broad.ripr.infect.state, StageState::No);
+
+    for assertion in [
+        "const input = Number(2); expect(price(input)).toBe(2);",
+        "expect(price(2)).toBe(2); expect(() => price(0)).toThrow();",
+    ] {
+        let uncertain = classify("throw-after-return-control", assertion)?;
+        assert_ne!(uncertain.ripr.infect.state, StageState::No);
+    }
+    let named_undefined = "export function price(undefined: number): number {\n  if (undefined !== 0) return undefined;\n  throw new Error(\"nope\");\n}\n";
+    let shadow = classify_source(
+        "throw-parameter-named-undefined",
+        named_undefined,
+        "expect(() => price(0)).toThrow('nope');",
+    )?;
+    assert_eq!(shadow.class, ExposureClass::Exposed);
+    let argument = classify(
+        "throw-argument-named-undefined",
+        "const undefined = 0; expect(() => price(undefined)).toThrow('nope');",
+    )?;
+    assert_ne!(argument.ripr.infect.state, StageState::No);
+    // With the old guard, price(2) fell through and threw. Its return on the
+    // new side cannot establish that the same call missed the old throw.
+    let guard_changed = finding_for_replacement_hunk(
+        "throw-after-changed-return",
+        source,
+        2,
+        &["  if (b === 0) return b;", "  throw new Error(\"zero\");"],
+        &["  if (b !== 0) return b;", "  throw new Error(\"nope\");"],
+        3,
+        &weak_test("price(2)"),
+    )?;
+    assert_ne!(guard_changed.ripr.infect.state, StageState::No);
     Ok(())
 }
 

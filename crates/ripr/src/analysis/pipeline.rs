@@ -692,6 +692,48 @@ impl ProbeWorkerObserver {
     }
 }
 
+thread_local! {
+    /// Deferred user-visible disclosures for the current analysis thread. While
+    /// a capture is installed, [`disclose!`] buffers instead of printing so a
+    /// caller that may discard the run (the last-commit fallback retry) prints
+    /// them only if it keeps the result (#15330).
+    static DEFERRED_DISCLOSURES: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Print one analysis disclosure on stderr, or buffer it under
+/// [`capture_disclosures`].
+pub(crate) fn emit_disclosure(message: String) {
+    let unbuffered = DEFERRED_DISCLOSURES.with(|slot| match slot.borrow_mut().as_mut() {
+        Some(buffer) => {
+            buffer.push(message);
+            None
+        }
+        None => Some(message),
+    });
+    if let Some(message) = unbuffered {
+        eprintln!("{message}");
+    }
+}
+
+macro_rules! disclose {
+    ($($arg:tt)*) => {
+        emit_disclosure(format!($($arg)*))
+    };
+}
+
+/// Run `work`, buffering the disclosures it would print on stderr and
+/// returning them beside its result. The caller prints them only when it
+/// adopts the result.
+pub(crate) fn capture_disclosures<T>(work: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let previous = DEFERRED_DISCLOSURES.with(|slot| slot.borrow_mut().replace(Vec::new()));
+    let result = work();
+    let captured = DEFERRED_DISCLOSURES
+        .with(|slot| std::mem::replace(&mut *slot.borrow_mut(), previous))
+        .unwrap_or_default();
+    (result, captured)
+}
+
 #[cfg(test)]
 thread_local! {
     static PROBE_WORKER_OBSERVER: std::cell::RefCell<
@@ -1356,7 +1398,8 @@ fn enforce_changed_language_line_limit(
          reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
          limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
          `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
-         are reported as not analyzed)."
+         are reported as not analyzed). From a pre-commit hook, set those flags in the \
+         hook's `args:`, or skip this hook for one commit with `SKIP=ripr git commit ...`."
     ))
 }
 
@@ -1500,7 +1543,25 @@ fn run_pipeline_for_diff_text_with_language_config(
             .sample
             .push(file.path.to_string_lossy().replace('\\', "/"));
     }
-    if out_of_scope.count > 0 && changed_files.is_empty() {
+    // #15268: a scoped path the parser refused (edited in two sections of a
+    // patch series) did match the scope; its located limitation, not a
+    // "matched nothing" error, is the answer.
+    // #15268: the parser read the input as a diff and refused named files
+    // (in any language), so an empty result is never the garbage reading.
+    let parser_refused_named_files = parsed_diff
+        .limitations
+        .iter()
+        .any(names_parsed_file_limitation);
+    let refused_in_scope = parsed_diff.limitations.iter().any(|limitation| {
+        names_parsed_file_limitation(limitation)
+            && limitation.path.as_deref().is_some_and(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path)
+                    && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+                    && diff_limitation_in_scope(limitation, languages)
+            })
+    });
+    if out_of_scope.count > 0 && changed_files.is_empty() && !refused_in_scope {
         return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
     }
     // #10796: the scoped intake completed — publish the adapter-facing scoped
@@ -1512,12 +1573,13 @@ fn run_pipeline_for_diff_text_with_language_config(
         .into_iter()
         .filter(|limitation| diff_limitation_in_scope(limitation, languages))
         // A per-file parser limitation (combined hunk, conflict markers) on a
-        // file the operator scoped out must not invalidate the files kept.
+        // file the operator scoped out must not invalidate the files kept,
+        // and one on ripr's own artifacts (#7663) is not user scope either.
         .filter(|limitation| {
-            limitation
-                .path
-                .as_deref()
-                .is_none_or(|path| diff_scope.admits(std::path::Path::new(path)))
+            limitation.path.as_deref().is_none_or(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path) && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+            })
         })
         .collect::<Vec<_>>();
     if out_of_scope.count > 0 {
@@ -2165,7 +2227,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // Emit as stderr disclosures — these are not Findings (no probe was
     // generated), but the user needs to know what was not analyzed.
     for message in unanalyzed_disclosures(non_source_message, &changed_files) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
     // RIPR-SPEC-0347 (#8999): changed trybuild `tests/ui` fixtures are compile-time
     // expectations ripr does not read as oracles. Advisory stderr text only; no
@@ -2173,22 +2235,22 @@ fn run_pipeline_for_diff_text_with_language_config(
     if let Some(message) =
         trybuild_fixtures::trybuild_fixture_disclosure_message(&options.root, &changed_files)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
-    emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
+    emit_submodule_disclosure(submodule_file_count, |message| disclose!("{message}"));
     if let Some(message) = symlink_disclosure_message(symlink_file_count) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
-        eprintln!("{message}");
+        disclose!("{message}");
     });
 
     // #7663: name every ripr-artifact file the intake dropped, so the counts
     // below never silently disagree with the commit the diff came from.
     if !own_artifact_files.is_empty() {
-        eprintln!(
+        disclose!(
             "{}",
             ripr_artifact_disclosure(&options.root, &artifact_roots, &own_artifact_files)
         );
@@ -2202,7 +2264,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     if findings.is_empty()
         && let Some(message) = deleted_files_disclosure(&deleted_paths, other_changes)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Disclose when the diff parsed to zero changed files (#2425): the input
@@ -2225,8 +2287,12 @@ fn run_pipeline_for_diff_text_with_language_config(
             .iter()
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
+        // A parser limitation that names a file (#15268: a path edited in
+        // two sections of a patch series) already says why nothing was read;
+        // the generic "verify the diff is valid" guess would contradict it.
+        && !parser_refused_named_files
     {
-        eprintln!(
+        disclose!(
             "{}",
             zero_file_diff_disclosure(
                 diff_text,
@@ -2247,7 +2313,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         && is_truncated_diff_stream(truncated_file_sections)
         && let Some(message) = truncated_diff_disclosure_message(truncated_file_sections)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Rename metadata can register a binary file without any text hunks.
@@ -2259,6 +2325,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         && deleted_file_count == 0
         && submodule_file_count == 0
         && limitations.len() == supplied_evidence_limitations
+        && !parser_refused_named_files
     {
         // The schema token stays `malformed_diff` (a new limitation kind is a
         // schema change); a well-formed diff with only binary or mode changes
@@ -3614,9 +3681,9 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
     })
 }
 
-/// Limitation detail for a well-formed diff with only binary or file-mode
-/// changes; `ripr check --diff` keys its stderr hedge on it.
-pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+// The well-formed binary- or mode-only detail; its owner is
+// `AnalysisLimitation::is_non_text_only` (#15862).
+use crate::analysis_outcome::NON_TEXT_ONLY_DETAIL;
 
 /// True when every git file section is a complete binary or mode-change
 /// section and no `@@` hunk exists: a valid diff that carries nothing ripr
@@ -3624,36 +3691,117 @@ pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but conta
 /// a malformed binary sentinel) keeps the generic malformed-diff wording.
 fn has_only_non_text_changes(diff_text: &str) -> bool {
     let mut sections = 0usize;
-    let mut binary = false;
-    let (mut old_mode, mut new_mode) = (false, false);
+    let mut section: Option<NonTextSection> = None;
     let mut all_ok = true;
-    let mut in_section = false;
     for line in diff_text.lines() {
+        let line = line.trim_end_matches('\r');
         if line.starts_with("@@") {
             return false;
         }
         if line.starts_with("diff --git ") {
-            if in_section {
-                all_ok &= binary || (old_mode && new_mode);
-            }
-            in_section = true;
+            all_ok &= section.is_none_or(|section| section.is_complete());
+            section = Some(NonTextSection::default());
             sections += 1;
-            binary = false;
-            old_mode = false;
-            new_mode = false;
             continue;
         }
-        if !in_section {
-            continue;
+        if let Some(section) = section.as_mut() {
+            section.read(line);
         }
-        binary |= is_binary_sentinel(line) || line == "GIT binary patch";
-        old_mode |= line.starts_with("old mode ");
-        new_mode |= line.starts_with("new mode ");
     }
-    if in_section {
-        all_ok &= binary || (old_mode && new_mode);
-    }
+    all_ok &= section.is_none_or(|section| section.is_complete());
     sections > 0 && all_ok
+}
+
+/// What one `diff --git` section has shown of a non-text change (#15862).
+#[derive(Clone, Copy, Default)]
+struct NonTextSection {
+    sentinel: bool,
+    old_mode: bool,
+    new_mode: bool,
+    patch: BinaryPatchState,
+}
+
+impl NonTextSection {
+    fn read(&mut self, line: &str) {
+        if self.patch == BinaryPatchState::Absent {
+            if line == "GIT binary patch" {
+                self.patch = BinaryPatchState::Header;
+                return;
+            }
+            self.sentinel |= is_binary_sentinel(line);
+            self.old_mode |= is_git_mode_line(line, "old mode ");
+            self.new_mode |= is_git_mode_line(line, "new mode ");
+            return;
+        }
+        self.patch = self.patch.after(line);
+    }
+
+    /// A started binary patch must be complete, whatever mode lines precede
+    /// it; otherwise a sentinel or a full mode pair is required.
+    fn is_complete(self) -> bool {
+        match self.patch {
+            BinaryPatchState::Absent => self.sentinel || (self.old_mode && self.new_mode),
+            state => state == BinaryPatchState::BlockEnd,
+        }
+    }
+}
+
+/// A `git diff --binary` patch: the `GIT binary patch` marker, then one or
+/// more blocks of a `literal <n>` or `delta <n>` line, base85 data lines and a
+/// blank line (#15862). Every data line is checked for shape; any other line
+/// inside the patch makes it invalid, and only a closed block completes it.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum BinaryPatchState {
+    #[default]
+    Absent,
+    Header,
+    Size,
+    Data,
+    BlockEnd,
+    Invalid,
+}
+
+impl BinaryPatchState {
+    fn after(self, line: &str) -> Self {
+        match self {
+            Self::Header | Self::BlockEnd if is_binary_patch_size(line) => Self::Size,
+            Self::Size | Self::Data if is_base85_data_line(line) => Self::Data,
+            Self::Data if line.is_empty() => Self::BlockEnd,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+/// `old mode <m>` / `new mode <m>` with a six-digit octal Git mode (#15862);
+/// `old mode invalid` is not a mode change.
+fn is_git_mode_line(line: &str, prefix: &str) -> bool {
+    line.strip_prefix(prefix)
+        .is_some_and(|mode| mode.len() == 6 && mode.bytes().all(|b| matches!(b, b'0'..=b'7')))
+}
+
+/// One line of Git's base85 binary payload: a length character (`A`-`Z` for
+/// 1-26 bytes, `a`-`z` for 27-52) then exactly `ceil(len / 4) * 5` characters
+/// of Git's base85 alphabet (#15862). The payload is not decoded.
+fn is_base85_data_line(line: &str) -> bool {
+    let Some((&first, encoded)) = line.as_bytes().split_first() else {
+        return false;
+    };
+    let decoded = match first {
+        b'A'..=b'Z' => usize::from(first - b'A') + 1,
+        b'a'..=b'z' => usize::from(first - b'a') + 27,
+        _ => return false,
+    };
+    encoded.len() == decoded.div_ceil(4) * 5
+        && encoded
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&()*+-;<=>?@^_`{|}~".contains(b))
+}
+
+fn is_binary_patch_size(line: &str) -> bool {
+    ["literal ", "delta "].iter().any(|prefix| {
+        line.strip_prefix(prefix)
+            .is_some_and(|size| !size.is_empty() && size.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// `Binary files <old> and <new> differ` with a non-empty path on each side.
@@ -3669,6 +3817,12 @@ fn is_binary_sentinel(line: &str) -> bool {
     };
     rest.match_indices(" and ")
         .any(|(at, sep)| at > 0 && at + sep.len() < rest.len())
+}
+
+/// A diff-parse limitation located at a file: the parser read the input as
+/// a diff and refused named content, so the input is not garbage.
+pub(crate) fn names_parsed_file_limitation(limitation: &AnalysisLimitation) -> bool {
+    limitation.producer_stage == AnalysisStage::DiffParse && limitation.path.is_some()
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
@@ -5017,9 +5171,43 @@ mod tests {
                 "{sentinel}"
             );
         }
+        // Real `git diff --binary` output is recognized (#15862) ...
+        // A mode change carried with a complete binary patch.
         assert!(has_only_non_text_changes(
-            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n"
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nindex 8352675..1592e5c\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
         ));
+        // A new one-byte file: the forward `literal 1` and reverse `literal 0`
+        // data lines are both base85 lines git emitted.
+        assert!(has_only_non_text_changes(
+            "diff --git a/e b/e\nnew file mode 100644\nindex 0000000..f76dd23\nGIT binary patch\nliteral 1\nIcmZPo000310RR91\n\nliteral 0\nHcmV?d00001\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/logo.png b/logo.png\nindex 8352675..1592e5c 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/x b/x\r\nold mode 100644\r\nnew mode 100755\r\n"
+        ));
+        // ... but a bare marker, a payload-less size line and non-octal modes
+        // are not a complete non-text section.
+        for lookalike in [
+            "diff --git a/x b/x\nGIT binary patch\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n\n",
+            "diff --git a/x b/x\nGIT binary patch\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\nnot payload\n",
+            // A started patch must complete even beside a valid mode pair.
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nGIT binary patch\n",
+            // A malformed reverse block, or a forward block never closed.
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nnot payload\n\n",
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQ WCj2L2ml2D\n",
+            "diff --git a/x b/x\nold mode invalid\nnew mode invalid\n",
+            "diff --git a/x b/x\nold mode 100644\nnew mode 10075\n",
+            "diff --git a/x b/x\nold mode 100648\nnew mode 100755\n",
+        ] {
+            assert!(!has_only_non_text_changes(lookalike), "{lookalike}");
+        }
         // Incomplete or mixed sections keep the generic wording.
         assert!(!has_only_non_text_changes(
             "diff --git a/x b/x\nold mode 100644\n"
@@ -9698,6 +9886,85 @@ index 0000000..1111111 100644
             detail.contains(&format!("and {} more", FLOODED_VENDOR_FILES - 3)),
             "{detail}"
         );
+        Ok(())
+    }
+
+    /// #15268: `src/lib.rs` edited in two sections of a series, `src/big.rs` once.
+    fn repeated_lib_series() -> String {
+        let edit = |hunk: &str| {
+            format!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n{hunk}"
+            )
+        };
+        // `git log -p` output: a commit header separates the two edits.
+        format!(
+            "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -1 +1 @@\n-pub fn big_0() -> u32 {{ 1 }}\n+pub fn big_0() -> u32 {{ 0 }}\n",
+            edit(
+                "@@ -1 +1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n"
+            ),
+            edit("@@ -0,0 +1 @@\n+// added later\n"),
+        )
+    }
+
+    #[test]
+    fn a_scope_keeping_only_a_refused_series_file_reports_its_limitation() -> Result<(), String> {
+        let result = run_scoped("series-scope", &["src/lib.rs"], &[], &repeated_lib_series())?
+            .map_err(|error| {
+                format!("a matched but refused path must not read as no match: {error}")
+            })?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{outcome:?}");
+        let refused = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                    && limitation.recovery.kind == AnalysisRecoveryKind::UseTwoWayDiff
+            })
+            .ok_or("the refused series file must be named")?;
+        assert_eq!(refused.path.as_deref(), Some("src/lib.rs"));
+        // Control: a scope that truly matches nothing is still refused.
+        let refusal = run_scoped(
+            "series-scope-miss",
+            &["nowhere"],
+            &[],
+            &repeated_lib_series(),
+        )?
+        .err()
+        .ok_or("a scope matching nothing must be refused")?;
+        assert!(
+            refusal.starts_with("scope_filter_matched_nothing:"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_series_editing_artifacts_or_docs_twice_is_not_a_limitation() -> Result<(), String> {
+        // #15268 review: only an analyzed-language path is refused. ripr's own
+        // reports (#7663) and a README edited in two commits stay out of scope.
+        for path in ["target/ripr/pilot/pilot-summary.md", "README.md"] {
+            let section = |hunk: &str| {
+                format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}")
+            };
+            let diff = format!(
+                "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}",
+                section("@@ -1 +1 @@\n-old\n+new\n"),
+                section("@@ -0,0 +1 @@\n+added\n")
+            );
+            let result = run_scoped("series-nonsource", &[], &[], &diff)?
+                .map_err(|error| format!("{path}: {error}"))?;
+            let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+            assert!(outcome.kind.is_complete(), "{path}: {outcome:?}");
+            assert!(
+                !outcome
+                    .limitations
+                    .iter()
+                    .any(|limitation| limitation.recovery.kind
+                        == AnalysisRecoveryKind::UseTwoWayDiff),
+                "{path}: {outcome:?}"
+            );
+        }
         Ok(())
     }
 

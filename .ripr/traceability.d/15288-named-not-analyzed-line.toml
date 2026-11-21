@@ -1,0 +1,8 @@
+# One named Not-analyzed line and one combined enable snippet when several
+# preview languages are off (#15288).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/check_not_analyzed_note_pointer.rs::two_preview_languages_off_get_named_lines_and_one_combined_snippet",
+  "crates/ripr/src/output/human.rs::tests::a_failed_enabled_adapter_keeps_its_own_line_beside_the_named_one",
+]

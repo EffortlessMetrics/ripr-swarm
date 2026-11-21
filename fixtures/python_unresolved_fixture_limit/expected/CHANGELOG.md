@@ -732,3 +732,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_unresolved_fixture_limit (36)
+
+Reason:
+RIPR-SPEC-0238: explain the unresolved fixture input and expected value in plain language (#14846)
+
+Command:
+`cargo xtask goldens bless python_unresolved_fixture_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

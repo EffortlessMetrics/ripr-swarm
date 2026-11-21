@@ -62,14 +62,8 @@ fn json_flag_field_agrees_with_the_parsed_flag_inventory() -> Result<(), String>
         }
         let path = row["path"].as_str().unwrap_or("?");
         let names = flag_names(row);
-        // Known documentation gaps: these help bodies do not list the JSON
-        // flag they accept (`help` prints no option list; `context` omits
-        // `--json`), or list `--format` without a typed value set. The
-        // catalog's `accepts_json_flag` is the authority there.
-        if matches!(
-            path,
-            "help" | "context" | "outcome" | "calibrate cargo-mutants"
-        ) {
+        // The remaining exemptions rely on the catalog's accepts_json_flag.
+        if matches!(path, "help" | "context" | "calibrate cargo-mutants") {
             continue;
         }
         match row["accepts_json_flag"].as_str() {
