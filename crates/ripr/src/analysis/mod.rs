@@ -42,7 +42,6 @@ pub(crate) use facts::cfg_predicates::{attribute_is_plain_test_gate, outer_attri
 // A long-lived server keeps unchanged files' parse facts in memory across
 // refreshes; one-shot commands leave this off.
 pub(crate) use facts::enable_process_fact_memo;
-pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::capture_disclosures;
 pub(crate) use pipeline::is_rust_excluded_by_config_detail;
 pub(crate) use pipeline::{

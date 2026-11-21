@@ -3657,10 +3657,9 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
     })
 }
 
-/// Limitation detail for a well-formed diff with only binary or file-mode
-/// changes; `ripr check --diff` keys its stderr hedge on it, and every
-/// plain-word label keys on it (#15862).
-pub(crate) use crate::analysis_outcome::NON_TEXT_ONLY_DETAIL;
+// The well-formed binary- or mode-only detail; its owner is
+// `AnalysisLimitation::is_non_text_only` (#15862).
+use crate::analysis_outcome::NON_TEXT_ONLY_DETAIL;
 
 /// True when every git file section is a complete binary or mode-change
 /// section and no `@@` hunk exists: a valid diff that carries nothing ripr
@@ -3672,7 +3671,9 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
     let (mut old_mode, mut new_mode) = (false, false);
     let mut all_ok = true;
     let mut in_section = false;
+    let mut binary_patch = BinaryPatchProgress::default();
     for line in diff_text.lines() {
+        let line = line.trim_end_matches('\r');
         if line.starts_with("@@") {
             return false;
         }
@@ -3685,19 +3686,60 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
             binary = false;
             old_mode = false;
             new_mode = false;
+            binary_patch = BinaryPatchProgress::default();
             continue;
         }
         if !in_section {
             continue;
         }
-        binary |= is_binary_sentinel(line) || line == "GIT binary patch";
-        old_mode |= line.starts_with("old mode ");
-        new_mode |= line.starts_with("new mode ");
+        binary |= is_binary_sentinel(line) || binary_patch.complete_after(line);
+        old_mode |= is_git_mode_line(line, "old mode ");
+        new_mode |= is_git_mode_line(line, "new mode ");
     }
     if in_section {
         all_ok &= binary || (old_mode && new_mode);
     }
     sections > 0 && all_ok
+}
+
+/// `old mode <m>` / `new mode <m>` with a six-digit octal Git mode (#15862);
+/// `old mode invalid` is not a mode change.
+fn is_git_mode_line(line: &str, prefix: &str) -> bool {
+    line.strip_prefix(prefix)
+        .is_some_and(|mode| mode.len() == 6 && mode.bytes().all(|b| matches!(b, b'0'..=b'7')))
+}
+
+/// A `git diff --binary` patch counts only once it is complete enough to be
+/// real: the `GIT binary patch` header, a `literal <n>` or `delta <n>` line,
+/// then a non-empty encoded data line (#15862). The marker alone, or a
+/// `literal 0` with no payload, stays unrecognized.
+#[derive(Clone, Copy, Default)]
+enum BinaryPatchProgress {
+    #[default]
+    Idle,
+    Header,
+    Size,
+}
+
+impl BinaryPatchProgress {
+    /// Advances on `line`; true when `line` completes a binary patch.
+    fn complete_after(&mut self, line: &str) -> bool {
+        let (next, complete) = match *self {
+            _ if line == "GIT binary patch" => (Self::Header, false),
+            Self::Header if is_binary_patch_size(line) => (Self::Size, false),
+            Self::Size if !line.is_empty() => (Self::Idle, true),
+            _ => (Self::Idle, false),
+        };
+        *self = next;
+        complete
+    }
+}
+
+fn is_binary_patch_size(line: &str) -> bool {
+    ["literal ", "delta "].iter().any(|prefix| {
+        line.strip_prefix(prefix)
+            .is_some_and(|size| !size.is_empty() && size.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// `Binary files <old> and <new> differ` with a non-empty path on each side.
@@ -5061,9 +5103,26 @@ mod tests {
                 "{sentinel}"
             );
         }
+        // Real `git diff --binary` output is recognized (#15862) ...
         assert!(has_only_non_text_changes(
-            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n"
+            "diff --git a/logo.png b/logo.png\nindex 8352675..1592e5c 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
         ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/x b/x\r\nold mode 100644\r\nnew mode 100755\r\n"
+        ));
+        // ... but a bare marker, a payload-less size line and non-octal modes
+        // are not a complete non-text section.
+        for lookalike in [
+            "diff --git a/x b/x\nGIT binary patch\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n\n",
+            "diff --git a/x b/x\nGIT binary patch\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nold mode invalid\nnew mode invalid\n",
+            "diff --git a/x b/x\nold mode 100644\nnew mode 10075\n",
+            "diff --git a/x b/x\nold mode 100648\nnew mode 100755\n",
+        ] {
+            assert!(!has_only_non_text_changes(lookalike), "{lookalike}");
+        }
         // Incomplete or mixed sections keep the generic wording.
         assert!(!has_only_non_text_changes(
             "diff --git a/x b/x\nold mode 100644\n"

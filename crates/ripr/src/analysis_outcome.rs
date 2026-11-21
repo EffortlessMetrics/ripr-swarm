@@ -492,12 +492,17 @@ impl AnalysisLimitation {
     /// diff keeps the `malformed_diff` token for schema stability but must
     /// not read "the diff could not be parsed" (#15862).
     pub(crate) fn plain_label(&self) -> &'static str {
-        if self.kind == AnalysisLimitationKind::MalformedDiff
-            && self.bounded_detail.as_deref() == Some(NON_TEXT_ONLY_DETAIL)
-        {
+        if self.is_non_text_only() {
             return NON_TEXT_ONLY_LABEL;
         }
         self.kind.plain_label()
+    }
+
+    /// The one classification of a well-formed binary- or mode-only diff:
+    /// the stderr zero-findings hedge and the plain-word label both key on it.
+    pub(crate) fn is_non_text_only(&self) -> bool {
+        self.kind == AnalysisLimitationKind::MalformedDiff
+            && self.bounded_detail.as_deref() == Some(NON_TEXT_ONLY_DETAIL)
     }
 
     pub(crate) fn with_path(mut self, path: impl AsRef<str>) -> Result<Self, String> {
