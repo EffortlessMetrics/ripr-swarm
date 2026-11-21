@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub use super::suppressions_core::*;
 
-const CONFINEMENT_REFUSAL: &str = "`suppressions.path` must resolve to a regular file inside the repository; replace the link or choose an in-repository regular file";
+const CONFINEMENT_REFUSAL: &str = "`suppressions.path` must resolve to a regular file inside the repository; replace the link or directory with an in-repository regular file";
 
 /// Loads the repository-controlled implicit suppression policy after proving
 /// that its resolved target remains inside `root`.
