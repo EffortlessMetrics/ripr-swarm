@@ -15572,6 +15572,8 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/build_env_macro_in_test.rs::a_test_that_reads_its_build_environment_pins_like_one_that_does_not",
+  "crates/ripr/tests/build_env_macro_in_test.rs::a_rebound_build_environment_macro_keeps_the_assertion_uncredited",
   "crates/ripr/tests/try_operand_in_test_assertion.rs::a_try_in_an_assertion_operand_of_a_result_test_pins_like_a_root_try",
   "crates/ripr/tests/try_operand_in_test_assertion.rs::a_try_whose_error_may_be_discarded_keeps_the_assertion_uncredited",
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
