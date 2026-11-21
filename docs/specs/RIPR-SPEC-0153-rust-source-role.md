@@ -108,7 +108,11 @@ file seeds only when a Cargo target's module tree reaches it through
 root (a declared `[lib] path` replaces `src/lib.rs`). `autobins = false`
 drops the undiscovered `src/main.rs` and `src/bin/*` roots, and
 `autolib = false` drops `src/lib.rs` unless a `[lib]` table remains; a
-path-less declaration keeps its default path (#15877). The modules of an
+path-less declaration keeps its default path, including edition 2015's
+`src/<name>.rs`, `src/main.rs` and `src/bin/main.rs` fallback (#15877). A
+manifest that leaves no library or binary target (`autobins = false`, no
+`[[bin]]` or `[lib]`, no discoverable `src/lib.rs`) lets a completed walk of
+its test, bench and example roots judge the package. The modules of an
 external root (`[lib] path = "../shared/lib.rs"`) seed, and every member
 package that compiles that root keeps its tests in Draft scope. A file
 outside the layout directories that the owning package's production root

@@ -160,3 +160,52 @@ fn autolib_false_drops_an_undeclared_library() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_test_only_package_judges_its_undiscovered_sources() -> Result<(), String> {
+    // Cargo accepts `autobins = false` with only a `tests/` target. With no
+    // library, the walk still judges the package from its manifest: the
+    // undeclared `src/main.rs` and the module it mounts are never built.
+    let files = |manifest: String| -> Result<Fixture, String> {
+        Fixture::with_files(&[
+            ("Cargo.toml", &manifest),
+            ("src/main.rs", "mod tool;\n\nfn main() {}\n"),
+            ("src/tool.rs", BULK),
+            ("tests/smoke.rs", "#[test]\nfn smoke() {}\n"),
+            ("diff.patch", &predicate_diff("src/tool.rs")),
+        ])
+    };
+    let enabled = files(manifest("", ""))?;
+    assert!(
+        enabled.reports("src/tool.rs")?,
+        "control: discovered main.rs"
+    );
+    let disabled = files(manifest("autobins = false", ""))?;
+    assert!(
+        !disabled.reports("src/tool.rs")?,
+        "a test-only package builds neither src/main.rs nor src/tool.rs"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_edition_2015_bin_keeps_the_legacy_main_fallback() -> Result<(), String> {
+    // Edition 2015 resolves a path-less `[[bin]] name = "cli"` with no
+    // `src/bin/cli.rs` to `src/main.rs` (Cargo's legacy fallback), so the
+    // module it mounts is built and still reports.
+    let legacy = main_mounting_tool(
+        "[package]\nname = \"price\"\nversion = \"0.1.0\"\nautobins = false\n\n[[bin]]\nname = \"cli\"\n\n[workspace]\n",
+    )?;
+    assert!(
+        legacy.reports("src/tool.rs")?,
+        "legacy fallback to src/main.rs"
+    );
+    let undeclared = main_mounting_tool(
+        "[package]\nname = \"price\"\nversion = \"0.1.0\"\nautobins = false\n\n[workspace]\n",
+    )?;
+    assert!(
+        !undeclared.reports("src/tool.rs")?,
+        "edition 2015 without a [[bin]] still builds no src/main.rs"
+    );
+    Ok(())
+}

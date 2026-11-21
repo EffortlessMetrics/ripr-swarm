@@ -790,7 +790,16 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
         // `src/bin/<name>/main.rs`, or `src/main.rs` when it carries the
         // package's name, so those stay rooted; an undeclared `src/main.rs`
         // or `src/bin/*` is never compiled and reaches nothing.
-        roots.extend(named_default_roots(manifest.get("bin"), &src.join("bin")));
+        //
+        // Both layouts stay rooted even when both exist on disk: existence
+        // here is the checkout's, while `--committed` walks HEAD, where a
+        // staged alternate layout is absent (#15892 review). An absent root
+        // reaches nothing, so the extra candidate can only keep a file
+        // reached, never drop a built one.
+        roots.extend(named_default_candidates(
+            manifest.get("bin"),
+            &src.join("bin"),
+        ));
         let package_name = package
             .and_then(|package| package.get("name"))
             .and_then(toml::Value::as_str);
@@ -807,11 +816,70 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
         if names_package_bin {
             roots.insert(src.join("main.rs"));
         }
+        // Edition 2015 resolves a path-less `[[bin]]` that matches no
+        // inferred layout through Cargo's legacy fallback: `src/<name>.rs`,
+        // then `src/main.rs`, then `src/bin/main.rs`. An inherited or absent
+        // edition may be 2015, so those stay rooted too (#15892 review).
+        let edition = package.and_then(|package| package.get("edition"));
+        let modern_edition = edition
+            .and_then(toml::Value::as_str)
+            .is_some_and(|edition| edition != "2015");
+        if !modern_edition {
+            let legacy_names = manifest
+                .get("bin")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|bin| bin.get("path").is_none())
+                .filter_map(|bin| bin.get("name").and_then(toml::Value::as_str))
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>();
+            if !legacy_names.is_empty() {
+                roots.extend(
+                    legacy_names
+                        .iter()
+                        .map(|name| src.join(format!("{name}.rs"))),
+                );
+                roots.insert(src.join("main.rs"));
+                roots.insert(src.join("bin").join("main.rs"));
+            }
+        }
     }
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
         .collect()
+}
+
+/// Whether the manifest itself leaves the package without a library or
+/// binary target (#15892 review): `autobins = false` with no `[[bin]]`, no
+/// `[lib]` table, and no discoverable `src/lib.rs`. Cargo then builds only
+/// test, bench and example targets, so a completed walk of those judges
+/// every file even though no production root was read. A package whose
+/// manifest names a production target it cannot read stays unjudged.
+fn manifest_rules_out_production(
+    workspace_root: &Path,
+    manifest: &toml::Value,
+    package_dir: &Path,
+) -> bool {
+    let package = manifest.get("package");
+    let disabled = |key: &str| {
+        package
+            .and_then(|package| package.get(key))
+            .and_then(toml::Value::as_bool)
+            == Some(false)
+    };
+    disabled("autobins")
+        && manifest.get("bin").is_none()
+        && manifest.get("lib").is_none()
+        && (disabled("autolib")
+            // Read through the same committed-source view as the walk; an
+            // unreadable `src/lib.rs` is not an absent one.
+            || matches!(
+                read_source(workspace_root, &package_dir.join("src").join("lib.rs")),
+                SourceRead::Absent
+            ))
 }
 
 /// Test, bench, example and build-script roots, declared and autodiscovered.
@@ -855,8 +923,29 @@ fn evidence_roots(
 
 /// The default paths of declared targets that name no `path`:
 /// `<dir>/<name>.rs` and `<dir>/<name>/main.rs`. When both layouts exist
-/// on disk Cargo drops the target entirely (#6979 item 4), so neither path
-/// is rooted.
+/// on disk Cargo refuses the manifest ("multiple target files found",
+/// #6979 item 4); for test, bench and example roots this collector models
+/// that as neither path being rooted, which only withholds evidence.
+/// Both default layouts, `<dir>/<name>.rs` and `<dir>/<name>/main.rs`, of
+/// every declared target that names no `path`, whatever exists on disk.
+fn named_default_candidates(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
+    target_entries
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("path").is_none())
+        .filter_map(|entry| entry.get("name").and_then(toml::Value::as_str))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .flat_map(|name| {
+            [
+                dir.join(format!("{name}.rs")),
+                dir.join(name).join("main.rs"),
+            ]
+        })
+        .collect()
+}
+
 fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
     let Some(entries) = target_entries.and_then(toml::Value::as_array) else {
         return Vec::new();
@@ -912,6 +1001,8 @@ impl PackageWalk {
         let (manifest_text, manifest) = read_manifest(workspace_root, package_dir)?;
         let production_roots = production_roots(&manifest, package_dir);
         let evidence_roots = evidence_roots(&manifest, &manifest_text, package_dir);
+        let production_root_read =
+            manifest_rules_out_production(workspace_root, &manifest, package_dir);
         let package_dir = lexical(&normalize(package_dir));
         Some(Self {
             queue: production_roots
@@ -931,7 +1022,7 @@ impl PackageWalk {
             visited: BTreeSet::new(),
             reached: BTreeMap::new(),
             production_roots,
-            production_root_read: false,
+            production_root_read,
             scans: BTreeMap::new(),
             read_ahead: BTreeMap::new(),
             pending_read_ahead_limit: MAX_PENDING_READ_AHEAD,
@@ -1170,7 +1261,8 @@ impl PackageWalk {
 
     /// Whether a completed walk proves every unreached file unreachable. A
     /// package with no readable library or binary root is not a tree this
-    /// walk can judge (a partial checkout, a manifest ahead of its sources).
+    /// walk can judge (a partial checkout, a manifest ahead of its sources),
+    /// unless its manifest rules out every library and binary target.
     fn proves_unreached(&self) -> bool {
         self.complete && self.production_root_read
     }
