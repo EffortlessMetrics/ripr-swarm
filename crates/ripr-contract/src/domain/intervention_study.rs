@@ -28,7 +28,8 @@ pub mod codes {
     /// or list, a condition other than exactly `control` and `ripr_assisted`,
     /// a condition without a budget overlay, an assisted surface that names no
     /// RIPR evidence, a task outside every assignment pair, a required outcome
-    /// cell or axis, or a claim ceiling not bounded to this study.
+    /// cell or axis, a claim ceiling not bounded to this study, or a planned
+    /// analysis that does not report exact numerators and denominators.
     pub const MISSING_FIELD: &str = "missing_field";
     /// An identity is malformed, duplicated or names something unknown, such as
     /// a task in an unknown stratum.
