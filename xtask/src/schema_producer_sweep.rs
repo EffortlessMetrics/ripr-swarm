@@ -105,6 +105,7 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         corpus: Corpus::FileName("check.json"),
         edge_fixtures: &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
+            "tests/fixtures/verification/ripr/check-empty-root-refusal.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
             // A bounded partial-scope run (RIPR-PROP-0019): a completed run
@@ -219,10 +220,16 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         // envelope's required fields, so they match this schema's top-level
         // shape. They carry `mode` and a `diff` scope, which this schema
         // rejects, and check.schema.json owns them.
-        excluded: &[(
-            "tests/fixtures/verification/ripr/check-limited.valid.json",
-            "a `ripr check` 0.2 refusal envelope (scope `diff`, carries `mode`), owned by check.schema.json",
-        )],
+        excluded: &[
+            (
+                "tests/fixtures/verification/ripr/check-limited.valid.json",
+                "a `ripr check` 0.2 refusal envelope (scope `diff`, carries `mode`), owned by check.schema.json",
+            ),
+            (
+                "tests/fixtures/verification/ripr/check-empty-root-refusal.valid.json",
+                "explicit empty root on `ripr check`; the diff scope and mode belong to the check 0.2 edge fixture and are outside the agent brief schema",
+            ),
+        ],
     },
     Binding {
         schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
