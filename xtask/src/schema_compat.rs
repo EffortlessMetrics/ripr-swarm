@@ -621,7 +621,7 @@ mod tests {
             )
         };
         if !accepted(&widened) {
-            return Err("optional old field must remain optional; old string guard suffices".into());
+            return Err("old property guard rejected".into());
         }
         for bad in [
             json!({"properties":{"root":{"minLength":2}}}),
