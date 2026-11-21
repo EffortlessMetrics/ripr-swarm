@@ -107,6 +107,7 @@ map is:
 | `ripr check --format missed-txt` | none (plain text) | one `path:line:col: <classification> <probe family>: <expression> -> <missing discriminator>` line per gap; see "missed-txt" below (#13626) |
 | `ripr check --format json-terse` | `schema_version` | `0.2` (the `json` findings with repeated evidence prose coded against an `evidence_legend`; see "json-terse" below) |
 | `ripr context --json` (`context_packet`; versions via top-level `version` key) | `version` | `1.1` |
+| `ripr context` operational refusal (JSON or compact JSON) | `schema_version` | `1.1` |
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
@@ -178,6 +179,7 @@ records that distinction.
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
 | `schemas/ripr/agent-packet-refusal.schema.json` | `0.5` | `crates/ripr/src/app.rs`; the refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet, keyed with the packet's version |
+| `schemas/ripr/context-refusal.schema.json` | `1.1` | `crates/ripr/src/cli/commands/context.rs` operational refusal, including an unusable root or check artifact |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/muse-plugin-eval.schema.json` | `muse-plugin-eval-v1` | `xtask/src/reports/dx_scoreboard/muse_plugin.rs`; canonical Muse evaluation record with optional structured observations; [contract](verification/muse-plugin-eval.md) |
@@ -1891,11 +1893,14 @@ command's output:
 [`schemas/ripr/agent-brief-refusal.schema.json`](../schemas/ripr/agent-brief-refusal.schema.json)
 and
 [`schemas/ripr/agent-packet-refusal.schema.json`](../schemas/ripr/agent-packet-refusal.schema.json).
-The last three are the diff refusal schema with the command's own version and
-scope and without the fields it never writes (`mode`, and `base` except on
-agent brief), and `crates/ripr/tests/refusal_envelope_schemas.rs` holds them
-to exactly that difference. The `ripr context` refusal has no published schema
-yet.
+The [context operational refusal](../schemas/ripr/context-refusal.schema.json)
+carries `schema_version: "1.1"`, a diff scope, the effective mode and a base
+when one was supplied. An explicitly empty `--root` is echoed as the empty
+string. Both JSON presentations use this schema. A successful
+context packet uses its top-level `version` field. An explicit JSON selector
+miss uses the `cli_refusal` contract described below.
+`crates/ripr/tests/refusal_envelope_schemas.rs` checks each sibling against
+the shared diff refusal definitions and the fields its command accepts.
 
 For `ripr check`, the machine-readable formats also carry their own refusal
 document on stdout instead of zero bytes (#7332), each parseable as its own

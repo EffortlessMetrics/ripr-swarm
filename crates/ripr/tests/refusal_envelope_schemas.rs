@@ -1,9 +1,9 @@
-//! The published refusal-envelope schemas of `ripr rerun --json`,
+//! The published refusal-envelope schemas of `ripr context`, `ripr rerun --json`,
 //! `ripr agent brief --json` and `ripr agent packet --json`, checked against
 //! bytes the real commands wrote.
 //!
 //! Each command answers a post-argv-parse failure with the check JSON refusal
-//! envelope keyed with its own `schema_version` (#7331). The three schemas are
+//! envelope keyed with its own `schema_version` (#7331). These schemas are
 //! `schemas/ripr/diff-refusal.schema.json` with a different version, scope and
 //! set of optional fields, and a test holds them to exactly that difference so
 //! a change to the shared envelope cannot reach one schema and miss another.
@@ -21,38 +21,56 @@ mod published_schema;
 use common::fixture_git::fixture_git_ok;
 
 const DIFF_REFUSAL_SCHEMA: &str = "schemas/ripr/diff-refusal.schema.json";
+const CONTEXT_REFUSAL_SCHEMA: &str = "schemas/ripr/context-refusal.schema.json";
 const RERUN_REFUSAL_SCHEMA: &str = "schemas/ripr/rerun-refusal.schema.json";
 const AGENT_BRIEF_REFUSAL_SCHEMA: &str = "schemas/ripr/agent-brief-refusal.schema.json";
 const AGENT_PACKET_REFUSAL_SCHEMA: &str = "schemas/ripr/agent-packet-refusal.schema.json";
 
 /// One schema derived from the diff refusal schema: its pinned version, its
-/// `analysis_scope.scope`, and whether it may echo `base`. None of the three
-/// commands accepts `--mode`, so none declares `mode`.
+/// `analysis_scope.scope`, and the optional fields it may echo.
 struct Derived {
     path: &'static str,
     version: &'static str,
     scope: &'static str,
     echoes_base: bool,
+    echoes_mode: bool,
 }
 
-const DERIVED: [Derived; 3] = [
+const OPTIONAL_SUMMARY_COUNTS: &[&str] = &[
+    "suppressed_by_policy",
+    "withheld_by_owner_opt_out",
+    "conflicting_expressions",
+    "proof_harness_only",
+];
+
+const DERIVED: [Derived; 4] = [
     Derived {
         path: RERUN_REFUSAL_SCHEMA,
         version: "ripr-targeted-rerun-v1",
         scope: "diff",
         echoes_base: false,
+        echoes_mode: false,
     },
     Derived {
         path: AGENT_BRIEF_REFUSAL_SCHEMA,
         version: "0.2",
         scope: "repo",
         echoes_base: true,
+        echoes_mode: false,
     },
     Derived {
         path: AGENT_PACKET_REFUSAL_SCHEMA,
         version: "0.5",
         scope: "repo",
         echoes_base: false,
+        echoes_mode: false,
+    },
+    Derived {
+        path: CONTEXT_REFUSAL_SCHEMA,
+        version: "1.1",
+        scope: "diff",
+        echoes_base: true,
+        echoes_mode: true,
     },
 ];
 
@@ -124,6 +142,7 @@ fn refusal_json(args: &[&str], root: &Path, exit: i32) -> Result<Value, String> 
 /// config, each labelled with its expected identity.
 fn root_and_config_refusals(
     label: &str,
+    missing_identity: &'static str,
     args: &[&str],
 ) -> Result<Vec<(&'static str, Value)>, String> {
     let missing = std::env::temp_dir().join(format!(
@@ -136,7 +155,7 @@ fn root_and_config_refusals(
     let bad_config = refusal_json(args, &broken, 2);
     let _ = std::fs::remove_dir_all(&broken);
     Ok(vec![
-        ("repository_root_unusable", unusable_root),
+        (missing_identity, unusable_root),
         ("config_invalid", bad_config?),
     ])
 }
@@ -176,7 +195,7 @@ fn the_checker_covers_every_keyword_the_refusal_schemas_use() -> Result<(), Stri
     Ok(())
 }
 
-/// The three schemas copy the diff refusal schema. Apart from the identity
+/// The derived schemas copy the diff refusal schema. Apart from the identity
 /// text, the pinned version, the scope and the optional fields a command never
 /// writes, each must be identical to it, so the envelope's shared definitions
 /// (`summary`, `run_limitation`, `refusal_remedy`, themselves held equal to
@@ -203,8 +222,19 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
         expected["properties"]["schema_version"]["const"] = json!(derived.version);
         expected["properties"]["analysis_scope"]["properties"]["scope"]["const"] =
             json!(derived.scope);
+        // The context parser accepts an explicitly empty root. A missing
+        // artifact still produces a typed refusal echoing that exact spelling.
+        if derived.path == CONTEXT_REFUSAL_SCHEMA {
+            expected["properties"]["root"] = json!({"type": "string"});
+            // A context refusal cannot carry positive optional summary counts.
+            for &counter in OPTIONAL_SUMMARY_COUNTS {
+                expected["properties"]["summary"]["properties"][counter] = json!({"const": 0});
+            }
+        }
         if let Some(properties) = expected["properties"].as_object_mut() {
-            properties.remove("mode");
+            if !derived.echoes_mode {
+                properties.remove("mode");
+            }
             if !derived.echoes_base {
                 properties.remove("base");
             }
@@ -223,6 +253,7 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
 fn rerun_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
     let refusals = root_and_config_refusals(
         "rerun",
+        "repository_root_unusable",
         &["rerun", "--json", "--changed-test", "tests/over.rs"],
     )?;
     check_refusals(RERUN_REFUSAL_SCHEMA, &refusals)?;
@@ -246,12 +277,96 @@ fn rerun_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
     }
 }
 
+/// Both presentations use the same contract. Pre-config failures echo the
+/// parsed mode and base; saved-artifact failures retain the effective mode.
+#[test]
+fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
+    let root = fixture_repo("context-artifact", false)?;
+    let artifact = root.join("missing.json").display().to_string();
+    let captured = (|| {
+        write(&root, "ripr.toml", "[analysis]\nmode = \"deep\"\n")?;
+        let schema = published_schema::read(CONTEXT_REFUSAL_SCHEMA)?;
+        for format in ["json", "json-compact"] {
+            let args = [
+                "context",
+                "--at",
+                "src/lib.rs:1",
+                "--mode",
+                "ready",
+                "--base",
+                "main",
+                "--format",
+                format,
+            ];
+            let refusals = root_and_config_refusals("context", "analysis_failed", &args)?;
+            check_refusals(CONTEXT_REFUSAL_SCHEMA, &refusals)?;
+            for (identity, document) in &refusals {
+                if document.get("mode").and_then(Value::as_str) != Some("ready")
+                    || document.get("base").and_then(Value::as_str) != Some("main")
+                {
+                    return Err(format!(
+                        "{format} {identity} lost the requested mode or base"
+                    ));
+                }
+            }
+            let args = [
+                "context",
+                "--at",
+                "src/lib.rs:1",
+                "--from",
+                &artifact,
+                "--format",
+                format,
+            ];
+            let document = refusal_json(&args, &root, 2)?;
+            if document.get("mode").and_then(Value::as_str) != Some("deep")
+                || document.get("base").is_some()
+            {
+                return Err(format!(
+                    "unexpected mode or base in {format} artifact refusal"
+                ));
+            }
+            for &counter in OPTIONAL_SUMMARY_COUNTS {
+                let mut bad = document.clone();
+                let summary = bad
+                    .get_mut("summary")
+                    .and_then(Value::as_object_mut)
+                    .ok_or("the refusal has no summary object")?;
+                summary.insert(counter.to_string(), json!(1));
+                if conforms(&bad, &schema).is_ok() {
+                    return Err(format!(
+                        "{format} schema accepted a positive {counter} refusal count"
+                    ));
+                }
+            }
+            let empty_root = refusal_json(&args, Path::new(""), 2)?;
+            if empty_root.get("root").and_then(Value::as_str) != Some("") {
+                return Err(format!(
+                    "{format} refused to echo the explicitly empty root"
+                ));
+            }
+            check_refusals(
+                CONTEXT_REFUSAL_SCHEMA,
+                &[("check_artifact_unusable", empty_root)],
+            )?;
+            check_refusals(
+                CONTEXT_REFUSAL_SCHEMA,
+                &[("check_artifact_unusable", document)],
+            )?;
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    captured
+}
+
 /// `agent brief` echoes `--base` when that selected the working set, and
 /// omits it for another selector.
 #[test]
 fn agent_brief_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
     let mut refusals = root_and_config_refusals(
         "agent-brief",
+        "repository_root_unusable",
         &["agent", "brief", "--json", "--base", "main"],
     )?;
     let broken = fixture_repo("agent-brief-seam", true)?;
@@ -291,7 +406,7 @@ fn agent_brief_json_refusals_conform_to_the_published_schema() -> Result<(), Str
 #[test]
 fn agent_packet_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
     let args = ["agent", "packet", "--json", "--seam-id", "seam:none"];
-    let mut refusals = root_and_config_refusals("agent-packet", &args)?;
+    let mut refusals = root_and_config_refusals("agent-packet", "repository_root_unusable", &args)?;
     let root = fixture_repo("agent-packet-unknown", false)?;
     let unknown = refusal_json(&args, &root, 3);
     let _ = std::fs::remove_dir_all(&root);
@@ -324,7 +439,7 @@ fn agent_packet_json_refusals_conform_to_the_published_schema() -> Result<(), St
 #[test]
 fn published_refusal_schemas_reject_documents_they_forbid() -> Result<(), String> {
     type Mutation = fn(&mut Value);
-    let shared: [(&str, Mutation); 9] = [
+    let shared: [(&str, Mutation); 8] = [
         ("unknown field", |doc| doc["status"] = json!("refused")),
         ("a refusal that carries a finding", |doc| {
             doc["findings"] = json!([{}])
@@ -343,9 +458,6 @@ fn published_refusal_schemas_reject_documents_they_forbid() -> Result<(), String
                 object.remove("remedy");
             }
         }),
-        ("a mode on a command without --mode", |doc| {
-            doc["mode"] = json!("draft")
-        }),
         ("the diff report's version", |doc| {
             doc["schema_version"] = json!("0.1")
         }),
@@ -359,10 +471,11 @@ fn published_refusal_schemas_reject_documents_they_forbid() -> Result<(), String
         std::process::id(),
         FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    let commands: [&[&str]; 3] = [
+    let commands: [&[&str]; 4] = [
         &["rerun", "--json", "--changed-test", "tests/over.rs"],
         &["agent", "brief", "--json", "--base", "main"],
         &["agent", "packet", "--json", "--seam-id", "seam:none"],
+        &["context", "--json", "--at", "src/lib.rs:1"],
     ];
     let mut rejected = 0;
     for (derived, args) in DERIVED.iter().zip(commands) {
@@ -382,6 +495,13 @@ fn published_refusal_schemas_reject_documents_they_forbid() -> Result<(), String
                 ((*label).to_string(), document)
             })
             .collect();
+        let mut invalid_mode = refusal.clone();
+        invalid_mode["mode"] = if derived.echoes_mode {
+            json!("invalid-mode")
+        } else {
+            json!("draft")
+        };
+        cases.push(("unsupported mode".to_string(), invalid_mode));
         let mut scoped = refusal.clone();
         scoped["analysis_scope"]["scope"] = json!(other_scope);
         cases.push(("another command's scope".to_string(), scoped));
@@ -406,7 +526,7 @@ fn published_refusal_schemas_reject_documents_they_forbid() -> Result<(), String
             }
         }
     }
-    if rejected == DERIVED.len() * (shared.len() + 1) {
+    if rejected == DERIVED.len() * (shared.len() + 2) {
         Ok(())
     } else {
         Err(format!("only {rejected} mutations were rejected"))

@@ -234,6 +234,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/context-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates real pretty and compact CLI refusals, and published_refusal_schemas_reject_documents_they_forbid exercises invalid variants; the edge fixture captures an unusable root",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         pointer: None,
         corpus: Corpus::FileName("gate-decision.json"),

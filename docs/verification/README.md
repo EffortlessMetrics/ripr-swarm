@@ -44,6 +44,7 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/rerun-refusal.schema.json`](../../schemas/ripr/rerun-refusal.schema.json) | The refusal envelope `ripr rerun --json` writes with exit code 2 when it cannot produce a targeted rerun report. |
 | [`schemas/ripr/agent-brief-refusal.schema.json`](../../schemas/ripr/agent-brief-refusal.schema.json) | The refusal envelope `ripr agent brief --json` writes with exit code 2 when it cannot produce a brief. |
 | [`schemas/ripr/agent-packet-refusal.schema.json`](../../schemas/ripr/agent-packet-refusal.schema.json) | The refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet: exit code 3 for an unknown seam, exit code 2 otherwise. |
+| [`schemas/ripr/context-refusal.schema.json`](../../schemas/ripr/context-refusal.schema.json) | The operational refusal from `ripr context` in pretty or compact JSON, with exit code 2. |
 | [`schemas/ripr/gate-decision.schema.json`](../../schemas/ripr/gate-decision.schema.json) | `ripr gate evaluate` decision output and its structured repair route. |
 | [`schemas/ripr/check.schema.json`](../../schemas/ripr/check.schema.json) | `ripr check --json` primary findings and typed analysis-outcome output. |
 | [`schemas/ripr/check-timeout-refusal.schema.json`](../../schemas/ripr/check-timeout-refusal.schema.json) | `ripr check --json` `analysis_timeout` refusal with input context (refusal generation 0.3, RIPR-SPEC-0241 amendment #10796). |
