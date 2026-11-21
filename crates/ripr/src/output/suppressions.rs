@@ -2714,4 +2714,5 @@ mod audit_controls {
 }
 
 #[cfg(test)]
+#[path = "suppressions/typo_hint_tests.rs"]
 mod typo_hint_tests;
