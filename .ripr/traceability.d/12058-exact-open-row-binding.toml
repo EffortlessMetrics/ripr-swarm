@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human/agent_tests.rs::reach_limit_with_an_unbound_weak_row_keeps_stop",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_reach_limit_requires_exact_contributing_weak_test_binding",
+]
+code = [
+  "crates/ripr/src/output/human/triage.rs::weak_assertion_row",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+]

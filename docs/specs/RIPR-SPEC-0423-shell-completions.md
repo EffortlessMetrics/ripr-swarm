@@ -46,6 +46,12 @@ command is offered only in the second position, in every shell: after
 - A missing shell name, an unknown shell name (with the accepted names and a
   suggestion), a second shell name, or an unknown flag prints a message to
   stderr, prints nothing to stdout, and exits `2`.
+- An unknown shell gets a suggestion only when it is one edit away, or a known
+  alias (`pwsh`, `ps` for `powershell`); otherwise only the accepted names are
+  listed (#15259).
+- `--shell NAME` is refused with the positional spelling to use instead
+  (`ripr completions bash`), and under `--json` writes the `cli_refusal`
+  document with code `unknown_argument`.
 
 ## Non-Goals
 

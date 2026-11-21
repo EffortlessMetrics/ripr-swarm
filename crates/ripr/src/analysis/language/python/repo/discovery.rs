@@ -163,21 +163,23 @@ pub(in crate::analysis::language::python) struct DiscoveryCounts {
 pub(in crate::analysis::language::python) struct RepoDiscovery {
     /// Selected `(path, role)` pairs in deterministic sorted-path order.
     pub(in crate::analysis::language::python) selected: Vec<(PathBuf, PythonFileRole)>,
+    /// Omitted source identities for module ambiguity. Their contents are never selected.
+    pub(in crate::analysis::language::python) capped_source_paths: Vec<PathBuf>,
     pub(in crate::analysis::language::python) counts: DiscoveryCounts,
 }
 
 /// Discover and select the bounded Python repo working set under `root`.
 ///
 /// Deterministic: retained candidates are the lexicographically smallest
-/// eligible paths, and the selected output is sorted. Walk memory is
-/// bounded by the working-set limit (#3666 review): each role retains a
-/// bounded max-heap of the smallest candidates seen, instead of holding
-/// every eligible path.
+/// eligible paths, and the selected output is sorted. Per-role selection
+/// heaps are bounded by the limit. Omitted source paths are retained
+/// separately for the path-only module ambiguity index.
 pub(in crate::analysis::language::python) fn discover_repo_working_set(
     root: &Path,
     limit: usize,
 ) -> RepoDiscovery {
     let mut state = BoundedWalkState {
+        capped_source_paths: Vec::new(),
         production_heap: std::collections::BinaryHeap::new(),
         evidence_heap: std::collections::BinaryHeap::new(),
         excluded_by_role: 0,
@@ -233,8 +235,16 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
     // `discovered == selected + skipped` pins the split.
     let capped = (production_seen + evidence_seen) - selected_count;
 
+    state.capped_source_paths.extend(
+        evidence
+            .into_iter()
+            .skip(evidence_budget)
+            .filter_map(|(path, role)| (role == PythonFileRole::Unknown).then_some(path)),
+    );
+    state.capped_source_paths.sort();
     RepoDiscovery {
         selected,
+        capped_source_paths: state.capped_source_paths,
         counts: DiscoveryCounts {
             discovered: production_seen + evidence_seen + excluded_by_role,
             selected: selected_count,
@@ -256,13 +266,10 @@ pub(in crate::analysis::language::python) fn discover_repo_working_set(
 /// pruned (#3672): vendor files must be discovered so the role authority
 /// counts them as typed excluded-role inputs. Eligible files are retained
 /// in the bounded per-role heaps; excluded-role and generated files are
-/// counted but never stored, so walk memory is bounded by the working-set
-/// cap (#3666 review). Read failures on subtrees or entries count as
-/// incomplete-discovery accounting.
-/// Accumulated bounded-retention walk state: per-role candidate heaps
-/// (bounded by the working-set limit), the incomplete-discovery
-/// accounting, and the true seen totals.
+/// counted but never stored. Omitted source paths are metadata only.
+/// Read failures on subtrees or entries count as incomplete discovery.
 struct BoundedWalkState {
+    capped_source_paths: Vec<PathBuf>,
     production_heap: std::collections::BinaryHeap<PathBuf>,
     evidence_heap: std::collections::BinaryHeap<(PathBuf, PythonFileRole)>,
     excluded_by_role: usize,
@@ -277,14 +284,18 @@ impl BoundedWalkState {
         if role == PythonFileRole::Production {
             self.production_seen_total += 1;
             self.production_heap.push(relative);
-            if self.production_heap.len() > self.limit {
-                self.production_heap.pop();
+            if self.production_heap.len() > self.limit
+                && let Some(path) = self.production_heap.pop()
+            {
+                self.capped_source_paths.push(path);
             }
         } else {
             self.evidence_seen_total += 1;
             self.evidence_heap.push((relative, role));
-            if self.evidence_heap.len() > self.limit {
-                self.evidence_heap.pop();
+            if self.evidence_heap.len() > self.limit
+                && let Some((path, PythonFileRole::Unknown)) = self.evidence_heap.pop()
+            {
+                self.capped_source_paths.push(path);
             }
         }
     }

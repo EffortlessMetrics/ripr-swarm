@@ -126,7 +126,12 @@ malformed pull discloses a typed
 state (`config_pull_failed` / `config_pull_invalid`, mirroring the
 `AnalysisFailure { kind, message }` pattern) with a recovery route, while
 the last-known-good pulled layer is retained as stale. Defaults never
-masquerade as accepted requested settings: the status payload carries the
+masquerade as accepted requested settings. A malformed pull also sends one
+`window/logMessage` warning (and, for clients without the `riprEditor`
+integration, the same `window/showMessage`) naming every rejected setting
+with its accepted values and saying the previous settings stay in effect
+(#15312); the status payload alone is not rendered by generic editors. The
+status payload carries the
 negotiated `configuration_mode`, a per-field source map
 (`pulled` | `initialization` | `repo` | `default`) for the governed keys
 (six per the #2303 amendment, seven per the #1972 amendment), and the last
@@ -297,6 +302,16 @@ when a re-pull returns {"checkMode": 42},
 then the pull state discloses failed with kind config_pull_invalid,
 the last-known-good pulled layer stays in effect,
 and analysis is not rescheduled by the pull.
+```
+
+### Malformed pull is announced, naming every rejected setting
+
+```text
+Given a generic client (no riprEditor) with workspace.configuration support,
+when a pull returns {"diagnosticProfile": "loud", "seamDiagnostics": "yes", "baseRef": 5},
+then one window/logMessage and one window/showMessage warning arrive,
+each naming diagnosticProfile, seamDiagnostics and baseRef with their accepted values,
+and saying the previous settings stay in effect.
 ```
 
 ### Fallback is unchanged without pull support

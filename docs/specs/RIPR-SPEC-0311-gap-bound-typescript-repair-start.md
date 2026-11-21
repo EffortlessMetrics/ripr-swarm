@@ -78,7 +78,10 @@ existed with no way to begin the attempt.
    after the workflow artifacts were written) leaves no attempt manifest and
    restores the shared workflow artifacts to the bytes they had before the
    invocation: prior files survive byte-identical and only files the
-   invocation created are removed.
+   invocation created are removed. Each prior file is put back by atomic
+   replacement, never rewritten in place, so an interrupted restore leaves
+   either the complete prior file or the file the refused start wrote, never
+   a truncated one (#15444).
 5. Status and recovery text for a gap attempt name the gap start and never
    `--seam-id`.
 6. `agent repair --phase after` for a gap-bound attempt writes
