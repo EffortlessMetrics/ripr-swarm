@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-py-pytest-route-clients-nested-exact",
+  "origin": "authored",
+  "version_label": "authored@1818f481",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "2acea854b7b14ccdabb06bbb15e2a3ad8e5dac9b38626e16c0f29d75e6bd1ad9"
+    },
+    {
+      "path": "routeclients/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "routeclients/invoices.py",
+      "sha256": "087b1e918eb5c32ec84d6f6db2227b9fb29fd73648d225a7c7bd2aac4d799b52"
+    },
+    {
+      "path": "routeclients/mini.py",
+      "sha256": "e09de5eb8db2d7bbdd7b38fb8b84d1732b82ae1cca7f7af8f74983f3d4bc2866"
+    },
+    {
+      "path": "tests/invoices/conftest.py",
+      "sha256": "28999725056e7a2e109061dda9d535a9d6af09818bcf8f6169992781b1674b4f"
+    },
+    {
+      "path": "tests/invoices/test_invoices.py",
+      "sha256": "9c1a1f4897b08c04c4017507532c3efa211cb6039290aeaf41f23c0fdd0144b3"
+    }
+  ]
+}

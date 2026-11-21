@@ -77,6 +77,7 @@ pub(super) fn collect_fixture_defs(
                     literal_params: None,
                     isolated: false,
                     scope_imports: Vec::new(),
+                    client_fixture_chain: Vec::new(),
                 });
             }
             continue;
@@ -118,6 +119,7 @@ pub(super) fn collect_fixture_defs(
             ),
             isolated: false,
             scope_imports: Vec::new(),
+            client_fixture_chain: Vec::new(),
         });
     }
     defs
@@ -987,8 +989,79 @@ pub(super) fn attach_fixture_defs(
                 attached.push(def.clone());
             }
         }
+        for def in &mut attached {
+            def.client_fixture_chain = client_fixture_chain(def, &test.file, defs_by_file);
+        }
         test.fixture_defs = attached;
     }
+}
+
+/// The fixture definitions a route-client fixture's application parameter
+/// resolves through, in order (#14141): the client fixture's unrebound
+/// parameter names another fixture, that fixture's returned name may name
+/// a further fixture, and so on, capped at
+/// [`super::route_client::MAX_CLIENT_FIXTURE_CHAIN`]. Resolution is
+/// anchored at the requesting fixture's file (its own file, then the
+/// conftest chain from there), falling back to the test's resolution.
+/// An unresolved, cyclic or over-cap link ends the chain; the reader in
+/// `related_tests.rs` then fails closed.
+fn client_fixture_chain(
+    start: &PythonFixtureDef,
+    test_file: &Path,
+    defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+) -> Vec<PythonFixtureDef> {
+    let mut chain: Vec<PythonFixtureDef> = Vec::new();
+    let mut current = start.clone();
+    let mut is_client = true;
+    for _ in 0..super::route_client::MAX_CLIENT_FIXTURE_CHAIN {
+        let candidate = if is_client {
+            super::route_client::fixture_client_app_name(&current.body_text)
+        } else {
+            super::route_client::fixture_returned_name(&current.body_text)
+        };
+        is_client = false;
+        let Some(candidate) = candidate else {
+            break;
+        };
+        if !super::route_client::is_unrebound_parameter(&current.body_text, &candidate) {
+            break;
+        }
+        let Some(next) = resolve_from_fixture(&current.file, &candidate, defs_by_file)
+            .or_else(|| resolve(test_file, &candidate, defs_by_file))
+        else {
+            break;
+        };
+        if chain
+            .iter()
+            .any(|def: &PythonFixtureDef| def.name == next.name && def.file == next.file)
+            || (next.name == start.name && next.file == start.file)
+        {
+            break;
+        }
+        let mut next = next.clone();
+        next.client_fixture_chain = Vec::new();
+        chain.push(next.clone());
+        current = next;
+    }
+    chain
+}
+
+/// Resolve fixture `name` as pytest would for a fixture defined in
+/// `fixture_file`: that file first, then conftests up its chain.
+fn resolve_from_fixture<'a>(
+    fixture_file: &Path,
+    name: &str,
+    defs_by_file: &'a BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+) -> Option<&'a PythonFixtureDef> {
+    let find = |file: &Path| {
+        defs_by_file
+            .get(file)
+            .and_then(|defs| defs.iter().rev().find(|def| def.name == name))
+    };
+    if let Some(def) = find(fixture_file) {
+        return Some(def);
+    }
+    conftest_chain(fixture_file).find_map(|conftest| find(&conftest))
 }
 
 fn resolve<'a>(

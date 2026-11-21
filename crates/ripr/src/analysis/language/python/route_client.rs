@@ -651,6 +651,37 @@ pub(super) fn fixture_client_app_name(fixture_body: &str) -> Option<String> {
     found
 }
 
+/// Most fixture-parameter hops followed from a route-client fixture to
+/// the imported application (#14141).
+pub(super) const MAX_CLIENT_FIXTURE_CHAIN: usize = 4;
+
+/// The plain name every `return` / `yield` of a fixture body returns, or
+/// `None` when any exit is not a plain name, exits disagree, or there is
+/// no exit. Used for an application fixture a client fixture depends on
+/// (`return app`).
+pub(super) fn fixture_returned_name(fixture_body: &str) -> Option<String> {
+    let lines = logical_lines(fixture_body);
+    let mut found: Option<String> = None;
+    for line in lines.iter().flat_map(|line| line.split(';')) {
+        let line = exit_statement(line.trim());
+        let Some(value) = line
+            .strip_prefix("return ")
+            .or_else(|| line.strip_prefix("yield "))
+        else {
+            continue;
+        };
+        let value = value.trim();
+        if !is_plain_name(value) {
+            return None;
+        }
+        match &found {
+            Some(existing) if existing != value => return None,
+            _ => found = Some(value.to_string()),
+        }
+    }
+    found
+}
+
 /// The `return`/`yield` statement a line ends in, so that a one-line compound
 /// suite (`if flag: return TestClient(other_app)`) counts as an exit of the
 /// fixture rather than being skipped.

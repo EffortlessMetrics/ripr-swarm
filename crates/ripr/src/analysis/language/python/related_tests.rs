@@ -3211,17 +3211,17 @@ enum ClientApp {
 /// The application name a receiver's client is built over, and the imports
 /// that name resolves against: the test body, or the fixture the receiver is
 /// a parameter of (the test's module or a `conftest.py` up its chain).
-fn client_app_source<'a>(
-    test: &'a PythonTest,
+fn client_app_source(
+    test: &PythonTest,
     receiver: &str,
-) -> Option<(String, &'a [PythonImport])> {
+) -> Option<(String, Vec<PythonImport>, std::path::PathBuf)> {
     if let Some(app) = super::route_client::client_app_name(&test.body_text, receiver) {
         // An application name bound in the test body is not the import it spells.
         if super::route_client::rebinds_name(&test.body_text, &app) || test.fixtures.contains(&app)
         {
             return None;
         }
-        return Some((app, test.imports.as_slice()));
+        return Some((app, test.imports.clone(), test.file.clone()));
     }
     // A fixture parameter: the client alias leads back to it, nothing in the
     // body rebinds it, and a class-level fixture override (which is not
@@ -3237,13 +3237,36 @@ fn client_app_source<'a>(
         .iter()
         .find(|def| def.name == root && test.fixtures.contains(&root))?;
     let app = super::route_client::fixture_client_app_name(&def.body_text)?;
-    // The fixture's own parameters and local bindings are not module imports.
-    if super::route_client::rebinds_name(&def.body_text, &app)
-        || super::route_client::is_unrebound_parameter(&def.body_text, &app)
-    {
+    // The fixture's own local bindings are not module imports.
+    if super::route_client::rebinds_name(&def.body_text, &app) {
         return None;
     }
-    Some((app, def.imports.as_slice()))
+    if !super::route_client::is_unrebound_parameter(&def.body_text, &app) {
+        return Some((app, def.imports.clone(), def.file.clone()));
+    }
+    // The client fixture takes its application from another fixture
+    // (#14141): follow the attached chain, capped when it was built, to
+    // the fixture that returns an imported name. Any link that is
+    // missing, rebound, cyclic in effect, or returns a non-name or
+    // disagreeing names fails closed.
+    let mut parameter = app;
+    let mut chain = def.client_fixture_chain.iter();
+    for _ in 0..super::route_client::MAX_CLIENT_FIXTURE_CHAIN {
+        let next = chain.next()?;
+        if next.name != parameter {
+            return None;
+        }
+        let returned = super::route_client::fixture_returned_name(&next.body_text)?;
+        if super::route_client::rebinds_name(&next.body_text, &returned) {
+            return None;
+        }
+        if super::route_client::is_unrebound_parameter(&next.body_text, &returned) {
+            parameter = returned;
+            continue;
+        }
+        return Some((returned, next.imports.clone(), next.file.clone()));
+    }
+    None
 }
 
 /// Which application the client targets, decided only from the pair: a client
@@ -3263,7 +3286,10 @@ fn client_app_identity(
     let Some(owner_receiver) = owner_receiver.filter(|name| !name.is_empty()) else {
         return ClientApp::Unidentified;
     };
-    let Some((app_name, imports)) = client_app_source(test, receiver) else {
+    // `source_file` is the file the application import lives in (the test
+    // file, or the fixture file for a fixture-built client), so ambiguous
+    // module names are judged from that file's context (#14141).
+    let Some((app_name, imports, source_file)) = client_app_source(test, receiver) else {
         return ClientApp::Unidentified;
     };
     // Where the owner's file itself got the receiver: a shared application
@@ -3274,7 +3300,7 @@ fn client_app_identity(
         .find(|import| import_bound_name(import) == owner_receiver)
         .map(|import| (import.source_module.as_str(), import.imported.as_str()));
     let mut identity = ClientApp::Unidentified;
-    for import in imports {
+    for import in &imports {
         if import_bound_name(import) != app_name || import.source_module.is_empty() {
             continue;
         }
@@ -3291,7 +3317,7 @@ fn client_app_identity(
                 } else if import.imported == owner_receiver || import.imported == symbol {
                     // The owner's own module re-exports the app it imported; a
                     // package above it may define another `app`.
-                    if import_source_module_matches_owner(import, owner, &test.file) {
+                    if import_source_module_matches_owner(import, owner, &source_file) {
                         ClientApp::Own
                     } else if owner_module_paths(&owner.file)
                         .iter()
@@ -3310,7 +3336,7 @@ fn client_app_identity(
             // `pkg/main.py`'s `app`).
             None => {
                 let names_owner_module =
-                    import_source_module_matches_owner(import, owner, &test.file)
+                    import_source_module_matches_owner(import, owner, &source_file)
                         || owner_module_paths(&owner.file)
                             .iter()
                             .any(|path| path.starts_with(&format!("{}.", import.source_module)));

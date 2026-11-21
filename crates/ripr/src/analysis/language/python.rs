@@ -916,6 +916,12 @@ struct PythonFixtureDef {
     /// Set when attached: the `from` imports of the test's module and its
     /// conftest chain, by importing file; each must be the owner's module.
     scope_imports: Vec<(PathBuf, PythonImport)>,
+    /// Fixture definitions a route-client fixture's application parameter
+    /// resolves through, in order, when attached (#14141). Kept apart from
+    /// the test's own `fixture_defs` so following them earns no
+    /// `fixture_owner_call` relation.
+    #[serde(default)]
+    client_fixture_chain: Vec<PythonFixtureDef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
