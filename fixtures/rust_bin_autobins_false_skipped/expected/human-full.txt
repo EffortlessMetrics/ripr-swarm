@@ -1,0 +1,51 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_bin_autobins_false_skipped/input
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING ./src/main.rs:2
+  id: probe:src_main.rs:return_value:5bcf3219
+
+Changed
+  before: a + 1
+  after:  a + 2
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/main.rs::f
+  gap id (for scripts): gap:rust:src/main.rs:f:return_value:return_value:a+2
+
+Static exposure
+  no_static_path (warning, confidence 0.48)
+
+Evidence
+  - reach no: No static test path found for the changed owner
+  - infection unknown: No reachable tests were found, so infection cannot be established
+  - propagation yes: Complete propagation witness reaches returned value: a + 2
+  - observation no: No reachable test oracle found
+  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  - local flow reaches returned value: a + 2 (line 2)
+
+Next step
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_bin_autobins_false_skipped/input --diff <cwd>/fixtures/rust_bin_autobins_false_skipped/diff.patch --mode fast probe:src_main.rs:return_value:5bcf3219
+  ripr context --root <cwd>/fixtures/rust_bin_autobins_false_skipped/input --diff <cwd>/fixtures/rust_bin_autobins_false_skipped/diff.patch --mode fast --at probe:src_main.rs:return_value:5bcf3219
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

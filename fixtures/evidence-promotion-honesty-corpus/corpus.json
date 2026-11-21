@@ -152,6 +152,7 @@
   ],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-rebound-let.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
@@ -206,6 +207,191 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json"
   ],
   "cases": [
+    {
+      "id": "rust_repo_exposure_lib_test_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
+      "report_subject": "fixtures/rust_lib_test_false_skipped/input",
+      "vector": "skipped_library_unit_test_gives_no_repo_seam_reach",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::f",
+          "expression": "a + 2",
+          "grip_class": "ungripped",
+          "reach": "no"
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_test_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_test_false_skipped",
+      "vector": "lib_target_with_test_false_withholds_in_crate_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_bin_autobins_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bin_autobins_false_skipped",
+      "vector": "autobins_false_without_bin_entry_withholds_main_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_bin_explicit_path_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bin_explicit_path_enabled",
+      "vector": "autobins_false_with_explicit_bin_path_credits_main_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_autolib_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_autolib_false_skipped",
+      "vector": "autolib_false_without_lib_entry_withholds_lib_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_explicit_path_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_explicit_path_enabled",
+      "vector": "autolib_false_with_explicit_lib_path_credits_lib_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_example_default_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_example_default_skipped",
+      "vector": "default_example_target_without_test_true_withholds_example_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_example_test_true_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_example_test_true_enabled",
+      "vector": "example_target_with_test_true_credits_example_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
     {
       "id": "python_route_response_json_patch",
       "language": "python",
