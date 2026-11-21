@@ -14499,6 +14499,13 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
             "qualified-nested-wrapper",
             "proptest::proptest! { #[test] fn p(v in proptest::collection::vec(proptest::prop_oneof![proptest::strategy::Just(vec![1u8])], 0..3)) { proptest::prop_assert!(v.len() < 3); assert_eq!(v.len(), v.len()); } }\n".to_string(),
         ),
+        // A field colon is no `::` separator: a bare call after it stays bare.
+        (
+            "field-initializer-bare-calls",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ let c = Check {{ items: vec![vec![x]], strategy: prop_oneof![Just(vec![x])] }}; assert_eq!(c.items.len(), 1); }} }}\n"
+            ),
+        ),
         // A field colon before the path is no `::` separator.
         (
             "field-initializer-nested-wrapper",
@@ -14644,6 +14651,17 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
         (
             "nested-qualified-root-imported",
             "use other::proptest;\n::proptest::proptest! { #[test] fn p(x in 0u8..3) { proptest::prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        // A field's `:` ends the path; it does not launder what follows it.
+        (
+            "field-initializer-foreign-nested-wrapper",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ let c = Check {{ result: dep::prop_assert!(assert_eq) }}; }} }}\n"
+            ),
+        ),
+        (
+            "field-initializer-nested-root-imported",
+            "use other::proptest;\n::proptest::proptest! { #[test] fn p(x in 0u8..3) { let c = Check { result: proptest::prop_assert!(assert_eq) }; } }\n".to_string(),
         ),
     ] {
         assert!(
