@@ -666,8 +666,10 @@ jobs:
             ip address add 192.0.2.1/32 dev lo
             sysctl -qw net.ipv4.ip_unprivileged_port_start=443
             exec sudo -u "$1" -- env -i HOME="$2" PATH="$3" GITHUB_REPOSITORY="$4" \
+              CARGO_HOME="$7" RUSTUP_HOME="$8" CARGO_INCREMENTAL="$9" CARGO_NET_OFFLINE=true \
               xvfb-run -a node "$5" "$6"
-          ' bash "$(id -un)" "$HOME" "$PATH" "$GITHUB_REPOSITORY" "$instrument" "$vscode"
+          ' bash "$(id -un)" "$HOME" "$PATH" "$GITHUB_REPOSITORY" "$instrument" "$vscode" \
+            "${CARGO_HOME:-$HOME/.cargo}" "${RUSTUP_HOME:-$HOME/.rustup}" "${CARGO_INCREMENTAL:-0}"
 
       - name: Retain managed-download composition evidence
         if: ${{ always() }}
