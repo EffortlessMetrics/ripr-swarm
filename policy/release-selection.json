@@ -393,6 +393,9 @@
     {
       "claim_id": "candidate-exec-4508",
       "owner_issue": 4508,
+      "related_issues": [
+        15902
+      ],
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
       "candidate_effect": "Exact-candidate proof: literal installed Rust, Python and TypeScript journeys.",
@@ -856,8 +859,8 @@
         "pr:15161",
         "pr:15474"
       ],
-      "candidate_effect": "ripr is packaged and published from a publish stage that strips inline test modules; the staged ripr-0.11.0.crate measured 7,384,942 bytes against the 10,485,760-byte crates.io default (#15194), publish-dry-run refuses an over-limit crate, the contract-first two-crate order and recovery are enforced (#15161), and the qualified producer packages the publish-stage archive (#15474). The owner issues are still open.",
-      "next": "Reconcile acceptance on #14071, #14198, #15204, #15216 and #14792 against merged #15194, #15161 and #15474, including #15216's open Windows cold-install deadline and any archive exception; then record the remaining candidate packaging and size receipts as final-candidate execution under #2769. Owner: the package composition owner named on #15474."
+      "candidate_effect": "ripr is packaged and published from a publish stage that strips inline test modules; the staged ripr-0.11.0.crate measured 7,384,942 bytes against the 10,485,760-byte crates.io default (#15194), publish-dry-run refuses an over-limit crate, the contract-first two-crate order and recovery are enforced (#15161), and the qualified producer packages the publish-stage archive (#15474). #14071, #14198 and #15216 are still open; #14792 and #15204 closed on 2026-11-21.",
+      "next": "Reconcile acceptance on #14071, #14198 and #15216 against merged #15194, #15161 and #15474, including #15216's open Windows cold-install deadline and any archive exception; then record the remaining candidate packaging and size receipts as final-candidate execution under #2769. Owner: the package composition owner named on #15474."
     },
     {
       "claim_id": "server-size-receipts",
@@ -1287,16 +1290,12 @@
       14633,
       14776,
       14777,
-      14792,
-      14898,
-      15204,
       15216,
-      15576,
-      15578,
       15601,
       15606,
       15839,
-      15842
+      15842,
+      15902
     ]
   },
   "non_claims": [
