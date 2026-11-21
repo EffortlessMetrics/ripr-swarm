@@ -4666,8 +4666,59 @@ fn facade_commands_stay_under_selected_root_from_foreign_cwd() -> Result<(), Str
     Ok(())
 }
 
-/// Control 8: terminal attempt — continue is idempotent already-complete
-/// status with receipt/details, never another attempt or rewritten evidence.
+/// The already-complete `continue` summary (#15282 item 7): the attempt, its
+/// issued receipt and the next commands, without the status page's store,
+/// claim boundary, limitations or non-claims, which `ripr status` keeps.
+fn assert_already_complete_summary(
+    summary: &str,
+    attempt_id: &str,
+    root_arg: &str,
+) -> Result<(), String> {
+    let expected_lines = [
+        format!("Repair attempt `{attempt_id}` is complete (finished_"),
+        format!("Gap: `{FIXTURE_SEAM}`"),
+        "Receipt: issued (".to_string(),
+        "Test run: none recorded.".to_string(),
+        "Next: `ripr repair --root ".to_string(),
+        format!("Full status: `ripr status --attempt {attempt_id} --root "),
+    ];
+    let lines: Vec<&str> = summary.lines().collect();
+    if lines.len() != expected_lines.len() {
+        return Err(format!(
+            "the summary must be exactly {} lines, got {}:\n{summary}",
+            expected_lines.len(),
+            lines.len()
+        ));
+    }
+    for (line, expected) in lines.iter().zip(&expected_lines) {
+        if !line.starts_with(expected.as_str()) {
+            return Err(format!(
+                "summary line `{line}` must start with `{expected}`:\n{summary}"
+            ));
+        }
+    }
+    if !summary.contains(root_arg) {
+        return Err(format!(
+            "the printed commands must name the selected root `{root_arg}`:\n{summary}"
+        ));
+    }
+    for page_only in [
+        "# RIPR Repair Attempt Status",
+        "## Claim Boundary",
+        "Status names no next action",
+    ] {
+        if summary.contains(page_only) {
+            return Err(format!(
+                "the summary must leave `{page_only}` to `ripr status`:\n{summary}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Control 8: terminal attempt — continue is an idempotent already-complete
+/// summary with the receipt and the next commands (#15282 item 7: not the
+/// whole status page), never another attempt or rewritten evidence.
 #[test]
 fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
     let fixture = Fixture::boundary("facade-terminal")?;
@@ -4715,18 +4766,40 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
         &["status", "--root", &root_arg, "--attempt", &attempt_id],
     )?;
     assert_exit(&status, 0, "facade status of the terminal attempt");
-    // Repeated invocation returns the same status, not another attempt.
+    let status_json = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(
+        &status_json,
+        0,
+        "facade status JSON of the terminal attempt",
+    );
+    // Repeated invocation returns the same short summary, not another
+    // attempt and not the whole status page.
+    let mut first_summary: Option<String> = None;
     for _ in 0..2 {
         let repeated = run_ripr(
             root,
             &["continue", "--attempt", &attempt_id, "--root", &root_arg],
         )?;
         assert_exit(&repeated, 0, "repeated continue on a terminal attempt");
-        assert_eq!(
-            stdout_text(&repeated),
-            stdout_text(&status),
-            "already-complete output must equal the attempt status"
-        );
+        let summary = stdout_text(&repeated);
+        assert_already_complete_summary(&summary, &attempt_id, &root_arg)?;
+        match &first_summary {
+            Some(first) => assert_eq!(
+                &summary, first,
+                "a repeated continue must print the same summary"
+            ),
+            None => first_summary = Some(summary.clone()),
+        }
         assert!(
             stderr_text(&repeated).contains("already complete"),
             "must say explicitly that the attempt is complete:\n{}",
@@ -4759,9 +4832,9 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
             "continue after a confirmed-complete attempt",
         );
         assert_eq!(
-            stdout_text(&unselected),
-            stdout_text(&status),
-            "implicit already-complete output must equal the attempt status"
+            Some(stdout_text(&unselected)),
+            first_summary,
+            "implicit already-complete output must equal the named summary"
         );
         assert!(
             stderr_text(&unselected).contains("already complete")
@@ -4775,6 +4848,24 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
             stderr_text(&unselected)
         );
     }
+    // `--json` keeps the attempt's status JSON, as `continue --help` says.
+    let repeated_json = run_ripr(
+        root,
+        &[
+            "continue",
+            "--attempt",
+            &attempt_id,
+            "--root",
+            &root_arg,
+            "--json",
+        ],
+    )?;
+    assert_exit(&repeated_json, 0, "continue --json on a terminal attempt");
+    assert_eq!(
+        stdout_text(&repeated_json),
+        stdout_text(&status_json),
+        "already-complete JSON must equal the attempt status JSON"
+    );
     assert_eq!(
         manifest_bytes(root, &attempt_id)?,
         sealed,
