@@ -756,7 +756,7 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
     const ENUM: &str = "pub enum Rule {\n    None,\n    Upper,\n    Tagged(u32),\n}\n";
     let decide = |name: &str, test_file: &str| {
         let index = index(&[(HELPERS, ENUM), (LIB, test_file)]);
-        imported_enum_variant_value(name, "Rule", Path::new(LIB), &index)
+        decide_imported_variant(name, "Rule", &index)
     };
     let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
     assert!(decide("Upper", glob));
@@ -794,7 +794,7 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
         "Upper",
         "use crate::Rule::*;\n#[test]\nfn t() { let Upper = 1; }\n"
     ));
-    // A second glob (file-wide use scan) or a same-named parameter keeps the
+    // A second glob in scope or a same-named parameter keeps the
     // spelling ambiguous.
     assert!(!decide(
         "Upper",
@@ -802,7 +802,7 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
     ));
     assert!(!decide(
         "Upper",
-        "use crate::Rule::*;\n#[test]\nfn t(Upper: u32) { assert_eq!(Upper.apply(1), 1); }\n"
+        "use crate::Rule::*;\n#[test]\nfn t() { fn helper(Upper: u32) {} }\n"
     ));
     assert!(!decide(
         "Upper",
@@ -810,12 +810,7 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
     ));
     // Two declarations of the enum make it ambiguous.
     let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
-    assert!(!imported_enum_variant_value(
-        "Upper",
-        "Rule",
-        Path::new(LIB),
-        &two
-    ));
+    assert!(!decide_imported_variant("Upper", "Rule", &two));
 }
 
 /// The sole declaring file of the enum is decided once per index: repeated
@@ -829,27 +824,12 @@ fn imported_enum_variant_value_reuses_the_declarer_decision_per_index() {
     let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
     let one = index(&[(HELPERS, ENUM), (LIB, glob)]);
     for _ in 0..3 {
-        assert!(imported_enum_variant_value(
-            "Upper",
-            "Rule",
-            Path::new(LIB),
-            &one
-        ));
+        assert!(decide_imported_variant("Upper", "Rule", &one));
     }
     let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
     for _ in 0..3 {
-        assert!(!imported_enum_variant_value(
-            "Upper",
-            "Rule",
-            Path::new(LIB),
-            &two
-        ));
-        assert!(!imported_enum_variant_value(
-            "Upper",
-            "Missing",
-            Path::new(LIB),
-            &two
-        ));
+        assert!(!decide_imported_variant("Upper", "Rule", &two));
+        assert!(!decide_imported_variant("Upper", "Missing", &two));
     }
     let stored = two
         .call_identity_memos
@@ -859,6 +839,14 @@ fn imported_enum_variant_value_reuses_the_declarer_decision_per_index() {
         .call_identity_memos
         .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
     assert_eq!(stored.as_deref(), Some(Path::new(HELPERS)));
+}
+
+fn decide_imported_variant(name: &str, enum_name: &str, index: &RustIndex) -> bool {
+    let test = index.tests().iter().find(|test| test.name == "t");
+    assert!(test.is_some(), "fixture did not produce a test");
+    test.is_some_and(|test| {
+        imported_enum_variant_value(name, enum_name, test, index, &OwnerPinSyntax::default())
+    })
 }
 
 /// #7172: per-assertion unit-struct pin admission must not rescan the

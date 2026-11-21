@@ -6884,7 +6884,7 @@ fn inherent_receiver_call_resolves_with(
     };
     let unit_variant = |name: &str| {
         index.is_some_and(|index| {
-            super::owner_pin::imported_enum_variant_value(name, impl_type, &test.file, index)
+            super::owner_pin::imported_enum_variant_value(name, impl_type, test, index, pin_syntax)
         })
     };
     // The file-local claims below speak of the test file's own root `ty`, so
@@ -6974,17 +6974,18 @@ fn inherent_receiver_call_resolves_with(
                 && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
         })
     };
-    let resolves = |node: SyntaxNode, scope: Option<&SyntaxNode>| {
+    let resolve = |node: SyntaxNode, scope: Option<&SyntaxNode>, variant: &dyn Fn(&str) -> bool| {
         inherent_call_node_resolves(
             node,
             scope,
             method,
             impl_type,
-            (&unit_struct, &unit_variant),
+            (&unit_struct, variant),
             &factory,
             &owner_unrebound,
         )
     };
+    let resolves = |node, scope: Option<&SyntaxNode>| resolve(node, scope, &unit_variant);
     if let Some(assertion) = assertion {
         assertion_calls_resolve(test, assertion, method, index, pin_syntax, &resolves)
     } else {
@@ -7001,7 +7002,9 @@ fn inherent_receiver_call_resolves_with(
             index,
             pin_syntax,
             trust_unplaced_standard_root,
-            &resolves,
+            // The copied helper call has its own module scope. The test's
+            // imports cannot establish a bare variant in the helper.
+            &|node, scope| resolve(node, scope, &|_| false),
         )
     }
 }
@@ -17816,6 +17819,94 @@ let r = try_parse_summary(\"x\");",
             !test_module_rebinds_free_function(&index, &second, "fixture"),
             "root dup must not inherit with_use's import"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn imported_unit_variant_receiver_uses_the_tests_own_module() -> Result<(), String> {
+        let root = temp_dir("imported-unit-variant-own-module")?;
+        write_manifest(&root)?;
+        let path = write(
+            &root,
+            "src/lib.rs",
+            r#"
+#![allow(dead_code, unused_imports)]
+enum Rule { Upper }
+impl Rule { fn apply(&self) -> i32 { 8 } }
+
+enum Decoy { Upper }
+impl Decoy { fn apply(&self) -> i32 { 3 } }
+
+#[cfg(test)]
+mod confirms {
+    use super::Rule::*;
+    #[test]
+    fn own_import() { assert_eq!(Upper.apply(), 8); }
+}
+
+#[cfg(test)]
+mod wrong_receiver {
+    use super::Decoy::*;
+    #[test]
+    fn sibling_import() { assert_eq!(Upper.apply(), 3); }
+}
+
+#[cfg(test)]
+mod sibling_binding {
+    use super::Decoy;
+    #[allow(non_upper_case_globals)]
+    const Upper: Decoy = Decoy::Upper;
+}
+
+#[cfg(test)]
+mod shadowed {
+    use super::Rule::*;
+    use super::Decoy;
+    #[allow(non_upper_case_globals)]
+    const Upper: Decoy = Decoy::Upper;
+
+    #[test]
+    fn own_shadow() { assert_eq!(Upper.apply(), 3); }
+}
+
+#[cfg(test)]
+mod block_shadowed {
+    use super::Rule::*;
+    #[test]
+    fn body_import() {
+        use super::Decoy::Upper;
+        assert_eq!(Upper.apply(), 3);
+    }
+}
+"#,
+        )?;
+        let index = crate::analysis::facts::build_index(&root, &[path])?;
+        let mut owners = index.functions().iter().filter(|function| {
+            function.name == "apply"
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::Inherent { self_ty } if self_ty == "Rule"
+                )
+        });
+        let owner = owners.next().ok_or("fixture did not index Rule::apply")?;
+        assert!(owners.next().is_none(), "fixture duplicated Rule::apply");
+        for (name, expected) in [
+            ("own_import", true),
+            ("sibling_import", false),
+            ("own_shadow", false),
+            ("body_import", false),
+        ] {
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == name)
+                .ok_or_else(|| format!("fixture did not index {name}"))?;
+            assert_eq!(
+                inherent_receiver_call_resolves(test, "apply", "Rule", Some(&index), Some(owner)),
+                expected,
+                "{name}",
+            );
+        }
         Ok(())
     }
 
