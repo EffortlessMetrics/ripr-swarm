@@ -186,6 +186,9 @@ const NEW_TS: &str = "export function over(qty: number) { return qty >= 10; }\n"
 #[test]
 fn two_preview_languages_off_get_named_lines_and_one_combined_snippet() -> Result<(), String> {
     let repo = Repo::create()?;
+    // A root-level Python file now auto-enables Python (#13342); an explicit
+    // Rust-only opt-in keeps Python a preview language that is not enabled.
+    repo.write("ripr.toml", "[languages]\nenabled = [\"rust\"]\n")?;
     repo.write("web.ts", OLD_TS)?;
     repo.git(&["add", "-A"])?;
     repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "ts"])?;
