@@ -1813,7 +1813,7 @@ mod tests {
         key: &RepoSeamCacheKey,
         seams: &[ClassifiedSeam],
     ) -> Result<(), String> {
-        match cache.load_classified_seams(key) {
+        match cache.load_classified_seams(key)? {
             CacheLoad::Hit((loaded, _)) => {
                 if loaded.len() != seams.len() {
                     return Err(format!(
@@ -2643,7 +2643,7 @@ mod tests {
             !cache.sharded_manifest_path(&key).exists(),
             "skipped oversized store must not publish a shard generation"
         );
-        match cache.load_classified_seams(&key) {
+        match cache.load_classified_seams(&key)? {
             CacheLoad::Miss => {}
             other => return Err(format!("skipped store must remain a miss, got {other:?}")),
         }

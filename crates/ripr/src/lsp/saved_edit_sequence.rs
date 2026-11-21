@@ -1270,7 +1270,7 @@ pub(super) fn drive_saved_edit_sequence(
         .store_classified_seams_with_limit(&key, &[], None, 20_000)
         .map_err(|err| format!("store cache fixture: {err}"))?;
     corrupt_json_files(&cache_dir)?;
-    let fallback = match cache.load_classified_seams(&key) {
+    let fallback = match cache.load_classified_seams(&key)? {
         CacheLoad::CorruptIgnored { reason } => reason,
         other => {
             return Err(format!(
