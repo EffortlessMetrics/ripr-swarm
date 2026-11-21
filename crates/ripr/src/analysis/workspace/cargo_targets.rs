@@ -425,6 +425,14 @@ impl ManifestInventory {
             // `required-features`): libtest does not collect the file.
             return CargoHarnessVerdict::NotDeclared;
         }
+        // Cargo may report the physical workspace when the caller used an
+        // aliased ancestor. Keep the configured suffix lexical: an undeclared
+        // alias *inside* the workspace is not an explicit Cargo target.
+        let physical_root_target = std::cell::LazyCell::new(|| {
+            let root = std::fs::canonicalize(workspace_root).ok()?;
+            let root = crate::analysis::plain_drive_verbatim_path(&root, cfg!(windows));
+            Some(lexical(&normalize(&root.join(registration_target))))
+        });
         let mut flags: Vec<bool> = Vec::new();
         for owner in &live {
             match self.manifest_at(&owner.manifest_dir) {
@@ -442,7 +450,10 @@ impl ManifestInventory {
                         // another entry owns.
                         let matched = match &target.name {
                             Some(name) => name == &owner.name,
-                            None => target.path == anchored,
+                            None => {
+                                target.path == anchored
+                                    || physical_root_target.as_ref() == Some(&target.path)
+                            }
                         };
                         if matched {
                             flags.push(target.harness);
@@ -2879,6 +2890,55 @@ harness=false
             "a relative root resolves the same workspace premise as an absolute one"
         );
         let _ = std::fs::remove_dir_all(&relative_root);
+        Ok(())
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn explicit_harness_preserves_the_registered_path_under_an_aliased_ancestor()
+    -> Result<(), String> {
+        let dir = unique_workspace("explicit-harness-ancestor");
+        let container = dir.join("actual");
+        let real = container.join("workspace");
+        let link = dir.join("link");
+        let manifest = "[package]\nname='fixture'\nversion='0.1.0'\nedition='2024'\n\
+            [workspace]\n\
+            [[test]]\nname='registered'\npath='src/registered.rs'\nharness=false\n\
+            [[test]]\nname='enabled'\npath='src/enabled.rs'\nharness=true\n";
+        write_member_package(&real, "", manifest)?;
+        for path in ["src/registered.rs", "src/enabled.rs", "src/undeclared.rs"] {
+            write_file(&real, path, "")?;
+        }
+        create_filesystem_alias(&container, &link).map_err(|error| error.to_string())?;
+        create_filesystem_alias(&real.join("src"), &real.join("alias"))
+            .map_err(|error| error.to_string())?;
+        let results = [real, link.join("workspace")].map(|root| {
+            let mut inventory = ManifestInventory::default();
+            [
+                "src/registered.rs",
+                "src/enabled.rs",
+                "src/undeclared.rs",
+                "alias/registered.rs",
+            ]
+            .map(|path| inventory.verdict(&root, Path::new(path)))
+        });
+        std::fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        for verdicts in results {
+            use CargoHarnessVerdict::{HarnessDisabled, HarnessEnabled, NotDeclared};
+            if !matches!(
+                verdicts,
+                [
+                    HarnessDisabled,
+                    HarnessEnabled,
+                    NotDeclared,
+                    HarnessEnabled | NotDeclared
+                ]
+            ) {
+                return Err(format!(
+                    "unexpected explicit-harness classifications: {verdicts:?}"
+                ));
+            }
+        }
         Ok(())
     }
 
