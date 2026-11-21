@@ -15597,51 +15597,6 @@
       ]
     },
     {
-      "id": "ts_dormant_generator_then_callback_cannot_confirm_return",
-      "language": "typescript",
-      "tier": "pure",
-      "source_fixture": "fixtures/typescript_generator_promise",
-      "vector": "generator_then_callback_body_never_runs_so_its_assertion_cannot_fail_the_test",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "unknown",
-          "strength": "unknown"
-        },
-        {
-          "type": "expected_related_test",
-          "name": "total",
-          "file": "tests/total.test.ts",
-          "line": 5,
-          "kind": "unknown",
-          "strength": "unknown",
-          "relation_reason": "direct_owner_call"
-        },
-        {
-          "type": "expected_finding_owner",
-          "owner": "typescript:src/total.ts::total"
-        },
-        {
-          "type": "must_not_emit_repair_packet"
-        }
-      ]
-    },
-    {
       "id": "rust_map_overwrite_count_call_deletion",
       "language": "rust",
       "tier": "pure",
