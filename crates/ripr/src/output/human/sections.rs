@@ -130,13 +130,24 @@ fn plain_delta(delta: &crate::domain::DeltaKind) -> &'static str {
 /// The digest label for the first missing entry: an observed advisory
 /// check, the analyzer naming what it could not bind, or a missing check.
 fn digest_missing_label(finding: &Finding, missing: &str) -> &'static str {
+    // #11481: the Rust adapter puts the named helper-path limitation in
+    // `missing` when it cannot establish a private helper's reach.
+    let infection_reach_limit = finding.class == ExposureClass::InfectionUnknown
+        && finding.ripr.reach.state == StageState::Weak
+        && finding
+            .stop_reasons
+            .contains(&crate::domain::StopReason::TransitiveReachUnresolved)
+        && finding
+            .static_limit_kind
+            .is_some_and(|limit| missing == limit.describe());
     if finding.class == ExposureClass::Exposed {
         "Check (observed, advisory)"
     } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
         || ((matches!(
             finding.class,
             ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) || untraced_reach_weak_finding(finding))
+        ) || infection_reach_limit
+            || untraced_reach_weak_finding(finding))
             && finding.activation.missing_discriminators.is_empty())
     {
         "Analyzer limit"

@@ -5970,6 +5970,74 @@ mod tests {
         assert!(digest.contains("  Missing check:"), "{digest}");
     }
 
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn infection_unknown_digest_labels_only_the_witnessed_helper_limit() -> Result<(), String> {
+        use crate::domain::{RelationReason, StaticLimitKind};
+
+        let cases = [
+            (
+                "module_reach_super_import_in_file_wrong_module",
+                "probe:src_lib.rs:predicate:41e056ec",
+                StageState::Weak,
+                Some(StaticLimitKind::RustTransitiveReachUnresolved),
+                "  Analyzer limit: A test may reach this change through an internal helper-call chain",
+            ),
+            (
+                "assertion_shaped_oracle_test_file",
+                "probe:src_fragment_checks.rs:predicate:41d9e03a",
+                StageState::Yes,
+                None,
+                "  Missing check",
+            ),
+            (
+                "manual_let_else_pairing",
+                "probe:src_impls.rs:return_value:cb506e85",
+                StageState::Weak,
+                None,
+                "  Missing check",
+            ),
+        ];
+        for (fixture, id, reach, limit, expected_line) in cases {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures")
+                .join(fixture);
+            let output = crate::check_workspace(crate::CheckInput {
+                root: path.join("input"),
+                diff_file: Some(path.join("diff.patch")),
+                mode: Mode::Fast,
+                include_unchanged_tests: true,
+                ..Default::default()
+            })?;
+            let finding = output
+                .findings
+                .iter()
+                .find(|f| f.id == id)
+                .ok_or_else(|| format!("{fixture} produced no {id}"))?;
+            assert_eq!(finding.class, ExposureClass::InfectionUnknown, "{fixture}");
+            assert_eq!(finding.ripr.reach.state, reach, "{fixture}");
+            assert_eq!(finding.static_limit_kind, limit, "{fixture}");
+            if reach == StageState::Yes {
+                assert!(
+                    finding.related_tests.iter().any(|test| {
+                        test.relation_reason == Some(RelationReason::DirectOwnerCall)
+                    }),
+                    "{fixture}"
+                );
+            }
+            let digest = super::sections::render_finding_digest_with_config(
+                finding,
+                &RiprConfig::default(),
+                &output.root,
+            );
+            assert!(
+                digest.lines().any(|line| line.starts_with(expected_line)),
+                "{fixture}: {digest}"
+            );
+        }
+        Ok(())
+    }
+
     // #9033: a `no_static_path` finding's Evidence block already says
     // `reach no`, `observation no` and `discriminator no`; the Weakness list
     // and the digest pointer must not restate them as more problems, but must

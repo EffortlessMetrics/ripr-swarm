@@ -1,0 +1,4 @@
+[[extend]]
+id = "RIPR-SPEC-0114"
+tests = ["crates/ripr/src/output/human.rs::tests::infection_unknown_digest_labels_only_the_witnessed_helper_limit"]
+code = ["crates/ripr/src/output/human/sections.rs"]
