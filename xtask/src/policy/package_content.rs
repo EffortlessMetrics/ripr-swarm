@@ -21,10 +21,13 @@
 //! `*_tests/` directory are test-only even when their own basenames are clean
 //! (a `#[cfg(test)] mod bool_oracle_tests;` ships its
 //! `bool_oracle_tests/*.rs` children past a basename-only rule), except
-//! children of an allowlisted production module's own directory
+//! children of a verified directory-owning production module's own directory
 //! (`related_tests/**`, `owners_tests/**` under their allowlisted
-//! `*_tests.rs` files), which are production submodules. Basename rules
-//! still fire inside those production directories.
+//! `*_tests.rs` files), which are production submodules. The waiver applies
+//! only when the triggering `*_tests` directory component is exactly that
+//! owned directory: a nested `*_tests/` or `tests/` descendant inside it is
+//! still flagged, and file-only allowlisted modules own no directory
+//! waiver. Basename rules still fire inside those production directories.
 //! `tests/**` is likewise scoped to the crate root and `src/**`: the
 //! `examples/*/tests/**` trees are shipped deliberately (see the `ripr`
 //! manifest) as the analyzable sample workspace, not as this crate's tests.
@@ -79,6 +82,17 @@ const PRODUCTION_ALLOWLIST: &[(&str, &str, &str)] = &[
         "src/analysis/test_grip_evidence/related_tests.rs",
         "unconditional module in test_grip_evidence.rs; find_related_tests_with_context is production test-grip evidence",
     ),
+];
+
+/// Verified directory-owning entries from [`PRODUCTION_ALLOWLIST`], as
+/// `(package, directory)`. Only these modules own a same-stem directory on
+/// disk whose clean-named children are production submodules; the other
+/// allowlisted modules are file-only and derive no directory waiver.
+const PRODUCTION_DIRECTORY_ALLOWLIST: &[(&str, &str)] = &[
+    ("ripr", "src/analysis/classify/related_tests"),
+    ("ripr", "src/analysis/language/python/owners_tests"),
+    ("ripr", "src/analysis/language/python/related_tests"),
+    ("ripr", "src/analysis/test_grip_evidence/related_tests"),
 ];
 
 pub(crate) fn check_package_content() -> Result<(), String> {
@@ -162,16 +176,26 @@ fn is_allowlisted_production(package: &str, path: &str) -> bool {
         .any(|(pkg, allowed, _reason)| *pkg == package && *allowed == path)
 }
 
-/// True when `path` lies inside the directory owned by an allowlisted
-/// production `*_tests.rs` module (`related_tests.rs` owns
-/// `related_tests/**`). Exact stem-plus-slash prefix, package-scoped: a
-/// sibling such as `related_tests_extra_tests/` does not match.
+/// True when `path` lies inside a verified directory-owning production
+/// module's directory and the triggering test-directory component is
+/// exactly that directory. Exact directory-plus-slash prefix,
+/// package-scoped: a sibling such as `related_tests_extra_tests/` does not
+/// match, a descendant `*_tests/` or `tests/` directory inside the owned
+/// directory is a new triggering component and is not waived, and
+/// file-only allowlisted modules own no directory waiver.
 fn is_under_allowlisted_production_dir(package: &str, path: &str) -> bool {
-    PRODUCTION_ALLOWLIST.iter().any(|(pkg, allowed, _reason)| {
-        *pkg == package
-            && allowed
-                .strip_suffix(".rs")
-                .is_some_and(|stem| path.starts_with(&format!("{stem}/")))
+    PRODUCTION_DIRECTORY_ALLOWLIST.iter().any(|(pkg, dir)| {
+        if *pkg != package {
+            return false;
+        }
+        let Some(rest) = path.strip_prefix(&format!("{dir}/")) else {
+            return false;
+        };
+        let components: Vec<&str> = rest.split('/').filter(|c| !c.is_empty()).collect();
+        let parents = &components[..components.len().saturating_sub(1)];
+        !parents
+            .iter()
+            .any(|c| *c == "tests" || c.ends_with("_tests"))
     })
 }
 
@@ -401,6 +425,59 @@ src/analysis/test_grip_evidence/related_tests/visibility.rs
                 "{path} must stay flagged by its basename rule"
             );
         }
+    }
+
+    #[test]
+    fn tests_dir_waiver_requires_exact_directory_owning_module() {
+        // The waiver applies only when the triggering `*_tests` directory
+        // component is exactly a verified directory-owning production
+        // directory. A nested test directory inside it, and any child of a
+        // file-only allowlisted module, must still flag.
+        for path in [
+            // Nested `*_tests` / `tests` descendants of an owned directory.
+            "src/analysis/classify/related_tests/evil_tests/clean.rs",
+            "src/analysis/classify/related_tests/tests/clean.rs",
+            "src/analysis/classify/related_tests/nested_tests/deep/clean.rs",
+            "src/analysis/language/python/related_tests/evil_tests/clean.rs",
+            "src/analysis/language/python/owners_tests/tests/clean.rs",
+            "src/analysis/test_grip_evidence/related_tests/nested_tests/deep/clean.rs",
+            // File-only allowlisted modules own no directory waiver.
+            "src/analysis/facts/macro_generated_tests/clean.rs",
+            "src/analysis/facts/parameterized_tests/clean.rs",
+            "src/analysis/language/python/doctest_tests/clean.rs",
+            "src/analysis/language/typescript/related_tests/clean.rs",
+            // Backslash spellings of the same probes.
+            "src\\analysis\\classify\\related_tests\\evil_tests\\clean.rs",
+            "src\\analysis\\facts\\macro_generated_tests\\clean.rs",
+            "src\\analysis\\language\\python\\doctest_tests\\clean.rs",
+        ] {
+            let violations = package_content_violations("ripr", path);
+            assert_eq!(violations.len(), 1, "{path} must flag: {violations:?}");
+        }
+        // Direct clean-named children (including clean subdirectories) of
+        // each verified directory-owning module remain unflagged.
+        for path in [
+            "src/analysis/classify/related_tests/clean.rs",
+            "src/analysis/language/python/owners_tests/clean.rs",
+            "src/analysis/language/python/related_tests/clean.rs",
+            "src/analysis/test_grip_evidence/related_tests/clean.rs",
+            "src/analysis/classify/related_tests/subdir/clean.rs",
+        ] {
+            assert_eq!(
+                package_content_violations("ripr", path),
+                Vec::<String>::new(),
+                "{path} must not flag"
+            );
+        }
+        // Directory waiver stays package-scoped.
+        assert_eq!(
+            package_content_violations(
+                "ripr-contract",
+                "src/analysis/classify/related_tests/clean.rs\n"
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]
