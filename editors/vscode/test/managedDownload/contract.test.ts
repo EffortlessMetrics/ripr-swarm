@@ -84,8 +84,7 @@ test('retains failed host execution separately from success and unstarted cases'
 });
 
 test('hosted IPC length is measured in bytes at the Linux pathname boundary', { skip: process.platform !== 'linux' }, () => {
-  // The hosted checkout prefix that failed, joined so no machine path is committed.
-  const root = ['', 'home', 'runner', 'work', 'ripr-swarm', 'ripr-swarm', 'target/ripr/managed-download/run-X0p2x0'].join('/');
+  const root = '/home/runner/work/ripr-swarm/ripr-swarm/target/ripr/managed-download/run-X0p2x0';
   checkHostSocketPath(root + '/valid/user');
   for (const kind of ['manifest_tampered', 'archive_tampered']) {
     assert.throws(() => checkHostSocketPath(root + '/' + kind + '/user'), /exceeds 107 bytes/);
