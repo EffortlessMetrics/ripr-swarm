@@ -509,6 +509,13 @@ impl Summary {
 
     fn start_here_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Commands and paths the packet wrote with the runner's checkout
+        // path: shown from the repository root, as the front panel and first
+        // action are, so they paste into the reader's checkout (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let state = field(&["selected.state"], "unknown");
         let gap = field(
@@ -559,8 +566,8 @@ impl Summary {
             &["selected.static_evidence_boundary"],
             "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
         );
-        let target = field(&["selected.repair.target_file"], "not_available");
-        let related = field(&["selected.repair.related_test"], "not_available");
+        let target = local(&["selected.repair.target_file"], "not_available");
+        let related = local(&["selected.repair.related_test"], "not_available");
         let limit = inline(&doc.text(
             |value| {
                 let kind = jq::at(value, "selected.static_limit_kind")?;
@@ -577,12 +584,12 @@ impl Summary {
             },
             "unknown",
         ));
-        let verify = field(&["selected.verify_command"], "not_available");
-        let receipt = field(&["selected.receipt_command"], "not_available");
-        let receipt_path = field(&["selected.receipt_path"], "not_available");
+        let verify = local(&["selected.verify_command"], "not_available");
+        let receipt = local(&["selected.receipt_command"], "not_available");
+        let receipt_path = local(&["selected.receipt_path"], "not_available");
         let receipt_state = field(&["selected.receipt_state"], "receipt_missing");
         let repair_command = doc.optional(&["selected.repair_command"]);
-        let next = field(
+        let next = local(
             &[
                 "selected.repair_command",
                 "selected.next_command",
@@ -593,7 +600,7 @@ impl Summary {
         let warnings = inline(&doc.length("warnings"));
         let labels = ProofLabels::new(!repair_command.is_empty());
         if !repair_command.is_empty() {
-            self.repair_start("Start repair", &inline(&repair_command));
+            self.repair_start("Start repair", &inline(&relative.value(&repair_command)));
         }
         self.status_row(&status, &format!("- Status: `{status}`"));
         self.status_row(&state, &format!("- Selected state: `{state}`"));
@@ -638,6 +645,11 @@ impl Summary {
 
     fn first_action_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Its commands are shown from the repository root too (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
@@ -703,10 +715,10 @@ impl Summary {
             },
             "unknown",
         ));
-        let repair = field(&["commands.repair"], "not_available");
-        let packet = field(&["commands.context_packet"], "not_available");
-        let verify = field(&["commands.verify"], "not_available");
-        let receipt = field(&["commands.receipt"], "not_available");
+        let repair = local(&["commands.repair"], "not_available");
+        let packet = local(&["commands.context_packet"], "not_available");
+        let verify = local(&["commands.verify"], "not_available");
+        let receipt = local(&["commands.receipt"], "not_available");
         let fallback = field(&["fallback.summary", "fallback.kind"], "none");
         let warnings = inline(&doc.length("warnings"));
         let led = repair != "not_available" && repair != "unknown";

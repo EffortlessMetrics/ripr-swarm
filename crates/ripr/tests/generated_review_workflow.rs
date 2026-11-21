@@ -5586,6 +5586,65 @@ fn the_pull_request_comment_states_a_blocking_gate() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+/// #15858: the start-here commands and paths a packet wrote with the
+/// checkout path are shown from the repository root in the real
+/// `reports ci-summary`, so they paste into the reader's own checkout. A
+/// value that does not name the checkout is left as written.
+#[cfg(unix)]
+#[test]
+fn start_here_commands_in_the_summary_are_shown_from_the_repository_root()
+-> Result<(), Box<dyn Error>> {
+    let root = replay::unique_temp_dir("start-here-root")?;
+    let checkout = fs::canonicalize(&root)?;
+    let abs = checkout.to_str().ok_or("checkout path is not UTF-8")?;
+    fs::create_dir_all(root.join("target/ripr/reports"))?;
+    let packet = serde_json::json!({
+        "status": "advisory",
+        "selected": {
+            "state": "repair_ready",
+            "repair_command": format!("ripr agent repair --root {abs} --seam-id abc --phase before"),
+            "verify_command": format!("cargo test --manifest-path {abs}/Cargo.toml discount"),
+            "receipt_path": format!("{abs}/target/ripr/receipts/abc.json"),
+            "repair": { "target_file": "src/lib.rs", "related_test": "tests/pricing.rs" },
+        },
+        "warnings": [],
+    });
+    fs::write(
+        root.join("target/ripr/reports/start-here.json"),
+        serde_json::to_vec(&packet)?,
+    )?;
+    let output = replay::ripr_with_env(
+        &root,
+        &["reports", "ci-summary", "--root", "."],
+        &["GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "RIPR_GATE_MODE"],
+        &[],
+    )?;
+    let summary = String::from_utf8(output.stdout)?;
+    if !output.status.success() {
+        return Err(format!(
+            "ci-summary failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let _ = fs::remove_dir_all(&root);
+    assert!(!summary.contains(abs), "{summary}");
+    for line in [
+        "- Start repair: `ripr agent repair --root . --seam-id abc --phase before`\n",
+        "- Receipt path: `./target/ripr/receipts/abc.json`\n",
+        "- Safe next action command: `ripr agent repair --root . --seam-id abc --phase before`\n",
+        "- Repair target: `src/lib.rs`\n",
+        "- Related test: `tests/pricing.rs`\n",
+    ] {
+        assert!(summary.contains(line), "{line}\n{summary}");
+    }
+    assert!(
+        summary.contains("cargo test --manifest-path ./Cargo.toml discount`"),
+        "{summary}"
+    );
+    Ok(())
+}
+
 /// #14148: the real `reports ci-summary` reads the run's event from the
 /// environment, and a manual run says it has no pull request where a
 /// `pull_request` run of the same tree does not.
