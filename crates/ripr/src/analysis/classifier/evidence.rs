@@ -2218,6 +2218,7 @@ impl ClassifiedProbeEvidence {
                         literal_length_boundary: input.literal_length_boundary.as_ref(),
                         slice_counter_boundary: input.slice_counter_boundary.as_ref(),
                         unary_tail: None,
+                        literal_condition: None,
                     },
                     owner_has_other_callers,
                     assertion_macros_rebound,
