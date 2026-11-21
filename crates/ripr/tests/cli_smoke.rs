@@ -2841,6 +2841,54 @@ fn config_validate_hints_follow_the_parser_reason_not_source_text() -> Result<()
 }
 
 #[test]
+fn config_validate_rejects_an_override_for_an_excluded_package()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_external_workspace("config-override-exclude")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    for (dir, name) in [("one", "alpha"), ("two", "beta")] {
+        let package = root.join("members").join(dir);
+        std::fs::create_dir_all(package.join("src"))?;
+        std::fs::write(package.join("src/lib.rs"), "")?;
+        std::fs::write(
+            package.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )?;
+    }
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[[overrides]]\ncrate = \"beta\"\nseverity.findings.weakly_exposed = \"note\"\n",
+    )?;
+    let manifest = root.join("Cargo.toml");
+    let members = "[workspace]\nresolver = \"3\"\nmembers = [\"members/*\"]\n";
+    let validate = || {
+        run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["config", "validate"],
+        )
+    };
+
+    std::fs::write(&manifest, members)?;
+    let included = validate()?;
+    assert_success(&included);
+    let stdout = String::from_utf8(included.stdout)?;
+    assert!(stdout.contains("ripr.toml valid"), "{stdout}");
+    assert!(included.stderr.is_empty(), "{:?}", included.stderr);
+
+    std::fs::write(manifest, format!("{members}exclude = [\"members/two\"]\n"))?;
+    let excluded = validate()?;
+    assert_eq!(excluded.status.code(), Some(2), "{excluded:?}");
+    assert!(excluded.stdout.is_empty(), "{excluded:?}");
+    let stderr = String::from_utf8(excluded.stderr)?;
+    assert!(
+        stderr.contains("[[overrides]] crate = \"beta\" does not match a Cargo package"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("(known: alpha)"), "{stderr}");
+    Ok(())
+}
+
+#[test]
 fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = unique_external_workspace("config-validate-parent")?;

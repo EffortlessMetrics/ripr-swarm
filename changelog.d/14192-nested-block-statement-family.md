@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed statement inside a closure or `async` block that a Rust function returns (`with(|| { .. })`, `Box::pin(async move { .. })`) no longer reads as the function's `return_value` or `error_path`. It now gets the same findings as the same statement in a plain function body, so async code no longer reports each such line two or three times with an actionable class. The block's own tail expression and method-chain links still read as the returned value (#14192).

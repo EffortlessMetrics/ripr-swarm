@@ -2341,6 +2341,8 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_ineligible_seam_refuses_without_attempt_or_lock",
   "crates/ripr/tests/task_first_facade.rs::repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock",
   "crates/ripr/tests/task_first_facade.rs::repair_accepts_the_producer_gap_id_check_prints",
+  "crates/ripr/tests/task_first_facade.rs::static_unknown_range_id_routes_to_inspection",
+  "crates/ripr/tests/task_first_facade.rs::startable_predicate_routes_to_the_printed_repair",
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_names_only_the_seam_it_was_minted_from",
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::producer_gap_id_rejects_other_languages_and_hash_ids",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_prints_repair_identity_that_starts_the_same_seam",
@@ -7010,6 +7012,7 @@ tests = [
   "xtask::tests::ripr_swarm_attempt_dry_run_renders_bounded_packet_context",
   "xtask::tests::ripr_swarm_attempt_dry_run_reports_blocked_packet_context",
   "xtask::tests::ripr_swarm_attempt_ledger_preserves_prior_attempts_and_highlights_latest",
+  "xtask/tests/swarm_attempt_retention.rs::retains_registered_receipts_across_replay_and_refuses_incomplete_history",
   "xtask::tests::ripr_swarm_attempt_ledger_imports_real_repair_attempts",
   "xtask::tests::ripr_swarm_attempt_ledger_real_corpus_supersedes_unchanged_attempts",
   "xtask::tests::ripr_swarm_repair_route_quality_samples_attempts_and_classifies_failures",
@@ -9952,6 +9955,9 @@ tests = [
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::projected_effect_payload_requires_fresh_state_and_a_preserving_map",
   "crates/ripr/tests/owner_pin_execution.rs::awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results",
   "crates/ripr/tests/owner_pin_execution.rs::exact_error_kind_projection_keeps_its_own_result_identity",
+  "xtask/src/evidence_promotion/pre_label.rs::tests::pre_label_requires_exact_ordered_published_parents",
+  "xtask/src/evidence_promotion/pre_label.rs::tests::published_composition_checks_all_reports_and_reasoned_pins",
+  "xtask/src/evidence_promotion/pre_label.rs::tests::batch_binds_each_record_even_for_repeated_oids_and_embedded_newlines",
   "crates/ripr/src/analysis/classifier.rs::tests::given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided",
   "crates/ripr/tests/operand_whitespace.rs::primitive_type_aliases_do_not_hide_observed_operator_effects",
   "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
@@ -10153,6 +10159,7 @@ fixtures = [
   "fixtures/atomic_ordering_swap_strong_object_oracle",
 ]
 code = [
+  "xtask/src/evidence_promotion/pre_label.rs::check",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
@@ -21808,7 +21815,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrophe",
   "crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope",
   "crates/ripr/src/cli/commands/context.rs::tests::terminal_stdout_note_frames_json_only_for_an_interactive_stdout",
-  "crates/ripr/src/mcp/gaps.rs::tests::one_finding_renders_one_location_string_on_every_surface_under_default_config",
+  "crates/ripr/src/mcp/gaps.rs::tests::finding_location_keeps_each_surface_spelling_under_default_config",
 ]
 fixtures = []
 code = [

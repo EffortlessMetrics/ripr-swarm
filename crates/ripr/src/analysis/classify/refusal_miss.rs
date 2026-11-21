@@ -3,39 +3,105 @@
 use super::owner_pin::{AssertionRefusal, OwnerPinSyntax};
 use crate::analysis::classify::{ProbeContext, direct_call_name};
 use crate::analysis::facts::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{RelatedTest, RelatedTestMiss};
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::cell::{OnceCell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+type TestKey = (PathBuf, String, usize);
+
+/// Per-probe memo of refusal, cfg-gate and module-gate answers. It lives in
+/// one `ProbeContext`, so answers are reused across that probe's assertions
+/// and related tests, never across probes or owners.
+#[derive(Default)]
+pub(in crate::analysis) struct RefusalMemo {
+    local_refusals: RefCell<BTreeMap<TestKey, Option<Vec<Option<AssertionRefusal>>>>>,
+    test_cfg_gates: RefCell<BTreeMap<TestKey, Option<BTreeSet<String>>>>,
+    owner_cfg_gates: OnceCell<Option<BTreeSet<String>>>,
+    module_gates: RefCell<BTreeMap<(PathBuf, usize, String), Option<bool>>>,
+}
 
 pub(in crate::analysis) fn assertion_refusal_counts_as_analyzer_limit(
     context: &ProbeContext<'_>,
     test: &TestSummary,
     refusal: &AssertionRefusal,
 ) -> bool {
+    assertion_refusal_counts_as_analyzer_limit_with_local(
+        context,
+        test,
+        refusal,
+        &context.refusal_memo,
+    )
+}
+
+fn assertion_refusal_counts_as_analyzer_limit_with_local(
+    context: &ProbeContext<'_>,
+    test: &TestSummary,
+    refusal: &AssertionRefusal,
+    local: &RefusalMemo,
+) -> bool {
     let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
     (refusal.is_analyzer_limit()
-        || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test))
+        || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test, local))
         || context.owner_fn.is_some_and(|owner| {
-            owner_compiled_only_under_refused_declaration(context.index, owner, test, refusal)
+            owner_compiled_only_under_refused_declaration_with_local(
+                context.index,
+                owner,
+                test,
+                refusal,
+                local,
+            )
         }))
         && refusal
             .value_guard_subject()
             .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
 }
 
-pub(super) fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -> bool {
+fn cfg_gates(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    local: &RefusalMemo,
+) -> (Option<BTreeSet<String>>, Option<BTreeSet<String>>) {
+    let test_gates = local
+        .test_cfg_gates
+        .borrow_mut()
+        .entry((test.file.clone(), test.name.clone(), test.start_line))
+        .or_insert_with(|| {
+            let facts = index.files().get(&test.file)?;
+            crate::analysis::syntax::unestablished_cfg_gates_of_fn(
+                &facts.source,
+                &test.name,
+                test.start_line,
+            )
+        })
+        .clone();
+    let owner_gates = local
+        .owner_cfg_gates
+        .get_or_init(|| {
+            let facts = index.files().get(&owner.file)?;
+            crate::analysis::syntax::unestablished_cfg_gates_of_fn(
+                &facts.source,
+                &owner.name,
+                owner.start_line,
+            )
+        })
+        .clone();
+    (test_gates, owner_gates)
+}
+
+pub(super) fn test_shares_owner_cfg_gates(
+    context: &ProbeContext<'_>,
+    test: &TestSummary,
+    local: &RefusalMemo,
+) -> bool {
     let Some(owner) = context.owner_fn else {
         return false;
     };
-    let gates = |file: &Path, name: &str, line: usize| {
-        let facts = context.index.files().get(file)?;
-        crate::analysis::syntax::unestablished_cfg_gates_of_fn(&facts.source, name, line)
-    };
-    let (Some(test_gates), Some(owner_gates)) = (
-        gates(&test.file, &test.name, test.start_line),
-        gates(&owner.file, &owner.name, owner.start_line),
-    ) else {
+    let (Some(test_gates), Some(owner_gates)) = cfg_gates(context.index, owner, test, local) else {
         return false;
     };
     !test_gates.is_empty() && test_gates.is_subset(&owner_gates)
@@ -69,6 +135,22 @@ pub(in crate::analysis) fn owner_compiled_only_under_refused_declaration(
     test: &TestSummary,
     refusal: &AssertionRefusal,
 ) -> bool {
+    owner_compiled_only_under_refused_declaration_with_local(
+        index,
+        owner,
+        test,
+        refusal,
+        &RefusalMemo::default(),
+    )
+}
+
+fn owner_compiled_only_under_refused_declaration_with_local(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    refusal: &AssertionRefusal,
+    local: &RefusalMemo,
+) -> bool {
     let Some((parent, line, declaration)) = refusal.module_declaration_site() else {
         return false;
     };
@@ -94,19 +176,7 @@ pub(in crate::analysis) fn owner_compiled_only_under_refused_declaration(
     {
         return false;
     }
-    let gate_of = |edge: &SourceRoleProvenanceEdge| {
-        (edge.kind == SourceRoleProvenanceEdgeKind::Module)
-            .then(|| index.files().get(&edge.parent))
-            .flatten()
-            .filter(|facts| !facts.used_lexical_fallback)
-            .and_then(|facts| {
-                crate::analysis::syntax::module_declaration_unestablished_gate(
-                    &facts.source,
-                    edge.line,
-                    &edge.declaration,
-                )
-            })
-    };
+    let gate_of = |edge: &SourceRoleProvenanceEdge| module_edge_gate(index, local, edge);
     let chain_admitted = test_context.edges.iter().all(|edge| match gate_of(edge) {
         // Shared with the owner: any unevaluated gate binds both.
         Some(_) if owner_edges.contains(&edge_key(edge)) => true,
@@ -120,22 +190,20 @@ pub(in crate::analysis) fn owner_compiled_only_under_refused_declaration(
         .find(|edge| edge_key(edge) == (parent, line, declaration))
         .and_then(gate_of)
         == Some(true);
-    let in_file_gates = |file: &Path, name: &str, line: usize| {
-        let facts = index.files().get(file)?;
-        crate::analysis::syntax::unestablished_cfg_gates_of_fn(&facts.source, name, line)
-    };
-    let in_file_shared = match (
-        in_file_gates(&test.file, &test.name, test.start_line),
-        in_file_gates(&owner.file, &owner.name, owner.start_line),
-    ) {
+    let in_file_shared = match cfg_gates(index, owner, test, local) {
         (Some(test_gates), Some(owner_gates)) => test_gates.is_subset(&owner_gates),
         _ => false,
     };
     // The shared declaration explains only the provenance refusal: every
     // assertion's own in-file reading must be admitted, an analyzer limit, or
     // the enclosing gate the subset check above shares with the owner.
-    let test_local_admitted =
-        AssertionRefusal::test_local_refusals(test, index).is_some_and(|refusals| {
+    let test_local_admitted = local
+        .local_refusals
+        .borrow_mut()
+        .entry((test.file.clone(), test.name.clone(), test.start_line))
+        .or_insert_with(|| AssertionRefusal::test_local_refusals(test, index))
+        .as_ref()
+        .is_some_and(|refusals| {
             !refusals.is_empty()
                 && refusals.iter().all(|refusal| {
                     refusal.as_ref().is_none_or(|refusal| {
@@ -146,17 +214,50 @@ pub(in crate::analysis) fn owner_compiled_only_under_refused_declaration(
     refused_is_unknown_gate && chain_admitted && in_file_shared && test_local_admitted
 }
 
+/// The memoized unestablished-gate reading of a module edge's declaration.
+/// The memo key is the full edge identity: two `mod` declarations on one line
+/// are distinct declarations with distinct gates.
+fn module_edge_gate(
+    index: &RustIndex,
+    local: &RefusalMemo,
+    edge: &SourceRoleProvenanceEdge,
+) -> Option<bool> {
+    if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+        return None;
+    }
+    let key = (edge.parent.clone(), edge.line, edge.declaration.clone());
+    local
+        .module_gates
+        .borrow_mut()
+        .entry(key)
+        .or_insert_with(|| {
+            index
+                .files()
+                .get(&edge.parent)
+                .filter(|facts| !facts.used_lexical_fallback)
+                .and_then(|facts| {
+                    crate::analysis::syntax::module_declaration_unestablished_gate(
+                        &facts.source,
+                        edge.line,
+                        &edge.declaration,
+                    )
+                })
+        })
+        .to_owned()
+}
+
 /// A module edge's identity: declaring file, line and declaration text.
 fn edge_key(edge: &SourceRoleProvenanceEdge) -> (&Path, usize, &str) {
     (edge.parent.as_path(), edge.line, edge.declaration.as_str())
 }
 
-pub(in crate::analysis) fn related_test_miss_for_assertion_refusal(
+fn related_test_miss_for_assertion_refusal_with_local(
     context: &ProbeContext<'_>,
     test: &TestSummary,
     refusal: &AssertionRefusal,
+    local: &RefusalMemo,
 ) -> RelatedTestMiss {
-    if assertion_refusal_counts_as_analyzer_limit(context, test, refusal) {
+    if assertion_refusal_counts_as_analyzer_limit_with_local(context, test, refusal, local) {
         RelatedTestMiss::AssertionAdmissionUnproven
     } else {
         RelatedTestMiss::AssertionInert
@@ -180,6 +281,7 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
     pin_syntax: &OwnerPinSyntax,
     related_tests: &mut [RelatedTest],
 ) {
+    let started = Instant::now();
     for row in related_tests.iter_mut() {
         if row.miss != Some(RelatedTestMiss::AssertionNotCredited) {
             continue;
@@ -206,11 +308,21 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
             ) else {
                 continue;
             };
-            let miss = related_test_miss_for_assertion_refusal(context, test, &refusal);
+            let miss = related_test_miss_for_assertion_refusal_with_local(
+                context,
+                test,
+                &refusal,
+                &context.refusal_memo,
+            );
             split = Some(combine_refusal_misses(split, miss));
         }
         row.miss = Some(split.unwrap_or(RelatedTestMiss::AssertionAdmissionUnproven));
     }
+    trace_latency_phase(
+        "classify_assertion_not_credited_misses",
+        "ok",
+        started.elapsed(),
+    );
 }
 
 /// #9981 forwarding residual: a row read as `no_assertion` whose test calls a
@@ -448,5 +560,50 @@ mod returned_type_tests {
         ] {
             assert!(!property(body), "{body}");
         }
+    }
+}
+
+#[cfg(test)]
+mod module_gate_memo_tests {
+    use super::{RefusalMemo, module_edge_gate};
+    use crate::analysis::facts::{
+        FileFacts, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind,
+    };
+    use crate::analysis::rust_index::RustIndex;
+    use std::path::PathBuf;
+
+    fn edge(declaration: &str) -> SourceRoleProvenanceEdge {
+        SourceRoleProvenanceEdge {
+            kind: SourceRoleProvenanceEdgeKind::Module,
+            parent: PathBuf::from("lib.rs"),
+            child: PathBuf::from("child.rs"),
+            declaration: declaration.to_string(),
+            line: 1,
+            requires_test: false,
+        }
+    }
+
+    #[test]
+    fn same_line_sibling_modules_do_not_share_a_memoized_gate() {
+        let source = "#[cfg(feature = \"v4\")] mod v4; mod helpers;\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("lib.rs"),
+            FileFacts {
+                path: PathBuf::from("lib.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        let memo = RefusalMemo::default();
+        // Gated sibling first, so a line-only key would poison the second.
+        assert_eq!(
+            module_edge_gate(&index, &memo, &edge("mod v4;")),
+            Some(true)
+        );
+        assert_eq!(
+            module_edge_gate(&index, &memo, &edge("mod helpers;")),
+            Some(false)
+        );
     }
 }

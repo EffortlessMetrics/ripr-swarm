@@ -126,6 +126,17 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr agent status --json`, the inventory document. The one-attempt
+        // document (`--attempt <id>`) has its own constant and is not
+        // published here.
+        "agent-status",
+        &[producer(
+            "crates/ripr/src/app/agent_status.rs",
+            "pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // `ripr cache status --json`. This versions the status report, not
         // the on-disk cache layers.
         "cache-status",
@@ -466,7 +477,7 @@ const CONTRACTS: &[VerificationContract] = &[
     },
     // `baseline_match_kind` is emitted only when a baseline match succeeded
     // through the legacy path/line/static_class fallback selector (issue
-    // #1934, RIPR-SPEC-0014 § Baseline Comparison), so the hand-written
+    // #1934, RIPR-SPEC-0014 Â§ Baseline Comparison), so the hand-written
     // fixture above never carries it. This golden does, and it carries a
     // canonical-match decision beside it, so one subject binds both that the
     // schema admits the field and that it does not require it.
@@ -548,7 +559,7 @@ const CONTRACTS: &[VerificationContract] = &[
     // The analysis_timeout refusal of `ripr check` renders at refusal
     // generation 0.3 with `input_context` (RIPR-SPEC-0241 amendment
     // #10796). Before this row the product emitted 0.3 documents no
-    // published schema admitted while the gate stayed green — the exact
+    // published schema admitted while the gate stayed green â€” the exact
     // #3883/#3912 shape. The emission bytes are pinned by
     // `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
     // and the forced-deadline e2e in `cli_smoke.rs`; this row pins the
@@ -621,6 +632,17 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["check_artifact_unusable", "run_limitations"],
     },
+    // `ripr agent status --json`. The fixture is a capture of a finished
+    // repair loop with the host's absolute root replaced by `.`; the
+    // producer-byte authority is `agent_status_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-status.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-status.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["repair_attempts", "missing_commands"],
+    },
     // `ripr cache export` success stdout. The fixture is a capture with the
     // host's absolute export directory replaced by a portable path; the
     // producer-byte authority is `cache_export_json_schema.rs`.
@@ -633,7 +655,7 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_markers: &["classified_entries", "logical_file_bytes"],
     },
     // `ripr cache status --json`. The fixture is hand-written with a portable
-    // path: the real document carries the host's absolute cache directory.
+    // path. The real document carries a host-specific cache path.
     // The producer-byte authority is `cache_clear_safety.rs`.
     VerificationContract {
         schema_path: "schemas/ripr/cache-status.schema.json",
@@ -1023,7 +1045,7 @@ pub(crate) fn check_verification_contracts_with_hooks(
         };
         let Some(sv_prop) = props.get("schema_version") else {
             violations.push(format!(
-                "{rel_str} is missing `schema_version` property — every ripr output schema must declare a version (#1720)"
+                "{rel_str} is missing `schema_version` property â€” every ripr output schema must declare a version (#1720)"
             ));
             continue;
         };
@@ -1362,7 +1384,7 @@ fn schema_documentation_violations(
         }
         if !lists_schema_in_a_table_row(audit, schema_path) {
             violations.push(format!(
-                "{SCHEMA_PRODUCER_AUDIT} has no audit-table row for `{schema_path}` — every published schema must name its producer and canonical subject, or carry an explicit exemption"
+                "{SCHEMA_PRODUCER_AUDIT} has no audit-table row for `{schema_path}` â€” every published schema must name its producer and canonical subject, or carry an explicit exemption"
             ));
         }
     }
@@ -1373,7 +1395,7 @@ fn schema_documentation_violations(
 /// row, which is how both verification documents list a schema.
 ///
 /// Searching the whole document instead would accept a passing mention
-/// anywhere in it — a sentence, a note, a code block — while the violation
+/// anywhere in it â€” a sentence, a note, a code block â€” while the violation
 /// that silences claims a row exists. That is the same overstated contract
 /// this gate exists to close, one level down.
 ///
@@ -1529,7 +1551,7 @@ fn supported_numeric_bounds(
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
             }),
-            "allOf" | "anyOf" | "oneOf" => value.as_array().is_none_or(|entries| {
+            "allOf" | "anyOf" | "oneOf" | "prefixItems" => value.as_array().is_none_or(|entries| {
                 entries.iter().all(|entry| {
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
@@ -1742,7 +1764,7 @@ fn validate_value_against_schema_impl(
 ) {
     // `$ref` does not suppress its siblings. A schema may write
     // `{"$ref": "...", "minItems": 1}`, and returning here would silently drop
-    // every sibling keyword — an empty array passed `minItems: 1` because this
+    // every sibling keyword â€” an empty array passed `minItems: 1` because this
     // path never reached the array checks. Validate the referenced schema, then
     // fall through so the sibling keywords on this schema object are evaluated
     // too.
@@ -1869,7 +1891,7 @@ fn validate_value_against_schema_impl(
     }
 
     // `if`/`then`/`else` carry the conditional field requirements that make a
-    // state vocabulary closed — a validator that skipped them would accept a
+    // state vocabulary closed â€” a validator that skipped them would accept a
     // state paired with evidence the schema forbids.
     if budget.exhausted {
         return;
@@ -2007,7 +2029,7 @@ fn validate_object(
     // `required` is independent of `properties`. A conditional `then` branch is
     // routinely written as `{"required": ["duplicate_of"]}` with no
     // `properties` at all, and returning early on a missing `properties` made
-    // every such branch unenforceable — the malformed value was accepted with
+    // every such branch unenforceable â€” the malformed value was accepted with
     // zero violations.
     if let Some(required) = schema.get("required").and_then(ExactValue::as_array) {
         for entry in required {
@@ -2128,10 +2150,37 @@ fn validate_array(
         }
     }
 
+    // Draft 2020-12: `prefixItems` binds a schema to each leading position,
+    // and `items` then applies only to the positions after the prefix. A
+    // `prefixItems` that is not an array is reported, never skipped.
+    let prefix = match schema.get("prefixItems") {
+        None => &[][..],
+        Some(prefix) => match prefix.as_array() {
+            Some(prefix) => prefix.as_slice(),
+            None => {
+                violations.push(format!("{location}: unsupported prefixItems value"));
+                return;
+            }
+        },
+    };
+    for (index, (item, item_schema)) in items.iter().zip(prefix).enumerate() {
+        if !charge_validation_work(budget, 1 + location.len() / 1024) {
+            return;
+        }
+        validate_value_against_schema_inner(
+            item,
+            item_schema,
+            root_schema,
+            format!("{location}[{index}]"),
+            violations,
+            budget,
+        );
+    }
+
     let Some(items_schema) = schema.get("items") else {
         return;
     };
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in items.iter().enumerate().skip(prefix.len()) {
         if !charge_validation_work(budget, 1 + location.len() / 1024) {
             return;
         }
@@ -2176,7 +2225,7 @@ fn validate_string(
             "{location}: string longer than maxLength {max_length}"
         ));
     }
-    // `pattern` carries the identity commitments — commit SHAs, `sha256:`
+    // `pattern` carries the identity commitments â€” commit SHAs, `sha256:`
     // digests, relative working directories. Compilation is fail-closed, so an
     // uninterpretable pattern is reported rather than assumed satisfied.
     if let Some(pattern) = schema.get("pattern").and_then(ExactValue::as_str) {
@@ -2347,7 +2396,7 @@ pub(crate) fn validate_value_against_schema(
 /// positive contract subject. Shared by the subject selector and its test so
 /// the test asserts the retained selection rule rather than restating it.
 /// Fail closed on type drift. Matching `as_bool == Some(true)` would let
-/// `"invalid": "true"` or `"invalid": 1` fall through as a positive subject —
+/// `"invalid": "true"` or `"invalid": 1` fall through as a positive subject â€”
 /// the advertised negative would silently re-enter the passing count, which is
 /// the defect this predicate exists to prevent. Any present `invalid` that is
 /// not literally `false` is treated as a negative; `assurance_corpus_marks_invalid_with_a_boolean`
@@ -2450,7 +2499,7 @@ mod tests {
         working.remove("changed_lines");
         working.insert(
             "changed_line_ranges".to_string(),
-            serde_json::json!([{"file":"雪.rs","ranges":[[1,2],[2,2],[0,0]]}]),
+            serde_json::json!([{"file":"é›ª.rs","ranges":[[1,2],[2,2],[0,0]]}]),
         );
         for value in [&full, &profile] {
             let mut errors = Vec::new();
@@ -2593,12 +2642,12 @@ mod tests {
         for (schema, document, expected) in [
             (
                 r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
-                r#"{"E0001":"雪雪"}"#,
+                r#"{"E0001":"é›ªé›ª"}"#,
                 None,
             ),
             (
                 r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
-                r#"{"E0001":"雪"}"#,
+                r#"{"E0001":"é›ª"}"#,
                 Some("$.E0001: string shorter than minLength 2"),
             ),
             (
@@ -3838,7 +3887,7 @@ mod tests {
     ///
     /// `error_review_comments_packet` (`xtask/src/reports/review_comments.rs`)
     /// emits `status: "error"` and deliberately retains the producer's
-    /// `analysis_outcome` — `error_packet_retains_check_output_analysis_outcome`
+    /// `analysis_outcome` â€” `error_packet_retains_check_output_analysis_outcome`
     /// pins that on purpose, so a failed run can still say what the analysis
     /// found. Both branches keyed on `analysis_complete` pinned `status` to a
     /// single `const`, so an error packet was rejected whichever outcome it
@@ -3915,7 +3964,7 @@ mod tests {
         // The incomplete case is asserted only at the level this change owns:
         // the `status` branch must stop rejecting it. It is deliberately not
         // asserted fully valid, because a separate divergence still rejects it
-        // — `check.schema.json` allows any non-empty `claim_boundary` while this
+        // â€” `check.schema.json` allows any non-empty `claim_boundary` while this
         // schema pins it to one `const`, so a real incomplete outcome never
         // projects cleanly. That is tracked on its own and is not silently
         // absorbed here.
@@ -3992,9 +4041,69 @@ mod tests {
         );
     }
 
+    /// `prefixItems` binds each leading position to its own schema, and
+    /// `items` then covers only the positions after the prefix (draft
+    /// 2020-12). Before this was evaluated, a positional contract such as the
+    /// agent status artifact order was silently unchecked.
+    #[test]
+    fn prefix_items_bind_positions_and_items_covers_the_rest() {
+        let schema = serde_json::json!({
+            "type": "array",
+            "prefixItems": [{ "const": "first" }, { "const": "second" }],
+            "items": { "type": "integer" }
+        });
+        let violations_for = |value: serde_json::Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "list".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert_eq!(
+            violations_for(serde_json::json!(["first", "second", 3])),
+            Vec::<String>::new()
+        );
+        let swapped = violations_for(serde_json::json!(["second", "first"]));
+        assert!(
+            swapped
+                .iter()
+                .any(|violation| violation.starts_with("list[0]"))
+                && swapped
+                    .iter()
+                    .any(|violation| violation.starts_with("list[1]")),
+            "swapped positions must be rejected: {swapped:#?}"
+        );
+        let trailing = violations_for(serde_json::json!(["first", "second", "third"]));
+        assert!(
+            trailing
+                .iter()
+                .any(|violation| violation.starts_with("list[2]")),
+            "items must apply after the prefix: {trailing:#?}"
+        );
+        let malformed = serde_json::json!({ "prefixItems": { "const": 1 } });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &serde_json::json!([1]),
+            &malformed,
+            &malformed,
+            "list".to_string(),
+            &mut violations,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unsupported prefixItems")),
+            "a non-array prefixItems must be reported: {violations:#?}"
+        );
+    }
+
     /// `$ref` does not suppress its siblings. The validator used to return
     /// immediately after resolving a reference, so a schema written as
-    /// `{"$ref": ..., "minItems": 1}` silently accepted an empty array — the
+    /// `{"$ref": ..., "minItems": 1}` silently accepted an empty array â€” the
     /// sibling constraint was never reached.
     #[test]
     fn keywords_beside_a_ref_are_still_evaluated() {
@@ -4348,7 +4457,7 @@ mod tests {
     /// disposition outside it must be rejected rather than silently admitted.
     /// Negative control for the `flow_sink` relaxation added with #3912. The
     /// producer emits `null` when a missing discriminator has no local flow
-    /// sink to name, so the schema admits `null` — but not any other
+    /// sink to name, so the schema admits `null` â€” but not any other
     /// non-object, and not an absent key.
     #[test]
     fn check_schema_admits_a_null_flow_sink_without_admitting_anything_else() -> Result<(), String>
@@ -4408,7 +4517,7 @@ mod tests {
 
     /// Negative control for the next-step relaxation added with #3912. The
     /// producer emits `""` for "no action to recommend", so the schema drops
-    /// `minLength` — but the fields stay required strings.
+    /// `minLength` â€” but the fields stay required strings.
     #[test]
     fn check_schema_admits_an_empty_next_step_without_admitting_a_non_string() -> Result<(), String>
     {
@@ -4766,8 +4875,8 @@ mod tests {
             .ok_or_else(|| format!("schema must define {pointer}"))
     }
 
-    /// The corpus of record — the exact bytes `cargo xtask rust-repair-trust`
-    /// reads — must satisfy its published schema. Validating a hand-written
+    /// The corpus of record â€” the exact bytes `cargo xtask rust-repair-trust`
+    /// reads â€” must satisfy its published schema. Validating a hand-written
     /// copy instead would let the schema confirm itself.
     #[test]
     fn live_rust_repair_trust_corpus_matches_its_schema() -> Result<(), String> {
@@ -4925,7 +5034,7 @@ mod tests {
     /// be counted as a passing positive subject.
     ///
     /// `wrong_root` and `fabricated_result` are schema-valid: their invalidity
-    /// is semantic — root identity and producer-bound command-spec digest — and
+    /// is semantic â€” root identity and producer-bound command-spec digest â€” and
     /// is enforced by `VerificationExecutionResultV1::validate_against`, which
     /// the contract walk never calls. Feeding them as positive subjects reported
     /// them as passing, so the corpus claimed negative coverage it did not

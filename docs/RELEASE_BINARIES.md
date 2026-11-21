@@ -235,6 +235,8 @@ ripr-server-v<VERSION>-<target>.tar.gz
 ripr-server-v<VERSION>-<target>.<zip-or-tar.gz>.sha256
 ripr-server-manifest-v<VERSION>.json
 SHA256SUMS
+ripr-server-v<VERSION>-<target>.zip.sha256
+ripr-server-v<VERSION>-<target>.tar.gz.sha256
 ```
 
 The assembly step also retains the internal, non-publication evidence packet
@@ -362,10 +364,22 @@ publication command selects the archives, archive sidecars, versioned
 manifest, and `SHA256SUMS` explicitly; receipt files remain downstream
 evidence and are never release assets.
 
-The `SHA256SUMS` sidecar is `sha256sum -c SHA256SUMS`-compatible (one
-`<sha256>  <file_name>` line per asset). Releases through `v0.7.0` published the
-same manifest under the legacy name `checksums.txt`; the content format is
-unchanged.
+Each per-archive `.sha256` file holds only the bare lowercase digest and a
+newline, not `<sha256>  <file_name>`, so `sha256sum -c <archive>.sha256` fails
+with "no properly formatted checksum lines". Check one with
+`echo "$(cat <archive>.sha256)  <archive>" | sha256sum -c -` (the quickstart
+snippet), or use the release's combined checksum file. The archives are flat
+(members are `./ripr`, `./LICENSE-MIT`, ...), so extract into a newly created,
+empty directory (`mkdir <dir> && tar xzf <archive> -C <dir>`, which stops if
+`<dir>` already exists) rather than into a repository or a reused directory,
+where existing files with those names would be replaced.
+
+The current producer writes the combined checksum file as `SHA256SUMS`, which
+is `sha256sum -c SHA256SUMS`-compatible (one `<sha256>  <file_name>` line per
+asset). Published releases up to and including `v0.10.0` carry it under the
+legacy name `checksums.txt` (same format; `v0.10.0` has `checksums.txt` and no
+`SHA256SUMS`, read back from the release download URLs on 2026-11-19), so use
+`checksums.txt` for the release the quickstart pins.
 
 ### RC placement and the embedded manifest digest (#3798)
 

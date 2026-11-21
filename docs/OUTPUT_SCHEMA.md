@@ -128,7 +128,7 @@ map is:
 | `ripr agent repair --phase after --json` and `ripr continue --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
 | `ripr agent repair --phase after --json` and `ripr continue --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.4` |
 | `ripr repair --json` repeated start and `ripr continue --json` already-complete stdout (`agent_attempt_status`; #11584) | `schema_version` | `0.1` |
-| `ripr agent status` | `schema_version` | `0.1` |
+| `ripr agent status --json` (published as `schemas/ripr/agent-status.schema.json`) | `schema_version` | `0.1` |
 | `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0217, #4798) | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -168,6 +168,7 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
+| `schemas/ripr/agent-status.schema.json` | `0.1` | `crates/ripr/src/app/agent_status.rs`; agent status inventory (`ripr agent status --json`; the `--attempt` document is separate) |
 | `schemas/ripr/cache-export.schema.json` | `0.1` | `crates/ripr/src/analysis/seam_cache/export.rs`; cache export success report (`ripr cache export`) |
 | `schemas/ripr/cache-status.schema.json` | `0.3` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
@@ -1156,6 +1157,9 @@ next=COMMAND
 verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- `id=` identifies the finding for inspection with the original check scope.
+  A Rust `probe:…:static_unknown:…` ID can identify a test-side gap without
+  identifying a repair seam. Follow its scoped `ripr explain` route.
 - A run refused before analysis (unresolvable base, invalid `ripr.toml`,
   unusable root) replaces this whole record with the short refusal record
   described under the `ripr check` refusal documents below, whose header reads
@@ -1287,8 +1291,9 @@ verify=complete|outcome=O|findings=N|exposed=N
 - `open=` replaces `stop=` when no gap is listed but a candidate-current
   `weakly_exposed` or `reachable_unrevealed` finding is held only by the
   reach-only `rust_transitive_reach_unresolved` limitation and still carries a
-  contributing related test with a `weak` or `smoke` oracle (#11825) that is not
-  related by file or module proximity alone (#12058). It is not a
+  contributing related test with a `weak` or `smoke` oracle (#11825) whose
+  recorded relation binds it to the changed function (#12058). File or name
+  affinity alone and missing relation evidence keep `stop=`. It is not a
   confirmed gap, so `gaps=` does not count it (`unconfirmed_gaps=` does); the
   finding is listed in the gap line shape (with `missing=-`), the weak test in
   its `tK` row, `limits=` still counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
@@ -16597,6 +16602,18 @@ Field contract:
   later reviewer-summary/status enhancement now that receipt provenance records
   artifact SHA-256 values.
 
+The JSON document is published as
+[`schemas/ripr/agent-status.schema.json`](../schemas/ripr/agent-status.schema.json).
+`crates/ripr/tests/agent_status_json_schema.rs` validates the bytes the real
+command writes for a fresh workspace, an attempt awaiting its edit, a finished
+attempt and a failed attempt, so the `repair_attempts` and `missing_commands`
+entries, the receipt reading and `test_run` are all checked against real
+output. The schema binds each of the seven artifact positions to its fixed name and path (`prefixItems`),
+`receipt` to `null` outside `ready_to_finish`, and `status` to its rule:
+`complete` has no next command and no warning, `warning` has no next command
+and at least one warning; `test_run` always carries the `attempt_id` it speaks
+for. It does not describe the `--attempt` document below.
+
 Markdown output contains the same status, recovered seam, artifact table, next
 command, warnings, and static-only limits. Generated CI writes it to
 `target/ripr/workflow/agent-status.md` next to
@@ -21714,7 +21731,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.62",
+    "schema_version": "1.63",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,

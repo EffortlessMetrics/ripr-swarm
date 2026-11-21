@@ -99,7 +99,11 @@ pub(in crate::analysis) fn withhold_configured_error_projection_gap(
         if *relation != RelationReason::DirectOwnerCall
             || test.file != owner.file
             || is_ignored(test)
-            || !super::refusal_miss::test_shares_owner_cfg_gates(context, test)
+            || !super::refusal_miss::test_shares_owner_cfg_gates(
+                context,
+                test,
+                &context.refusal_memo,
+            )
         {
             continue;
         }
@@ -1717,7 +1721,7 @@ mod tests {
                 true,
             ),
             (
-                r#"assert_eq!(Decoder::parse("é").unwrap_err(), Fault::Odd)"#,
+                r#"assert_eq!(Decoder::parse("Ã©").unwrap_err(), Fault::Odd)"#,
                 false,
             ),
             (

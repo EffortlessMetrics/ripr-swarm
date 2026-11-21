@@ -8217,7 +8217,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
         && index
             .call_identity_memos
             .receiver_pin_syntax
-            .target_placement_unavailable(index)
+            .target_placement_unavailable(&caller.file, index)
         && relation(false) != RelationReason::DirectOwnerCall
         && relation(true) == RelationReason::DirectOwnerCall
 }
@@ -8253,7 +8253,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
         && !index
             .call_identity_memos
             .receiver_pin_syntax
-            .target_placement_unavailable(index)
+            .target_placement_unavailable(&caller.file, index)
         && relation(false) != RelationReason::DirectOwnerCall
         && relation(true) == RelationReason::DirectOwnerCall
 }

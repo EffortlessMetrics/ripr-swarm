@@ -852,6 +852,12 @@ provably: unequal `bool`, `char`, byte or string values, integers both in
 element. Equal folds (`false` → `!true`) refuse. The sink carries the raw
 tail text. Whether a related test pins the returned value stays the owner
 pin's decision, so a bare call reads `reachable_unrevealed`.
+Unit tail statement block (#15459). An owner with no `->` return type whose
+tail is a block (plain, `unsafe`, `async`, `const` or labelled) with no tail
+expression, because its last item is a `;`-terminated statement, yields `()`
+and gets no `return_value` probe; its statements keep their own `side_effect`
+and `call_deletion` probes. A tail block that ends in a value expression, and
+any owner with a return type (`-> ()` included), keeps the tail probe.
 Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
 body rewrites `Ok(f(self.read(args)?, rest))` to
 `self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
@@ -1597,12 +1603,13 @@ declarations cannot be read, no witness completes and propagation reads
 `propagation_unknown`. Ungated owners, an owner beside an unrelated
 `cfg(test)` module and a same-named function on another path keep the
 credit. A `#[path]` module declaration gates the owners it may reach:
-the file its literal names, resolved against the declaring file's
+the file its relative literal names, resolved against the declaring file's
 directory (case-insensitively, with a backslash read as a separator), any file under
 that file's directory, where its own `mod` declarations resolve, except a
 default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
 can move or compile out), and any file whose path spells the declaration's
-name. A target that is not a literal on a top-level out-of-line
+name. A rooted or drive-qualified literal is opaque and gates every owner.
+A target that is not a literal on a top-level out-of-line
 declaration (an inline module's `#[path]`, a `#[path]` declaration inside
 an inline module, a non-literal value, an empty literal or one ending in
 `/`, a literal rooted at `/` or holding a `:`, as a drive does) gates every owner,
@@ -2857,7 +2864,8 @@ branch holding a statement, or code after the chain is outside the subset.
   confined lexically, a glob whose own module composition did not resolve has
   a separate cause, another disabling input (a lexical fallback, an unknown
   `#[path]` target or an unseen unindexed member) keeps placement off without
-  the include, and a glob that reaches the assertion from an ancestor module
+  the include, a glob in a file an unindexed member mounts stays unplaced
+  without it, and a glob that reaches the assertion from an ancestor module
   or along the module chain is ambiguous with placement on
   (`the_refusal_names_the_include_that_makes_placement_unavailable`,
   `a_public_glob_keeps_its_direct_explanation_with_an_include_present`,

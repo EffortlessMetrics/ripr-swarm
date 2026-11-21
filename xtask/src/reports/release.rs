@@ -1879,6 +1879,16 @@ const RELEASE_LOOP_NEEDLES: &[&str] = &[
     "ripr agent receipt",
 ];
 
+/// Required needles in `ripr first-pr --help`, pinned to the shipped
+/// `FIRST_PR_HELP` constant by `repository_help_surfaces_satisfy_command_surface_needles`.
+const FIRST_PR_HELP_NEEDLES: &[&str] = &[
+    "Summarize what to fix in one PR",
+    "Usage: ripr first-pr",
+    "--gap-ledger",
+    "--receipts-dir",
+    "--output-dir",
+];
+
 fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
     let binary_path = crate::normalize_path(binary);
     let command = format!(
@@ -2008,13 +2018,7 @@ fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
     ));
     missing.extend(missing_required_needles(
         &first_pr_help.stdout,
-        &[
-            "Summarize what to fix in one PR",
-            "Usage: ripr first-pr",
-            "--gap-ledger",
-            "--receipts-dir",
-            "--out-dir",
-        ],
+        FIRST_PR_HELP_NEEDLES,
     ));
     if missing.is_empty() {
         readiness_check(
@@ -4208,18 +4212,19 @@ mod tests {
     #[cfg(unix)]
     use super::{CI_PACKET_STEP_NEEDLES, ci_packet_steps_missing, ci_summary_first_run_missing};
     use super::{
-        CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
-        ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
-        check_install_provenance, create_external_doctor_fixture, extension_version_check_from,
-        extract_packaged_crate, file_url_path, init_generator_self_pin_problems,
-        init_pin_version_check_from, latency_parity_contradiction, latency_readiness_from,
-        latest_released_version_in, missing_required_needles, package_version,
-        packaged_archive_commit, parse_release_readiness_args, read_crate_version, readiness_check,
-        records_ripr_bin, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, repo_exposure_latency_output_parity,
-        repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
-        validate_install_provenance, validate_installed_version, validate_installed_version_result,
-        validate_package_entry, vsix_start_current_repair_command_present,
+        CommandResult, EditorVersion, FIRST_PR_HELP_NEEDLES, FIRST_SCREEN_NEEDLES, PackageVersion,
+        RELEASE_LOOP_NEEDLES, ReleaseReadinessCheck, ReleaseReadinessReport,
+        changelog_has_release_heading, check_install_provenance, create_external_doctor_fixture,
+        extension_version_check_from, extract_packaged_crate, file_url_path,
+        init_generator_self_pin_problems, init_pin_version_check_from,
+        latency_parity_contradiction, latency_readiness_from, latest_released_version_in,
+        missing_required_needles, package_version, packaged_archive_commit,
+        parse_release_readiness_args, read_crate_version, readiness_check, records_ripr_bin,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        repo_exposure_latency_output_parity, repo_exposure_latency_status_reasons,
+        validate_binary_identity, validate_doctor_result, validate_install_provenance,
+        validate_installed_version, validate_installed_version_result, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::{Value, json};
     use std::fs;
@@ -6238,6 +6243,24 @@ mod tests {
                  the release gate would fail on this help text"
             ));
         }
+
+        let first_pr_path = root.join("crates/ripr/src/output/first_pr/options.rs");
+        let first_pr_text = crate::read_text_lossy(&first_pr_path)
+            .map_err(|err| format!("read {}: {err}", first_pr_path.display()))?;
+        let first_pr_help =
+            quoted_string_const(&first_pr_text, "FIRST_PR_HELP").ok_or_else(|| {
+                format!(
+                    "could not locate FIRST_PR_HELP in {}",
+                    first_pr_path.display()
+                )
+            })?;
+        let missing_first_pr = missing_required_needles(first_pr_help, FIRST_PR_HELP_NEEDLES);
+        if !missing_first_pr.is_empty() {
+            return Err(format!(
+                "`ripr first-pr --help` no longer documents {missing_first_pr:?}; \
+                 the release gate would fail on this help text"
+            ));
+        }
         Ok(())
     }
 
@@ -6252,6 +6275,29 @@ mod tests {
         let body = rest.get(open..)?;
         let close = body.find("\"#")?;
         body.get(..close)
+    }
+
+    /// Extract the body of `const <name>: &str = "...";` from Rust source,
+    /// skipping backslash-escaped quotes inside the literal.
+    fn quoted_string_const<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+        let anchor = format!("const {name}:");
+        let after_name = text.find(&anchor)? + anchor.len();
+        let rest = text.get(after_name..)?;
+        let open = rest.find('"')? + 1;
+        let body = rest.get(open..)?;
+        let bytes = body.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                return body.get(..i);
+            }
+            i += 1;
+        }
+        None
     }
 
     #[test]
