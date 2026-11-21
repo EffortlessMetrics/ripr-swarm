@@ -5,7 +5,7 @@
 //! symlink race against a predictable path, and so no fixed shared name
 //! lets one local account deny the feature to another.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Write `diff_text` to a fresh private temporary file and return its path.
@@ -24,6 +24,12 @@ pub(crate) fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, Stri
             temp_root.display()
         ));
     }
+    write_diff_under(&temp_root, stamp, diff_text)
+}
+
+/// Stage `diff_text` in a fresh private directory directly under `temp_root`,
+/// named from the process id, `stamp` and an attempt suffix.
+fn write_diff_under(temp_root: &Path, stamp: u128, diff_text: &str) -> Result<PathBuf, String> {
     // Per-invocation private directory directly under the OS temp dir
     // (#2102). A fixed shared name like `/tmp/ripr-diff` lets the first local
     // account own the directory and deny every other account (cross-user
@@ -100,7 +106,8 @@ pub(crate) fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::write_temporary_diff_file;
+    use super::{write_diff_under, write_temporary_diff_file};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn write_temporary_diff_file_writes_content_in_restricted_dir() -> Result<(), String> {
@@ -136,5 +143,119 @@ mod tests {
             std::fs::remove_dir(parent).map_err(|err| err.to_string())?;
         }
         Ok(())
+    }
+
+    const STAMP: u128 = 4_242;
+    const DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n";
+
+    /// A fresh, test-owned root so candidate names can be pre-planted.
+    fn fresh_root(name: &str) -> Result<PathBuf, String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-temp-diff-test-{}-{name}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        }
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        Ok(root)
+    }
+
+    /// Candidate names spelled out literally, so the test does not share the
+    /// production suffix rule: no suffix first, then `-1`, `-2`, ...
+    fn candidate(root: &Path, attempt: u32) -> PathBuf {
+        let pid = std::process::id();
+        let name = match attempt {
+            0 => format!("ripr-diff-{pid}-4242"),
+            n => format!("ripr-diff-{pid}-4242-{n}"),
+        };
+        root.join(name)
+    }
+
+    fn plant(root: &Path, attempts: std::ops::Range<u32>) -> Result<(), String> {
+        for attempt in attempts {
+            std::fs::create_dir(candidate(root, attempt)).map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn first_free_name_is_the_unsuffixed_candidate_under_the_given_root() -> Result<(), String> {
+        let root = fresh_root("first")?;
+        let path = write_diff_under(&root, STAMP, DIFF)?;
+        assert_eq!(path, candidate(&root, 0).join("diff.patch"));
+        assert_eq!(
+            std::fs::read_to_string(&path).map_err(|err| err.to_string())?,
+            DIFF
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn an_existing_directory_is_skipped_and_left_untouched() -> Result<(), String> {
+        let root = fresh_root("skip")?;
+        plant(&root, 0..1)?;
+        let path = write_diff_under(&root, STAMP, DIFF)?;
+        assert_eq!(path, candidate(&root, 1).join("diff.patch"));
+        let planted = std::fs::read_dir(candidate(&root, 0))
+            .map_err(|err| err.to_string())?
+            .count();
+        assert_eq!(planted, 0, "the pre-existing directory gained an entry");
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// A symlink planted at the predictable name is never followed: the diff
+    /// does not reach the link target (#2102).
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_is_skipped_rather_than_followed() -> Result<(), String> {
+        let root = fresh_root("symlink")?;
+        let target = root.join("attacker-owned");
+        std::fs::create_dir(&target).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&target, candidate(&root, 0)).map_err(|err| err.to_string())?;
+        let path = write_diff_under(&root, STAMP, DIFF)?;
+        assert_eq!(path, candidate(&root, 1).join("diff.patch"));
+        assert!(!target.join("diff.patch").exists());
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn the_sixteenth_candidate_is_the_last_one_tried() -> Result<(), String> {
+        let root = fresh_root("last")?;
+        plant(&root, 0..15)?;
+        let path = write_diff_under(&root, STAMP, DIFF)?;
+        assert_eq!(path, candidate(&root, 15).join("diff.patch"));
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn sixteen_taken_names_refuse_with_a_cleanup_hint() -> Result<(), String> {
+        let root = fresh_root("exhausted")?;
+        plant(&root, 0..16)?;
+        assert_eq!(
+            write_diff_under(&root, STAMP, DIFF),
+            Err("create temporary diff dir failed: all name candidates exist; clear old ripr temp directories or set TMPDIR, or TEMP on Windows, to a writable directory".to_string())
+        );
+        assert!(!candidate(&root, 16).exists());
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn a_missing_root_refuses_at_once_instead_of_retrying() -> Result<(), String> {
+        let parent = fresh_root("missing")?;
+        let root = parent.join("absent");
+        let message = match write_diff_under(&root, STAMP, DIFF) {
+            Ok(path) => return Err(format!("expected a refusal, got {}", path.display())),
+            Err(message) => message,
+        };
+        let expected_prefix = format!(
+            "create temporary diff dir {} failed: ",
+            candidate(&root, 0).display()
+        );
+        assert!(message.starts_with(&expected_prefix), "{message}");
+        assert!(
+            message.ends_with("check the temp directory is writable (set TMPDIR, or TEMP on Windows, to a writable directory)"),
+            "{message}"
+        );
+        assert!(!root.exists());
+        std::fs::remove_dir_all(&parent).map_err(|err| err.to_string())
     }
 }
