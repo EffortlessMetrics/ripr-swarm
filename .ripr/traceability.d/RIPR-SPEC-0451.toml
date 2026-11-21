@@ -1,0 +1,22 @@
+[[behavior]]
+id = "RIPR-SPEC-0451"
+name = "DX scoreboard generated recall rows"
+spec = "docs/specs/RIPR-SPEC-0451-dx-scoreboard-generated-recall-rows.md"
+tests = [
+  "xtask/src/reports/dx_scoreboard/tests.rs::mutation_spot_check_checked_in_receipt_generates_issue_12900_values",
+  "xtask/src/reports/dx_scoreboard/tests.rs::a_config_without_the_generated_rows_still_loads_the_checked_in_receipt",
+  "xtask/src/reports/dx_scoreboard/tests.rs::mutation_spot_check_receipt_generates_recall_and_no_seam_rows",
+  "xtask/src/reports/dx_scoreboard/tests.rs::a_non_object_spot_check_section_fails_with_its_name",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/dx_scoreboard.rs",
+]
+outputs = [
+  "benchmarks/dx_scoreboard/scoreboards.toml",
+]
+metrics = [
+  "trust.mutation_recall_of_missed",
+  "trust.mutation_recall_flagged_or_unknown",
+  "trust.mutation_no_seam_share",
+]
