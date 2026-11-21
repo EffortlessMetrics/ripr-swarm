@@ -186,10 +186,10 @@ pub(crate) fn check_receipt(
     opts: &ReceiptCheckOptions,
 ) -> Result<(String, ReceiptCrossRefResult), String> {
     let path = resolve_check_path(opts)?;
-    // The path as ripr opens it, with slash separators. `display_path` is a
-    // stable identity encoding that escapes `%` again, and a default receipt
-    // file name already contains `%XX`; it printed a name no file has (#15899).
-    let displayed = crate::output::path::display_path_text(&path.to_string_lossy());
+    // The path as ripr opens it. `display_path` is a stable identity encoding
+    // that escapes `%` again, and a default receipt file name already contains
+    // `%XX`; it printed a name no file has (#15899).
+    let displayed = crate::output::path::human_path_text(&path.to_string_lossy(), cfg!(windows));
 
     let content = crate::bounded_input::read_to_string(&path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -1857,7 +1857,9 @@ mod tests {
     }
 
     /// #15899: the nested 0.10 path resolves, and the current encoded file
-    /// still wins when both exist.
+    /// still wins when both exist. Unix only: Windows cannot create the
+    /// colon-named directory 0.10 wrote.
+    #[cfg(unix)]
     #[test]
     fn receipt_check_resolves_a_0_10_nested_gap_id_path() -> Result<(), String> {
         let base = legacy_nested_base("resolve")?;
