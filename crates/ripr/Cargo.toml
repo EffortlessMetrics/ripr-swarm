@@ -208,7 +208,10 @@ lang-perl = ["ripr-contract/lang-perl"]
 ripr-contract = { version = "=0.11.0", path = "../ripr-contract", default-features = false, features = ["test-fixtures"] }
 proptest = "1"
 rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw"] }
+# Resolve Rust item boundaries and module declarations in the refusal source floor.
+ra_ap_syntax = "0.0.349"
 serial_test = "4"
+tempfile = "3"
 # Dev-only: deterministic initialize-delivery witnesses (#3802) pause tokio
 # time and drive the service layers (tower Service) directly.
 tokio = { version = "1", features = ["test-util", "process"] }

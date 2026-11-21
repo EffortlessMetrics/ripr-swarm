@@ -76,8 +76,8 @@ crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} is already awaiting_
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} is not ready_to_finish; terminal evidence is retained only after a compliant finish
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} moved while its terminal after-phase refusal was recorded
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} must finish with its retained agent_packet artifact
-crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} {AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL}; a refusal is recorded only while the attempt is resu
-crates/ripr/src/app/repair_attempt/mod.rs|repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} {AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL}; a refusal is recorded only while the attempt is resumable
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit path
 crates/ripr/src/app/repair_attempt/mod.rs|repair packet allowed_edit_surface must be an array
 crates/ripr/src/app/repair_attempt/mod.rs|repair packet contains no actionable packet
 crates/ripr/src/app/repair_attempt/mod.rs|repair packet has no selected edit target
@@ -88,7 +88,7 @@ crates/ripr/src/app/repair_attempt/mod.rs|repair packet must contain exactly one
 crates/ripr/src/app/repair_attempt/mod.rs|repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`
 crates/ripr/src/app/repair_attempt/mod.rs|repair packet recommended test `{file}` is not a test surface
 crates/ripr/src/app/repair_attempt/mod.rs|repair packet seam does not match requested seam `{seam_id}`
-crates/ripr/src/app/repair_attempt/mod.rs|repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built
 crates/ripr/src/app/repair_attempt/mod.rs|repair receipt projection predecessor is invalid
 crates/ripr/src/app/repair_attempt/mod.rs|replace {} failed: {error}
 crates/ripr/src/app/repair_attempt/mod.rs|retained focused result does not match the focused finish
