@@ -848,11 +848,98 @@ impl WorkspaceSession {
         canonical_id: &str,
         requested: Option<&str>,
         root_identity: Option<&str>,
+        root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
         // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
         let item = snapshot.require_item(canonical_id)?;
+        // #15240: never mint (or replay) a ready transaction over source that
+        // changed after the snapshot captured it. The card's own shared
+        // consumed-source custody check decides, with the same typed
+        // `stale_snapshot` refusal; the server does not watch the worktree.
+        // The refusal precedes the ineligible (negative) documents too. An
+        // item with no bound seam (admission can ready an unbound item) is
+        // checked over its own file and fix-site file instead of skipped.
+        // Facts the custody check could not establish; disclosed in the ready
+        // packet's limitations instead of implied current.
+        let mut custody_notes: Vec<String> = Vec::new();
+        if let Some(producers) = &snapshot.card_producers {
+            let Some(root) = root else {
+                return Err(AttemptFailure::new(
+                    super::workspace::CODE_WORKSPACE_UNAVAILABLE,
+                    "the workspace root is unavailable, so the consumed source cannot be re-verified for this repair",
+                    "restart the server with `ripr mcp --stdio --root <repository>` and retry",
+                ));
+            };
+            let fix_file = fix_site_file(item);
+            match producers
+                .bindings
+                .iter()
+                .find(|binding| binding.item_canonical_id == item.canonical_id)
+            {
+                Some(binding) => super::repair_card::verify_consumed_source_custody(
+                    root,
+                    snapshot,
+                    item,
+                    producers,
+                    &binding.seam,
+                    "repair preparation",
+                )?,
+                None => {
+                    // An item with no bound seam is checked over its own file
+                    // and its fix-site file (normalized like the digests).
+                    let item_file = super::repair_card::normalize_item_path(Path::new(&item.file));
+                    let mut paths = vec![item_file.clone()];
+                    if !fix_file.is_empty() {
+                        paths.push(std::path::PathBuf::from(&fix_file));
+                    }
+                    super::repair_card::verify_consumed_paths(
+                        root,
+                        snapshot,
+                        item,
+                        producers,
+                        &paths,
+                        "repair preparation",
+                    )?;
+                    if item_file.extension().is_none_or(|ext| ext != "rs") {
+                        custody_notes.push(format!(
+                            "source custody is not checked for `{}`: only Rust source files carry captured digests, so a change after the snapshot is not detected for this item",
+                            item_file.display()
+                        ));
+                    } else if item.repair_readiness.ready
+                        && producers.consumed_sources.digest(&item_file).is_none()
+                    {
+                        // The path cannot be captured at all (absolute, `..`,
+                        // unavailable or conflicting capture, empty custody):
+                        // a refresh cannot clear it, so say so and fail closed.
+                        return Err(AttemptFailure::new(
+                            super::workspace::CODE_STALE_SNAPSHOT,
+                            format!(
+                                "repair preparation for canonical item {} is refused: source custody cannot be verified for `{}` because the snapshot holds no captured digest for it",
+                                item.canonical_id,
+                                item_file.display()
+                            ),
+                            "ripr_refresh will not clear this: the file is outside the captured Rust corpus or its capture was unavailable; read the item with ripr_get_gap, or run `ripr agent packet` in the repository",
+                        )
+                        .with_data(json!({
+                            "current_snapshot_id": snapshot.snapshot_id,
+                            "custody": "not_verifiable",
+                            "path": item_file.display().to_string(),
+                        })));
+                    }
+                }
+            }
+            if !fix_file.is_empty() {
+                let fix_path = super::repair_card::normalize_item_path(Path::new(&fix_file));
+                if producers.consumed_sources.digest(&fix_path).is_none() {
+                    custody_notes.push(format!(
+                        "source custody is not checked for the fix-site file `{}`: the snapshot holds no captured digest for it (for example a proposed new test file)",
+                        fix_path.display()
+                    ));
+                }
+            }
+        }
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
@@ -982,7 +1069,11 @@ impl WorkspaceSession {
             },
             "command_routes": Value::Array(Vec::new()),
             "command_route_limitation": "concrete typed CommandSpec routes are published only by the durable CLI before phase (`ripr agent repair --phase before`); this session never executes commands and never reconstructs argv from display prose",
-            "limitations": prepare_limitations(&fix_site),
+            "limitations": prepare_limitations(&fix_site)
+                .into_iter()
+                .map(str::to_string)
+                .chain(custody_notes)
+                .collect::<Vec<String>>(),
             "non_claims": NON_CLAIMS,
             "links": {
                 "gap": format!("ripr://gap/{}", item.canonical_id),
@@ -1690,7 +1781,7 @@ pub(super) mod tests {
     fn complete_route_creates_one_replay_resistant_attempt() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let first = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if first
             .pointer("/repair_packet_ready")
@@ -1719,7 +1810,7 @@ pub(super) mod tests {
             return Err(format!("allowed edit surface drifted: {surface}"));
         }
         let second = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if second != first {
             return Err("repeated prepare must replay the identical document".to_string());
@@ -1744,7 +1835,7 @@ pub(super) mod tests {
         no_discriminator.canonical_gap = None;
         let mut session = session_with(&[no_discriminator], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if document
             .pointer("/repair_packet_ready")
@@ -1806,7 +1897,7 @@ pub(super) mod tests {
         weak.related_tests[0].oracle_strength = crate::domain::OracleStrength::Weak;
         let mut session = session_with(&[weak], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if packet.pointer("/repair_packet_ready") != Some(&Value::Bool(true))
             || packet
@@ -1851,7 +1942,7 @@ pub(super) mod tests {
         );
         let mut session = session_with(&[named_missing], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if document
             .pointer("/ineligibility/reason")
@@ -1898,7 +1989,7 @@ pub(super) mod tests {
         limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
         let mut session = session_with(&[limited], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if document
             .pointer("/repair_packet_ready")
@@ -1935,7 +2026,7 @@ pub(super) mod tests {
         limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
         let mut session = session_with(&[limited.clone()], "root:sha256:a")?;
         let document = session
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let recovery = document["recovery"].as_str().unwrap_or_default();
         if document["next"]["kind"] != "terminal_static_limit"
@@ -1949,12 +2040,253 @@ pub(super) mod tests {
         limited.probe.family = crate::domain::ProbeFamily::ReturnValue;
         let mut other = session_with(&[limited], "root:sha256:a")?;
         let ordinary = other
-            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         if ordinary["next"]["kind"] == "terminal_static_limit" {
             return Err(format!(
                 "a non-predicate item must not be terminal: {ordinary}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #15240: a ready item with no bound seam is still custody-checked over
+    /// its own and fix-site files; unchanged bytes still prepare (control).
+    #[test]
+    fn ready_unbound_item_is_refused_when_its_files_changed() -> Result<(), String> {
+        let dir = unique_test_dir("unbound-stale")?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        let src = dir.join("src/lib.rs");
+        let test_file = dir.join("tests/checkout.rs");
+        std::fs::write(&src, b"fn a() {}\n").map_err(|e| e.to_string())?;
+        std::fs::write(&test_file, b"fn t() {}\n").map_err(|e| e.to_string())?;
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let snapshot = session
+            .last_good
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture snapshot must be uniquely owned")?;
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("src/lib.rs"), Some(b"fn a() {}\n"));
+        consumed.record(Path::new("tests/checkout.rs"), Some(b"fn t() {}\n"));
+        snapshot.card_producers = Some(super::super::repair_card::SnapshotCardProducers {
+            repository_head: "head".to_string(),
+            bindings: Vec::new(),
+            candidate_seams: Vec::new(),
+            completeness: super::super::repair_admission::InventoryCompleteness::Complete,
+            config: crate::config::RiprConfig::default(),
+            consumed_sources: consumed,
+        });
+        let control = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+            .map_err(|failure| {
+                format!("unchanged unbound item must prepare: {}", failure.detail)
+            })?;
+        if control
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            return Err(format!("control must be ready: {control}"));
+        }
+        for (path, label) in [(&src, "item file"), (&test_file, "fix-site file")] {
+            let original = std::fs::read(path).map_err(|e| e.to_string())?;
+            std::fs::write(path, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+            let result =
+                session.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir));
+            std::fs::write(path, original).map_err(|e| e.to_string())?;
+            match result {
+                Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+                other => return Err(format!("{label}: changed file must be stale: {other:?}")),
+            }
+        }
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// #15240: a `./`-prefixed item file still matches its captured digest,
+    /// and a ready Rust item whose file has no captured digest is refused.
+    #[test]
+    fn unbound_item_with_dot_slash_file_is_checked_and_uncaptured_is_refused() -> Result<(), String>
+    {
+        let dir = unique_test_dir("unbound-dot")?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        let src = dir.join("src/lib.rs");
+        std::fs::write(&src, b"fn a() {}\n").map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("tests/checkout.rs"), b"fn t() {}\n").map_err(|e| e.to_string())?;
+        let build = |capture_src: bool| -> Result<WorkspaceSession, String> {
+            let mut session =
+                session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for item in &mut snapshot.items {
+                item.file = format!("./{}", item.file);
+            }
+            let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+            if capture_src {
+                consumed.record(Path::new("src/lib.rs"), Some(b"fn a() {}\n"));
+            }
+            consumed.record(Path::new("tests/checkout.rs"), Some(b"fn t() {}\n"));
+            snapshot.card_producers = Some(super::super::repair_card::SnapshotCardProducers {
+                repository_head: "head".to_string(),
+                bindings: Vec::new(),
+                candidate_seams: Vec::new(),
+                completeness: super::super::repair_admission::InventoryCompleteness::Complete,
+                config: crate::config::RiprConfig::default(),
+                consumed_sources: consumed,
+            });
+            Ok(session)
+        };
+        let mut captured = build(true)?;
+        captured
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+            .map_err(|failure| format!("unchanged ./ item must prepare: {}", failure.detail))?;
+        std::fs::write(&src, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+        match captured.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir)) {
+            Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+            other => {
+                return Err(format!(
+                    "./ item with changed file must be stale: {other:?}"
+                ));
+            }
+        }
+        let mut uncaptured = build(false)?;
+        match uncaptured.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir)) {
+            Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+            other => return Err(format!("uncaptured ready item must be refused: {other:?}")),
+        }
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// #15240: spelling variants (`./`, `.//`, backslash) of the item file and
+    /// the fix-site file still hit their captured digests; drift carries the
+    /// current snapshot id; an uncapturable ready Rust path refuses with a
+    /// recovery that does not promise a refresh; a non-Rust item discloses
+    /// that custody was not checked; the shared check normalizes bound paths.
+    #[test]
+    fn custody_normalizes_spellings_splits_refusals_and_discloses_gaps() -> Result<(), String> {
+        let dir = unique_test_dir("custody-variants")?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        let src = dir.join("src/lib.rs");
+        let test_file = dir.join("tests/checkout.rs");
+        std::fs::write(&src, b"fn a() {}\n").map_err(|e| e.to_string())?;
+        std::fs::write(&test_file, b"fn t() {}\n").map_err(|e| e.to_string())?;
+        let build = |item_file: &str,
+                     fix_file: &str,
+                     capture: &[(&str, &[u8])]|
+         -> Result<WorkspaceSession, String> {
+            let mut session =
+                session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for item in &mut snapshot.items {
+                item.file = item_file.to_string();
+                if let Some(site) = item.repair_readiness.fix_site.as_mut() {
+                    site.file = fix_file.to_string();
+                }
+            }
+            let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+            for (path, bytes) in capture {
+                consumed.record(Path::new(path), Some(bytes));
+            }
+            snapshot.card_producers = Some(super::super::repair_card::SnapshotCardProducers {
+                repository_head: "head".to_string(),
+                bindings: Vec::new(),
+                candidate_seams: Vec::new(),
+                completeness: super::super::repair_admission::InventoryCompleteness::Complete,
+                config: crate::config::RiprConfig::default(),
+                consumed_sources: consumed,
+            });
+            Ok(session)
+        };
+        let both: [(&str, &[u8]); 2] = [
+            ("src/lib.rs", b"fn a() {}\n"),
+            ("tests/checkout.rs", b"fn t() {}\n"),
+        ];
+        let prepare = |session: &mut WorkspaceSession| {
+            session.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+        };
+        // Spelling variants of the item file and the fix-site file: control
+        // prepares unchanged, then each is stale after an edit.
+        for (item_file, fix_file) in [
+            ("./src/lib.rs", "./tests/checkout.rs"),
+            (".//src/lib.rs", "tests/checkout.rs"),
+            ("src\\lib.rs", ".\\tests\\checkout.rs"),
+        ] {
+            let mut session = build(item_file, fix_file, &both)?;
+            prepare(&mut session).map_err(|failure| {
+                format!("{item_file}: control must prepare: {}", failure.detail)
+            })?;
+            let original = std::fs::read(&test_file).map_err(|e| e.to_string())?;
+            std::fs::write(&test_file, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+            let result = prepare(&mut session);
+            std::fs::write(&test_file, original).map_err(|e| e.to_string())?;
+            match result {
+                Err(failure)
+                    if failure.code == CODE_STALE_SNAPSHOT
+                        && failure.recovery.contains("run ripr_refresh")
+                        && failure.data.get("current_snapshot_id").is_some() => {}
+                other => return Err(format!("{item_file}/{fix_file}: fix-site drift: {other:?}")),
+            }
+        }
+        // Uncapturable ready Rust path: refused, but not as a refreshable drift.
+        for bad in ["/abs/src/lib.rs", "../src/lib.rs"] {
+            let mut session = build(bad, "tests/checkout.rs", &both)?;
+            match prepare(&mut session) {
+                Err(failure)
+                    if failure.code == CODE_STALE_SNAPSHOT
+                        && !failure.recovery.contains("run ripr_refresh")
+                        && failure.detail.contains(bad)
+                        && failure.data.get("custody") == Some(&json!("not_verifiable")) => {}
+                other => return Err(format!("{bad}: must refuse as not verifiable: {other:?}")),
+            }
+        }
+        // Non-Rust item: prepares, and says custody was not checked.
+        let mut session = build("app/pricing.py", "tests/checkout.rs", &both)?;
+        let packet = prepare(&mut session).map_err(|failure| failure.detail)?;
+        let notes = packet["limitations"].to_string();
+        if !notes.contains("source custody is not checked for `app/pricing.py`") {
+            return Err(format!(
+                "non-Rust item must disclose unchecked custody: {notes}"
+            ));
+        }
+        // A fix-site file with no captured digest is disclosed too.
+        let mut session = build("src/lib.rs", "tests/new_test.rs", &both[..1])?;
+        let packet = prepare(&mut session).map_err(|failure| failure.detail)?;
+        if !packet["limitations"]
+            .to_string()
+            .contains("source custody is not checked for the fix-site file `tests/new_test.rs`")
+        {
+            return Err(format!("uncaptured fix site must be disclosed: {packet}"));
+        }
+        // The shared check the bound-seam path uses normalizes its paths.
+        let session = build("src/lib.rs", "tests/checkout.rs", &both)?;
+        let snapshot = session.last_good.as_ref().ok_or("snapshot")?;
+        let producers = snapshot.card_producers.as_ref().ok_or("producers")?;
+        let item = snapshot.require_item("gap:test:1").map_err(|f| f.detail)?;
+        std::fs::write(&src, b"fn changed() {}\n").map_err(|e| e.to_string())?;
+        let drift = super::super::repair_card::verify_consumed_paths(
+            &dir,
+            snapshot,
+            item,
+            producers,
+            &[std::path::PathBuf::from(".//src/lib.rs")],
+            "repair card",
+        );
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        match drift {
+            Err(failure) if failure.code == CODE_STALE_SNAPSHOT => {}
+            other => return Err(format!("bound-path spelling must be checked: {other:?}")),
         }
         Ok(())
     }
@@ -1968,7 +2300,7 @@ pub(super) mod tests {
             .ok_or_else(|| "missing snapshot".to_string())?
             .snapshot_id
             .clone();
-        match session.prepare_repair("gap:test:1", Some("snapshot:sha256:old"), None) {
+        match session.prepare_repair("gap:test:1", Some("snapshot:sha256:old"), None, None) {
             Ok(value) => Err(format!("stale snapshot must fail closed: {value}")),
             Err(failure) if failure.code != CODE_STALE_SNAPSHOT => {
                 Err(format!("unexpected failure code: {}", failure.code))
@@ -1988,7 +2320,7 @@ pub(super) mod tests {
                 Ok(())
             }
         }?;
-        match session.prepare_repair("gap:missing", None, None) {
+        match session.prepare_repair("gap:missing", None, None, None) {
             Ok(value) => Err(format!("unknown item must fail closed: {value}")),
             Err(failure) if failure.code == CODE_ITEM_NOT_FOUND => Ok(()),
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
@@ -2000,10 +2332,10 @@ pub(super) mod tests {
         let mut first = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let mut second = session_with(&[super::super::gaps::test_finding()?], "root:sha256:b")?;
         let one = first
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let two = second
-            .prepare_repair("gap:test:1", None, Some("root:sha256:b"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:b"), None)
             .map_err(|failure| failure.detail)?;
         let one_id = one
             .pointer("/attempt/attempt_id")
@@ -2030,7 +2362,7 @@ pub(super) mod tests {
     fn superseded_attempt_fails_closed_after_refresh() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -2095,7 +2427,7 @@ pub(super) mod tests {
     fn unchanged_evidence_refresh_keeps_the_session_attempt_readable() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -2132,7 +2464,7 @@ pub(super) mod tests {
     fn receipt_status_for_session_attempt_awaits_the_external_edit() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -3224,7 +3556,7 @@ pub(super) mod tests {
     fn repair_reads_fail_closed_while_refresh_is_in_flight() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let packet = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let attempt_id = packet
             .pointer("/attempt/attempt_id")
@@ -3253,7 +3585,7 @@ pub(super) mod tests {
     fn evicted_transactions_keep_the_superseded_typed_code() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
         let first = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let first_id = first
             .pointer("/attempt/attempt_id")
@@ -3269,7 +3601,7 @@ pub(super) mod tests {
         let refreshed = session_with(&[changed], "root:sha256:a")?;
         session.last_good = refreshed.last_good;
         let second = session
-            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         let second_id = second
             .pointer("/attempt/attempt_id")

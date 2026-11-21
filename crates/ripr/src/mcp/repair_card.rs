@@ -260,6 +260,70 @@ pub(crate) fn gather_seam_inventory(
     })
 }
 
+/// Re-verify, at request time, the captured consumed-source digests of only
+/// the files one card's evidence is bound to. The refresh-time probe and
+/// custody are not re-run per read, and the server does not watch the
+/// worktree, so a source edit after the refresh would otherwise ride a card
+/// (or a prepared repair transaction) labeled current. The shared custody
+/// owner decides; this adapter reads bytes only. Both `ripr_get_repair_card`
+/// and `ripr_prepare_repair` call this one check and refuse with the same
+/// typed `stale_snapshot` failure (#15240).
+pub(super) fn verify_consumed_source_custody(
+    root: &Path,
+    snapshot: &Snapshot,
+    item: &GapItem,
+    producers: &SnapshotCardProducers,
+    entry: &ClassifiedSeam,
+    surface: &str,
+) -> Result<(), AttemptFailure> {
+    let evidence_paths = crate::app::repair_card_handoff::evidence_probe_paths(entry);
+    verify_consumed_paths(root, snapshot, item, producers, &evidence_paths, surface)
+}
+
+/// Repo-relative spelling the captured digests are keyed by: forward slashes
+/// and no leading `./` (repeated `./` and `.//` included). Absolute and `..`
+/// paths are left as written so they stay uncapturable.
+pub(super) fn normalize_item_path(file: &Path) -> PathBuf {
+    let unified = file.to_string_lossy().replace('\\', "/");
+    let mut rest = unified.as_str();
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped.trim_start_matches('/');
+    }
+    PathBuf::from(rest)
+}
+
+/// The same digest comparison over an explicit path set, for an item with no
+/// bound seam (#15240): the caller names the files, the shared custody owner
+/// decides, and the typed `stale_snapshot` refusal is identical.
+pub(super) fn verify_consumed_paths(
+    root: &Path,
+    snapshot: &Snapshot,
+    item: &GapItem,
+    producers: &SnapshotCardProducers,
+    paths: &[PathBuf],
+    surface: &str,
+) -> Result<(), AttemptFailure> {
+    let paths: Vec<PathBuf> = paths.iter().map(|path| normalize_item_path(path)).collect();
+    if let Some(drift) = producers
+        .consumed_sources
+        .first_drift(paths.iter().map(PathBuf::as_path), |relative| {
+            std::fs::read(root.join(relative)).ok()
+        })
+    {
+        return Err(AttemptFailure::new(
+            CODE_STALE_SNAPSHOT,
+            format!(
+                "{surface} for canonical item {} is unavailable: {}; the snapshot no longer describes the files on disk",
+                item.canonical_id,
+                drift.describe()
+            ),
+            "run ripr_refresh again to analyze the current source, then retry",
+        )
+        .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+    }
+    Ok(())
+}
+
 /// Bind the repair-card producers into one committing snapshot from the
 /// refresh's seam inventory: each owner-discriminated binding records its
 /// evidence-scope currentness probe. Any failure fails the attempt: the
@@ -582,29 +646,7 @@ impl WorkspaceSession {
                 "restart the server with `ripr mcp --stdio --root <repository>` and retry",
             ));
         };
-        // The refresh-time probe and custody are not re-run per read, so a
-        // source edit after the refresh (the server does not watch the
-        // worktree) would otherwise ride a card labeled current. Re-verify the
-        // captured digests of only the files this card's evidence is bound to
-        // (the shared custody owner decides; this adapter reads bytes only).
-        let evidence_paths = crate::app::repair_card_handoff::evidence_probe_paths(entry);
-        if let Some(drift) = producers
-            .consumed_sources
-            .first_drift(evidence_paths.iter().map(PathBuf::as_path), |relative| {
-                std::fs::read(root.join(relative)).ok()
-            })
-        {
-            return Err(AttemptFailure::new(
-                CODE_STALE_SNAPSHOT,
-                format!(
-                    "repair card for canonical item {} is unavailable: {}; the snapshot no longer describes the files on disk",
-                    item.canonical_id,
-                    drift.describe()
-                ),
-                "run ripr_refresh again to analyze the current source, then retry",
-            )
-            .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
-        }
+        verify_consumed_source_custody(root, snapshot, item, producers, entry, "repair card")?;
         let readiness = repair_packet_eligibility(entry).readiness;
         let seam_id = entry.seam.id().as_str().to_string();
         // The witness and finding id bind through the shared

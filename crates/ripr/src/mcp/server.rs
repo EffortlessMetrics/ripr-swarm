@@ -420,6 +420,7 @@ impl McpServer {
             &canonical_id,
             requested.as_deref(),
             self.root_identity.as_deref(),
+            self.analysis_root.as_deref(),
         ) {
             Ok(document) => {
                 // A refused item created no transaction: say so with
