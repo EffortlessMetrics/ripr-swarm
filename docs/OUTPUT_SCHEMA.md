@@ -21988,17 +21988,23 @@ writes for both selectors, `--before` movement (unchanged, improved, regressed,
 closed, indeterminate, and an unusable or incompatible before artifact),
 `--check-parity` (matched and capped), a gap ledger whose records conflict, a
 ledger carrying the typed command specs `ripr agent packet` produced, a
-TypeScript gap rerun, and selectors that resolve to nothing. Text the producer
-may leave empty stays a plain string: a TypeScript related test with no oracle
-or relation writes `""` for `evidence_summary`, `relation_reason` and
-`relation_confidence`, and a blank legacy `verify_commands` display is kept as
-written. Beyond the field shapes, the schema binds these rules: `limitation`
+TypeScript gap rerun, and selectors that resolve to nothing, including an
+empty `--gap ""` and a `--changed-test` that names the root. Only text the
+producer is observed to leave empty stays a plain string: a TypeScript related
+test with no oracle or relation writes `""` for `evidence_summary`,
+`relation_reason` and `relation_confidence`; a blank legacy `verify_commands`
+display is kept as written; and the selector echoes an empty `--gap` value, or
+a `--changed-test` that normalizes to an empty path, as `""` in a `limited`
+report. Every other text field is non-empty. Beyond the field shapes, the schema binds these rules: `limitation`
 is present exactly when `state` is `limited`; a `movement` section carries the
 report `state` and the before/after `authority_boundary`, and a report without
 one is `current_state_only` or `limited`; a `limited` movement is
-`movement_indeterminate`; an unusable before artifact makes no movement claim;
-`matched` parity has no mismatch of any kind, and `limited` parity is the
-report's `full_pipeline_parity_*` limitation; only a gap selector writes
+`movement_indeterminate`, and a `movement_indeterminate` limitation always
+carries a movement section; an unusable before artifact makes no movement
+claim; `matched` parity has no mismatch of any kind, and `limited` parity is
+exactly the report's `full_pipeline_parity_*` limitation (each requires the
+other); at most 32 `cache.store_failures` rows are retained; a typed command
+spec's `working_directory` is relative, as in `repair-assurance.schema.json`; only a gap selector writes
 `route` or `scope_limitations`; a `receipt_command_conflict` leaves
 `receipt_command` null with no typed receipt spec. Analysis-wide vocabularies
 (`static_class`, oracle and relation names, the selector limitation kinds) are

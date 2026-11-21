@@ -7,7 +7,8 @@
 //! regressed, closed, indeterminate, and an unusable before artifact),
 //! `--check-parity` (matched and capped), a gap ledger whose records conflict, a ledger carrying the typed
 //! command specs `ripr agent packet` produced, and selectors that resolve to
-//! nothing. Each document is also asserted to be the case it claims to be, so
+//! nothing (an empty `--gap` and a `--changed-test` naming the root among
+//! them). Each document is also asserted to be the case it claims to be, so
 //! a schema branch is never "covered" by a run that skipped it.
 
 use serde_json::{Value, json};
@@ -250,6 +251,21 @@ fn rerun_documents() -> Result<Vec<(&'static str, Value)>, String> {
         let (gap_conflict, _) = gap_run(&gap, &conflict_ledger)?;
         let (gap_typed, _) = gap_run(&gap, &typed_ledger)?;
         let (gap_unresolved, _) = gap_run("gap:absent", &conflict_ledger)?;
+        // Selector text the producer keeps as given, even when it is empty:
+        // `--gap ""`, and `--changed-test` naming the root itself (which
+        // normalizes to an empty relative path).
+        let (gap_empty, _) = gap_run("", &conflict_ledger)?;
+        let (root_as_changed_test, _) = json_of(
+            &[
+                "rerun",
+                "--root",
+                &root_arg,
+                "--changed-test",
+                &root_arg,
+                "--json",
+            ],
+            &[],
+        )?;
 
         // Pin the boundary, then drop the pin again: improved, then regressed.
         write(&root.join("tests/pricing.rs"), BOUNDARY_TEST)?;
@@ -290,6 +306,8 @@ fn rerun_documents() -> Result<Vec<(&'static str, Value)>, String> {
             ("gap_conflict", gap_conflict),
             ("gap_typed", gap_typed),
             ("gap_unresolved", gap_unresolved),
+            ("gap_empty", gap_empty),
+            ("root_as_changed_test", root_as_changed_test),
         ];
         #[cfg(feature = "lang-typescript")]
         documents.push(("typescript_gap", typescript_gap_rerun(&side)?));
@@ -437,7 +455,7 @@ fn expected(label: &str) -> Value {
             Value::Null,
             Value::Null,
         ),
-        "selector_unresolved" => changed(
+        "selector_unresolved" | "root_as_changed_test" => changed(
             "limited",
             json!("changed_test_unresolved"),
             Value::Null,
@@ -523,6 +541,14 @@ fn rerun_json_conforms_for_every_selector_and_option() -> Result<(), String> {
             "typescript_gap" => Some((true, true)),
             _ => None,
         };
+        let empty_selector = ["changed_test", "canonical_gap_id"]
+            .iter()
+            .any(|field| document["selector"][*field] == "");
+        if empty_selector != matches!(label, "gap_empty" | "root_as_changed_test") {
+            return Err(format!(
+                "{label}: empty selector text {empty_selector}\n{document:#}"
+            ));
+        }
         if let Some(wanted) = wanted
             && (empty_verify, empty_related) != wanted
         {
@@ -550,7 +576,12 @@ fn published_rerun_schema_rejects_documents_it_forbids() -> Result<(), String> {
             .ok_or(format!("no {label} document"))
     };
     let conflict_route = document("gap_conflict")?["route"].clone();
-    let cases: [(&str, &str, Mutation); 24] = [
+    // The store-failure cap: 32 retained rows conform, a 33rd does not.
+    let failure_row = json!({"path": "src/lib.rs", "stage": "write", "error": "e"});
+    let mut capped = document("current")?;
+    capped["cache"]["store_failures"] = json!(vec![failure_row; 32]);
+    conforms(&capped, &schema, "32 retained store failures")?;
+    let cases: [(&str, &str, Mutation); 33] = [
         ("current", "an unknown top-level field", |doc, _| {
             doc["ok"] = json!(true)
         }),
@@ -659,6 +690,79 @@ fn published_rerun_schema_rejects_documents_it_forbids() -> Result<(), String> {
         }),
         ("current", "an empty static class", |doc, _| {
             doc["seams"][0]["static_class"] = json!("")
+        }),
+        (
+            "indeterminate",
+            "an indeterminate limitation with no movement",
+            |doc, _| {
+                if let Some(map) = doc.as_object_mut() {
+                    map.remove("movement");
+                }
+                doc["authority_boundary"] = json!(DEFAULT_BOUNDARY);
+            },
+        ),
+        (
+            "parity_capped",
+            "a parity limitation with no parity result",
+            |doc, _| {
+                if let Some(map) = doc.as_object_mut() {
+                    map.remove("parity");
+                }
+            },
+        ),
+        ("current", "a 33rd retained store failure", |doc, _| {
+            let row = json!({"path": "src/lib.rs", "stage": "write", "error": "e"});
+            doc["cache"]["store_failures"] = json!(vec![row; 33]);
+        }),
+        (
+            "gap_typed",
+            "an absolute typed working directory",
+            |doc, _| doc["route"]["verify_command_specs"][0]["working_directory"] = json!("/tmp"),
+        ),
+        (
+            "gap_typed",
+            "a typed working directory above the root",
+            |doc, _| {
+                doc["route"]["verify_command_specs"][0]["working_directory"] = json!("crates/../..")
+            },
+        ),
+        ("current", "an empty seam owner", |doc, _| {
+            doc["seams"][0]["owner"] = json!("")
+        }),
+        ("current", "an empty required evidence item", |doc, _| {
+            if let Some(items) =
+                doc["seams"][0]["repair_route_readiness"]["required_evidence"].as_array_mut()
+            {
+                items.push(json!(""));
+            }
+        }),
+        ("current", "a related test with no name", |doc, _| {
+            if let Some(test) = doc["seams"]
+                .as_array_mut()
+                .into_iter()
+                .flatten()
+                .find_map(|seam| {
+                    seam["related_tests"]
+                        .as_array_mut()
+                        .and_then(|tests| tests.first_mut())
+                })
+            {
+                test["test_name"] = json!("");
+            }
+        }),
+        ("current", "an empty missing discriminator", |doc, _| {
+            if let Some(fact) = doc["seams"]
+                .as_array_mut()
+                .into_iter()
+                .flatten()
+                .find_map(|seam| {
+                    seam["missing_discriminators"]
+                        .as_array_mut()
+                        .and_then(|facts| facts.first_mut())
+                })
+            {
+                fact["value"] = json!("");
+            }
         }),
     ];
     for (base, label, mutate) in cases {

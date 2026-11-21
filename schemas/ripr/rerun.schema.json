@@ -292,6 +292,28 @@
       }
     },
     {
+      "description": "`movement_indeterminate` is only written after a before/after comparison, so it carries a movement section.",
+      "if": {
+        "required": [
+          "limitation"
+        ],
+        "properties": {
+          "limitation": {
+            "properties": {
+              "kind": {
+                "const": "movement_indeterminate"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "movement"
+        ]
+      }
+    },
+    {
       "description": "An unusable `--before` artifact makes no movement claim.",
       "if": {
         "required": [
@@ -374,6 +396,41 @@
       }
     },
     {
+      "description": "A `full_pipeline_parity_*` limitation is only written beside a `limited` parity result.",
+      "if": {
+        "required": [
+          "limitation"
+        ],
+        "properties": {
+          "limitation": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "full_pipeline_parity_incomplete",
+                  "full_pipeline_parity_mismatch",
+                  "full_pipeline_parity_input_mismatch"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "parity"
+        ],
+        "properties": {
+          "parity": {
+            "properties": {
+              "state": {
+                "const": "limited"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "description": "Only a gap selector writes a route or scope limitations.",
       "if": {
         "properties": {
@@ -421,9 +478,8 @@
           "const": "changed_test"
         },
         "changed_test": {
-          "description": "The changed test file, with `::<test>` when one test was named.",
-          "type": "string",
-          "minLength": 1
+          "description": "The changed test file relative to the root, with `::<test>` when one test was named. Empty when `--changed-test` names the root itself; such a selector resolves to nothing and the report is `limited`.",
+          "type": "string"
         },
         "selected_test_count": {
           "type": "integer",
@@ -455,8 +511,8 @@
           "const": "canonical_gap"
         },
         "canonical_gap_id": {
-          "type": "string",
-          "minLength": 1
+          "description": "The `--gap` value as given. Empty when `--gap \"\"` was passed; such a selector matches no ledger record and the report is `limited`.",
+          "type": "string"
         },
         "gap_ledger": {
           "description": "The ledger path as given on the command line.",
@@ -540,8 +596,9 @@
           "minimum": 0
         },
         "store_failures": {
-          "description": "Bounded rows behind `store_errors`; the rows plus `store_failures_dropped` equal `store_errors`.",
+          "description": "Bounded rows behind `store_errors`, at most 32; the rows plus `store_failures_dropped` equal `store_errors`.",
           "type": "array",
+          "maxItems": 32,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -856,8 +913,9 @@
           "minimum": 1
         },
         "owner": {
-          "description": "The production owner; empty when the analysis could not name one.",
-          "type": "string"
+          "description": "The production owner; a TypeScript seam with no named owner writes `typescript:<unknown>`.",
+          "type": "string",
+          "minLength": 1
         },
         "static_class": {
           "description": "The seam's static grip class, as the full pipeline names it.",
@@ -884,10 +942,12 @@
             ],
             "properties": {
               "test_name": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "file": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "line": {
                 "type": "integer",
@@ -927,10 +987,12 @@
             ],
             "properties": {
               "value": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "reason": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               }
             }
           }
@@ -981,19 +1043,22 @@
         "required_evidence": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         },
         "present_evidence": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         },
         "missing_evidence": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         },
         "target_selection": {
@@ -1106,7 +1171,8 @@
           "minLength": 1
         },
         "workspace_identity": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "currentness": {
           "type": "string",
@@ -1527,8 +1593,9 @@
           }
         },
         "working_directory": {
+          "description": "Relative to the workspace root: no drive or scheme prefix, no leading separator and no `..` segment (the same constraint as `repair-assurance.schema.json`).",
           "type": "string",
-          "minLength": 1
+          "pattern": "^(?![^\\\\/]+:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$"
         },
         "env_set": {
           "type": "array",

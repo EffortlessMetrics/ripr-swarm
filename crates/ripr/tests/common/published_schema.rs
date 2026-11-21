@@ -325,9 +325,14 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
                     return Err(format!("{location}: {text:?} does not match {pattern}"));
                 }
             }
+            RELATIVE_WORKDIR_PATTERN => {
+                if !is_relative_working_directory(text) {
+                    return Err(format!("{location}: {text:?} does not match {pattern}"));
+                }
+            }
             other => {
                 return Err(format!(
-                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?} and {LONG_FLAG_PATTERN:?}"
+                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?}, {LONG_FLAG_PATTERN:?} and {RELATIVE_WORKDIR_PATTERN:?}"
                 ));
             }
         }
@@ -341,6 +346,21 @@ pub const SHA256_DIGEST_PATTERN: &str = "^sha256:[0-9a-f]{64}$";
 /// Unanchored at the end: a long flag is `--` then a lowercase letter, then
 /// anything.
 pub const LONG_FLAG_PATTERN: &str = "^--[a-z]";
+/// A relative working directory, as `repair-assurance.schema.json` publishes
+/// it: non-empty with no line break, no `name:` drive or scheme prefix before
+/// the first separator, no leading `/` or `\\`, and no `..` segment.
+pub const RELATIVE_WORKDIR_PATTERN: &str =
+    r"^(?![^\\/]+:)(?![\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).+$";
+
+fn is_relative_working_directory(text: &str) -> bool {
+    let is_separator = |c: char| c == '/' || c == '\\';
+    let first_segment = text.split(is_separator).next().unwrap_or("");
+    !text.is_empty()
+        && !text.contains('\n')
+        && !first_segment.contains(':')
+        && !text.starts_with(is_separator)
+        && !text.split(is_separator).any(|segment| segment == "..")
+}
 
 const SUPPORTED_KEYWORDS: &[&str] = &[
     "$defs",

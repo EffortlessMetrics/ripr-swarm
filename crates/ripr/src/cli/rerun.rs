@@ -43,9 +43,10 @@ struct RerunOptions {
 const TARGETED_RERUN_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
 
 /// The `ripr rerun --json` refusal envelope keys its document with the
-/// targeted rerun report's schema version (#7331). The version gate pins this
-/// mirror and `TARGETED_RERUN_SCHEMA_VERSION` to their published schemas
-/// separately, so the two cannot drift apart unreported.
+/// targeted rerun report's schema version (#7331). The version gate checks
+/// this constant and `TARGETED_RERUN_SCHEMA_VERSION` each against its own
+/// published schema and documentation row; it does not compare the two, so a
+/// report-only version bump must update this mirror by hand.
 const TARGETED_RERUN_REFUSAL_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
 
 #[derive(Debug, PartialEq, Eq)]
