@@ -22635,6 +22635,7 @@ mod function_reference_callback_tests;
 mod gap_reach_config_tests;
 mod getter_matcher_key_tests;
 mod guard_entry_tests;
+mod import_then_export_barrel_tests;
 mod infection_tests;
 mod instance_class_tests;
 mod instance_factory_tests;

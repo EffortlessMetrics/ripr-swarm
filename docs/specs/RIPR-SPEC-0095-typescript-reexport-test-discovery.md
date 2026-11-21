@@ -45,6 +45,7 @@ on the changed owner's own export:
 ```
 test file imports N from module B
   →  B: `export { N } from './A'`, `export { M as N } from './A'`,
+        `import { N } from './A'; export { N };` (see below),
         or `export * from './A'` (A must itself export N)
   →  ... at most MAX_REEXPORT_HOPS (4) hops ...
   →  owner module: declares and exports the changed owner as N
@@ -66,6 +67,27 @@ from the non-test workspace sources. Per module it records named re-exports
 `(module, exported_name) → (original_name, source_module)`, the module's own
 rename exports as self-hops, `export *` edges, the names the module exports
 from its own declarations, and the set of known workspace modules.
+
+### Imported bindings exported by list
+
+`import { Help } from './help'; export { Help };` (the shape of commander.js's
+`index.js`) exports the binding of `./help`, an indirect binding in ECMAScript
+exactly as `export { Help } from './help'` is. An own export list entry whose
+local name is bound by a value `import` of an in-repo module therefore records
+the same hop as the one-statement form (#15940):
+
+- `import { M } from './A'; export { M as N };` and `import { M as L } from
+  './A'; export { L as N };` record `(B, N) → (M, A)`.
+- `import D from './A'; export { D as N };` records `(B, N) → (default, A)`.
+- `import * as ns from './A'; export { ns };` records the namespace export
+  `(B, ns) → A`, read like `export * as ns from './A'`.
+
+A type-only import (`import type { N }`, `import { type N }`) binds no value
+and records no hop. An import whose specifier is not an in-repo module (a
+package) keeps the own-export reading, so it still shadows the module's star
+sources and never lands on a workspace owner. The import target resolves on
+disk, so the module's export facts are recomputed each run like any `export
+... from`.
 
 ### Namespace re-exports
 
@@ -193,6 +215,9 @@ involves indirection that ripr cannot verify at runtime.
   the same-named class, ambiguous star, mocked module, shadowed name,
   type-only, computed or reassigned constructor, sibling-export and namespace
   controls.
+- Unit tests in `import_then_export_barrel_tests` for a function and a class
+  through an import-then-export barrel, renamed, default and namespace
+  imports, and the other-module, package and type-only controls.
 - Unit tests in `reexport_chain_tests` for the over-bound chain, cycle,
   ambiguous star, non-exported star target, file-module-over-index, and
   shadowed import controls.
@@ -203,8 +228,6 @@ involves indirection that ripr cannot verify at runtime.
 ## Non-Goals
 
 - Chains beyond `MAX_REEXPORT_HOPS`.
-- Following a module's own `import { x } from './a'; export { x }` re-binding
-  (under-credited, fail-closed).
 - Default-import tracing through barrels, and `import * as ns` of a barrel
   (`ns.units.f(...)`).
 - Package-graph resolution (no node_modules, no tsc, no package.json
@@ -278,6 +301,9 @@ involves indirection that ripr cannot verify at runtime.
   fixture for the same-named-class guard.
 - `crates/ripr/src/analysis/language/typescript/tests/class_barrel_reexport_tests.rs`
   — classes through a barrel: positive owners and every fail-closed control.
+- `crates/ripr/src/analysis/language/typescript/tests/import_then_export_barrel_tests.rs`
+  — imported bindings exported by list: positive owners and every
+  fail-closed control.
 - `fixtures/typescript_reexport_single_hop/` — golden fixture for single-hop credit.
 - `fixtures/typescript_reexport_no_false_credit/` — golden fixture for name-collision guard.
 - `fixtures/typescript_reexport_two_hop_limit/` — golden fixture for a

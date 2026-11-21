@@ -1976,6 +1976,7 @@ pub(crate) fn module_export_facts(
             facts.unstable_enum_roots.push(name.clone());
         }
     }
+    let imported_bindings = es_import_bindings(body);
     for stmt in body {
         match stmt {
             Statement::ExportAllDeclaration(export_all) => {
@@ -2036,6 +2037,29 @@ pub(crate) fn module_export_facts(
                         };
                         let exported_name = module_export_name_text(&specifier.exported)
                             .unwrap_or_else(|| local_name.clone());
+                        // `import { N } from './a'; export { N };` exports
+                        // the binding of `./a`, exactly as `export { N } from
+                        // './a'` does (an indirect binding in ECMAScript), so
+                        // it records the same hop. An import whose source is
+                        // not an in-repo module keeps the own-export reading.
+                        if let Some((imported, import_source)) = imported_bindings.get(&local_name)
+                            && let Some(resolved) = normalized_relative_import_module(
+                                relative,
+                                import_source,
+                                alias_map,
+                                Some(workspace_root),
+                            )
+                        {
+                            facts.re_exports_from_source = true;
+                            let key = (module.clone(), exported_name);
+                            match imported {
+                                Some(original) => {
+                                    facts.entries.push((key, (original.clone(), resolved)));
+                                }
+                                None => facts.namespace_exports.push((key, resolved)),
+                            }
+                            continue;
+                        }
                         if exported_name == local_name {
                             facts.local_exports.push(local_name);
                             continue;
@@ -2090,6 +2114,50 @@ pub(crate) fn module_export_facts(
     facts.commonjs_forwards = commonjs.forwards;
     facts.commonjs_own_names = commonjs.own_names;
     facts
+}
+
+/// Value bindings of the module's ES `import` declarations: local name ->
+/// (the name imported from the source, `default` for a default import, `None`
+/// for a namespace import; the source specifier as written). Type-only
+/// imports bind no value and are skipped.
+fn es_import_bindings(
+    body: &oxc_allocator::Vec<'_, Statement<'_>>,
+) -> HashMap<String, (Option<String>, String)> {
+    let mut bindings = HashMap::new();
+    for statement in body {
+        let Statement::ImportDeclaration(import) = statement else {
+            continue;
+        };
+        if import.import_kind == ImportOrExportKind::Type {
+            continue;
+        }
+        let Some(specifiers) = &import.specifiers else {
+            continue;
+        };
+        let source = import.source.value.to_string();
+        for specifier in specifiers {
+            let (local, imported) = match specifier {
+                ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                    if specifier.import_kind == ImportOrExportKind::Type {
+                        continue;
+                    }
+                    let Some(imported) = module_export_name_text(&specifier.imported) else {
+                        continue;
+                    };
+                    (specifier.local.name.to_string(), Some(imported))
+                }
+                ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => (
+                    specifier.local.name.to_string(),
+                    Some("default".to_string()),
+                ),
+                ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                    (specifier.local.name.to_string(), None)
+                }
+            };
+            bindings.insert(local, (imported, source.clone()));
+        }
+    }
+    bindings
 }
 
 /// Value names bound by an exported declaration. Type-only declarations

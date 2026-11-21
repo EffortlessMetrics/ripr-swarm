@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0095"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/import_then_export_barrel_tests.rs",
+]
