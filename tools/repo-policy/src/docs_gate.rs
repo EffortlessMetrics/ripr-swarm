@@ -350,45 +350,7 @@ fn check_static_language(rel: &str, text: &str, violations: &mut Vec<String>) {
     }
 }
 
-/// GitHub heading slugs for one document, excluding fenced headings, with
-/// `-1`, `-2` suffixes for repeated headings.
-fn heading_slugs(text: &str) -> BTreeSet<String> {
-    let mut slugs = BTreeSet::new();
-    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    let mut fenced = false;
-    for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-            continue;
-        }
-        if fenced {
-            continue;
-        }
-        let Some(heading) = line.trim_start().strip_prefix('#') else {
-            continue;
-        };
-        let heading = heading.trim_start_matches('#').trim();
-        if heading.is_empty() {
-            continue;
-        }
-        let mut slug = String::new();
-        for ch in heading.chars() {
-            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
-                slug.push(ch.to_ascii_lowercase());
-            } else if ch.is_whitespace() {
-                slug.push('-');
-            }
-        }
-        let seen = counts.entry(slug.clone()).or_default();
-        if *seen == 0 {
-            slugs.insert(slug);
-        } else {
-            slugs.insert(format!("{slug}-{seen}"));
-        }
-        *seen += 1;
-    }
-    slugs
-}
+use crate::markdown_headings::heading_slugs;
 
 fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec<String>) {
     let base = Path::new(rel).parent().map(Path::to_path_buf);
@@ -873,7 +835,16 @@ pub fn run_docs_gate_at_revision(
     let base_id = resolve_commit(checkout, base)?;
     let head_id = resolve_commit(checkout, head)?;
     verify_checkout_at(checkout, &head_id, head)?;
-    let changed = git_diff_files(checkout, &base_id, &head_id)?;
+    let (changed, risks) = revision_changes(checkout, &base_id, &head_id)?;
+    if !risks.is_empty() {
+        let mut plan = plan(&changed);
+        plan.gates.clear();
+        plan.widen_reasons.extend(risks);
+        return Ok(DocsGateReport {
+            plan,
+            violations: Vec::new(),
+        });
+    }
     let tree = materialize_tree(checkout, &head_id)?;
     let result = run_docs_gate(&tree, &changed);
     let _ = std::fs::remove_dir_all(&tree);
@@ -947,7 +918,12 @@ fn create_staging_dir(head_id: &str) -> Result<PathBuf, String> {
 /// via repeated flags). Exit via `Err` on widen or violations.
 pub fn command(args: &[String]) -> Result<(), String> {
     let report = match parse_mode(args)? {
-        CommandMode::Changed(changed) => run_docs_gate(Path::new("."), &changed)?,
+        CommandMode::Changed(changed) => {
+            eprintln!(
+                "docs-gate: live paths check outgoing links only; use --base and --head to check for removed Markdown destinations and anchors"
+            );
+            run_docs_gate(Path::new("."), &changed)?
+        }
         CommandMode::Revision { base, head } => {
             run_docs_gate_at_revision(Path::new("."), &base, &head)?
         }
@@ -1027,7 +1003,7 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
         CommandMode::Revision { base, head } => {
             let head_id = resolve_commit(Path::new("."), &head)?;
             verify_checkout_at(Path::new("."), &head_id, &head)?;
-            git_diff_files(Path::new("."), &base, &head)
+            revision_changes(Path::new("."), &base, &head).map(|(paths, _)| paths)
         }
     }
 }
@@ -1069,13 +1045,19 @@ fn verify_checkout_at(checkout: &Path, head_id: &str, head_label: &str) -> Resul
     Ok(())
 }
 
-fn git_diff_files(checkout: &Path, base: &str, head: &str) -> Result<Vec<String>, String> {
+/// Read before/after blob identities from the same three-dot diff as the path roster.
+fn revision_changes(
+    checkout: &Path,
+    base: &str,
+    head: &str,
+) -> Result<(Vec<String>, Vec<String>), String> {
     // Fail closed on any git error: an unavailable diff widens, never passes.
     let output = std::process::Command::new("git")
         .args([
             "diff",
             "--no-renames",
-            "--name-only",
+            "--raw",
+            "--no-abbrev",
             "-z",
             &format!("{base}...{head}"),
         ])
@@ -1088,12 +1070,63 @@ fn git_diff_files(checkout: &Path, base: &str, head: &str) -> Result<Vec<String>
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(output
-        .stdout
-        .split(|b| *b == 0)
-        .filter(|chunk| !chunk.is_empty())
-        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
-        .collect())
+    let mut paths = Vec::new();
+    let mut risks = Vec::new();
+    let raw = std::str::from_utf8(&output.stdout)
+        .map_err(|e| format!("docs-gate: unreadable Git diff: {e}"))?;
+    let mut records = raw.split_terminator('\0');
+    while let Some(header) = records.next() {
+        let path = records.next().ok_or("docs-gate: missing Git diff path")?;
+        let fields: Vec<_> = header
+            .trim_start_matches(':')
+            .split_ascii_whitespace()
+            .collect();
+        let [old_mode, new_mode, old_blob, new_blob, status] = fields.as_slice() else {
+            return Err(format!("docs-gate: unexpected Git diff record {header:?}"));
+        };
+        paths.push(path.to_owned());
+        if normalize(path) != path {
+            risks.push(format!(
+                "Git path {path:?} would be normalized to another path; full proof required"
+            ));
+            continue;
+        }
+        if !path.ends_with(".md") {
+            continue;
+        }
+        // Unchanged referrers may name a removed destination or heading.
+        match (*status, *old_mode, *new_mode) {
+            ("A", "000000", "100644") => (),
+            ("M", "100644", "100644") => {
+                let old = blob_headings(checkout, old_blob)?;
+                let new = blob_headings(checkout, new_blob)?;
+                if let Some(missing) = old.difference(&new).next() {
+                    risks.push(format!("{path}: removed Markdown anchor #{missing}; full incoming-link check required"));
+                }
+            }
+            _ => risks.push(format!(
+                "{path}: changed Markdown destination or mode; full incoming-link check required"
+            )),
+        }
+    }
+    Ok((paths, risks))
+}
+
+fn blob_headings(checkout: &Path, oid: &str) -> Result<BTreeSet<String>, String> {
+    let output = std::process::Command::new("git")
+        .args(["cat-file", "blob", oid])
+        .current_dir(checkout)
+        .output()
+        .map_err(|e| format!("docs-gate: cannot read Markdown blob {oid}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docs-gate: reading Markdown blob {oid}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|e| format!("docs-gate: Markdown blob {oid} is not UTF-8: {e}"))?;
+    Ok(heading_slugs(text))
 }
 
 #[cfg(test)]

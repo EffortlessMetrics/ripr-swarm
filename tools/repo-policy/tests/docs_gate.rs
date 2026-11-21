@@ -438,3 +438,42 @@ fn forbidden_static_language_and_broken_link_fail() -> TestResult {
     );
     Ok(())
 }
+#[test]
+fn revision_mode_widens_when_unchanged_markdown_can_lose_its_destination() -> TestResult {
+    let note = "docs/releases/0.11.0-release-notes.md";
+    let root = fixture(&[
+        (
+            "README.md",
+            "[Upgrade](docs/releases/0.11.0-release-notes.md#upgrade-1)\n",
+        ),
+        (note, "# Upgrade\n## Upgrade ##\n"),
+    ])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "retain duplicate heading"])?;
+    fs::write(root.join(note), "# Upgrade\n## Upgrade ##\n\nNew prose.\n")?;
+    git(&root, &["commit", "-qam", "ordinary release note"])?;
+    let safe = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !safe.plan.is_docs_eligible() || !safe.violations.is_empty() {
+        return Err(safe.render().into());
+    }
+    fs::write(root.join(note), "# Upgrade\n~~~\n## Upgrade ##\n~~~\n")?;
+    git(&root, &["commit", "-qam", "turn second heading into code"])?;
+    let renamed = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !renamed
+        .plan
+        .widen_reasons
+        .iter()
+        .any(|reason| reason.contains("#upgrade-1"))
+    {
+        return Err(format!("lost incoming anchor was eligible: {}", renamed.render()).into());
+    }
+    git(&root, &["rm", note])?;
+    git(&root, &["commit", "-qm", "remove linked page"])?;
+    let deleted = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if deleted.plan.is_docs_eligible() {
+        return Err(format!("deleted destination was eligible: {}", deleted.render()).into());
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
