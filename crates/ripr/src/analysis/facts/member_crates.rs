@@ -1137,6 +1137,50 @@ impl MemberCrates {
         })
     }
 
+    /// Whether `file` (root-relative) is a `[[test]]` target entry
+    /// ([`Self::is_declared_test_target_entry`], any package) that roots no
+    /// other Cargo target (#15910). The nearest package manifest must not
+    /// also name the file as its `[lib]`, a `[[bin]]`, `[[example]]` or
+    /// `[[bench]]` `path`, or its build script, so a manifest can never turn
+    /// production code into a test file by declaring it twice.
+    pub(crate) fn is_declared_test_only_entry(&self, file: &Path) -> bool {
+        self.is_declared_test_target_entry(file, false)
+            && !self.is_declared_entry_of(file, &["bin", "example", "bench"])
+            && !self.is_library_or_build_script_entry(file)
+    }
+
+    /// Whether the nearest package manifest names `file` as its `[lib]
+    /// path` or its build script (`package.build`, or the default
+    /// `build.rs`). A manifest that cannot be read answers yes, so the
+    /// caller's exclusion fails closed.
+    fn is_library_or_build_script_entry(&self, file: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return true;
+        };
+        let root = lexical(root);
+        let file_abs = lexical(&root.join(file));
+        let Some((package, manifest)) = file_abs.parent().and_then(|directory| {
+            committed_package(self.root.as_deref().unwrap_or(&root), &root, directory)
+        }) else {
+            return true;
+        };
+        let names = |path: &str| lexical(&package.join(path)) == file_abs;
+        let library = manifest
+            .get("lib")
+            .and_then(|lib| lib.get("path"))
+            .and_then(toml::Value::as_str)
+            .is_some_and(names);
+        let build_script = match manifest
+            .get("package")
+            .and_then(|package| package.get("build"))
+        {
+            Some(toml::Value::String(path)) => names(path),
+            Some(toml::Value::Boolean(false)) => false,
+            _ => names("build.rs"),
+        };
+        library || build_script
+    }
+
     fn is_declared_entry_of(&self, file: &Path, kinds: &[&str]) -> bool {
         self.is_declared_entry_matching(file, kinds, false, |_| true)
     }

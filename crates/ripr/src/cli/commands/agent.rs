@@ -2788,34 +2788,34 @@ fn run_agent_repair_phase(
                     &root, &seam_id, &file,
                 ));
             }
-            let mut policy =
-                crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|error| {
-                        // Only a packet that names no editable test target gets
-                        // the plain next-step text; a malformed packet or an
-                        // invalid edit surface keeps its own diagnostic.
-                        if !crate::app::task_first::is_missing_edit_target_error(&error) {
-                            return error;
-                        }
-                        refusal.code = Some(crate::app::task_first::RepairRefusalCode::NoTestRoute);
-                        // #10978: say where the change is and what to do next.
-                        // The exact diagnostic stays last, because `ripr agent
-                        // card` reports the same text as its blocker.
-                        let seam = before_report
-                            .classified
-                            .iter()
-                            .find(|entry| entry.seam.id().as_str() == seam_id);
-                        let source = seam.and_then(|entry| {
-                            std::fs::read_to_string(root.join(entry.seam.file())).ok()
-                        });
-                        let plain = crate::app::task_first::no_test_route_refusal(
-                            &root,
-                            &seam_id,
-                            seam,
-                            source.as_deref(),
-                        );
-                        format!("{plain} (Detail: {error})")
-                    })?;
+            let mut policy = crate::app::repair_attempt::edit_cage_policy_from_packet_in(
+                &root, &packet, &seam_id,
+            )
+            .map_err(|error| {
+                // Only a packet that names no editable test target gets
+                // the plain next-step text; a malformed packet or an
+                // invalid edit surface keeps its own diagnostic.
+                if !crate::app::task_first::is_missing_edit_target_error(&error) {
+                    return error;
+                }
+                refusal.code = Some(crate::app::task_first::RepairRefusalCode::NoTestRoute);
+                // #10978: say where the change is and what to do next.
+                // The exact diagnostic stays last, because `ripr agent
+                // card` reports the same text as its blocker.
+                let seam = before_report
+                    .classified
+                    .iter()
+                    .find(|entry| entry.seam.id().as_str() == seam_id);
+                let source = seam
+                    .and_then(|entry| std::fs::read_to_string(root.join(entry.seam.file())).ok());
+                let plain = crate::app::task_first::no_test_route_refusal(
+                    &root,
+                    &seam_id,
+                    seam,
+                    source.as_deref(),
+                );
+                format!("{plain} (Detail: {error})")
+            })?;
             crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
                 &mut policy,
                 &root,
@@ -3650,7 +3650,8 @@ fn run_agent_repair_phase(
             })?;
             let packet_text = String::from_utf8(packet_bytes.clone())
                 .map_err(|error| format!("retained repair packet is not UTF-8: {error}; start a new attempt with `ripr agent repair --phase before`"))?;
-            let mut cage_policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+            let mut cage_policy = crate::app::repair_attempt::edit_cage_policy_from_packet_in(
+                &root,
                 &packet_text,
                 &attempt.seam_id,
             )?;
@@ -5398,7 +5399,7 @@ fn run_gap_bound_before_phase(
             "agent repair --gap-id `{gap_id}`: the repair packet is not ready: {error}. No repair attempt was started."
         )
     })?;
-    let mut policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, gap_id)
+    let mut policy = crate::app::repair_attempt::edit_cage_policy_from_packet_in(root, &packet, gap_id)
         .map_err(|error| {
             refusal.start_refused = true;
             format!(

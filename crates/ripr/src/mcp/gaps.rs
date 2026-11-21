@@ -266,7 +266,7 @@ impl RepairReadiness {
             // condition (strength and relation confidence are applied by
             // `fix_site_candidates`); the test-surface predicate is re-applied
             // here so swapping candidates can never widen the edit surface.
-            Some(candidate) if !crate::analysis::is_test_surface_path(&candidate.file) => {
+            Some(candidate) if !crate::analysis::is_test_surface(root, &candidate.file) => {
                 self.ready = false;
                 self.fix_site = Some(candidate);
                 self.ineligibility = Some("fix_site_not_test_surface");
@@ -378,7 +378,7 @@ impl RepairReadiness {
         };
         let Some(fix_site) = candidates
             .into_iter()
-            .find(|site| crate::analysis::is_test_surface_path(&site.file))
+            .find(|site| crate::analysis::is_test_surface(root, &site.file))
         else {
             return Self {
                 ready: false,

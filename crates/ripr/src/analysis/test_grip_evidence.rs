@@ -229,6 +229,12 @@ pub(crate) enum TestTargetCurrentness {
 pub(crate) enum TestKind {
     InlineUnit,
     Integration,
+    /// An integration test in the entry file of a `[[test]]` target the
+    /// package manifest declares outside the test layouts (`[[test]] path =
+    /// "spec/pricing.rs"`, #15910). The manifest, not the path, makes the
+    /// file a test file, so the repair route may name it as the test to
+    /// edit ([`crate::analysis::is_test_surface`]).
+    DeclaredIntegration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -6683,6 +6689,11 @@ fn test_target_evidence_memo<'a>(
         function.start_line,
         if function.file == seam.file() || context.is_default_unit_test_file(&function.file) {
             TestKind::InlineUnit
+        } else if crate::analysis::workspace::is_declared_cargo_test_surface_in(
+            &index.member_crates,
+            &function.file,
+        ) {
+            TestKind::DeclaredIntegration
         } else {
             TestKind::Integration
         },

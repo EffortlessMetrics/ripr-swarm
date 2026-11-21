@@ -1,0 +1,19 @@
+[[extend]]
+id = "RIPR-SPEC-0181"
+tests = [
+  "crates/ripr/tests/declared_test_target_repair_start.rs::declared_test_path_outside_tests_starts_and_completes_a_repair",
+  "crates/ripr/tests/declared_test_target_repair_start.rs::attempt_on_a_declared_test_file_refuses_a_production_edit",
+  "crates/ripr/tests/declared_test_target_repair_start.rs::attempt_on_a_declared_test_file_refuses_rewriting_an_existing_test",
+  "crates/ripr/tests/declared_test_target_repair_start.rs::declared_test_path_under_src_gets_no_start",
+  "crates/ripr/tests/declared_test_target_repair_start.rs::test_path_that_also_roots_another_target_gets_no_start",
+]
+code = [
+  "crates/ripr/src/analysis/workspace/source_role.rs::is_test_surface",
+  "crates/ripr/src/analysis/workspace/source_role.rs::is_declared_cargo_test_surface_in",
+  "crates/ripr/src/analysis/facts/member_crates.rs::is_declared_test_only_entry",
+  "crates/ripr/src/app/repair_attempt/mod.rs::edit_cage_policy_from_packet_in",
+  "crates/ripr/src/output/agent_seam_packets.rs::recommended_test_is_repair_edit_target",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0181-inline-test-module-region-cage.md",
+]
