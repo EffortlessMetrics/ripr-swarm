@@ -1651,13 +1651,15 @@ impl Backend {
             return;
         }
         let _transition = self.workspace_root_transition.lock().await;
-        let failure = self.configuration_failure();
+        let withdrawal = self.retained_evidence_withdrawal();
         let has_snapshot = self.latest_pull_snapshot().is_some();
-        if failure.is_none() && has_snapshot {
+        if withdrawal.is_none() && has_snapshot {
             return;
         }
-        let recovery =
-            Self::push_marker_recovery(self.analysis_pending_recovery(), analysis_starting);
+        let recovery = Self::push_marker_recovery(
+            withdrawal.unwrap_or_else(|| self.analysis_pending_recovery()),
+            analysis_starting,
+        );
         let withdrawn = has_snapshot;
         let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let items = if withdrawn {
@@ -1703,14 +1705,17 @@ impl Backend {
     /// snapshot owns both surfaces, so nothing is sent once one exists
     /// without a latched failure.
     async fn refresh_pending_marker_surfaces(&self) {
-        if self.latest_pull_snapshot().is_some() && self.configuration_failure().is_none() {
+        let withdrawal = self.retained_evidence_withdrawal();
+        if self.latest_pull_snapshot().is_some() && withdrawal.is_none() {
             return;
         }
         self.publish_analysis_pending_push_markers(false).await;
         if !(self.pull_diagnostics_enabled() && self.diagnostic_refresh_support_enabled()) {
             return;
         }
-        let identity = self.analysis_pending_recovery().payload_identity();
+        let identity = withdrawal
+            .unwrap_or_else(|| self.analysis_pending_recovery())
+            .payload_identity();
         let route_unchanged = self
             .pending_pull_marker_served_recovery
             .lock()
@@ -3441,6 +3446,25 @@ impl Backend {
             .and_then(|guard| guard.as_ref().cloned())
     }
 
+    /// The route under which the retained snapshot is withdrawn from service,
+    /// or `None` while it may be served. A latched configuration failure
+    /// withdraws it (#8731). So does a latest attempt that failed because the
+    /// requested base does not resolve (#15312): the retained findings answer
+    /// a base the session no longer asks about, and serving them unmarked
+    /// reads as the current answer. Other failures keep the retained
+    /// snapshot, which still answers the same question for an older save.
+    fn retained_evidence_withdrawal(&self) -> Option<AnalysisPendingRecovery> {
+        if self.configuration_failure().is_some() {
+            return Some(AnalysisPendingRecovery::FixConfiguration);
+        }
+        self.latest_attempt_failure()
+            .filter(|failure| failure.kind == AnalysisFailureKind::BaseUnresolvable)
+            .map(|failure| AnalysisPendingRecovery::AnalysisFailed {
+                kind: failure.kind,
+                detail: failure.message,
+            })
+    }
+
     /// The recovery route the pre-analysis pull marker may promise (#7774):
     /// mirrors the `refresh_diagnostics` preconditions so a blocked state
     /// never advertises a route that returns before analysis.
@@ -4327,7 +4351,7 @@ impl Backend {
         // Serialize with refresh commits and root transitions, then read the
         // snapshot, so a concurrent clear cannot be followed by a stale marker.
         let _transition = self.workspace_root_transition.lock().await;
-        if self.configuration_failure().is_some() {
+        if self.retained_evidence_withdrawal().is_some() {
             return;
         }
         let marker_snapshot = self
@@ -4556,15 +4580,10 @@ impl Backend {
         // untouched: the client's view is the marker, not these findings.
         if !self.pull_diagnostics_enabled() {
             let transition = self.workspace_root_transition.lock().await;
-            if self.configuration_failure().is_some() {
-                let items = analysis_pending_withdrawal_diagnostics(
-                    AnalysisPendingRecovery::FixConfiguration,
-                );
+            if let Some(recovery) = self.retained_evidence_withdrawal() {
+                let signature = Self::pending_push_marker_signature(&recovery, true);
+                let items = analysis_pending_withdrawal_diagnostics(recovery);
                 let version = self.negotiated_version(decision_version);
-                let signature = Self::pending_push_marker_signature(
-                    &AnalysisPendingRecovery::FixConfiguration,
-                    true,
-                );
                 if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
                     if pending.get(uri) == Some(&signature) {
                         drop(transition);
@@ -7857,8 +7876,7 @@ impl Backend {
         // recovery route instead — the same stable pending identity the
         // pre-analysis state uses, so the client re-renders instead of
         // holding the stale payload.
-        if self.configuration_failure().is_some() {
-            let recovery = AnalysisPendingRecovery::FixConfiguration;
+        if let Some(recovery) = self.retained_evidence_withdrawal() {
             self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_document_report_withdrawn(
                 params.previous_result_id,
@@ -7971,8 +7989,7 @@ impl Backend {
         // withdraws the retained evidence from service (#8731), same as the
         // document pull path: serve the typed withdrawal marker per tracked
         // URI under the FixConfiguration recovery route.
-        if self.configuration_failure().is_some() {
-            let recovery = AnalysisPendingRecovery::FixConfiguration;
+        if let Some(recovery) = self.retained_evidence_withdrawal() {
             self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
         }

@@ -1218,7 +1218,16 @@ fn analysis_pending_diagnostic_for(
     recovery: AnalysisPendingRecovery,
     withdrawn: bool,
 ) -> Diagnostic {
-    let message = if withdrawn {
+    let message = if withdrawn && matches!(recovery, AnalysisPendingRecovery::AnalysisFailed { .. })
+    {
+        // #15312: the retained findings answer an earlier base, so they are
+        // withdrawn rather than shown as the answer to the current one.
+        format!(
+            "ripr could not analyze this workspace with the current settings, so previously \
+             reported findings are withdrawn — this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if withdrawn {
         format!(
             "ripr analysis is paused and previously reported findings are withdrawn — \
              this is not evidence of a clean workspace. {}",
@@ -1245,10 +1254,10 @@ fn analysis_pending_diagnostic_for(
     };
     let mut data = serde_json::json!({
         "kind": "delivery_limitation",
-        "state": if withdrawn {
-            "withdrawn_configuration_failure"
-        } else {
-            "no_snapshot"
+        "state": match (withdrawn, &recovery) {
+            (true, AnalysisPendingRecovery::AnalysisFailed { .. }) => "withdrawn_analysis_failure",
+            (true, _) => "withdrawn_configuration_failure",
+            (false, _) => "no_snapshot",
         },
         "recovery": recovery.recovery_id(),
     });

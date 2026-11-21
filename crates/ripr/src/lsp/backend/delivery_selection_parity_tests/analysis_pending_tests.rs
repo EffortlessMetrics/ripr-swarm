@@ -629,3 +629,126 @@ fn analysis_pending_workspace_pull_withdraws_committed_snapshot_when_configurati
     assert_eq!(cached_items[0]["kind"], "unchanged");
     Ok(())
 }
+
+/// #15312: a refresh that fails because the requested base does not resolve
+/// withdraws the retained snapshot on both pull paths. Its findings answer an
+/// earlier base, so serving them unmarked would read as the current answer.
+/// Any other failure keeps the retained snapshot in service, and so does a
+/// retry that is already running.
+#[test]
+fn unresolvable_base_failure_withdraws_the_retained_snapshot_and_other_failures_do_not()
+-> Result<(), String> {
+    let harness = drained_parity_backend()?;
+    select_root(&harness);
+    let uri = parity_uri("committed.rs")?;
+    commit(
+        harness.service.inner(),
+        parity_workspace_diagnostics(vec![(
+            uri.clone(),
+            vec![parity_diagnostic("gap:committed", true)],
+        )]),
+    )?;
+    let served = document_report(&harness, &uri, None)?;
+    let served_id = result_id(&served)?;
+
+    // Discriminating negative: a failure that leaves the question unchanged
+    // (same base, older save) keeps the committed payload.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::AnalysisError,
+            "workspace analysis failed: could not read the Git index.",
+        );
+    let retained = document_report(&harness, &uri, None)?;
+    if result_id(&retained)? != served_id || retained["items"] != served["items"] {
+        return Err(format!(
+            "a non-base failure must keep the retained snapshot in service: {retained}"
+        ));
+    }
+
+    let detail = "workspace analysis failed: the base `no-such-ref` does not resolve to a commit (the analysis did not run).";
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(AnalysisFailureKind::BaseUnresolvable, detail);
+    let withdrawn = document_report(&harness, &uri, Some(served_id.clone()))?;
+    assert_eq!(withdrawn["kind"], "full");
+    let withdrawn_id = result_id(&withdrawn)?;
+    if !withdrawn_id.starts_with("ripr:analysis-pending:fix_failure_then_refresh:")
+        || !withdrawn_id.ends_with(":withdrawn")
+    {
+        return Err(format!(
+            "withdrawal must carry its own result id: {withdrawn_id}"
+        ));
+    }
+    let items = withdrawn["items"]
+        .as_array()
+        .ok_or_else(|| format!("items missing: {withdrawn}"))?;
+    let [marker] = items.as_slice() else {
+        return Err(format!("exactly one withdrawal marker expected: {items:?}"));
+    };
+    if marker["code"] != DIAGNOSTIC_ANALYSIS_PENDING_CODE
+        || marker["severity"] != 3
+        || marker["data"]["kind"] != "delivery_limitation"
+        || marker["data"]["state"] != "withdrawn_analysis_failure"
+        || marker["data"]["recovery"] != "fix_failure_then_refresh"
+        || marker["data"]["failure_kind"] != "base_unresolvable"
+        || marker["data"]["diagnostic_id"].is_string()
+    {
+        return Err(format!("withdrawal marker shape drifted: {marker}"));
+    }
+    let message = marker["message"].as_str().unwrap_or_default();
+    for needle in [
+        "previously reported findings are withdrawn",
+        "not evidence of a clean workspace",
+        "the base `no-such-ref` does not resolve",
+        "Fix that cause",
+    ] {
+        if !message.contains(needle) {
+            return Err(format!("marker must contain {needle:?}: {message}"));
+        }
+    }
+    if message.contains("analysis is paused") || message.contains("no findings are reported") {
+        return Err(format!(
+            "the marker must not read as a configuration pause or a cold start: {message}"
+        ));
+    }
+
+    // The workspace pull serves the same marker for the tracked URI.
+    let report = workspace_report(
+        &harness,
+        vec![PreviousResultId {
+            uri: uri.clone(),
+            value: served_id.clone(),
+        }],
+    )?;
+    let workspace_items = report["items"]
+        .as_array()
+        .ok_or_else(|| format!("workspace items missing: {report}"))?;
+    let [item] = workspace_items.as_slice() else {
+        return Err(format!("expected one withdrawal item, got {report}"));
+    };
+    if item["resultId"] != serde_json::json!(withdrawn_id)
+        || item["items"][0]["data"]["state"] != "withdrawn_analysis_failure"
+    {
+        return Err(format!(
+            "workspace pull must serve the withdrawal marker: {report}"
+        ));
+    }
+
+    // A retry in progress no longer holds a recorded failure, so the
+    // retained payload is served again until that attempt ends.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_state_for_test(AnalysisAttemptState::Running);
+    let retrying = document_report(&harness, &uri, Some(withdrawn_id))?;
+    assert_eq!(retrying["kind"], "full");
+    if result_id(&retrying)? != served_id {
+        return Err(format!(
+            "a running retry must serve the retained snapshot: {retrying}"
+        ));
+    }
+    Ok(())
+}
