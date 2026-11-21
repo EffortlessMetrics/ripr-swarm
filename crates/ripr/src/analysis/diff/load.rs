@@ -53,6 +53,9 @@ pub struct LoadedDiff {
 /// file-header line that is not UTF-8 therefore fails closed, naming the
 /// regeneration command.
 fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    if let Some(decoded) = decode_utf16_diff_text(source, &bytes) {
+        return decoded;
+    }
     let error = match String::from_utf8(bytes) {
         Ok(text) => return Ok(text),
         Err(error) => error,
@@ -80,6 +83,35 @@ fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Decode a diff that opens with a UTF-16 byte-order mark; `None` when it does
+/// not. Windows PowerShell 5.1 writes `git diff > change.diff` as UTF-16LE with
+/// a BOM, and read as UTF-8 that file holds no diff line at all, so the
+/// redirect most Windows users type first was refused as "not a valid unified
+/// diff" (#15907).
+///
+/// The BOM declares the encoding, so the decode is exact or it fails: an odd
+/// byte count or an unpaired surrogate is refused rather than replaced, which
+/// keeps the path-identity rule above (no lossy decode may merge two names).
+fn decode_utf16_diff_text(source: &str, bytes: &[u8]) -> Option<Result<String, String>> {
+    let (payload, unit_from_bytes): (&[u8], fn([u8; 2]) -> u16) = match bytes {
+        [0xFF, 0xFE, payload @ ..] => (payload, u16::from_le_bytes),
+        [0xFE, 0xFF, payload @ ..] => (payload, u16::from_be_bytes),
+        _ => return None,
+    };
+    let (pairs, trailing) = payload.as_chunks::<2>();
+    let units = pairs.iter().map(|pair| unit_from_bytes(*pair));
+    let decoded = char::decode_utf16(units).collect::<Result<String, _>>();
+    Some(match decoded {
+        Ok(text) if trailing.is_empty() => Ok(text),
+        _ => Err(format!(
+            "failed to read {source}: the input starts with a UTF-16 byte-order mark but is \
+             not complete UTF-16 text (a truncated final unit or an unpaired surrogate), so \
+             it cannot be decoded exactly; write the diff as UTF-8 with \
+             `git diff --output=<file> ...`"
+        )),
+    })
 }
 
 /// Git file-header lines that carry a path. None can be a hunk line, which
@@ -3418,6 +3450,74 @@ mod tests {
                 .to_vec();
         let text = decode_diff_text("diff from stdin", quoted).map_err(std::io::Error::other)?;
         assert!(text.contains("-caf\u{fffd}"), "{text}");
+        Ok(())
+    }
+
+    /// The bytes Windows PowerShell 5.1 writes for `git diff > change.diff`:
+    /// a byte-order mark, UTF-16 units, and CRLF line ends.
+    fn utf16_diff_bytes(text: &str, bom: [u8; 2], unit_bytes: fn(u16) -> [u8; 2]) -> Vec<u8> {
+        let mut bytes = bom.to_vec();
+        for unit in text.replace('\n', "\r\n").encode_utf16() {
+            bytes.extend(unit_bytes(unit));
+        }
+        bytes
+    }
+
+    const UTF16_CASE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn a() -> bool { 1 > 0 }\n+fn a() -> bool { \"caf\u{e9} \u{1d11e}\"; 1 >= 0 }\n";
+
+    #[test]
+    fn utf16_diff_with_a_byte_order_mark_decodes_to_its_exact_text() -> std::io::Result<()> {
+        // #15907. The astral character proves surrogate pairs decode, not
+        // only the ASCII half of each unit. The mark itself is dropped.
+        let expected = UTF16_CASE_DIFF.replace('\n', "\r\n");
+        for (bom, unit_bytes) in [
+            ([0xFF, 0xFE], u16::to_le_bytes as fn(u16) -> [u8; 2]),
+            ([0xFE, 0xFF], u16::to_be_bytes),
+        ] {
+            let bytes = utf16_diff_bytes(UTF16_CASE_DIFF, bom, unit_bytes);
+            // Fixture check: these bytes are not the UTF-8 spelling.
+            assert_ne!(bytes, expected.as_bytes());
+            let text = decode_diff_text("diff from stdin", bytes).map_err(std::io::Error::other)?;
+            assert_eq!(text, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn utf16_diff_that_cannot_decode_exactly_fails_closed() -> std::io::Result<()> {
+        let whole = utf16_diff_bytes(UTF16_CASE_DIFF, [0xFF, 0xFE], u16::to_le_bytes);
+        let truncated = whole[..whole.len() - 1].to_vec();
+        // A lone high surrogate in a path: a lossy decode would merge it
+        // with every other undecodable name.
+        let mut unpaired = vec![0xFF, 0xFE];
+        for unit in "--- a/src/p_".encode_utf16().chain([0xD800]) {
+            unpaired.extend(unit.to_le_bytes());
+        }
+        for bytes in [truncated, unpaired] {
+            let Err(message) = decode_diff_text("diff file change.diff", bytes) else {
+                return Err(std::io::Error::other("inexact UTF-16 must fail closed"));
+            };
+            assert!(
+                message.starts_with("failed to read diff file change.diff: "),
+                "{message}"
+            );
+            assert!(message.contains("git diff --output=<file>"), "{message}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn utf8_diff_is_not_read_as_utf16() -> std::io::Result<()> {
+        // Negative control: a UTF-8 BOM and a first byte that is half of a
+        // UTF-16 mark both stay on the byte-preserving UTF-8 route.
+        let mut with_utf8_bom = b"\xef\xbb\xbf".to_vec();
+        with_utf8_bom.extend(UTF16_CASE_DIFF.as_bytes());
+        let text = decode_diff_text("diff from stdin", with_utf8_bom.clone())
+            .map_err(std::io::Error::other)?;
+        assert_eq!(text.as_bytes(), with_utf8_bom);
+        let lone_ff = b"\xff--- not a mark\n".to_vec();
+        let text = decode_diff_text("diff from stdin", lone_ff).map_err(std::io::Error::other)?;
+        assert_eq!(text, "\u{fffd}--- not a mark\n");
         Ok(())
     }
 
