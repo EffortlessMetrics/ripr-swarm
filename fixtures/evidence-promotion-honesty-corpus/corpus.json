@@ -2753,7 +2753,7 @@
       "id": "python_patched_callee_reachable_unrevealed",
       "language": "python",
       "tier": "pure",
-      "source_fixture": "fixtures/python_patched_callee_reachable_unrevealed",
+      "source_fixture": "fixtures/python_patched_callee_reachable_h",
       "vector": "change_inside_patched_callee_every_related_test_replaces_it_reached_but_unrevealed",
       "probe_family": "return_value",
       "assertions": [
