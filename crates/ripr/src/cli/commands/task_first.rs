@@ -44,9 +44,10 @@ Options:
                    unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
-                   lines from stderr. Refusal prose, the attempt id and the
-                   next command stay. `RIPR_QUIET` (any value except empty,
-                   `0` or `false`) does the same.
+                   lines from stderr. Refusal prose, the attempt id, the
+                   next command and the warning to write output outside the
+                   repo stay. `RIPR_QUIET` (any value except empty, `0` or
+                   `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded
@@ -428,6 +429,14 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
 /// boundary writes it only when this decision is the error that escaped.
 fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
     crate::cli::usage_refusal::note_typed_refusal(code, message.trim_end());
+    CommandError::Decision(code.message_with_stderr_line(&message))
+}
+
+/// [`typed_decision`] for a refusal whose prose names one next command the
+/// caller composed from the bound root; the document carries it as `next`
+/// (#15260).
+fn typed_decision_with_next(code: RepairRefusalCode, message: String, next: &str) -> CommandError {
+    crate::cli::usage_refusal::note_typed_refusal_with_next(code, message.trim_end(), next);
     CommandError::Decision(code.message_with_stderr_line(&message))
 }
 
@@ -814,9 +823,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                     .map_err(CommandError::Failure)?;
                 print!("{rendered}");
             } else {
+                // A short summary, not the whole status page (#15282 item 7):
+                // `ripr status --attempt` keeps the full page.
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
                 print!(
                     "{}",
-                    crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+                    crate::app::agent_status::complete_summary::render_already_complete_summary(
+                        &report, &root
+                    )
                 );
             }
             eprintln!(
@@ -921,13 +937,15 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(typed_decision(
+            let next = format!("ripr status --root {root}");
+            Err(typed_decision_with_next(
                 RepairRefusalCode::NoCurrentAttempt,
                 format!(
-                    "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
+                    "no current attempt to continue under {root}: {}. Next: `{next}`; {}",
                     none_available_detail(prepared, terminal, trust_bound, &root),
                     start_with_repair_clause(&options.root, &root)
                 ),
+                &next,
             ))
         }
         ContinueSelection::Ambiguous { candidates } => {

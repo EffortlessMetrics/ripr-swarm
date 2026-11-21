@@ -13,6 +13,8 @@ Linked issues:
   replaced.
 - [#14352](https://github.com/EffortlessMetrics/ripr-swarm/issues/14352) -
   `--out-jsonl` overlap guards are still lexical-only (follow-up).
+- [#15254](https://github.com/EffortlessMetrics/ripr-swarm/issues/15254) -
+  an explicitly named input that cannot be used exited `0`.
 
 ## Problem
 
@@ -55,19 +57,57 @@ Commands covered: `reports gap-ledger|ts-limitations|ts-false-actionable`,
 `assistant-loop proof|health`, and `policy readiness|operations|history|
 promote|preview-promote|waiver-aging|suppression-health`.
 
+`--out-jsonl` append targets (#14352) follow the same filesystem identity.
+`pr-ledger record --out-jsonl` is refused when it names `--out`, `--out-md` or
+an evidence input, and `policy history --out-jsonl` when it names `--out`,
+`--out-md` or `--current`, by any spelling (lexically equal, absolute, or a
+symlink), with exit `2` and `<command> --out-jsonl must not be the same path as
+...`. `--history` equal to `--out-jsonl` is the intended append flow and is
+not refused.
+
+## Explicitly Named Input That Cannot Be Used
+
+The same commands treat an input file the caller named explicitly as part of
+the request (#15254). When it is missing, unreadable or (for `baseline diff`
+and `zero status --baseline|--delta` JSON, and an explicit
+`policy suppression-health --manifest` with `config_error` findings) not
+usable, the command exits `2` and stderr names the flag, the path and what
+to pass:
+
+```text
+ripr: <command> <flag> <path> <why>. Pass an existing file ...
+```
+
+- Where a usable report can still be produced it is written first, so a
+  stale report is not left for a later step; `pr-summary --baseline` refuses
+  before writing, and a missing or unreadable `reports ts-*` input refuses
+  before any write.
+- An absent default path (for example `annotations` without `--comments`, or
+  `policy suppression-health` without `--manifest`) stays a quiet skip.
+- `gate evaluate|check` names each unavailable optional input once on stderr
+  and keeps its exit code.
+- Covered: `reports ts-limitations|ts-false-actionable`, `coverage-grip
+  frontier`, `policy operations|promote|preview-promote|waiver-aging|
+  suppression-health|history`, `annotations --comments`, `pr-summary
+  --baseline`, `baseline diff`, `zero status --baseline|--delta`,
+  `first-action --pr-guidance` and `assistant-loop proof
+  --pr-guidance|--agent-packet|--before`. Other optional inputs of
+  `zero status`, `first-action` and `assistant-loop proof`, and
+  `policy history|waiver-aging --history`, stay tolerant.
+
 ## Required Evidence
 
 - Built-binary tests with exact stderr, exit `2`, empty stdout, and unchanged
   input bytes for refused cases across the covered commands.
 - Discriminating negatives: distinct paths write; the in-place exemptions
   are not refused; a symlinked parent plus `..` reaching another file writes;
-  a missing input is not refused.
+  a missing input is not refused; `--history` equal to `--out-jsonl`
+  appends on each run.
 
 ## Non-Goals
 
 - `gate` (inputs resolve against `--root`; its flags are owned elsewhere),
   `reports index` (directory inputs) and `review-comments`.
-- `--out-jsonl` append targets (#14352).
 - Hard-link detection.
 
 ## Acceptance Examples
@@ -100,12 +140,20 @@ promote|preview-promote|waiver-aging|suppression-health`.
   and `::directory_members_are_inputs_and_missing_inputs_are_not` - identity
   edges.
 
+- `crates/ripr/tests/cli_smoke/explicit_input_refusals.rs` - the explicit
+  input refusals, their default-path negatives, and the gate stderr warning
+  (#15254).
+
 ## Implementation Mapping
 
 - `crates/ripr/src/output/path.rs::output_replaces_input` - canonical
   identity rule.
 - `crates/ripr/src/cli/commands.rs::refuse_output_naming_input` - the shared
   refusal and its wording, called from each covered command's option parser.
+- `crates/ripr/src/cli/commands.rs::SuppliedInputReads` - explicit input
+  reads and the post-write exit `2` refusal (#15254).
+- `crates/ripr/src/output/gate/presentation.rs::gate_decision_unavailable_inputs`
+  - the gate's once-per-input stderr warning.
 
 ## Metrics
 

@@ -50,15 +50,6 @@ pub(super) fn reference_seam_branch_reached_by_call(
     if names.len() != values.len() {
         return None;
     }
-    // The environment binds the call's literal arguments to the parameter
-    // names once. A `let` rebind, an assignment or a `for` pattern that
-    // targets one of those names changes what the condition reads, so the
-    // fold could disagree with the branch the call actually reaches. Keep
-    // today's credit rather than withhold a real discriminator.
-    if parameter_is_rebound_or_mutated(&block, &names) {
-        return None;
-    }
-    let environment: BTreeMap<String, i128> = names.into_iter().zip(values).collect();
     let target = normalized_expression(seam_expression);
     // The seam's own line, in the coordinates of the parsed body. `body` starts
     // at the owner's `fn` token, so body line 1 is `owner.start_line`. Matching
@@ -100,6 +91,17 @@ pub(super) fn reference_seam_branch_reached_by_call(
     let [(if_expr, in_then)] = matches.as_slice() else {
         return None;
     };
+    // The environment binds the call's literal arguments to the parameter
+    // names once. A `let` rebind, an assignment or a `for` pattern that
+    // targets one of those names changes what the condition reads, so the
+    // fold could disagree with the branch the call actually reaches. Keep
+    // today's credit rather than withhold a real discriminator. A `let` in a
+    // nested block that closes before the seam's path shadows nothing the
+    // fold reads, so it does not count (#14569).
+    if parameter_is_rebound_or_mutated(&block, &names, Some(if_expr)) {
+        return None;
+    }
+    let environment: BTreeMap<String, i128> = names.into_iter().zip(values).collect();
     let condition = fold_condition(
         &if_expr.condition()?.syntax().text().to_string(),
         &environment,
@@ -297,6 +299,10 @@ fn corpus() -> Vec<String> {
         "fn f(a: i32, b: i32) -> i32 {\nif a > 3 {\nreturn 1;\n}\nif a > 3 {\nreturn 1;\n}\n0\n}",
         "fn f(a: i32, b: i32) -> i32 {\nif a > 3 { return 1; } if a < 0 { return 2; } 0\n}",
         "fn f(a: i32, b: i32) -> i32 {\nif a > 3 {\nreturn 1;\n",
+        // #14569: a `let` in a block that closes before one `if` but holds
+        // another, so the rebind is in scope for one seam only.
+        "fn f(a: i32, b: i32) -> i32 {\n{ let a = 9; }\nif a > 3 {\nreturn 1;\n}\n0\n}",
+        "fn f(a: i32, b: i32) -> i32 {\nif b > 0 {\nlet a = 9;\nif a > 3 {\nreturn 2;\n}\n}\nif a > 3 {\nreturn 1;\n}\n0\n}",
     ]
     .iter()
     .map(|body| (*body).to_string())

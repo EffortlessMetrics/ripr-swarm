@@ -79,6 +79,7 @@ mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod commonjs_default_class;
+mod commonjs_reexports;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -122,6 +123,7 @@ mod infection_shape;
 mod infection_shape_tests;
 mod instance_class_guard;
 mod instance_factories;
+mod jsx_render;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_eval;
@@ -184,6 +186,7 @@ mod self_comparing_assertion_tests;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
+mod switch_return_witness;
 mod table_loop_rows;
 mod table_rows;
 mod ternary_arm_guard;
@@ -192,6 +195,7 @@ mod tests;
 mod typeof_kind;
 #[cfg(test)]
 mod typeof_kind_tests;
+mod unused_default_guard;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
@@ -1638,6 +1642,36 @@ impl TypeScriptAdapter {
                                 .to_string(),
                         );
                     }
+                    // The diff supplies both values. Take the binding only from the
+                    // parsed head whose line matches the diff, never a renderer reread.
+                    if let Some((lines, facts)) = &ast_probe_facts
+                        && let Some(binding) = facts.phase_two.default_bindings.get(&added.line)
+                        && lines
+                            .get(added.line.saturating_sub(1))
+                            .map(|line| line.trim())
+                            == Some(added.text.trim())
+                        && let Some(new) = standalone_decimal(&added.text)
+                    {
+                        // Only a lone replacement leaves the enclosing declaration
+                        // unchanged on both sides. Other edits can introduce the default.
+                        let previous = match (
+                            changed.added_lines.as_slice(),
+                            changed.removed_lines.as_slice(),
+                        ) {
+                            ([_], [removed]) if removed.new_side_line == added.line => {
+                                standalone_decimal(&removed.text).filter(|old| *old != new)
+                            }
+                            _ => None,
+                        };
+                        let detail = previous.map_or_else(
+                            || "default".to_string(),
+                            |old| format!("default was {old}"),
+                        );
+                        finding.evidence.push(format!(
+                            "{}{binding} = {new} ({detail})",
+                            crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX
+                        ));
+                    }
                     findings.push(finding);
                 } else if let Some(identity) = enum_member_lines.get(&added.line) {
                     let mut finding =
@@ -2372,4 +2406,12 @@ fn consulted_credit_gaps<'a>(
     gaps.iter()
         .filter(|gap| consulted_test_files.contains(&normalized_path(&gap.file)))
         .collect()
+}
+
+/// A whole decimal on a continuation line, optionally terminated as a
+/// declaration or parameter. A larger changed expression keeps its own text.
+fn standalone_decimal(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let value = text.strip_suffix([';', ',']).unwrap_or(text).trim_end();
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())).then_some(value)
 }

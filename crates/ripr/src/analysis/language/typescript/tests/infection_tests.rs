@@ -16,21 +16,42 @@ fn finding_for(
     added: &str,
     test: &str,
 ) -> Result<Finding, String> {
+    finding_for_replacement_hunk(label, source, line, &[removed], &[added], line, test)
+}
+
+fn finding_for_replacement_hunk(
+    label: &str,
+    source: &str,
+    start: usize,
+    removed: &[&str],
+    added: &[&str],
+    line: usize,
+    test: &str,
+) -> Result<Finding, String> {
+    use crate::analysis::diff::ChangedLine;
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/price.ts"), source)?;
     ts_write_file(&root.join("tests/price.test.ts"), test)?;
     let changed = ChangedFile {
         path: PathBuf::from("src/price.ts"),
-        added_lines: vec![crate::analysis::diff::ChangedLine {
-            line,
-            text: added.to_string(),
-            new_side_line: line,
-        }],
-        removed_lines: vec![crate::analysis::diff::ChangedLine {
-            line,
-            text: removed.to_string(),
-            new_side_line: line,
-        }],
+        added_lines: added
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: start + offset,
+                new_side_line: start + offset,
+                text: (*text).to_owned(),
+            })
+            .collect(),
+        removed_lines: removed
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: start + offset,
+                new_side_line: start,
+                text: (*text).to_owned(),
+            })
+            .collect(),
     };
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -110,6 +131,74 @@ fn an_arm_some_test_input_enters_stays_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn isolated_throw_message_after_a_nonzero_return() -> Result<(), String> {
+    let source = "export function price(b: number): number {\n  if (b !== 0) return b;\n  throw new Error(\"nope\");\n}\n";
+    let classify_source = |label: &str, source: &str, assertion: &str| {
+        let test = format!(
+            "import {{ price }} from '../src/price';\ntest('price', () => {{\n  {assertion}\n}});\n"
+        );
+        finding_for(
+            label,
+            source,
+            3,
+            "  throw new Error(\"zero\");",
+            "  throw new Error(\"nope\");",
+            &test,
+        )
+    };
+    let classify = |label: &str, assertion: &str| classify_source(label, source, assertion);
+    let missed = classify("throw-after-return", "expect(price(2)).toBe(2);")?;
+    assert_eq!(missed.class, ExposureClass::ReachableUnrevealed);
+    assert_eq!(missed.ripr.infect.state, StageState::No);
+    assert!(missed.ripr.infect.summary.contains("b !== 0"));
+    assert!(missed.activation.missing_discriminators.is_empty());
+
+    let observed = classify(
+        "throw-message-observed",
+        "expect(() => price(0)).toThrow('nope');",
+    )?;
+    assert_eq!(observed.class, ExposureClass::Exposed);
+    assert_ne!(observed.ripr.infect.state, StageState::No);
+
+    let broad = classify("throw-message-broad", "expect(() => price(0)).toThrow();")?;
+    assert_eq!(broad.class, ExposureClass::WeaklyExposed);
+    assert_ne!(broad.ripr.infect.state, StageState::No);
+
+    for assertion in [
+        "const input = Number(2); expect(price(input)).toBe(2);",
+        "expect(price(2)).toBe(2); expect(() => price(0)).toThrow();",
+    ] {
+        let uncertain = classify("throw-after-return-control", assertion)?;
+        assert_ne!(uncertain.ripr.infect.state, StageState::No);
+    }
+    let named_undefined = "export function price(undefined: number): number {\n  if (undefined !== 0) return undefined;\n  throw new Error(\"nope\");\n}\n";
+    let shadow = classify_source(
+        "throw-parameter-named-undefined",
+        named_undefined,
+        "expect(() => price(0)).toThrow('nope');",
+    )?;
+    assert_eq!(shadow.class, ExposureClass::Exposed);
+    let argument = classify(
+        "throw-argument-named-undefined",
+        "const undefined = 0; expect(() => price(undefined)).toThrow('nope');",
+    )?;
+    assert_ne!(argument.ripr.infect.state, StageState::No);
+    // With the old guard, price(2) fell through and threw. Its return on the
+    // new side cannot establish that the same call missed the old throw.
+    let guard_changed = finding_for_replacement_hunk(
+        "throw-after-changed-return",
+        source,
+        2,
+        &["  if (b === 0) return b;", "  throw new Error(\"zero\");"],
+        &["  if (b !== 0) return b;", "  throw new Error(\"nope\");"],
+        3,
+        &weak_test("price(2)"),
+    )?;
+    assert_ne!(guard_changed.ripr.infect.state, StageState::No);
+    Ok(())
+}
+
 fn shape_change(label: &str, old: &str, new: &str) -> Result<Finding, String> {
     let source =
         format!("export function price(flag: boolean, n?: number): number {{\n{new}\n}}\n");
@@ -176,6 +265,163 @@ fn literal_arm(label: &str, call: &str) -> Result<Finding, String> {
         "    return 7;",
         &weak_test(call),
     )
+}
+
+fn switch_return(label: &str, test: &str) -> Result<Finding, String> {
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n";
+    finding_for(label, source, 6, "      return 5;", "      return 7;", test)
+}
+
+#[test]
+fn selected_switch_literal_return_has_weak_oracle_gap() -> Result<(), String> {
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    let finding = switch_return("switch-selected", test)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn switch_literal_return_controls() -> Result<(), String> {
+    let exact = switch_return(
+        "switch-exact",
+        "import { price } from '../src/price';\ntest('price', () => { expect(price('silver')).toBe(7); });\n",
+    )?;
+    assert_eq!(exact.class, ExposureClass::Exposed);
+    let other = switch_return("switch-other", &weak_test("price('gold')"))?;
+    assert_ne!(other.class, ExposureClass::Exposed);
+    let unknown = switch_return("switch-unknown", &weak_test("price(pick())"))?;
+    assert_eq!(unknown.class, ExposureClass::InfectionUnknown);
+    let unrelated = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(0).toBeLessThan(100); });\n";
+    let finding = switch_return("switch-unrelated", unrelated)?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    let discriminating = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(6); });\n";
+    let finding = switch_return("switch-discriminating", discriminating)?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    let failing = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(1); });\n";
+    let finding = switch_return("switch-failing", failing)?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    let shadowed = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const expect = price('silver'); expect(expect).toBeLessThan(100); });\n";
+    let finding = switch_return("switch-shadowed-expect", shadowed)?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed);
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'silver':\n      return 9007199254740993;\n  }\n}\n";
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    let unsafe_number = finding_for(
+        "switch-unsafe-number",
+        source,
+        4,
+        "      return 9007199254740992;",
+        "      return 9007199254740993;",
+        test,
+    )?;
+    assert_eq!(unsafe_number.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
+fn switch_return_direct_selector_controls() -> Result<(), String> {
+    let test_for = |argument: &str| {
+        format!(
+            "import {{ test, expect }} from 'vitest';\nimport {{ price }} from '../src/price';\ntest('price', () => {{ const result = price({argument}); expect(result).toBeLessThan(100); }});\n"
+        )
+    };
+    let other = switch_return("switch-direct-other", &test_for("'gold'"))?;
+    assert_ne!(other.class, ExposureClass::WeaklyExposed);
+    assert_ne!(other.class, ExposureClass::Exposed);
+    let computed = switch_return("switch-direct-computed", &test_for("pick()"))?;
+    assert_eq!(computed.class, ExposureClass::InfectionUnknown);
+    let escaped_match = switch_return("switch-escaped-match", &test_for("'\\x73ilver'"))?;
+    assert_eq!(escaped_match.class, ExposureClass::WeaklyExposed);
+    let escaped_other = switch_return("switch-escaped-other", &test_for("'\\x67old'"))?;
+    assert_eq!(escaped_other.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
+fn switch_return_with_another_changed_line_stays_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("switch-changed-flow")?;
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n";
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    ts_write_file(&root.join("src/price.ts"), source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), test)?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/price.ts"),
+        added_lines: vec![
+            crate::analysis::diff::ChangedLine {
+                line: 5,
+                new_side_line: 5,
+                text: "    case 'silver':".into(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 6,
+                new_side_line: 6,
+                text: "      return 7;".into(),
+            },
+        ],
+        removed_lines: vec![
+            crate::analysis::diff::ChangedLine {
+                line: 5,
+                new_side_line: 5,
+                text: "    case 'bronze':".into(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 6,
+                new_side_line: 5,
+                text: "      return 5;".into(),
+            },
+        ],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|f| f.probe.location.line == 6)
+        .ok_or("missing return finding")?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
+fn switch_return_with_a_competing_test_stays_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("switch-competing")?;
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n";
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    ts_write_file(&root.join("src/price.ts"), source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), test)?;
+    ts_write_file(
+        &root.join("tests/other.test.ts"),
+        &weak_test("price('gold')"),
+    )?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/price.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 6,
+            new_side_line: 6,
+            text: "      return 7;".into(),
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 6,
+            new_side_line: 6,
+            text: "      return 5;".into(),
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|f| f.probe.location.line == 6)
+        .ok_or("missing return finding")?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    Ok(())
 }
 
 #[test]

@@ -16,6 +16,7 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
         std::process::id()
     ));
     fs::create_dir_all(&root)?;
+    ensure_fixture_repo_root(&root)?;
 
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["init", "--root"])
@@ -5112,7 +5113,18 @@ fn run_ripr_in(
         .output()?)
 }
 
+/// Make a CI fixture root its own Git repository when it is not one yet.
+/// Cargo pins TMPDIR under this checkout's `target/`, and `init --ci` refuses
+/// a root below a Git top level (#15389); an adopter's root is the repository.
+fn ensure_fixture_repo_root(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    if !root.join(".git").exists() {
+        fixture_git_ok(root, &["init", "-q"])?;
+    }
+    Ok(())
+}
+
 fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    ensure_fixture_repo_root(root)?;
     let root = root.to_string_lossy();
     run_ripr_in(
         std::path::Path::new("."),
@@ -5343,6 +5355,7 @@ fn comment_writing_steps_skip_fork_and_dependabot_pull_requests() -> Result<(), 
 /// `reports ci-summary` states it before the findings. Checked for a blocking
 /// decision, a configuration error and an unknown `RIPR_GATE_MODE`, against a
 /// `visible-only` run of the same input that adds neither.
+#[cfg(unix)]
 #[test]
 fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
 -> Result<(), Box<dyn Error>> {
@@ -5475,5 +5488,342 @@ fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
     assert!(errors(&stdout).is_empty(), "{stdout}");
     assert!(!summary.contains("### RIPR gate"), "{summary}");
     assert!(summary.contains("\n- Status: `advisory`\n"), "{summary}");
+    Ok(())
+}
+
+/// #15718: the real `pr-comments summary` step reads the job's
+/// `RIPR_GATE_MODE` and the decision the real gate step wrote. A blocked gate
+/// leads the pull request comment and the footer stops saying RIPR does not
+/// block merging; a `visible-only` run of the same input keeps the advisory
+/// comment.
+#[cfg(unix)]
+#[test]
+fn the_pull_request_comment_states_a_blocking_gate() -> Result<(), Box<dyn Error>> {
+    let guidance = fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json"),
+    )?;
+    let removed = [
+        "GITHUB_BASE_REF",
+        "GITHUB_EVENT_NAME",
+        "GITHUB_EVENT_PATH",
+        "RIPR_UPLOAD_SARIF",
+        "RIPR_COMMENT_MODE",
+        "RIPR_GATE_BASELINE",
+        "RIPR_GATE_MODE",
+        "RIPR_PILOT_TIMEOUT_MS",
+    ];
+    let comment = |mode: &str| -> Result<(Option<i32>, String), Box<dyn Error>> {
+        let root = replay::unique_temp_dir("gate-comment")?;
+        fs::create_dir_all(root.join("target/ripr/review"))?;
+        fs::write(root.join("target/ripr/review/comments.json"), &guidance)?;
+        let packet = replay::ripr_with_env(
+            &root,
+            &[
+                "reports",
+                "ci-packet",
+                "--root",
+                ".",
+                "--step",
+                "Evaluate RIPR gate decision",
+            ],
+            &removed,
+            &[("RIPR_GATE_MODE", mode)],
+        )?;
+        let summary = replay::ripr_with_env(
+            &root,
+            &[
+                "pr-comments",
+                "summary",
+                "--root",
+                ".",
+                "--pull-request",
+                "7",
+                "--head-sha",
+                "abcdef0123",
+            ],
+            &removed,
+            &[("RIPR_GATE_MODE", mode)],
+        )?;
+        if !summary.status.success() {
+            return Err(format!(
+                "pr-comments summary failed under {mode}: {}",
+                String::from_utf8_lossy(&summary.stderr)
+            )
+            .into());
+        }
+        let request: serde_json::Value = serde_json::from_slice(&fs::read(
+            root.join("target/ripr/review/summary/summary-request.json"),
+        )?)?;
+        let body = request["body"]
+            .as_str()
+            .ok_or("summary request has no body")?
+            .to_string();
+        let _ = fs::remove_dir_all(&root);
+        Ok((packet.status.code(), body))
+    };
+
+    // The fixture input must really block, or the rest proves nothing.
+    let (code, body) = comment("acknowledgeable")?;
+    assert_eq!(code, Some(3), "{body}");
+    let verdict = "**The RIPR gate blocked this pull request** under `acknowledgeable` mode: 1 blocking gap. First: `policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: 'ripr-waive')` at `src/pricing.rs:88`.";
+    assert!(
+        body.starts_with(&format!(
+            "<!-- ripr:summary -->\n### RIPR test-evidence review\n\n{verdict}"
+        )),
+        "{body}"
+    );
+    assert!(!body.contains("does not block merging"), "{body}");
+    assert!(
+        body.contains("Not advisory: `RIPR_GATE_MODE` is set to `acknowledgeable`, so this check can block merging."),
+        "{body}"
+    );
+
+    let (code, body) = comment("visible-only")?;
+    assert_eq!(code, Some(0), "{body}");
+    assert!(!body.contains("RIPR gate"), "{body}");
+    assert!(body.contains("and it does not block merging."), "{body}");
+    Ok(())
+}
+
+/// #15858: the start-here commands and paths a packet wrote with the
+/// checkout path are shown from the repository root in the real
+/// `reports ci-summary`, so they paste into the reader's own checkout. A
+/// value that does not name the checkout is left as written. The
+/// missing-base fetch (`selected.next_command`) and the first-action packet
+/// that stands in when start-here is absent get the same rewrite.
+#[cfg(unix)]
+#[test]
+fn start_here_commands_in_the_summary_are_shown_from_the_repository_root()
+-> Result<(), Box<dyn Error>> {
+    let root = replay::unique_temp_dir("start-here-root")?;
+    let checkout = fs::canonicalize(&root)?;
+    let abs = checkout.to_str().ok_or("checkout path is not UTF-8")?;
+    let reports = root.join("target/ripr/reports");
+    fs::create_dir_all(&reports)?;
+    let summary = |packets: &[(&str, serde_json::Value)]| -> Result<String, Box<dyn Error>> {
+        for name in ["start-here.json", "first-useful-action.json"] {
+            let _ = fs::remove_file(reports.join(name));
+        }
+        for (name, packet) in packets {
+            fs::write(reports.join(name), serde_json::to_vec(packet)?)?;
+        }
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &["GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "RIPR_GATE_MODE"],
+            &[],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "ci-summary failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8(output.stdout)?)
+    };
+    // The directory is kept when a run fails, for inspection.
+    let repair_ready = summary(&[(
+        "start-here.json",
+        serde_json::json!({
+            "status": "advisory",
+            "selected": {
+                "state": "repair_ready",
+                "repair_command": format!("ripr agent repair --root {abs} --seam-id abc --phase before"),
+                "verify_command": format!("cargo test --manifest-path {abs}/Cargo.toml discount"),
+                "receipt_path": format!("{abs}/target/ripr/receipts/abc.json"),
+                "repair": { "target_file": "src/lib.rs", "related_test": "tests/pricing.rs" },
+            },
+            "warnings": [],
+        }),
+    )])?;
+    let missing_base = summary(&[(
+        "start-here.json",
+        serde_json::json!({
+            "status": "blocked",
+            "selected": {
+                "state": "missing_base",
+                "next_command": format!("git -C {abs} fetch --no-tags origin main"),
+            },
+            "warnings": [],
+        }),
+    )])?;
+    let first_action = summary(&[(
+        "first-useful-action.json",
+        serde_json::json!({
+            "status": "advisory",
+            "action_kind": "repair",
+            "commands": {
+                "repair": format!("ripr agent repair --root {abs} --seam-id abc --phase before"),
+                "context_packet": format!("ripr agent packet --root {abs} --seam-id abc"),
+                "verify": format!("cargo test --manifest-path {abs}/Cargo.toml discount"),
+                "receipt": format!("ripr agent receipt --root {abs} --seam-id abc"),
+            },
+            "warnings": [],
+        }),
+    )])?;
+    for (case, text) in [
+        ("repair_ready", &repair_ready),
+        ("missing_base", &missing_base),
+        ("first_action", &first_action),
+    ] {
+        assert!(!text.contains(abs), "{case}\n{text}");
+    }
+    for line in [
+        "- Start repair: `ripr agent repair --root . --seam-id abc --phase before`\n",
+        "- Receipt path: `./target/ripr/receipts/abc.json`\n",
+        "- Safe next action command: `ripr agent repair --root . --seam-id abc --phase before`\n",
+        "- Repair target: `src/lib.rs`\n",
+        "- Related test: `tests/pricing.rs`\n",
+    ] {
+        assert!(repair_ready.contains(line), "{line}\n{repair_ready}");
+    }
+    assert!(
+        repair_ready.contains("cargo test --manifest-path ./Cargo.toml discount`"),
+        "{repair_ready}"
+    );
+    assert!(
+        missing_base
+            .contains("- Safe next action command: `git -C . fetch --no-tags origin main`\n"),
+        "{missing_base}"
+    );
+    for line in [
+        "- Repair start: `ripr agent repair --root . --seam-id abc --phase before`\n",
+        "- Agent packet: `ripr agent packet --root . --seam-id abc`\n",
+        "ripr agent receipt --root . --seam-id abc`\n",
+        "cargo test --manifest-path ./Cargo.toml discount`\n",
+    ] {
+        assert!(first_action.contains(line), "{line}\n{first_action}");
+    }
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #15858: a checkout whose path the producer must shell-quote. The real
+/// `reports ci-packet` start-here step writes the missing-base fetch with
+/// `git -C '<checkout>'` (an apostrophe is escaped as `'\''`), and the real
+/// `reports ci-summary` shows that directory argument as `'.'` with the
+/// refspec unchanged. A space-only checkout is the control: its quoted form
+/// holds the raw path. The packet keeps the runner's own command.
+#[cfg(unix)]
+#[test]
+fn a_quoted_checkout_path_in_the_missing_base_fetch_is_shown_as_the_repository_root()
+-> Result<(), Box<dyn Error>> {
+    let refspec = "fetch origin -- '+refs/heads/main:refs/remotes/origin/main'";
+    for name in ["O'Brien", "two words"] {
+        let parent = replay::unique_temp_dir("quoted-checkout")?;
+        let root = parent.join(name).join("project");
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"quoted\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(root.join("src/lib.rs"), "pub fn one() -> u8 { 1 }\n")?;
+        replay::git(&root, &["init", "-q"])?;
+        replay::git(&root, &["add", "-A"])?;
+        replay::git(&root, &["commit", "-q", "-m", "initial"])?;
+        let checkout = fs::canonicalize(&root)?;
+        let abs = checkout.to_str().ok_or("checkout path is not UTF-8")?;
+        let quoted = format!("'{}'", abs.replace('\'', r"'\''"));
+        let removed = ["GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "RIPR_GATE_MODE"];
+        let packet = replay::ripr_with_env(
+            &root,
+            &[
+                "reports",
+                "ci-packet",
+                "--root",
+                ".",
+                "--step",
+                "Render RIPR first-pr start-here",
+            ],
+            &removed,
+            &[("GITHUB_BASE_REF", "main")],
+        )?;
+        if !packet.status.success() {
+            return Err(format!(
+                "ci-packet failed for {name}: {}",
+                String::from_utf8_lossy(&packet.stderr)
+            )
+            .into());
+        }
+        let start_here: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("target/ripr/reports/start-here.json"))?)?;
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &removed,
+            &[("GITHUB_BASE_REF", "main")],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "ci-summary failed for {name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let summary = String::from_utf8(output.stdout)?;
+        // The directory is kept when an assert fails, for inspection.
+        assert_eq!(
+            start_here["selected"]["next_command"].as_str(),
+            Some(format!("git -C {quoted} {refspec}").as_str()),
+            "{name}: {start_here}"
+        );
+        assert!(
+            summary.contains(&format!(
+                "- Safe next action command: `git -C '.' {refspec}`\n"
+            )),
+            "{name}: {summary}"
+        );
+        assert!(!summary.contains(&quoted), "{name}: {summary}");
+        assert!(!summary.contains(abs), "{name}: {summary}");
+        let _ = fs::remove_dir_all(&parent);
+    }
+    Ok(())
+}
+
+/// #14148: the real `reports ci-summary` reads the run's event from the
+/// environment, and a manual run says it has no pull request where a
+/// `pull_request` run of the same tree does not.
+#[cfg(unix)]
+#[test]
+fn a_manual_run_summary_says_there_is_no_pull_request() -> Result<(), Box<dyn Error>> {
+    let root = replay::unique_temp_dir("manual-run-summary")?;
+    let summary = |event: &str| -> Result<String, Box<dyn Error>> {
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &[
+                "GITHUB_BASE_REF",
+                "GITHUB_EVENT_PATH",
+                "RIPR_UPLOAD_SARIF",
+                "RIPR_COMMENT_MODE",
+                "RIPR_GATE_BASELINE",
+                "RIPR_GATE_MODE",
+                "RIPR_PILOT_TIMEOUT_MS",
+            ],
+            &[("GITHUB_EVENT_NAME", event)],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "ci-summary failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8(output.stdout)?)
+    };
+    // The directory is kept when a run fails, for inspection.
+    let manual = summary("workflow_dispatch")?;
+    let pull_request = summary("pull_request")?;
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        manual.contains("#### First-run status\n- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced."),
+        "{manual}"
+    );
+    assert!(
+        !pull_request.contains("No pull request in this run"),
+        "{pull_request}"
+    );
     Ok(())
 }

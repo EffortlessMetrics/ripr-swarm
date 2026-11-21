@@ -321,7 +321,7 @@ impl Fixture {
 
     fn report_path(&self, extension: &str) -> PathBuf {
         self.root
-            .join(format!("target/ripr/reports/kani.{extension}"))
+            .join(format!("target/ripr/reports/kani-import.{extension}"))
     }
 
     fn close(mut self) -> TestResult {

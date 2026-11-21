@@ -90,7 +90,8 @@ fn missing_path_values_refuse_option_tokens_before_writing_reports() -> Result<(
 }
 
 #[test]
-fn explicit_option_named_paths_and_unreadable_inputs_keep_advisory_reports() -> Result<(), String> {
+fn explicit_option_named_paths_and_unreadable_inputs_write_reports_then_refuse_when_unreadable()
+-> Result<(), String> {
     let root = unique_temp_workspace("baseline-explicit-path");
     std::fs::create_dir_all(root.join("input-directory"))
         .map_err(|error| format!("create fixture: {error}"))?;
@@ -132,11 +133,14 @@ fn explicit_option_named_paths_and_unreadable_inputs_keep_advisory_reports() -> 
                 out_md,
             ],
         )?;
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        // An unreadable required input writes the report, then refuses with
+        // exit 2 (#15254); a readable one stays advisory.
+        let expected = if unreadable { 2 } else { 0 };
+        assert_eq!(output.status.code(), Some(expected), "{output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         if unreadable {
-            // #9856: the router now echoes the input-missing warning to stderr
-            // (exit 0 and report contents are unchanged).
+            // #9856: the input-missing warning is echoed to stderr, and
+            // #15254 refuses on it.
             assert!(
                 stderr.contains("./input-directory"),
                 "unreadable input must be named on stderr: {output:?}"

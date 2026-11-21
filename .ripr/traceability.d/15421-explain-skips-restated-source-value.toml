@@ -1,0 +1,12 @@
+# Registers the explain Evidence skip of a source-value row the Weakness reason restates (#15421).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::explain_skips_source_value_row_the_discriminator_reason_restates",
+  "crates/ripr/src/output/human.rs::tests::explain_skipping_the_only_value_row_keeps_literal_evidence_out",
+  "crates/ripr/src/output/human.rs::tests::explain_keeps_source_value_row_the_reason_does_not_restate",
+  "crates/ripr/src/output/human.rs::tests::explain_keeps_restated_row_when_the_window_is_truncated",
+]
+code = [
+  "crates/ripr/src/output/human/evidence_lines.rs",
+]

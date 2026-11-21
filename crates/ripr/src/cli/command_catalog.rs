@@ -854,6 +854,22 @@ fn typo_suggestable_spellings_from(entries: &[CommandCatalogEntry]) -> Vec<&'sta
     spellings.into_iter().collect()
 }
 
+/// The one nested command whose subcommand is exactly `word` (`ci-summary` ->
+/// `reports ci-summary`). A word typed at the top level that is really a
+/// family's subcommand deserves its full path, not a typo guess. Ambiguous
+/// words (the same subcommand under several families) name nothing.
+pub(crate) fn nested_route_for_subcommand(word: &str) -> Option<&'static str> {
+    let mut matches = catalog().iter().filter(|entry| {
+        typo_suggestable(entry)
+            && entry
+                .path
+                .split_once(' ')
+                .is_some_and(|(_, sub)| sub == word)
+    });
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first.path)
+}
+
 fn typo_suggestable(entry: &CommandCatalogEntry) -> bool {
     entry.class != CommandClass::Internal
         && !is_retired_relation(entry.relation)
@@ -1313,7 +1329,7 @@ mod tests {
         assert_eq!(alias.relation, CommandRelation::AliasOf("first-pr"));
         assert_eq!(
             CliCommand::from_parts(Some("start-here"), Vec::new()),
-            Ok(CliCommand::FirstPr(Vec::new()))
+            Ok(CliCommand::StartHere(Vec::new()))
         );
         Ok(())
     }

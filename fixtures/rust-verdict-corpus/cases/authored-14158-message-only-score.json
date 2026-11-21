@@ -1,0 +1,44 @@
+{
+  "case_id": "authored-14158-message-only-score",
+  "subject_id": "authored-14158-message-only",
+  "diff": "cases/authored-14158-message-only-score.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "let_bound_result_named_only_in_message",
+  "hard_case": "The bound result `v` appears only in the message arguments of `assert_eq!(4, 4, ...)`, which compares two literals.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n * 3",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent as code (`score(2)` becomes 6), but the test compares the literals 4 and 4 and only formats `v` on failure, so the mutant survives. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_passed."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A binding named only in the message arguments is not pinned (#14158): the message never decides the test, so the edit must not be credited through it.",
+  "labeling_observation": {
+    "ripr_commit": "332729ac",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

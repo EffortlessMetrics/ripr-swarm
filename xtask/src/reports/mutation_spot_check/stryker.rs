@@ -82,6 +82,7 @@ pub(crate) fn parse_stryker_report(report: &Value) -> Result<(Vec<MutationSource
             parsed.push(SyntheticMutant {
                 id: text("id")?.to_string(),
                 mutator: text("mutatorName")?.to_string(),
+                genre: text("mutatorName")?.to_string(),
                 replacement: text("replacement")?.to_string(),
                 start_line,
                 start_col,

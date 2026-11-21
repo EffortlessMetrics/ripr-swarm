@@ -107,7 +107,10 @@ file seeds only when a Cargo target's module tree reaches it through
 `mod`, `#[path]` or literal `include!` edges, walked from every target
 root (a declared `[lib] path` replaces `src/lib.rs`). The modules of an
 external root (`[lib] path = "../shared/lib.rs"`) seed, and every member
-package that compiles that root keeps its tests in Draft scope. A changed
+package that compiles that root keeps its tests in Draft scope. A file
+outside the layout directories that the owning package's production root
+mounts (`#[path = "../impl/price.rs"]` from `src/lib.rs`) seeds too (#15264);
+one only a test, bench or example root mounts stays evidence. A changed
 file no target reaches seeds nothing; when the layout rule would have
 seeded it, the run records one `language_scope_unsupported` limitation
 naming it, but only when every
@@ -462,7 +465,9 @@ fields between a `FunctionFact` and its paired executable `TestFact` via generat
   `tests/data` source, record the limitation; a module only a replaced
   default `src/lib.rs` declares seeds nothing; an external root's module seeds and relates the tests of
   every declaring package; `#[path]`, `include!`, nested inline and
-  raw-identifier edges seed; an unknown tree (`cfg_if!`) keeps seeding;
+  raw-identifier edges seed; a `#[path]` module outside `src/` that the
+  production root mounts seeds while an unmounted sibling and a file only a
+  test target mounts do not (#15264); an unknown tree (`cfg_if!`) keeps seeding;
   the LSP partition drops the same anchors. Each walk regression pairs a
   reached file with a true orphan so neither direction goes unpinned.
 - Unbuilt tests (#6965): a test in a file no `mod` declares (unchanged,
