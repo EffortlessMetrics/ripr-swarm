@@ -36971,11 +36971,15 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
                 "{name}: a refused command wrote under the CWD (target/ripr)"
             ));
         }
+        // Checked per command, and removed so the next command starts from a
+        // missing root again, so a red names the command that created it.
+        if scratch.join("nope").exists() {
+            failures.push(format!("{name}: the mistyped --root was created"));
+            let _ = std::fs::remove_dir_all(scratch.join("nope"));
+        }
     }
-    let created = scratch.join("nope").exists();
     let file_kept = std::fs::read_to_string(&file)?;
     let _ = std::fs::remove_dir_all(&scratch);
-    assert!(!created, "the mistyped --root was created");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
     Ok(())
