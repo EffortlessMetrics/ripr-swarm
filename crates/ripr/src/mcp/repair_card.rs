@@ -605,6 +605,24 @@ impl WorkspaceSession {
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
         }
+        // The shared per-item admission (`ripr_list_gaps` / `ripr_prepare_repair`)
+        // holds a start whose inline test target has uncommitted changes
+        // (#11397). The card reads that same verdict from the committed item,
+        // after the drift check, so it never claims `repair_ready` where the
+        // item is refused and list, prepare and card never disagree.
+        if let Some(file) = item.repair_readiness.held_file.as_deref() {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} was refused: {}. Commit or stash `{file}`, then run ripr_refresh again",
+                    item.canonical_id,
+                    item.repair_readiness
+                        .seam_detail
+                        .as_deref()
+                        .unwrap_or("the shared repair gate refuses this seam")
+                ),
+            )));
+        }
         let readiness = repair_packet_eligibility(entry).readiness;
         let seam_id = entry.seam.id().as_str().to_string();
         // The witness and finding id bind through the shared

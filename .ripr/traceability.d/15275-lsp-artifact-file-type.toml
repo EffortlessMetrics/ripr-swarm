@@ -1,0 +1,14 @@
+# Registers the non-regular and oversize report-artifact refusal tests (#15275).
+[[extend]]
+id = "RIPR-SPEC-0047"
+tests = [
+  "crates/ripr/src/bounded_input.rs::tests::repository_artifact_reads_a_regular_file_within_its_cap",
+  "crates/ripr/src/bounded_input.rs::tests::repository_artifact_refuses_fifo_device_and_links_to_them",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::non_regular_workspace_gap_artifacts_are_refused_without_reading",
+  "crates/ripr/src/lsp/uri.rs::tests::read_artifact_capped_refuses_fifo_and_device_links_without_blocking",
+]
+code = [
+  "crates/ripr/src/bounded_input.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+  "crates/ripr/src/lsp/uri.rs",
+]

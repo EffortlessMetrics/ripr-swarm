@@ -1342,6 +1342,208 @@ fn library_export_imports_in_another_file_still_defeat_a_module_name() {
     }
 }
 
+/// The single-walk implementation that predates the name-independent summary
+/// (#15329), kept as the oracle. Only `modules` is owned (`String`) to match
+/// `reexports_library_module`; the logic is otherwise verbatim.
+fn single_walk_library_may_export_other(index: &RustIndex, owner_root: &Path, name: &str) -> bool {
+    let Some(source_dir) = owner_root.parent() else {
+        return true;
+    };
+    if !index.include_limitations.is_empty() {
+        return true;
+    }
+    let src_dirs = BTreeSet::new();
+    let mut library = Vec::new();
+    for (path, facts) in index.files().iter() {
+        if !path.starts_with(source_dir) {
+            continue;
+        }
+        match target_root(path, index, &src_dirs) {
+            None => return true,
+            Some(root) if root == owner_root => {
+                let masked = mask_comments_and_strings(&facts.source);
+                let includes = whole_word_offsets(&masked, "include")
+                    .into_iter()
+                    .any(|offset| {
+                        masked[offset + "include".len()..]
+                            .trim_start()
+                            .starts_with('!')
+                    });
+                if includes || declares_value_named(&masked, name) {
+                    return true;
+                }
+                library.push(masked);
+            }
+            Some(_) => {}
+        }
+    }
+    let modules: BTreeSet<String> = library
+        .iter()
+        .flat_map(|masked| declared_module_names(masked))
+        .filter(|module| {
+            !library.iter().any(|masked| {
+                library_import_statements(masked)
+                    .iter()
+                    .any(|statement| use_statement_binds_name(statement, module))
+                    || binds_extern_crate(masked, module)
+            })
+        })
+        .map(String::from)
+        .collect();
+    index.files().iter().any(|(path, facts)| {
+        target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
+            && public_use_statements(&facts.source)
+                .iter()
+                .any(|statement| {
+                    (contains_as_whole_word(statement, name) || statement.contains('*'))
+                        && !reexports_library_module(statement, &modules)
+                })
+    })
+}
+
+/// (label, `lib.rs` tail, expected answer per name).
+type LibraryExportCase<'a> = (&'a str, &'a str, &'a [(&'a str, bool)]);
+
+const LIBRARY_EXPORT_NAMES: [&str; 8] = [
+    "LIMIT", "score", "rebate", "ext", "absent", "m", "helpers", "Widget",
+];
+
+#[test]
+fn library_export_summary_answers_match_the_single_walk_on_a_multi_file_library() {
+    let m = "pub fn score() -> i64 { 1 }\npub fn rebate() -> i64 { 2 }\n";
+    let helpers = "pub const LIMIT: u32 = 9;\n// pub use ghost::absent;\n";
+    let widget = "pub struct Widget;\n";
+    let base = [
+        ("src/m.rs", m),
+        ("src/helpers.rs", helpers),
+        ("src/widget.rs", widget),
+    ];
+    let mods = "pub mod m;\nmod helpers;\nmod widget;\n";
+    let root = Path::new(LIB);
+    // (label, lib.rs tail, name -> expected)
+    let cases: [LibraryExportCase; 6] = [
+        (
+            "value declared in a library file",
+            "",
+            &[
+                ("LIMIT", true),
+                ("score", false),
+                ("absent", false),
+                ("ext", false),
+            ],
+        ),
+        (
+            "re-export through a library module",
+            "pub use self::m::score;\n",
+            &[("score", false), ("rebate", false), ("LIMIT", true)],
+        ),
+        (
+            // No `crate`/`self`/`super` root: not provably local, fails closed.
+            "re-export through a bare module path",
+            "pub use m::score;\n",
+            &[("score", true), ("rebate", false), ("LIMIT", true)],
+        ),
+        (
+            "re-export of a foreign item",
+            "pub use fastscore::ext;\n",
+            &[
+                ("ext", true),
+                ("score", false),
+                ("absent", false),
+                ("LIMIT", true),
+            ],
+        ),
+        (
+            "foreign glob",
+            "pub use fastscore::*;\n",
+            &[("rebate", true), ("absent", true), ("Widget", true)],
+        ),
+        (
+            "glob of a library module",
+            "pub use self::m::*;\n",
+            &[("rebate", false), ("absent", false), ("LIMIT", true)],
+        ),
+    ];
+    for (label, tail, expected) in cases {
+        let lib = format!("{mods}{tail}");
+        let mut files = vec![(LIB, lib.as_str())];
+        files.extend(base);
+        let library = index(&files);
+        assert_eq!(library.files().len(), 4, "{label}");
+        for name in LIBRARY_EXPORT_NAMES {
+            let old = single_walk_library_may_export_other(&library, root, name);
+            assert_eq!(
+                library_may_export_other(&library, root, name),
+                old,
+                "{label}: {name}"
+            );
+        }
+        for (name, answer) in expected {
+            assert_eq!(
+                library_may_export_other(&library, root, name),
+                *answer,
+                "{label}: {name}"
+            );
+        }
+    }
+    // An `include!` in any library file fails every name closed.
+    let included = "pub fn score() -> i64 { 1 }\ninclude!(\"gen.rs\");\n";
+    let lib = format!("{mods}pub use m::score;\n");
+    let library = index(&[
+        (LIB, lib.as_str()),
+        ("src/m.rs", m),
+        ("src/helpers.rs", included),
+        ("src/widget.rs", widget),
+    ]);
+    for name in LIBRARY_EXPORT_NAMES {
+        assert!(
+            single_walk_library_may_export_other(&library, root, name),
+            "{name}"
+        );
+        assert!(
+            library_may_export_other(&library, root, name),
+            "include: {name}"
+        );
+    }
+    // A file with no established crate root fails every name closed.
+    let library = index(&[
+        (LIB, "pub mod m;\n"),
+        ("src/m.rs", m),
+        ("src/orphan.rs", widget),
+    ]);
+    for name in LIBRARY_EXPORT_NAMES {
+        assert!(
+            single_walk_library_may_export_other(&library, root, name),
+            "{name}"
+        );
+        assert!(
+            library_may_export_other(&library, root, name),
+            "orphan: {name}"
+        );
+    }
+}
+
+#[test]
+fn library_export_summary_is_computed_once_per_owner_root_across_names() {
+    let library = index(&[
+        (LIB, "pub mod m;\npub use m::score;\n"),
+        ("src/m.rs", "pub fn score() -> i64 { 1 }\n"),
+    ]);
+    assert_eq!(library.files().len(), 2);
+    LIBRARY_EXPORT_SUMMARIES.with(|count| count.set(0));
+    for name in LIBRARY_EXPORT_NAMES {
+        library_may_export_other(&library, Path::new(LIB), name);
+    }
+    assert_eq!(
+        LIBRARY_EXPORT_SUMMARIES.with(std::cell::Cell::get),
+        1,
+        "every name reuses one summary of the owner's library"
+    );
+    // A second owner root is its own summary.
+    library_may_export_other(&library, Path::new("other/src/lib.rs"), "score");
+    assert_eq!(LIBRARY_EXPORT_SUMMARIES.with(std::cell::Cell::get), 2);
+}
+
 #[test]
 fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
     // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
@@ -9917,6 +10119,51 @@ fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
     }
 }
 
+/// #15345: an associated constructor (`Config::fresh(3)`) pins its
+/// returned literal's field through the `T::name(..)` call identity
+/// (RIPR-SPEC-0172): the test names the owner's own type through a direct
+/// `use` (a brace list is refused there). A bare `fresh(3)`, another type's
+/// `Other::fresh(3)`, a glob import and `assert_ne!` do not pin.
+#[test]
+fn an_associated_constructor_pins_its_whole_value_field() {
+    let lib = format!(
+        "{CONFIG_LIB}\nimpl Config {{\n    pub fn fresh(n: u32) -> Self {{\n        Config {{\n            retries: n + 1,\n            name: \"x\".into(),\n            count: Count(n),\n        }}\n    }}\n}}\n"
+    );
+    let literal = r#"Config { retries: 7, name: "x".into(), count: Count(3) }"#;
+    let admits = |imports: &str, body: &str| {
+        let tests = format!("{imports}\n#[test]\nfn pins() {{\n{body}\n}}\n");
+        let (index, pin) = whole_value_pin(&lib, "fresh", &tests);
+        assert!(pin.is_some(), "the associated field pin must establish");
+        pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+    };
+    let direct = "use demo::Config;\nuse demo::Count;";
+    for body in [
+        format!("assert_eq!(Config::fresh(3), {literal});"),
+        format!("let c = Config::fresh(3);\nassert_eq!(c, {literal});"),
+    ] {
+        assert!(admits(direct, &body), "{body}");
+    }
+    for (imports, body) in [
+        (direct, format!("assert_ne!(Config::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(Other::fresh(3), {literal});")),
+        (direct, format!("assert_eq!(fresh(3), {literal});")),
+        (
+            "use demo::*;",
+            format!("assert_eq!(Config::fresh(3), {literal});"),
+        ),
+    ] {
+        assert!(!admits(imports, &body), "{imports} {body}");
+    }
+    // Another type's same-named associated function competes for the call
+    // name, so no field pin is established.
+    let decoy = format!(
+        "{lib}\npub struct Other;\nimpl Other {{\n    pub fn fresh(_n: u32) -> u32 {{\n        0\n    }}\n}}\n"
+    );
+    let tests =
+        format!("{direct}\n#[test]\nfn pins() {{\nassert_eq!(Config::fresh(3), {literal});\n}}\n");
+    assert!(whole_value_pin(&decoy, "fresh", &tests).1.is_none());
+}
+
 /// RIPR-SPEC-0225 decision 6 (ledger-receipt-remaining): beside an `Ok(..)`
 /// tail, an early `return Err(..)` exits as `?` does, and the test may
 /// compare `owner(..).unwrap()` or `.expect("..")` with the bare literal.
@@ -14335,6 +14582,11 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "use ::vstd::prelude::*;\n",
         ),
         (
+            "owner-pin-prelude-external-beside-import",
+            vstd,
+            "use other::vstd;\nuse ::vstd::prelude::*;\n",
+        ),
+        (
             "owner-pin-prelude-workspace-dep",
             "creusot-std = { version = \"0.14\", features = [\"std\"] }\n",
             "use creusot_std::prelude::*;\n",
@@ -14419,6 +14671,16 @@ fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crat
             "owner-pin-prelude-rename",
             vstd,
             "extern crate other as vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import",
+            vstd,
+            "use other::vstd;\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-plain-import-self",
+            prusti,
+            "use other::prusti_contracts::{self};\nuse prusti_contracts::*;\n",
         ),
     ] {
         assert!(
@@ -15005,4 +15267,95 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     assert_eq!(proofs(), before + 1, "a read-time proof is not repeated");
     let matches = StdRootedCalls::of(sources[3]);
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
+}
+
+/// #15263: a test module that imports a standard macro at its own path
+/// (`use std::vec;`, `use alloc::vec;`, `use core::assert_eq;`) binds the
+/// standard macro, so the `assert_eq!` over `vec![..]` stays credited. Each
+/// control keeps a real or possible rebinding refused.
+#[test]
+fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-macro-import-plain",
+        &[
+            ("Cargo.toml", &manifest("")),
+            ("src/lib.rs", ""),
+            ("tests/buf_tests.rs", ""),
+        ],
+    )?;
+    let alloc_dependency = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-macro-import-alloc-dep",
+        &[(
+            "Cargo.toml",
+            &manifest("alloc = { package = \"fake-alloc\", version = \"1\" }\n"),
+        )],
+    )?;
+    let lib = "pub fn weights(x: u32) -> Vec<u32> {\n    vec![x * 3]\n}\n";
+    let refusal_under = |root: &Path, import: &str| -> Result<Option<AssertionRefusal>, String> {
+        let tests = format!(
+            "#[cfg(test)]\nmod test {{\n    use demo::weights;\n    {import}\n\n    #[test]\n    fn weighs() {{\n        assert_eq!(weights(4), vec![12]);\n    }}\n}}\n"
+        );
+        let mut index = index(&[(LIB, lib), (TESTS, &tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))
+            .ok_or_else(|| format!("no indexed test under `{import}`"))?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.starts_with("assert_eq!(weights(4)"))
+            .ok_or_else(|| format!("no indexed assertion under `{import}`"))?;
+        Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+    };
+    let rebound = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    // Fixture premise: with no import the assertion is credited, and a
+    // foreign import of `vec` does refuse it.
+    assert_eq!(refusal_under(&plain, "")?, None);
+    assert!(rebound(refusal_under(&plain, "use other::vec;")?));
+    for import in [
+        "use std::vec;",
+        "use ::std::vec;",
+        "use alloc::vec;",
+        "use std::assert_eq;",
+        "use core::assert_eq;",
+        "use std::{vec, fmt};",
+    ] {
+        assert_eq!(refusal_under(&plain, import)?, None, "{import}");
+    }
+    for import in [
+        // Not where the standard library exports the macro.
+        "use core::vec;",
+        "use std::vec::vec;",
+        "use alloc::assert_eq;",
+        // A rename, and a root a local alias or module takes.
+        "use other::assert_eq as vec;",
+        "use std::assert_eq as vec;",
+        "use other as std;\n    use std::vec;",
+        "mod std {}\n    use std::vec;",
+        "mod alloc {}\n    use alloc::vec;",
+        "extern crate other as alloc;\n    use alloc::vec;",
+        "use crate::alloc::vec;",
+    ] {
+        assert!(rebound(refusal_under(&plain, import)?), "{import}");
+    }
+    // A manifest dependency named `alloc` may be the crate `use alloc::vec`
+    // names, so the import stays a rebinding there; `std` is unaffected.
+    assert!(rebound(refusal_under(
+        &alloc_dependency,
+        "use alloc::vec;"
+    )?));
+    assert_eq!(refusal_under(&alloc_dependency, "use std::vec;")?, None);
+    Ok(())
 }

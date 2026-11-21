@@ -852,6 +852,12 @@ provably: unequal `bool`, `char`, byte or string values, integers both in
 element. Equal folds (`false` → `!true`) refuse. The sink carries the raw
 tail text. Whether a related test pins the returned value stays the owner
 pin's decision, so a bare call reads `reachable_unrevealed`.
+Unit tail statement block (#15459). An owner with no `->` return type whose
+tail is a block (plain, `unsafe`, `async`, `const` or labelled) with no tail
+expression, because its last item is a `;`-terminated statement, yields `()`
+and gets no `return_value` probe; its statements keep their own `side_effect`
+and `call_deletion` probes. A tail block that ends in a value expression, and
+any owner with a return type (`-> ()` included), keeps the tail probe.
 Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
 body rewrites `Ok(f(self.read(args)?, rest))` to
 `self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
@@ -978,7 +984,15 @@ general combinator, callback or mutation adequacy.
    trusted macro used by that test refuses the pin. This scan
    includes other indexed files because textual macro scope reaches child
    modules. Workspace-owned globs remain supported only when that scan finds
-   no competing binding. The scan conservatively ignores visibility/cfg
+   no competing binding. A plain, unrenamed two-segment import of a trusted
+   macro at the root that exports it (`use std::vec;`, `use alloc::vec;`,
+   `use core::assert_eq;`; `vec`/`format` from `std` or `alloc`, the
+   assertion family, `matches`, `panic` and `unreachable` from `std` or
+   `core`) binds the standard macro rather than a competing one, when the
+   root is not shadowed in the file and the manifests prove no dependency,
+   package or patch takes the root name (#15263). Renames, longer paths,
+   `crate::`/`self::` paths and a root a crate does not export the macro
+   from (`use core::vec;`) still refuse. The scan conservatively ignores visibility/cfg
    refinements, so unrelated same-name definitions can cause under-credit.
    Other trusted names unused by the test do not defeat its pin (for example,
    an unrelated `std::fs::write` import does not defeat a plain assertion). It is not
@@ -1400,7 +1414,15 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
    variable. Reject ambient `CARGO_SOURCE_*`, `CARGO_REGISTRIES_*` and
    `CARGO_REGISTRY_*` variables; never print their values. This intentionally
-   refuses even unused alternate-source settings. The metadata command has no
+   refuses even unused alternate-source settings. A resolving metadata query
+   runs `rustc` for target information, so a config found from the query
+   directory through its ancestors (every file except the canonical effective
+   home's own) also refuses when it sets `build.rustc`, `build.rustc-wrapper`,
+   `build.rustc-workspace-wrapper`, `build.rustflags`, any `target.*.rustflags`,
+   `include`, `unstable` or `host`, or an `[env]` key other than `TEMP`, `TMP`,
+   `TMPDIR`, `RUST_BACKTRACE`, `RUST_LOG`, `RUST_MIN_STACK` or
+   `RUST_TEST_THREADS` (ASCII case-insensitive): the analyzed tree must not
+   choose a program, flag or environment the query runs (#15247). The metadata command has no
    `--config` arguments; an analysis requiring unobservable consumer CLI config
    overrides is outside this slice. Cargo's executable and ordinary registry
    cache integrity remain stated instrument assumptions, not simulated proof.
@@ -2839,7 +2861,8 @@ branch holding a statement, or code after the chain is outside the subset.
   confined lexically, a glob whose own module composition did not resolve has
   a separate cause, another disabling input (a lexical fallback, an unknown
   `#[path]` target or an unseen unindexed member) keeps placement off without
-  the include, and a glob that reaches the assertion from an ancestor module
+  the include, a glob in a file an unindexed member mounts stays unplaced
+  without it, and a glob that reaches the assertion from an ancestor module
   or along the module chain is ambiguous with placement on
   (`the_refusal_names_the_include_that_makes_placement_unavailable`,
   `a_public_glob_keeps_its_direct_explanation_with_an_include_present`,
@@ -3670,8 +3693,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value`,
   `layout_whitespace_cannot_invert_the_chain_direction`,
   `layout_whitespace_does_not_hide_a_retained_operand`,
-  `a_char_literal_operator_is_not_an_arithmetic_split` and
-  `a_quote_char_literal_does_not_flip_the_literal_scan`;
+  `a_char_literal_operator_is_not_an_arithmetic_split`,
+  `a_quote_char_literal_does_not_flip_the_literal_scan` and
+  `whitespace_inside_a_raw_string_with_an_inner_quote_is_content` (#15021);
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
   `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,
@@ -3878,7 +3902,16 @@ commas and unsupported syntax. A constructor name never supplies an oracle.
 
 Registry authority is limited to serde_json 1.0.151, crates.io checksum
 `c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14`,
+and 1.0.154, checksum
+`e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6`,
 whose macro expansion has no enclosing-function exit for this literal grammar.
+Each version is accepted only with its own checksum. The 1.0.154 audit (#14116)
+found `src/macros.rs` byte-identical to 1.0.151; its other source changes
+(`-0` text parsing, `as_f32` finiteness, the `preserve_order` hasher and
+raw-value error positions) are outside the `json!` literal expansion. A new
+release is added by re-reading `src/macros.rs` at that version and extending
+`AUDITED_JSON_RELEASES`; persisted classifications key on the analyzer build
+identity, so no cache generation bump is needed.
 The analysis root must declare this dependency directly or in its workspace
 package table. Offline locked Cargo metadata must resolve one canonical package
 and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
@@ -4126,3 +4159,35 @@ identity is `infection_unknown`, never a fabricated missing-equality gap.
 Returned comparisons retain the same unresolved boundary reason as predicates.
 An admitted exact boundary input still supplies the discriminator. The adaptor
 element-run reader (`sequence_runs`) is unchanged.
+
+### A deleted early return that gives the remaining tail's value (#14936)
+
+Deleting `if x == 0 { return Vec::new(); }` from a function whose remaining
+body is `vec![]` changes nothing an assertion on the owner's return can see:
+every input the guard took returned an empty vector on the base side and
+returns the candidate's `vec![]` now. A removed-only `return_value` probe on
+the deleted line therefore reads its discriminate stage `weak`
+(`deleted_guard_same_value`) instead of crediting an exact pin, and the
+finding is not `exposed`, when all of the following hold; every unmet
+condition keeps today's reading:
+
+1. The shared owner `verified_base_owner` verifies the base-side item and
+   reports no gate.
+2. The deleted line is the base body's first statement, an `if` with no
+   `else` whose block is exactly one `return <constant>`, and it is the
+   removed line the probe stands on.
+3. The candidate body is one tail expression with no statement and no
+   attribute, and it folds to a constant.
+4. The two constants fold to the same value with the #14852 folder, which
+   for this reading also takes a bare `Vec::new()` or `String::new()` as the
+   empty value.
+
+The reading only withholds credit, so it does not refuse a possibly rebound
+`vec!`. It also does not read the guard's condition: a condition with a side
+effect or a possible panic could still be observed by a state or
+`should_panic` test, but the demoted oracle is the return-value pin, which
+cannot see that difference. "Remaining tail" here means the candidate's
+constant tail, which the same diff may also have changed; that change has
+its own probe. A deleted guard whose remaining tail returns a different constant
+(`vec![9]`) keeps its credit. The fixture is
+`fixtures/rust_deleted_guard_same_value`.

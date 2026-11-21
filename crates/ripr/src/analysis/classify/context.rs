@@ -61,6 +61,10 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// whole-body constant tail on the base side; `None` when any part of
     /// that reading failed.
     pub constant_tail_change: Option<super::ConstantTailChange>,
+    /// #14936: the removed-only probe is a deleted early-return guard whose
+    /// constant equals the candidate owner's whole-body constant tail, so no
+    /// pin on the owner's return discriminates it. Only withholds credit.
+    pub deleted_guard_agreement: Option<super::DeletedGuardAgreement>,
     /// #15104: a test may run some other function in place of the owner (a
     /// `cfg` gate on it, its enclosing items, file or module chain, or a
     /// same-path `cfg` twin), read by the shared base-owner gate decision
@@ -77,6 +81,11 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// establishes. Gives the change a return-value sink and decides its
     /// infection; `None` keeps the ordinary reading.
     pub unary_tail: Option<super::UnaryTailChange>,
+    /// #14816: one `if` condition replaced by a literal `true`/`false`,
+    /// with the base-side owner the diff establishes. Decides the
+    /// predicate's infection by folding both versions; `None` keeps the
+    /// ordinary reading.
+    pub literal_condition: Option<super::LiteralConditionChange>,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,
     /// #14387: the diff's old text of the probe's line when that line is the
@@ -116,9 +125,11 @@ impl<'a> ProbeContext<'a> {
             const_flow: None,
             binding_return_flow: None,
             constant_tail_change: None,
+            deleted_guard_agreement: None,
             owner_may_be_swapped: false,
             compile_time_guarded: false,
             unary_tail: None,
+            literal_condition: None,
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
             owner_sole_change: None,

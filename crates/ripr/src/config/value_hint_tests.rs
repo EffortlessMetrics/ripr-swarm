@@ -34,6 +34,18 @@ fn near_miss_values_name_the_accepted_value() -> Result<(), String> {
             "severity.findings.exposed `WARNING` is not supported; expected info, warning, or note (did you mean `warning`?)",
         ),
         (
+            "[lsp]\ndiagnostic_profile = \"Full\"\n",
+            "invalid lsp.diagnostic_profile \"Full\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `full`?)",
+        ),
+        (
+            "[lsp]\ndiagnostic_profile = \"actionabel\"\n",
+            "invalid lsp.diagnostic_profile \"actionabel\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `actionable`?)",
+        ),
+        (
+            "[perl]\nproducer = \"perl_ripr_facts\"\n",
+            "perl.producer `perl_ripr_facts` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-ripr-facts`?)",
+        ),
+        (
             "[severity.seams]\nopaque = \"Off\"\n",
             "severity.seams.opaque `Off` is not supported; expected info, warning, or note, or off (did you mean `off`?)",
         ),
@@ -57,6 +69,8 @@ fn unrelated_values_get_no_hint() -> Result<(), String> {
         "[oracles]\nsnapshot_strength = \"high\"\n",
         "[severity.findings]\nexposed = \"error\"\n",
         "[languages]\nenabled = [\"cobol\"]\n",
+        "[lsp]\ndiagnostic_profile = \"verbose\"\n",
+        "[perl]\nproducer = \"python\"\n",
     ] {
         let message = error(text)?;
         assert!(!message.contains("did you mean"), "{text}: {message}");

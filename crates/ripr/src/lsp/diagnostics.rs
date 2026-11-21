@@ -1080,6 +1080,10 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
             "save_then_refresh",
             "Save the file if it is new, then refresh (`ripr.refresh`) so ripr can restore them.",
         ),
+        DocumentStalenessReason::SavedContentNotYetAnalyzed => (
+            "await_analysis_or_refresh",
+            "They return when ripr analyzes the saved file; run `ripr.refresh` if they do not.",
+        ),
     };
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
@@ -1108,7 +1112,7 @@ pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) 
 /// only starts analysis when configuration is valid and the workspace root
 /// authority admits analysis, so a blocked state must not advertise
 /// save/refresh — a wrong actionable route is worse than none.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AnalysisPendingRecovery {
     /// Configuration valid, root admitted: the ordinary cold-start state.
     SaveOrRefresh,
@@ -1122,6 +1126,15 @@ pub(super) enum AnalysisPendingRecovery {
     /// The root authority blocks analysis; carries the authority's own
     /// recovery route (`refresh` or `use_single_workspace_root_and_restart`).
     RootBlocked(&'static str),
+    /// Configuration valid, root admitted, no snapshot, and the latest
+    /// attempt failed (for example the root is not inside a Git work tree, or
+    /// the repository has no commits). A bare retry fails the same way, so
+    /// the marker names the recorded failure (already bounded and
+    /// path-redacted by the health owner) instead of the cold-start route.
+    AnalysisFailed {
+        kind: AnalysisFailureKind,
+        detail: String,
+    },
 }
 
 impl AnalysisPendingRecovery {
@@ -1131,11 +1144,29 @@ impl AnalysisPendingRecovery {
             Self::AnalysisRunning => "analysis_running",
             Self::FixConfiguration => "fix_configuration",
             Self::RootBlocked(route) => route,
+            Self::AnalysisFailed { .. } => "fix_failure_then_refresh",
         }
     }
 
-    fn route_text(&self) -> &'static str {
+    /// The served payload identity: the recovery id, plus a digest of the
+    /// failure detail for a failed attempt, so a different failure re-renders
+    /// instead of answering `unchanged` with stale reason text.
+    pub(super) fn payload_identity(&self) -> String {
         match self {
+            Self::AnalysisFailed { kind, detail } => format!(
+                "{}:{}",
+                self.recovery_id(),
+                stable_diagnostic_id(
+                    "ripr-analysis-failed-marker-v1",
+                    [kind.as_str(), detail.as_str()]
+                )
+            ),
+            _ => self.recovery_id().to_string(),
+        }
+    }
+
+    fn route_text(&self) -> String {
+        let route = match self {
             Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
             Self::AnalysisRunning => "Results replace this marker when it finishes.",
             Self::FixConfiguration => {
@@ -1145,7 +1176,19 @@ impl AnalysisPendingRecovery {
             Self::RootBlocked(_) => {
                 "Select a single workspace root and restart the language server."
             }
-        }
+            Self::AnalysisFailed { detail, .. } => {
+                let detail = detail.trim_end();
+                let separator = if detail.ends_with(['.', '!', '?']) {
+                    " "
+                } else {
+                    ". "
+                };
+                return format!(
+                    "The last analysis attempt failed: {detail}{separator}Fix that cause, then save a file or run `ripr.refresh` to analyze again."
+                );
+            }
+        };
+        route.to_string()
     }
 }
 
@@ -1187,6 +1230,12 @@ fn analysis_pending_diagnostic_for(
              this is not evidence of a clean workspace. {}",
             recovery.route_text()
         )
+    } else if matches!(recovery, AnalysisPendingRecovery::AnalysisFailed { .. }) {
+        format!(
+            "ripr could not analyze this workspace, so no findings are reported — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
     } else {
         format!(
             "ripr has not analyzed this workspace yet, so no findings are reported — \
@@ -1194,6 +1243,23 @@ fn analysis_pending_diagnostic_for(
             recovery.route_text()
         )
     };
+    let mut data = serde_json::json!({
+        "kind": "delivery_limitation",
+        "state": if withdrawn {
+            "withdrawn_configuration_failure"
+        } else {
+            "no_snapshot"
+        },
+        "recovery": recovery.recovery_id(),
+    });
+    if let AnalysisPendingRecovery::AnalysisFailed { kind, .. } = &recovery
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "failure_kind".to_string(),
+            serde_json::Value::String(kind.as_str().to_string()),
+        );
+    }
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
         code: Some(NumberOrString::String(
@@ -1201,15 +1267,7 @@ fn analysis_pending_diagnostic_for(
         )),
         source: Some("ripr".to_string()),
         message,
-        data: Some(serde_json::json!({
-            "kind": "delivery_limitation",
-            "state": if withdrawn {
-                "withdrawn_configuration_failure"
-            } else {
-                "no_snapshot"
-            },
-            "recovery": recovery.recovery_id(),
-        })),
+        data: Some(data),
         ..Default::default()
     }
 }

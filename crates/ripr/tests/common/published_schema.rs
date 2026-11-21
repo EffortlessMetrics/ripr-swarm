@@ -240,8 +240,22 @@ fn check_array(
     root: &Value,
     location: &str,
 ) -> Result<(), String> {
+    // Draft 2020-12: `prefixItems` binds a schema to each leading position,
+    // and `items` then applies only to the positions after the prefix.
+    let prefix = schema
+        .get("prefixItems")
+        .map(|prefix| {
+            prefix
+                .as_array()
+                .ok_or_else(|| format!("{location}: unsupported `prefixItems` value {prefix}"))
+        })
+        .transpose()?
+        .map_or(&[][..], Vec::as_slice);
+    for (index, (item, item_schema)) in items.iter().zip(prefix).enumerate() {
+        check(item, item_schema, root, &format!("{location}[{index}]"))?;
+    }
     if let Some(item_schema) = schema.get("items") {
-        for (index, item) in items.iter().enumerate() {
+        for (index, item) in items.iter().enumerate().skip(prefix.len()) {
             check(item, item_schema, root, &format!("{location}[{index}]"))?;
         }
     }
@@ -330,6 +344,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "minimum",
     "oneOf",
     "pattern",
+    "prefixItems",
     "properties",
     "required",
     "then",
@@ -359,7 +374,7 @@ fn collect_unsupported(schema: &Value, found: &mut Vec<String>) {
                 }
             }
             "items" | "if" | "then" | "else" => collect_unsupported(nested, found),
-            "allOf" | "oneOf" => {
+            "allOf" | "oneOf" | "prefixItems" => {
                 for member in nested.as_array().into_iter().flatten() {
                     collect_unsupported(member, found);
                 }

@@ -90,7 +90,18 @@ fn run_receipt_check(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_check_options(args)?;
-    let (msg, cross_ref) = check_receipt(&opts)?;
+    // #15260: under `--json` a receipt or ledger that cannot be used is the
+    // shared refusal document on stdout, not an empty stdout plus prose.
+    // The missing-selector refusal is a required-flag error, not an unusable
+    // input, and stays with the required-flag owner.
+    let names_a_receipt = opts.path.is_some() || opts.gap.is_some();
+    let (msg, cross_ref) = check_receipt(&opts).map_err(|message| {
+        if names_a_receipt {
+            crate::cli::usage_refusal::input_unusable(None, &message)
+        } else {
+            message
+        }
+    })?;
     if opts.json {
         // Machine-readable mode: one JSON document carrying the typed
         // cross-reference verdict. The human sentence stays the default.

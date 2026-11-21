@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #8999
+- #14768 (benchmark inputs that contain module-generating syntax)
 - #14962 (tests compiled only into a target `cargo test` skips: `[lib]
   test = false`, `[[bin]] test = false`, a bin's unmet default-feature
   `required-features`)
@@ -67,20 +68,38 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    its package's `src/lib.rs` or `src/main.rs` is indexed.
 3. No Rust source or `Cargo.toml` of the workspace mentions its file name as a
    substring anywhere (a `#[path]`, an `include!`, a `[[bench]]`/`[[test]]`/`[lib]`
-   `path`, a `build =`), no `path` attribute or key, or `include!` operand, contains a
-   backslash (escape, line continuation or separator), names compare
-   ASCII-case-insensitively, no source declares a `mod` of its stem, no source builds a `mod`
-   or `include!` operand from a macro metavariable (any `$` beside a
-   `mod`/`include` word, whatever comments or strings intervene) or passes a
-   computed `include!` operand, and the file is not a `mod.rs`.
-4. The workspace has no unresolved `include!`, and every lexical-fallback file
+   `path`, a `build =`). Names compare ASCII-case-insensitively. No source
+   declares a `mod` of its stem, and the file is not a `mod.rs`.
+4. The Rust mount-token scan finds no uncertain mount operand in another
+   indexed source, such as a macro-generated module or a computed `include!`.
+   A literal `mod` inside a macro invocation may be forwarded into an
+   out-of-line declaration.
+   A macro binding named `$mod` is an ordinary metavariable. An uncertain
+   operand inside the candidate still counts when judging other files.
+   Escaped mount operands in other sources and escaped manifest paths
+   also preserve uncertainty.
+5. The workspace has no unresolved `include!`, and every lexical-fallback file
    or unknown `#[path]` is itself unlinked: a file no root reaches never
    compiles its own declarations either.
+6. Manifest reads establish the Cargo context. A missing root manifest is
+   allowed for a standalone nested package. An unreadable or malformed
+   manifest preserves uncertainty. For a candidate's governing workspace,
+   including one nested beneath the analysis root, the bounded path inventory
+   must be covered by the index and its manifests examined. A member can use
+   `#[path]` into another member without a Cargo dependency. Explicit source
+   roots and build paths in the relevant manifests must also be covered,
+   including roots that discovery skips. For a standalone candidate package,
+   a bounded path scan must find no symlink that could hide an autodiscovered
+   Cargo root or another source spelling. Both scans skip conventional Cargo
+   build output.
 
 The executable tests registered in such a file are withheld from the index, so
 they are neither related tests nor oracles, and a parser refusal of the file
 adds no lexical-fallback limitation. The file and its functions stay indexed,
 and an owner inside it still reads as outside the module tree.
+The workspace assertion macro-binding scan omits parser-refused files with
+this source-role verdict. A parser-refused reachable or unresolved file
+retains its assertion-binding uncertainty.
 
 Any doubt keeps the file as before: it stays indexed with its tests. The
 change only removes credit; it never adds a relation, raises a class or
@@ -138,9 +157,12 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    `include!("gen.inc")`, and an alias such as `use std::include as inc;`
    whose `inc!` no rule could follow); a
    `path` attribute whose value is a metavariable or a non-`.rs` string
-   (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
-   `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
-   is no doubt; when a source spells a mount operand with escapes (an
+   (`#[path = "m.txt"]`); or `mod $name` anywhere. A literal `mod` inside a
+   macro invocation can be forwarded or renamed. It keeps uncertainty when
+   it comes from outside the skipped ancestry, since an invocation inside
+   that ancestry cannot bring its own ancestor into another target. Plain
+   metavariable names such as `$mod` and `$include` alone add no doubt. The
+   file also keeps its tests when a source spells a mount operand with escapes (an
    `include!` operand or `path` value holding a backslash names no `.rs`
    file the scan can match, however the tokens are spaced); when any file of
    the holder's ancestry other than its skipped roots is mounted from
@@ -218,6 +240,18 @@ running test; no named stop reason is added on this issue.
   `include!`, by a same-stem `mod`, below a macro that builds `mod` operands,
   or beside a lexical-fallback crate root keeps its tests; so does a package
   whose crate root is not indexed.
+- A benchmark input with module-generating syntax in its own text stays out
+  of related tests and assertion refusals. A declared `[[test]]`
+  target and a `#[path]` module keep the same unusual path as related evidence.
+- A sibling member outside Draft selection, a literal `mod` forwarded by a
+  declared target's macro, and an unreadable or malformed root Cargo manifest
+  each preserve the potential test in the shared source-role pass.
+- A nested governing workspace and a declared test root under `target/` also
+  preserve possible mounts. Removing the declared target restores the data-only
+  verdict with the same generated-output directory on disk.
+- An autodiscovered test symlink in a standalone package keeps its source
+  eligible as related evidence. Removing the alias restores the data-only
+  verdict in Draft, Fast and Deep.
 - Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
   child module, and `[[bin]] test = false` unit tests do not credit a
   discriminator (nor, as before, a `[[test]] test = false` target), while
@@ -260,11 +294,6 @@ running test; no named stop reason is added on this issue.
 
 ## Known Limits
 
-- A parser-refused file still makes the workspace-wide macro-binding scan
-  ambiguous when it spells `assert_eq!`, so a finding can stay
-  `static_unknown` with `rust_assertion_context_unresolved` (fail closed,
-  disclosed); it does not become a related test or a limitation. A follow-up
-  can let the scan skip never-compiled files.
 - Only the `.rs` file name is matched, not its directory: another file of the
   same name that is referenced keeps every same-named file (more doubt).
 - Build scripts that write sources into the tree, `cargo script` files and
@@ -366,6 +395,7 @@ running test; no named stop reason is added on this issue.
 - `crates/ripr/src/analysis/facts/role_composition.rs`:
   `files_outside_module_tree`, `withhold_tests_outside_module_tree`,
   `files_in_skipped_unit_test_targets` (#14962).
+- `crates/ripr/src/analysis/classify/owner_pin.rs`: `scan_macro_sites` (#14768).
 - `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
   `ManifestInventory::crate_root_unit_tests_skipped` (#14962).
 

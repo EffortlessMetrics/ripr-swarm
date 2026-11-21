@@ -236,7 +236,7 @@ Examples:
 ```text
 Write a bounded brief for a coding agent over the current diff or change.
 
-Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
+Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N] [--line-ranges]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -252,6 +252,9 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
+  --line-ranges    JSON-only lossless grouped inclusive changed-line ranges.
+                   Minifies output; requires --json. May grow for many files.
+                   Does not truncate locations or change the seam cap.
 
 When --files or --base produces a working set that matches no seams, the brief
 falls back to all repo-actionable seams. This scope-widening is disclosed in
@@ -1564,7 +1567,12 @@ Options:
                            suppressed: true; per-class summary counts cover
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
-                           policy fails the run.
+                           policy fails the run. Every other format (sarif,
+                           sarif-compact, agent, json-terse, badge and repo
+                           formats) refuses the flag as a usage error. sarif,
+                           sarif-compact, badge-json, badge-shields and the
+                           badge-plus formats read [suppressions] path from
+                           ripr.toml (default .ripr/suppressions.toml) instead.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member
@@ -1639,7 +1647,9 @@ Progress:
   github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
   missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
-  `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
+  `RIPR_PROGRESS=1` restores it. A terminal keeps it. A human format on a
+  non-terminal stderr holds it for the first 2s, so a run that finishes
+  sooner prints nothing; `RIPR_PROGRESS=1` makes those lines immediate. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
   or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
@@ -1800,7 +1810,9 @@ Options:
 The command uses the same ancestor-aware loader as analysis and fails with the
 path-qualified parser or policy error. A missing ripr.toml follows the normal
 built-in-defaults path; use `ripr init` when you want to materialize those
-defaults into a file.
+defaults into a file. It also checks the suppressions manifest the config
+selects: a configured [suppressions] path that does not exist fails, and a
+present manifest (default .ripr/suppressions.toml) must parse.
 
 Examples:
   ripr config validate --root PATH
@@ -1816,10 +1828,11 @@ Print one finding's changed code and related tests for an agent or script.
 Use this when an agent or tool needs the facts behind one `ripr check`
 finding: the changed expression ripr examined, the tests that appear to
 reach it, the values they check, and any assertion that seems to be missing.
-Output is always JSON. To read the same finding as prose, run `ripr explain`
-with the same selector.
+Output is always JSON; `--json` is accepted and changes nothing.
+`--format json-compact` removes JSON whitespace. To read the same finding as
+prose, run `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json|--format json|json-compact] [--quiet]
 
 Options:
   --at <finding-id|file:line>
@@ -1827,6 +1840,8 @@ Options:
                `ripr check --json`, or a changed `file:line`.
   --finding ID
                Same as --at.
+  --format FORMAT
+               JSON presentation: json (default) or json-compact.
   --max-related-tests N
                List at most N related tests. Defaults to
                `reports.max_related_tests` in ripr.toml, otherwise 5.
@@ -2040,7 +2055,9 @@ Diagnose the local ripr setup (workspace, config, toolchains, paths).
 Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 
 Options:
-  --root PATH   Diagnose the selected workspace (defaults to `.`).
+  --root PATH   Workspace to diagnose. Defaults to the root `ripr check` would
+                use: the current directory, then the enclosing workspace or
+                package, or the git top level; `--root .` pins this directory.
   --json        Emit the core checks as stable JSON and use the same exit status.
   --timings     With --json, include the volatile timing fields (elapsed_ms,
                 segments). Default --json output is byte-stable across runs
@@ -2188,8 +2205,9 @@ Options:
                directory).
   --format F   human (default; text is an alias) or agent. agent prints the selected finding as
                compact `check --format agent` lines (one record, its related
-               test, and an explicit done=/open=/stop= terminal line plus
-               next=<ripr context command>), static advisory only. For the
+               test, owner=/before= lines, and an explicit done=/open=/stop=
+               terminal line plus next=<ripr context command> when the JSON
+               packet holds more), static advisory only. For the
                JSON packet use `ripr context --at <finding-id>`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
@@ -2504,7 +2522,7 @@ Check options:
   --head REV                          Head revision. Defaults to HEAD.
   --timeout-ms N                      Passed to review-comments.
   --suppression-policy PATH           Passed to review-comments; suppressed seams are non-blocking.
-  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
+  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json under --root.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
   --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
@@ -2543,7 +2561,7 @@ Evaluate options:
                                       legacy labels retain global compatibility disclosure.
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
-  --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.
+  --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json under --root.
   --out-md PATH                       Markdown output path. Defaults to --out with .md extension.
 
 The gate evaluator is read-only policy over existing RIPR evidence. It writes
@@ -2901,7 +2919,7 @@ Progress:
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
   reports them, including `processed_<n>_of_<total>` once the inventory has
   an honest seam denominator. Non-TTY / CI output is newline-delimited with
-  no control sequences; stdout and the pilot packet stay byte-clean. When
+  no control sequences and starts after the first 2s of a run; stdout and the pilot packet stay byte-clean. When
   the default timeout passes, the same run continues under the same progress
   stream. `--quiet` turns this stream off.
 
@@ -4364,7 +4382,7 @@ Options:
                  `suppressed_by_policy`, which `gate evaluate` treats as
                  non-blocking. Not combinable with `--gap-ledger`. The default
                  `.ripr/suppressions.toml` is never applied implicitly.
-  --out PATH     JSON output path. Defaults to target/ripr/review/comments.json.
+  --out PATH     JSON output path. Defaults to target/ripr/review/comments.json under --root.
   --timeout-ms MS
                  Cooperative analysis budget (default 600000ms), checked at
                  safe boundaries. Non-preemptible operations can overrun it.

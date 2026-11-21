@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0010"
+tests = [
+  "crates/ripr/src/output/agent_brief.rs::tests::line_range_profile_constructs_no_full_location_records",
+  "crates/ripr/src/output/agent_brief.rs::tests::working_set_encoding_preserves_empty_singleton_and_ordered_records",
+  "crates/ripr/src/output/agent_brief/line_ranges.rs::tests::grouped_ranges_preserve_order_duplicates_reentry_and_boundaries",
+  "crates/ripr/tests/task_first_facade/brief_line_ranges.rs::brief_line_ranges_real_diff_preserves_full_document_and_measures_bytes",
+  "crates/ripr/tests/task_first_facade/brief_line_ranges.rs::brief_line_ranges_help_usage_and_refusal_keep_their_contract",
+  "xtask/src/verification_contracts.rs::tests::agent_brief_schema_profiles_reject_mixed_missing_and_unknown_forms",
+]
+code = ["crates/ripr/src/output/agent_brief.rs", "crates/ripr/src/output/agent_brief/line_ranges.rs", "crates/ripr/src/cli/agent.rs", "crates/ripr/src/cli/commands/agent.rs"]

@@ -151,10 +151,22 @@ fn portfolio(source: &str, build_jobs: NonZeroUsize) -> Result<Vec<Step>, String
                 "ADMISSION_HEAD" => Some(("${{ inputs.admission-head }}", Some(""))),
                 "SYNC_SOURCE" => Some(("${{ inputs.history-sync-source }}", Some(""))),
                 "SYNC_BASE" => Some(("${{ inputs.history-sync-base }}", Some(""))),
+                // The honesty digest has no qualification profile or admitted
+                // base in the detached rehearsal; empty inputs select its
+                // local merge-base mode, as before the step took any input.
+                "RIPR_HONESTY_PROFILE" => Some(("${{ inputs.proof-profile }}", Some(""))),
+                "RIPR_HONESTY_ADMITTED_BASE" => {
+                    Some(("${{ steps.admitted.outputs.base }}", Some("")))
+                }
                 _ => None,
             };
             if let Some((expected, projected)) = projection {
-                if *name != "PR evidence" || value != expected {
+                let owner = if key.starts_with("RIPR_HONESTY_") {
+                    "Evidence promotion honesty"
+                } else {
+                    "PR evidence"
+                };
+                if *name != owner || value != expected {
                     return Err(format!("unsupported event projection: {key}"));
                 }
                 if let Some(projected) = projected {
@@ -836,6 +848,11 @@ mod tests {
             ("${{ inputs.admission-head }}", "ADMISSION_HEAD"),
             ("${{ inputs.history-sync-source }}", "SYNC_SOURCE"),
             ("${{ inputs.history-sync-base }}", "SYNC_BASE"),
+            ("${{ inputs.proof-profile }}", "RIPR_HONESTY_PROFILE"),
+            (
+                "${{ steps.admitted.outputs.base }}",
+                "RIPR_HONESTY_ADMITTED_BASE",
+            ),
         ] {
             for replacement in ["${{ inputs.unknown }}", "history_sync_admitted"] {
                 let changed = source.replace(expression, replacement);
