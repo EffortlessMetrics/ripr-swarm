@@ -413,7 +413,7 @@ fn bound_exception_comparison(
         return None;
     };
     for stmt in after {
-        if let Some((left, right)) = equality_operands(stmt) {
+        for (left, right) in required_equalities(stmt) {
             // One operand reads the error; the other must not, or the
             // comparison can hold for any message (`str(e.value) ==
             // str(e.value.args[0])`), as a tautology does (rule 1).
@@ -434,6 +434,38 @@ fn bound_exception_comparison(
         }
     }
     None
+}
+
+/// Every equality a passing `stmt` requires: the one `assert A == B` or
+/// `self.assertEqual(A, B)` states, or each `==` conjunct of a positive `and`
+/// chain (`assert len(e.value.args) == 1 and str(e.value) == "text"`, #15646).
+/// `or`, `not` and a comparison inside either require nothing.
+fn required_equalities(stmt: &Stmt) -> Vec<(&Expr, &Expr)> {
+    fn conjuncts<'a>(test: &'a Expr, out: &mut Vec<(&'a Expr, &'a Expr)>) {
+        match test {
+            Expr::BoolOp(bool_op) if bool_op.op == ast::BoolOp::And => {
+                for value in &bool_op.values {
+                    conjuncts(value, out);
+                }
+            }
+            Expr::Compare(compare)
+                if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::Eq) =>
+            {
+                if let Some(right) = compare.comparators.first() {
+                    out.push((compare.left.as_ref(), right));
+                }
+            }
+            _ => {}
+        }
+    }
+    match stmt {
+        Stmt::Assert(assert_stmt) if matches!(assert_stmt.test.as_ref(), Expr::BoolOp(_)) => {
+            let mut out = Vec::new();
+            conjuncts(assert_stmt.test.as_ref(), &mut out);
+            out
+        }
+        _ => equality_operands(stmt).into_iter().collect(),
+    }
 }
 
 /// The two operands of `assert A == B` or `self.assertEqual(A, B)`.

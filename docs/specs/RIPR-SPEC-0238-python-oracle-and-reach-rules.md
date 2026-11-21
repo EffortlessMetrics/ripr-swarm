@@ -309,15 +309,18 @@ one changed raise only (#12952); the general class-only table row stays weak.
    rejects, with each `{...}` placeholder read as a wildcard. The literals
    read are: the `match=` / `assertRaisesRegex` pattern (literal characters
    and the `.` wildcard only, searched as a substring), the string operand of
-   a one-line `assert x == "..."` or `assertEqual` (it must equal the whole
+   an `assert x == "..."` or `assertEqual` (it must equal the whole
    text), and the string operand of `assert "..." in x` or `assertIn` against
-   a non-literal container (a substring). At least half of the literal must
+   a non-literal container (a substring). The whole statement is read, so
+   it may span lines, and each conjunct of a positive `and` chain is read on
+   its own (`assert len(e.value.args) == 1 and str(e.value) == "..."`,
+   #15646); an `or` operand or anything under `not` pins nothing. At least half of the literal must
    match fixed characters of the old text; against the new text one fixed
-   character is enough, and a new text made only of placeholders rejects
-   nothing. A literal shorter than four characters pins only through
+   character is enough, and a non-empty new text made only of placeholders
+   rejects nothing (an empty new text rejects every non-empty literal). A literal shorter than four characters pins only through
    whole-text equality. Call arguments,
-   assert messages, `!=`, `not in`, two-constant comparisons and statements
-   that span lines pin nothing. Otherwise the change is `weakly_exposed`
+   assert messages, `!=`, `not in` and two-constant comparisons pin
+   nothing. Otherwise the change is `weakly_exposed`
    with missing discriminator `class attribute <name> text "<new text>"`.
    A decorated or multi-line constant and a non-string value keep the
    existing verdict.
@@ -989,7 +992,8 @@ the rule; ripr still reports only what the static shape shows.
     `self.assertRaises(...) as N` or `self.assertRaisesRegex(...) as N`
     (no other receiver), is recorded `exact_error_variant` / strong when a statement after the
     `with` statement, in the same test body, asserts `==` (an `assert`
-    with one `==`, or `assertEqual`) between two operands, one of which
+    with one `==`, an `==` conjunct of an `assert` whose test is a positive
+    `and` chain (#15646), or `assertEqual`) between two operands, one of which
     is a value-preserving read of the exception: `N.value` (pytest) or
     `N.exception` (unittest), alone, as `str(...)` or `repr(...)` of it,
     or as its `.args` or a literal index of `.args`, and whose other operand
