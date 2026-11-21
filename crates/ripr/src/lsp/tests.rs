@@ -4,7 +4,8 @@ use super::actions::{
 };
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
-    refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
+    disclosed_staleness_reason, refresh_completed_log_message, refresh_failed_log_message,
+    workspace_input_path_is_relevant,
 };
 use super::capabilities::{
     ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
@@ -24772,6 +24773,103 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
 }
 
 #[tokio::test]
+async fn out_of_root_document_names_the_root_instead_of_save_then_refresh() -> Result<(), String> {
+    // A document from a second repository (outside the selected root) can
+    // never get an analyzed baseline: analysis covers only the selected
+    // root, so "save the file, then refresh" is a route that cannot work.
+    // The served marker must name the out-of-root cause and its route, while
+    // a never-analyzed file inside the root keeps the save-then-refresh route.
+    let fixture = quarantine_fixture("out-of-root-marker")?;
+    let other = unique_lsp_test_root("out-of-root-marker-other")?;
+    let other_file = other.path().join("lib.rs");
+    std::fs::write(&other_file, QUARANTINE_TEXT_B)
+        .map_err(|err| format!("write other file failed: {err}"))?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    let outside = file_uri_for_path(&other_file).map_err(|err| format!("URI failed: {err}"))?;
+    let inside = file_uri_for_path(&fixture.root.join("src").join("new_file.rs"))
+        .map_err(|err| format!("new file URI failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&outside, QUARANTINE_TEXT_B))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&inside, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    match backend.document_quarantine(&outside) {
+        Some((_, DocumentStalenessReason::OutsideAnalyzedRoot)) => {}
+        other => {
+            return Err(format!(
+                "outside document must disclose out-of-root, got {other:?}"
+            ));
+        }
+    }
+    match backend.document_quarantine(&inside) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => return Err(format!("inside new file keeps its reason, got {other:?}")),
+    }
+    let report = pull_document_json(backend, &outside, None).await?;
+    let marker = &report["items"][0];
+    let message = marker["message"].as_str().unwrap_or_default();
+    if marker["data"]["reason"] != "outside_analyzed_root"
+        || marker["data"]["recovery"] != "open_repository_in_own_session"
+        || !message.contains("outside the analyzed workspace root")
+        || !message.contains("open this file's repository in its own editor window or session")
+        || message.contains("Save the file")
+        || message.contains("no analyzed baseline")
+    {
+        return Err(format!(
+            "out-of-root marker must name the root route: {report}"
+        ));
+    }
+    if !report["resultId"]
+        .as_str()
+        .is_some_and(|id| id.ends_with(":outside_analyzed_root:quarantined"))
+    {
+        return Err(format!(
+            "out-of-root result id must carry its reason: {report}"
+        ));
+    }
+    let inside_report = pull_document_json(backend, &inside, None).await?;
+    if inside_report["items"][0]["data"]["reason"] != "no_analyzed_saved_content"
+        || inside_report["items"][0]["data"]["recovery"] != "save_then_refresh"
+    {
+        return Err(format!(
+            "inside new file keeps save-then-refresh: {inside_report}"
+        ));
+    }
+    // #15462 review: workspace status (read by agents and MCP) discloses the
+    // same reason as the pull marker, not the stored save-then-refresh one.
+    let status = workspace_status_json(backend).await?;
+    for (uri, expected) in [
+        (&outside, "outside_analyzed_root"),
+        (&inside, "no_analyzed_saved_content"),
+    ] {
+        let entry = open_document_entry(&status, uri.as_str())?;
+        if entry
+            .get("staleness_reason")
+            .and_then(serde_json::Value::as_str)
+            != Some(expected)
+        {
+            return Err(format!("status must disclose {expected}: {entry}"));
+        }
+    }
+    drop(other);
+    Ok(())
+}
+
+#[tokio::test]
 async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result<(), String> {
     // A document with no analyzed saved content (here a new file that is
     // not on disk yet, so no refresh can record a baseline for it) is
@@ -36280,4 +36378,35 @@ fn hover_names_a_head_only_arm_result() -> Result<(), String> {
         return Err(format!("off-line sink was joined:\n{hover}"));
     }
     Ok(())
+}
+
+#[test]
+fn non_file_document_keeps_save_then_refresh_outside_a_root() {
+    let root = std::env::temp_dir().join("ripr-15462-root");
+    let untitled = Path::new("untitled:Untitled-1");
+    assert_eq!(
+        disclosed_staleness_reason(
+            Some(&root),
+            untitled,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent,
+    );
+    let outside = std::env::temp_dir().join("ripr-15462-other").join("lib.rs");
+    assert_eq!(
+        disclosed_staleness_reason(
+            Some(&root),
+            &outside,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        ),
+        DocumentStalenessReason::OutsideAnalyzedRoot,
+    );
+    assert_eq!(
+        disclosed_staleness_reason(
+            None,
+            &outside,
+            DocumentStalenessReason::NoAnalyzedSavedContent
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent,
+    );
 }
