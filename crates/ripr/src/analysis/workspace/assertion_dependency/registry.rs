@@ -648,15 +648,124 @@ impl RegistryIdentity {
     }
 }
 
-/// Initial scope: the analysis root declares serde_json itself or through its
-/// workspace dependency table. Other layouts remain unestablished.
+/// Cheap refusal before the metadata process: the analysis root declares
+/// serde_json itself or through its workspace dependency table, or (#14116) a
+/// workspace member the root manifest names declares it directly. Naming a
+/// dependency table grants nothing; the resolved edge of the importing file's
+/// own package stays the authority.
 pub(crate) fn eligible_json_root(root: &Path) -> bool {
-    eligible_root(root, "serde_json")
+    let Some(bytes) = read_optional(&root.join("Cargo.toml")).flatten() else {
+        return false;
+    };
+    match json_root_declaration(&bytes) {
+        JsonRootDeclaration::Declared => true,
+        JsonRootDeclaration::Members(members) => {
+            json_member_declares(&json_member_manifests(root, &members))
+        }
+    }
 }
 
+/// What the root manifest alone settles for [`eligible_json_root`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum JsonRootDeclaration {
+    /// The root names serde_json in a dependency table of its own.
+    Declared,
+    /// The root does not; these are its supported `workspace.members` entries
+    /// as written. Empty for no workspace, or a manifest that does not parse.
+    Members(Vec<String>),
+}
+
+/// Member manifests one eligibility query may read. A larger workspace keeps
+/// the refusal rather than a partial reading.
+pub(super) const JSON_MEMBER_BUDGET: usize = 256;
+
 /// Pure manifest parse behind [`eligible_json_root`]; callers own the read.
-pub(super) fn eligible_json_manifest_bytes(bytes: &[u8]) -> bool {
-    eligible_manifest_bytes(bytes, "serde_json")
+pub(super) fn json_root_declaration(bytes: &[u8]) -> JsonRootDeclaration {
+    if eligible_manifest_bytes(bytes, "serde_json") {
+        return JsonRootDeclaration::Declared;
+    }
+    let members = parse(bytes)
+        .as_ref()
+        .and_then(|manifest| manifest.get("workspace"))
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .filter(|member| supported_member_entry(member))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    JsonRootDeclaration::Members(members)
+}
+
+/// A member entry the prefilter reads: a relative path of plain components
+/// under the root, optionally ending in one `*` component (`crates/*`). Any
+/// other glob, `..`, or an absolute path is left unread.
+fn supported_member_entry(member: &str) -> bool {
+    let literal = member.strip_suffix("/*").unwrap_or(member);
+    !literal.is_empty()
+        && !literal.contains(['*', '?', '[', ']', '{', '}'])
+        && Path::new(literal)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// Current bytes of each present member manifest, in a stable order. `None`
+/// is an unreadable member directory or manifest, or more than
+/// [`JSON_MEMBER_BUDGET`] manifests.
+pub(super) fn json_member_manifests(root: &Path, members: &[String]) -> Option<Vec<Vec<u8>>> {
+    let mut manifests = Vec::new();
+    let mut read = |directory: PathBuf| -> Option<()> {
+        if let Some(bytes) = read_optional(&directory.join("Cargo.toml"))? {
+            manifests.push(bytes);
+        }
+        (manifests.len() <= JSON_MEMBER_BUDGET).then_some(())
+    };
+    for member in members {
+        let Some(parent) = member.strip_suffix("/*") else {
+            read(root.join(member))?;
+            continue;
+        };
+        let entries = match std::fs::read_dir(root.join(parent)) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        let mut directories = Vec::new();
+        for entry in entries {
+            directories.push(entry.ok()?.path());
+            if directories.len() > JSON_MEMBER_BUDGET {
+                return None;
+            }
+        }
+        directories.sort();
+        for directory in directories {
+            if directory.is_dir() {
+                read(directory)?;
+            }
+        }
+    }
+    Some(manifests)
+}
+
+/// Whether one of the member manifests read by [`json_member_manifests`]
+/// names serde_json in its own normal or dev dependency table.
+pub(super) fn json_member_declares(manifests: &Option<Vec<Vec<u8>>>) -> bool {
+    manifests.as_ref().is_some_and(|manifests| {
+        manifests.iter().any(|bytes| {
+            parse(bytes).is_some_and(|manifest| {
+                ["dependencies", "dev-dependencies"].iter().any(|table| {
+                    manifest
+                        .get(table)
+                        .and_then(|table| table.get("serde_json"))
+                        .is_some()
+                })
+            })
+        })
+    })
 }
 
 fn eligible_root(root: &Path, crate_name: &str) -> bool {
@@ -732,7 +841,13 @@ fn verified_registry_identity_result(
     version: &str,
     checksum: &str,
 ) -> Result<Option<RegistryIdentity>, MetadataProbeFailure> {
-    if !eligible_root(root, crate_name) {
+    // serde_json alone may be declared by a member of the analysis root.
+    let eligible = if crate_name == "serde_json" {
+        eligible_json_root(root)
+    } else {
+        eligible_root(root, crate_name)
+    };
+    if !eligible {
         return Ok(None);
     }
     let Ok(root) = root.canonicalize() else {

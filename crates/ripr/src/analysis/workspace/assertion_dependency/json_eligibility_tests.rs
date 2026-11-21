@@ -163,3 +163,164 @@ fn memo_preserves_root_eligibility_boundaries() -> Result<(), Box<dyn std::error
     // ambient authority still belongs to verified_json_identity and its callers.
     Ok(())
 }
+
+impl Fixture {
+    fn write_member(&self, member: &str, bytes: &[u8]) -> std::io::Result<()> {
+        let directory = self.0.join(member);
+        std::fs::create_dir_all(&directory)?;
+        std::fs::write(directory.join("Cargo.toml"), bytes)
+    }
+
+    /// The uncached prefilter and a fresh memo must agree on every layout.
+    fn eligible(&self) -> bool {
+        let uncached = eligible_json_root(&self.0);
+        assert_eq!(
+            JsonRootEligibilityMemo::default().eligible(&self.0),
+            uncached
+        );
+        uncached
+    }
+}
+
+const MEMBER: &[u8] = b"[package]\nname='demo'\n[dependencies]\nserde_json='1'\n";
+const OTHER: &[u8] = b"[package]\nname='demo'\n[dependencies]\nserde_jsom='1'\n";
+
+/// #14116: ripr's own layout. A virtual workspace root names no dependency,
+/// and the member that uses `json!` declares serde_json itself.
+#[test]
+fn a_named_member_that_declares_serde_json_makes_a_virtual_root_eligible()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (members, member) in [
+        ("['crates/demo']", "crates/demo"),
+        ("['tools/other', 'crates/demo']", "crates/demo"),
+        ("['crates/*']", "crates/demo"),
+        ("['demo']", "demo"),
+    ] {
+        let fixture = Fixture::new()?;
+        fixture.write(format!("[workspace]\nmembers={members}\n").as_bytes())?;
+        assert!(!fixture.eligible(), "{members}: no member manifest yet");
+        fixture.write_member(member, OTHER)?;
+        assert!(!fixture.eligible(), "{members}: member names another crate");
+        fixture.write_member(member, MEMBER)?;
+        assert!(fixture.eligible(), "{members}: member declares serde_json");
+        fixture.write_member(
+            member,
+            b"[package]\nname='demo'\n[dev-dependencies]\nserde_json='1'\n",
+        )?;
+        assert!(fixture.eligible(), "{members}: dev declaration");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_declaration_the_root_does_not_reach_stays_ineligible()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The declaring manifest exists in every row; only the root's reach differs.
+    for (root, member) in [
+        ("[workspace]\nmembers=['crates/other']\n", "crates/demo"),
+        ("[workspace]\n", "crates/demo"),
+        ("[workspace]\nexclude=['crates/demo']\n", "crates/demo"),
+        ("[package]\nname='root'\n", "crates/demo"),
+        ("[workspace]\nmembers='crates/demo'\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates/**']\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates/d*']\n", "crates/demo"),
+        ("[workspace]\nmembers=['*/demo']\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates/[d]emo']\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates/*']\n", "crates/nested/demo"),
+        (
+            "[workspace]\nmembers=['crates/../crates/demo']\n",
+            "crates/demo",
+        ),
+        ("[workspace]\nmembers=['./crates/demo']\n", "crates/demo"),
+        ("[workspace]\nmembers=['']\n", ""),
+        ("[workspace]\nmembers=['/*']\n", "demo"),
+        ("[workspace\nmembers=['crates/demo']\n", "crates/demo"),
+    ] {
+        let fixture = Fixture::new()?;
+        fixture.write_member(member, MEMBER)?;
+        fixture.write(root.as_bytes())?;
+        assert!(!fixture.eligible(), "{root}");
+    }
+    // A member outside the analysis root is never read through `..` or an
+    // absolute entry.
+    let outside = Fixture::new()?;
+    outside.write(MEMBER)?;
+    let fixture = Fixture::new()?;
+    let name = outside.0.file_name().and_then(|name| name.to_str());
+    let name = name.ok_or("fixture name")?;
+    for members in [
+        format!("['../{name}']"),
+        format!("['{}']", outside.0.display()),
+    ] {
+        fixture.write(format!("[workspace]\nmembers={members}\n").as_bytes())?;
+        assert!(!fixture.eligible(), "{members}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_table_other_than_normal_or_dev_dependencies_stays_ineligible()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    fixture.write(b"[workspace]\nmembers=['crates/demo']\n")?;
+    for member in [
+        &b"[build-dependencies]\nserde_json='1'\n"[..],
+        b"[target.'cfg(unix)'.dependencies]\nserde_json='1'\n",
+        b"[workspace.dependencies]\nserde_json='1'\n",
+        b"[features]\nserde_json=[]\n",
+        b"# [dependencies]\n# serde_json='1'\n",
+        b"[dependencies\nserde_json='1'\n",
+        b"\xff",
+    ] {
+        fixture.write_member("crates/demo", member)?;
+        assert!(!fixture.eligible(), "{member:?}");
+    }
+    fixture.write_member("crates/demo", MEMBER)?;
+    assert!(fixture.eligible());
+    Ok(())
+}
+
+#[test]
+fn member_manifest_changes_are_read_on_every_memo_query() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = Fixture::new()?;
+    fixture.write(b"[workspace]\nmembers=['crates/*']\n")?;
+    fixture.write_member("crates/demo", MEMBER)?;
+    let memo = JsonRootEligibilityMemo::default();
+    let before = parses();
+    assert!(memo.eligible(&fixture.0));
+    assert!(memo.eligible(&fixture.0));
+    assert_eq!(parses() - before, 1, "the unchanged root parses once");
+    assert_eq!(MEMBER.len(), OTHER.len());
+    fixture.write_member("crates/demo", OTHER)?;
+    assert!(!memo.eligible(&fixture.0), "same-size member rewrite");
+    fixture.write_member("crates/later", MEMBER)?;
+    assert!(memo.eligible(&fixture.0), "a member directory added later");
+    std::fs::remove_dir_all(fixture.0.join("crates/later"))?;
+    assert!(!memo.eligible(&fixture.0), "the declaring member removed");
+    fixture.write_member("crates/demo", MEMBER)?;
+    assert!(memo.eligible(&fixture.0));
+    std::fs::remove_file(fixture.0.join("crates/demo/Cargo.toml"))?;
+    std::fs::create_dir(fixture.0.join("crates/demo/Cargo.toml"))?;
+    assert!(!memo.eligible(&fixture.0), "member manifest is a directory");
+    assert_eq!(
+        parses() - before,
+        1,
+        "member changes do not reparse the root"
+    );
+    Ok(())
+}
+
+#[test]
+fn more_member_manifests_than_the_budget_stay_ineligible() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = Fixture::new()?;
+    fixture.write(b"[workspace]\nmembers=['crates/*']\n")?;
+    for member in 0..JSON_MEMBER_BUDGET {
+        fixture.write_member(&format!("crates/m{member:03}"), MEMBER)?;
+    }
+    assert!(fixture.eligible(), "at the budget");
+    fixture.write_member("crates/over", OTHER)?;
+    assert!(!fixture.eligible(), "one manifest over the budget");
+    Ok(())
+}
