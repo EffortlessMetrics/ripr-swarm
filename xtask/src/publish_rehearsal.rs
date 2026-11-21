@@ -239,6 +239,8 @@ fn package_from_stage(
 fn rehearse(scratch: &Path, version: &str) -> Result<PublishReceipt, String> {
     // The caller verified the lockstep pin before the contract dry-run.
     let (contract_crate, ripr_crate, stage) = vendored_ripr_crate_with_report(scratch, version)?;
+    crate::source_package_contents::check_crate_file("ripr-contract", &contract_crate, version)?;
+    crate::source_package_contents::check_crate_file("ripr", &ripr_crate, version)?;
     let contract_sha = sha256_hex(&contract_crate)?;
     let ripr_sha = sha256_hex(&ripr_crate)?;
     // Leave the packaged crates where `cargo package` would put them, so
