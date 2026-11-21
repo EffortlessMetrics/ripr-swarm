@@ -22867,6 +22867,14 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
     if matches!(
         path,
+        "tools/ci/nextest-discovery.py" | "tools/ci/test_nextest_discovery.py"
+    ) {
+        return Some(
+            "The Linux shard caller bounds Nextest discovery independently of a potentially stalled test binary using runner-provided stdlib Python; fixture controls run through the Rust-owned nextest_discovery integration target (#14906).",
+        );
+    }
+    if matches!(
+        path,
         "tools/ci/main-qualification.py" | "tools/ci/test_main_qualification.py"
     ) {
         return Some(

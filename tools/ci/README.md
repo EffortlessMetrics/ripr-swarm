@@ -54,3 +54,51 @@ cleanup. A restored `target/xtask-binary` fixture remains untouched across two
 producer executions, each of which emits a distinct fresh payload path. The regular
 Linux repo-policy test invokes the same suite. These are
 local transport controls, not observed hosted downloads or queue qualification.
+
+## Bounded Nextest discovery (#14906)
+
+`nextest-discovery.py` is the Linux shard caller's stdlib supervisor. It runs
+partition discovery first and independently lists the full workspace on shard 1.
+Each phase has a 480-second cap, above the recorded 6.1-minute listing. Two
+maximum-length phases leave 24 minutes of the existing 40-minute test step;
+this is not a guarantee that the entire suite fits. Sampled successful whole
+test-step times (discovery plus execution) were 686–937 seconds in runs
+44553602873, 44562926168, 44576937506's healthy shard and 44486867385;
+whole successful jobs were 1352–1922 seconds, uploads 1–2 seconds. These are
+comparators, not separately measured execution times or a worst-case bound. The 60-minute job also
+includes earlier preparation/build steps. Upload time is not reserved by changing
+those caps: a discovery failure returns early to the existing `!cancelled()`
+upload, while outer job cancellation remains a limitation. Reassess budgets
+against measured phase durations before expanding workload; no hosted latency
+qualification is claimed by fixture tests.
+
+Only successful nonempty discovery publishes the canonical sorted list, after
+phase status and metadata are written. Duplicate rows remain for the unchanged
+verifier to reject. No shard-success status or JUnit is synthesized. A child
+exit 124/137 is distinct from a supervisor timeout. Cancellation tears down the
+owned process group; normal exit with surviving group members refuses. The direct
+child is reaped; orphan grandchildren rely on host init and a deliberately escaped
+session is outside this POSIX boundary. SIGKILL and blocked kernel IO still rely
+on the outer workflow bound.
+
+Artifact exports add only `discovery-*.status` and
+`discovery-*.metadata.json`. Metadata contains a validated phase, stderr byte
+count and present/empty bucket, never child stderr payload, commands or decoded
+diagnostics. No generic secret-redaction claim is made. Expected test names remain
+in the canonical lists. Stdout staging is private, bounded to 64 MiB and removed
+on ordinary completion/failure; no raw partial stream is an artifact. Exactly one
+writer owns each phase in the existing serial shard shell.
+
+Run `python3 tools/ci/test_nextest_discovery.py` for 21 helper controls plus five
+actual workflow-shell fixtures with inert Cargo/Git/Rust commands. The Linux
+`cargo test -p repo-policy --test nextest_discovery` target runs the same suite.
+The fixtures shorten the helper budget through an inert interpreter wrapper;
+they never run Nextest, build the workspace, dispatch CI or claim native test
+execution. Verifier, independent full-list denominator and JUnit requirements
+are unchanged.
+
+During process acquisition TERM/INT only record cancellation until the child
+handle is assigned. Cancellation is then checked before stream setup. Teardown
+also records repeated signals until group cleanup and direct-child reap finish;
+publication retains the exception-based cancellation guard. Two synchronous
+spawn-handoff controls pin TERM/INT at this ownership boundary.

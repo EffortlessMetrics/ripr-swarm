@@ -192,7 +192,7 @@ jobs:
         timeout-minutes: 40
         run: |
           mkdir -p target/nextest/ci
-          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt target/nextest/ci/shard-*.status target/nextest/ci/list-*.txt
+          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt target/nextest/ci/shard-*.status target/nextest/ci/list-*.txt target/nextest/ci/discovery-*.status target/nextest/ci/discovery-*.metadata.json
           checkout_sha="$(git rev-parse HEAD)"
           {
             printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
@@ -209,9 +209,11 @@ jobs:
           # the run executes: taken after it, shard 4 spent 4.3 to 6.1 minutes here
           # on every run (4 to 16 seconds on the other shards), with the cause
           # hidden by the discarded stderr (#12915).
-          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/2 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          # Each phase gets 8m: above historical 6.1m; both leave 24m of this
+          # step for tests. This is a discovery cap, not a suite-time guarantee.
+          python3 tools/ci/nextest-discovery.py partition-${{ matrix.shard }} target/nextest/ci/list-${{ matrix.shard }}.txt 480 cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/2 --color never --message-format oneline
           if [ "${{ matrix.shard }}" = 1 ]; then
-            cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
+            python3 tools/ci/nextest-discovery.py full target/nextest/ci/list-all.txt 480 cargo nextest list --workspace --profile ci --color never --message-format oneline
           fi
           set +e
           cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/2
@@ -238,6 +240,8 @@ jobs:
             target/nextest/ci/build-metrics/
             target/nextest/ci/shard-${{ matrix.shard }}.status
             target/nextest/ci/list-*.txt
+            target/nextest/ci/discovery-*.status
+            target/nextest/ci/discovery-*.metadata.json
             target/ripr/reports/discarded-matcher-cli-5713/
             target/nextest/ci/python-symlink-source-admission-cli-${{ github.run_id }}-${{ github.run_attempt }}.txt
             target/ripr/reports/repair-card-usability.json

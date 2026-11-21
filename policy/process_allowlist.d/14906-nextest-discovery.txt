@@ -1,0 +1,2 @@
+tools/repo-policy/tests/nextest_discovery.rs|Command::new|1|ci/nextest-discovery|#14906: bounded Linux discovery supervisor or local fixture controls; no network, hosted dispatch, or product-build qualification.
+tools/repo-policy/tests/nextest_discovery.rs|use std::process::Command|1|ci/nextest-discovery|#14906: bounded Linux discovery supervisor or local fixture controls; no network, hosted dispatch, or product-build qualification.
