@@ -108,7 +108,16 @@ constructor that is the single source of truth for that family:
   These are not analyzer findings or actionable repairs.
 
 The quarantine-withdrawn marker names its cause through `data.reason`, the
-hover and log text, and the workspace-status `staleness_reason`. When a
+hover and log text, and the workspace-status `staleness_reason`. A buffer
+that equals the recorded saved content which the committed snapshot did not
+analyze (the file was saved, or rewritten on disk and reloaded into the
+buffer, after the last analysis) is `saved_content_not_yet_analyzed`
+(#15316), not `buffer_diverges_from_analyzed_saved_content`: its text says
+the saved file changed since ripr last analyzed it and its recovery
+(`data.recovery` `await_analysis_or_refresh`) is the next analysis or
+`ripr.refresh`, never "save the file". A reloaded external rewrite registers
+its buffer change and the implied save as one step, so a push client
+receives one withdrawal marker for that document version. When a
 `didOpen` is refused because the store-wide open-document or retained-text
 limit was reached (#11666), the document is held as an unknown-authority
 placeholder with empty text and the reason is `document_store_limit_reached`,

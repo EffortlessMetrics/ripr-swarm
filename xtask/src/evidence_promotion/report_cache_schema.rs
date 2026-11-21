@@ -16,7 +16,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const SEAM_CACHE_SOURCE: &str = "crates/ripr/src/analysis/seam_cache.rs";
+pub(super) const SEAM_CACHE_SOURCE: &str = "crates/ripr/src/analysis/seam_cache.rs";
 const CONSTANT_PREFIX: &str = "pub(crate) const CACHE_SCHEMA_VERSION: &str = \"";
 
 /// Read the analyzer's current full-cache generation from its source, so the
@@ -72,7 +72,10 @@ pub(super) fn judges_evidence_path(report: &Value, current: &str) -> bool {
 
 /// The pins as `report path -> (version, reason)`. A pin without a version or
 /// a non-empty reason is itself a violation.
-fn read_pins(corpus: &Value, violations: &mut Vec<String>) -> BTreeMap<String, (String, String)> {
+pub(super) fn read_pins(
+    corpus: &Value,
+    violations: &mut Vec<String>,
+) -> BTreeMap<String, (String, String)> {
     let mut pins = BTreeMap::new();
     let Some(entries) = corpus
         .get("report_cache_schema_pins")
@@ -114,7 +117,7 @@ fn read_pins(corpus: &Value, violations: &mut Vec<String>) -> BTreeMap<String, (
 /// Judge each `(path, parsed report)` against the current generation and the
 /// pins. Reports without `source_subject.corpus` are not repo-exposure
 /// captures and are not judged; one that has `corpus` but no version fails.
-fn check_reports(
+pub(super) fn check_reports(
     reports: &[(String, Value)],
     current: &str,
     pins: &BTreeMap<String, (String, String)>,

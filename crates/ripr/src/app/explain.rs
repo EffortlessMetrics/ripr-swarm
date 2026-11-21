@@ -292,13 +292,31 @@ pub(crate) fn ambiguous_finding_match(
     list_command: &str,
 ) -> String {
     const MAX_LISTED: usize = 8;
-    let mut ids: Vec<&str> = candidates
+    // #15271: a changed line often carries both the new code's finding and
+    // the deleted code's base-side one under the same location. Mark the
+    // base-side ids so the reader can tell which one is an edit target.
+    let mut ids: Vec<(&str, bool)> = candidates
         .iter()
-        .map(|finding| finding.id.as_str())
+        .map(|finding| {
+            (
+                finding.id.as_str(),
+                finding.source_currentness.is_base_side(),
+            )
+        })
         .collect();
     ids.sort_unstable();
-    ids.dedup();
-    let listed: Vec<&str> = ids.iter().take(MAX_LISTED).copied().collect();
+    ids.dedup_by(|a, b| a.0 == b.0);
+    let listed: Vec<String> = ids
+        .iter()
+        .take(MAX_LISTED)
+        .map(|(id, base_side)| {
+            if *base_side {
+                format!("{id} (base-side: deleted or moved code, not an edit target)")
+            } else {
+                (*id).to_string()
+            }
+        })
+        .collect();
     let mut message = format!(
         "selector {selector:?} matched {} findings; select one explicitly: {}",
         candidates.len(),
@@ -1110,6 +1128,32 @@ mod tests {
             message.contains("probe:src_lib.rs:side_effect:3ceb2918"),
             "ambiguous refusal must name the second candidate: {message}"
         );
+        assert!(
+            !message.contains("base-side"),
+            "candidate-side ids carry no base-side mark: {message}"
+        );
+    }
+
+    /// #15271: when one of the findings at a location is base-side evidence,
+    /// the refusal marks that id so the reader can pick the edit target.
+    #[test]
+    fn ambiguous_refusal_marks_base_side_candidates() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        let mut findings: Vec<crate::domain::Finding> = output.findings.clone();
+        if findings.len() < 2 {
+            return Err(format!("fixture keeps two findings: {}", findings.len()));
+        }
+        findings[0].source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let refs: Vec<&crate::domain::Finding> = findings.iter().take(2).collect();
+        let message = ambiguous_finding_match("src/lib.rs:3", &refs, "ripr check --json");
+        let marked = format!(
+            "{} (base-side: deleted or moved code, not an edit target)",
+            findings[0].id
+        );
+        assert!(message.contains(&marked), "{message}");
+        assert_eq!(message.matches("base-side").count(), 1, "{message}");
+        assert!(message.contains(&findings[1].id), "{message}");
+        Ok(())
     }
 
     fn fixture_check_output(name: &str) -> Result<CheckOutput, String> {

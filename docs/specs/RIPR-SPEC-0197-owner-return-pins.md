@@ -852,6 +852,12 @@ provably: unequal `bool`, `char`, byte or string values, integers both in
 element. Equal folds (`false` → `!true`) refuse. The sink carries the raw
 tail text. Whether a related test pins the returned value stays the owner
 pin's decision, so a bare call reads `reachable_unrevealed`.
+Unit tail statement block (#15459). An owner with no `->` return type whose
+tail is a block (plain, `unsafe`, `async`, `const` or labelled) with no tail
+expression, because its last item is a `;`-terminated statement, yields `()`
+and gets no `return_value` probe; its statements keep their own `side_effect`
+and `call_deletion` probes. A tail block that ends in a value expression, and
+any owner with a return type (`-> ()` included), keeps the tail probe.
 Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
 body rewrites `Ok(f(self.read(args)?, rest))` to
 `self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
@@ -1408,7 +1414,15 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
    variable. Reject ambient `CARGO_SOURCE_*`, `CARGO_REGISTRIES_*` and
    `CARGO_REGISTRY_*` variables; never print their values. This intentionally
-   refuses even unused alternate-source settings. The metadata command has no
+   refuses even unused alternate-source settings. A resolving metadata query
+   runs `rustc` for target information, so a config found from the query
+   directory through its ancestors (every file except the canonical effective
+   home's own) also refuses when it sets `build.rustc`, `build.rustc-wrapper`,
+   `build.rustc-workspace-wrapper`, `build.rustflags`, any `target.*.rustflags`,
+   `include`, `unstable` or `host`, or an `[env]` key other than `TEMP`, `TMP`,
+   `TMPDIR`, `RUST_BACKTRACE`, `RUST_LOG`, `RUST_MIN_STACK` or
+   `RUST_TEST_THREADS` (ASCII case-insensitive): the analyzed tree must not
+   choose a program, flag or environment the query runs (#15247). The metadata command has no
    `--config` arguments; an analysis requiring unobservable consumer CLI config
    overrides is outside this slice. Cargo's executable and ordinary registry
    cache integrity remain stated instrument assumptions, not simulated proof.
@@ -1589,14 +1603,17 @@ declarations cannot be read, no witness completes and propagation reads
 `propagation_unknown`. Ungated owners, an owner beside an unrelated
 `cfg(test)` module and a same-named function on another path keep the
 credit. A `#[path]` module declaration gates the owners it may reach:
-the file its literal names, resolved against the declaring file's
+the file its relative literal names, resolved against the declaring file's
 directory (case-insensitively, with a backslash read as a separator), any file under
 that file's directory, where its own `mod` declarations resolve, except a
 default crate root (`src/lib.rs`, `src/main.rs`, which no `mod` declaration
 can move or compile out), and any file whose path spells the declaration's
-name. A target that is not a literal on a top-level out-of-line
+name. A rooted or drive-qualified literal is opaque and gates every owner.
+A target that is not a literal on a top-level out-of-line
 declaration (an inline module's `#[path]`, a `#[path]` declaration inside
-an inline module, a non-literal value) gates every owner. Limit:
+an inline module, a non-literal value, an empty literal or one ending in
+`/`, a literal rooted at `/` or holding a `:`, as a drive does) gates every owner,
+as does an unparseable declaring file. Limit:
 the declarations inside a target file are not followed, so every file under
 its directory is gated.
 
@@ -2847,7 +2864,8 @@ branch holding a statement, or code after the chain is outside the subset.
   confined lexically, a glob whose own module composition did not resolve has
   a separate cause, another disabling input (a lexical fallback, an unknown
   `#[path]` target or an unseen unindexed member) keeps placement off without
-  the include, and a glob that reaches the assertion from an ancestor module
+  the include, a glob in a file an unindexed member mounts stays unplaced
+  without it, and a glob that reaches the assertion from an ancestor module
   or along the module chain is ambiguous with placement on
   (`the_refusal_names_the_include_that_makes_placement_unavailable`,
   `a_public_glob_keeps_its_direct_explanation_with_an_include_present`,
@@ -3678,8 +3696,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `guard_operand_runs_agree_only_when_every_run_reads_the_identity_value`,
   `layout_whitespace_cannot_invert_the_chain_direction`,
   `layout_whitespace_does_not_hide_a_retained_operand`,
-  `a_char_literal_operator_is_not_an_arithmetic_split` and
-  `a_quote_char_literal_does_not_flip_the_literal_scan`;
+  `a_char_literal_operator_is_not_an_arithmetic_split`,
+  `a_quote_char_literal_does_not_flip_the_literal_scan` and
+  `whitespace_inside_a_raw_string_with_an_inner_quote_is_content` (#15021);
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
   `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,

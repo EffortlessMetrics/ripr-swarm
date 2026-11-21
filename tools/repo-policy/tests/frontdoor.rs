@@ -46,6 +46,7 @@ impl Fixture {
                 "AGENTS.md",
                 "AGENTS.override.md",
                 "CLAUDE.md",
+                "GEMINI.md",
                 "docs/ARCHITECTURE.md",
                 "docs/PR_AUTOMATION.md",
                 "docs/agent-context/review-conversations.md",
@@ -410,6 +411,57 @@ fn missing_and_unreadable_required_policy_inputs_fail() -> Result<(), String> {
     assert!(!fixture.run("check-agent-skills")?.status.success());
     std::fs::create_dir(fixture.0.join("AGENTS.md")).map_err(|e| e.to_string())?;
     assert!(!fixture.run("check-agent-skills")?.status.success());
+    Ok(())
+}
+
+#[test]
+fn gemini_route_controls_invalidate_preflight() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let pointer = fixture.0.join("GEMINI.md");
+    let valid = "@./AGENTS.md\n";
+    let check = || -> Result<String, String> {
+        let output = fixture.run("check-agent-skills")?;
+        assert!(!output.status.success());
+        assert!(!fixture.run("verify-preflight")?.status.success());
+        std::fs::read_to_string(fixture.0.join("target/ripr/reports/agent-skills.md"))
+            .map_err(|error| error.to_string())
+    };
+    let preflight = fixture.run("preflight")?;
+    assert!(
+        preflight.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preflight.stderr)
+    );
+    assert!(fixture.run("verify-preflight")?.status.success());
+
+    std::fs::remove_file(&pointer).map_err(|error| error.to_string())?;
+    assert!(check()?.contains("gemini: GEMINI.md unreadable"));
+    for invalid in [
+        "@./AGENTS.override.md\n",
+        "@./AGENTS.md\n@./CLAUDE.md\n",
+        "`@./AGENTS.md`\n",
+        "@./AGENTS.md\nA second policy body.\n",
+    ] {
+        std::fs::write(&pointer, invalid).map_err(|error| error.to_string())?;
+        assert!(check()?.contains("gemini: GEMINI.md must contain only @./AGENTS.md"));
+    }
+    std::fs::write(&pointer, "@./AGENTS.md\r\n").map_err(|error| error.to_string())?;
+    assert!(fixture.run("check-agent-skills")?.status.success());
+    assert!(!fixture.run("verify-preflight")?.status.success());
+    std::fs::write(&pointer, valid).map_err(|error| error.to_string())?;
+
+    let gemini = fixture.0.join(".gemini");
+    let settings = gemini.join("settings.json");
+    let skills = gemini.join("skills");
+    std::fs::create_dir(&gemini).map_err(|error| error.to_string())?;
+    std::fs::write(&settings, "{}").map_err(|error| error.to_string())?;
+    assert!(check()?.contains("gemini: .gemini/settings.json conflicts"));
+    std::fs::remove_file(&settings).map_err(|error| error.to_string())?;
+    std::fs::create_dir(&skills).map_err(|error| error.to_string())?;
+    assert!(check()?.contains("gemini: .gemini/skills conflicts"));
+    std::fs::remove_dir(&skills).map_err(|error| error.to_string())?;
+    assert!(fixture.run("check-agent-skills")?.status.success());
+    assert!(fixture.run("verify-preflight")?.status.success());
     Ok(())
 }
 

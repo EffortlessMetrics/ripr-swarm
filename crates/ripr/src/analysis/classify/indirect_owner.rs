@@ -557,7 +557,16 @@ fn mention_is_value(
     let after = code[at + name.len()..].trim_start();
     let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
     let method = before.ends_with('.');
-    let called = after.starts_with(['(', '!']) || after.starts_with("::<");
+    // #14941: whitespace may separate `::` from `<` (`thr :: <u8>(50)`); the
+    // code is comment-masked, so a comment between reads as whitespace too.
+    // A turbofish is a call only when its argument list opens one: a bare
+    // `thr::<u8>` (`let g = thr:: <u8>;`, `.map(thr::<u8>)`) is a value.
+    let turbofish = after
+        .strip_prefix("::")
+        .and_then(|rest| rest.trim_start().strip_prefix('<'))
+        .and_then(after_generic_arguments)
+        .is_some_and(|rest| rest.trim_start().starts_with('('));
+    let called = after.starts_with(['(', '!']) || turbofish;
     // #10604: a mention that continues a path (`thr::internal::thr(50)`, where
     // the crate or module is spelled like the owner) is a qualifier segment,
     // not the owner passed as a value: a value use is never followed by `::`
@@ -573,6 +582,34 @@ fn mention_is_value(
         || field_label
         || typed_fn_pointer_initializer(code, reference_at)
         || !qualifier_may_name_owner(before, name, owner_names))
+}
+
+/// #14941: the text after the `>` that closes a generic argument list whose
+/// opening `<` was already consumed, or None when the list does not close.
+/// A `->` inside a function type (`fn() -> u8`) does not close it, and an
+/// array type or const block (`[u8; 4]`, `{ N + 1 }`) is skipped whole.
+fn after_generic_arguments(text: &str) -> Option<&str> {
+    let mut depth = 1usize;
+    let mut nest = 0usize;
+    let mut previous = '<';
+    for (offset, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => nest += 1,
+            ')' | ']' | '}' => nest = nest.checked_sub(1)?,
+            _ if nest > 0 => {}
+            '<' => depth += 1,
+            '>' if previous != '-' => {
+                depth -= 1;
+                if depth == 0 {
+                    return text.get(offset + 1..);
+                }
+            }
+            ';' => return None,
+            _ => {}
+        }
+        previous = character;
+    }
+    None
 }
 
 /// Path segments that identify where the owner lives: `self`, `super` and
@@ -1397,6 +1434,45 @@ mod tests {
         // Control 2: real calls and the turbofish are unchanged.
         assert!(!value("assert!(thr(50));", "thr"));
         assert!(!value("assert!(thr::<u8>(50));", "thr"));
+    }
+
+    /// #14941: a turbofish is `::` then `<`, and Rust allows whitespace (and
+    /// comments, masked to whitespace) between them. Every spelling is the
+    /// call, never the owner passed as a value.
+    #[test]
+    fn a_whitespace_spelled_turbofish_is_a_call_not_a_value() {
+        assert!(!value("assert!(thr::<u8>(50));", "thr"));
+        assert!(!value("assert!(thr ::<u8>(50));", "thr"));
+        assert!(!value("assert!(thr:: <u8>(50));", "thr"));
+        assert!(!value("assert!(thr :: <u8>(50));", "thr"));
+        assert!(!value("assert!(thr :: \n <u8>(50));", "thr"));
+        assert!(!value("assert!(thr::/* c */<u8>(50));", "thr"));
+        assert!(!value("assert!(thr /* c */ :: <u8>(50));", "thr"));
+        // Fail closed: a spaced `::` is a qualifier, and a lone `<` or `::`
+        // not followed by `<` or a segment is still a value or comparison.
+        assert!(!value("assert!(thr :: helper());", "thr"));
+        assert!(value("let g = thr; g(50);", "thr"));
+        assert!(value("let g = thr ;", "thr"));
+        assert!(value("rows.map(thr).count();", "thr"));
+        assert!(value("let b = thr < 5;", "thr"));
+        assert!(value("let b = thr :: ;", "thr"));
+        // Devin review: a turbofish that does not open a call is the owner
+        // specialised as a value, whatever its spelling.
+        assert!(value("let g = thr::<u8>; assert!(g(50));", "thr"));
+        assert!(value("let g = thr:: <u8>; assert!(g(50));", "thr"));
+        assert!(value("let g = thr::/* c */<u8>;", "thr"));
+        assert!(value("rows.map(thr:: <u8>).count();", "thr"));
+        assert!(value("rows.map(thr::<u8>).count();", "thr"));
+        // A function type inside the arguments does not close the list early.
+        assert!(!value("assert!(thr::<fn() -> u8>(f));", "thr"));
+        assert!(value("let g = thr::<fn() -> u8>;", "thr"));
+        assert!(!value("assert!(thr::<Vec<u8>>(v));", "thr"));
+        // Graphite review: an array type or a const block inside the
+        // arguments is skipped whole, so these stay calls.
+        assert!(!value("assert!(thr::<[u8; 4]>(x));", "thr"));
+        assert!(!value("assert!(thr::<{ N + 1 }>(x));", "thr"));
+        assert!(!value("assert!(thr::<{ N > 1 }>(x));", "thr"));
+        assert!(value("let g = thr::<[u8; 4]>;", "thr"));
     }
 
     /// Review round 1 (Devin): excluding the qualifier must not eat the value

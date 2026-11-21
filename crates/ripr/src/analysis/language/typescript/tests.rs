@@ -1,5 +1,7 @@
 //! Tests for the TypeScript preview adapter.
 
+mod classification_property_tests;
+
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -21854,6 +21856,7 @@ mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
 mod floating_promise_tests;
+mod folded_module_constant_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
 mod getter_matcher_key_tests;
@@ -21906,6 +21909,7 @@ mod table_case_tests;
 mod table_loop_tests;
 mod typed_loose_equality_tests;
 mod unemitted_stage_unknown_tests;
+mod unused_default_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;
 mod vitest_for_tests;

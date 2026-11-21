@@ -452,6 +452,11 @@ impl SuppressionsConfig {
     pub(crate) fn display_path(&self) -> String {
         self.path.to_string_lossy().replace('\\', "/")
     }
+
+    /// Whether the path is the built-in default (an absent file is normal).
+    pub(crate) fn is_default(&self) -> bool {
+        self.path == Path::new(DEFAULT_SUPPRESSIONS_PATH)
+    }
 }
 
 /// `[typescript]` opt-in configuration for the TypeScript preview adapter.

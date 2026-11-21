@@ -71,8 +71,9 @@ shown) and runs ripr on your change:
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
 curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
-  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+  && mkdir ripr-bin && tar xzf $f -C ripr-bin \
+  && export PATH="$PWD/ripr-bin:$PATH"   # ripr-bin/ripr is now first on PATH for this shell
 ripr check
 ```
 

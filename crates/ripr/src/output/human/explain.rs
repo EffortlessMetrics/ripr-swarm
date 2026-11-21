@@ -286,7 +286,12 @@ fn reach_edge_unresolved(finding: &Finding) -> bool {
 /// established what is missing, and a gap whose next step was withheld (an
 /// exact oracle already covers the direct sink) indicates no assertion repair.
 fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<String> {
-    if crate::output::next_step::unresolved_edge_guidance(finding).is_some() {
+    // Base-side evidence (`base_deleted`, `moved_or_renamed`) is not a
+    // candidate edit target: its Next step recommends no test change, so a
+    // test recipe here would contradict it (#15271).
+    if finding.source_currentness.is_base_side()
+        || crate::output::next_step::unresolved_edge_guidance(finding).is_some()
+    {
         return Vec::new();
     }
     if !matches!(
@@ -588,6 +593,32 @@ mod tests {
             without_shape.contains("  To change the verdict, a test needs to:\n"),
             "{without_shape}"
         );
+    }
+
+    #[test]
+    fn base_side_finding_gets_no_test_recipe() {
+        // #15271: base-side evidence recommends no test change, so the
+        // verdict block must not ask a test to call deleted code. The same
+        // finding on the candidate side keeps its recipe (the control).
+        use crate::domain::SourceCurrentness;
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("add a test that calls the owner".to_string());
+        finding.related_tests = Vec::new();
+        let current = render_verdict_explanation(&finding, None);
+        assert!(
+            current.contains("  To change the verdict, a test needs to:\n"),
+            "{current}"
+        );
+        for side in [
+            SourceCurrentness::BaseDeleted,
+            SourceCurrentness::MovedOrRenamed,
+        ] {
+            finding.source_currentness = side;
+            let text = render_verdict_explanation(&finding, None);
+            assert!(!text.contains("To change the verdict"), "{text}");
+            assert!(!text.contains("assert on its result"), "{text}");
+        }
     }
 
     #[test]
