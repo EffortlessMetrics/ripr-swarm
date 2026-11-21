@@ -20,7 +20,7 @@ The return value of `rate_for` changes from `1` to `3`:
 ripr check \
   --root fixtures/python_patched_callee_reachable_unrevealed/input \
   --diff fixtures/python_patched_callee_reachable_unrevealed/diff.patch \
-  --mode draft
+  --mode fast
 ```
 
 ## Then
