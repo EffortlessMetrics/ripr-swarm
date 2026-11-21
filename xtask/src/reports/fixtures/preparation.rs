@@ -1,7 +1,7 @@
 //! Explicit dependency preparation; golden checks remain offline and never bless.
 //! Network boundary: only `goldens prepare` runs Cargo's locked registry fetch;
 //! ordinary fixture readiness uses offline metadata in the same environment.
-use crate::run::run_output_owned_with_envs;
+use crate::run::{private_cargo_output_dir, run_output_owned_with_envs};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -107,7 +107,7 @@ pub(super) fn build(args: &[&str]) -> Result<(), String> {
     crate::run::run_with_envs("cargo", args, &envs).map(|_| ())
 }
 
-/// Build with a dedicated `CARGO_TARGET_DIR` overlay (#11197): the argv
+/// Build with dedicated final and intermediate output overlays (#11197, #13968): the argv
 /// stays a plain `cargo build -p ripr ...` so native-lock observers keep
 /// matching the child's command line, while the artifacts land outside the
 /// shared target the running suite executes from.
@@ -129,20 +129,16 @@ pub(super) fn build_perl_variant(target_dir: &Path) -> Result<(), String> {
     })
 }
 
-/// Default-feature `cargo build -p ripr` under a private `CARGO_TARGET_DIR`, for
+/// Default-feature `cargo build -p ripr` with private final and intermediate output, for
 /// lanes whose suite binary is built with other features (see
 /// `RIPR_FIXTURE_BINARY_ISOLATE` in `fixtures.rs`). Plain argv, like the Perl
 /// variant, so native-lock observers keep matching it.
 pub(super) fn build_default_isolated(target_dir: &Path) -> Result<(), String> {
     let environment = proxy_environment(environment()?, offline_mode(false));
-    let dir = target_dir.to_str().ok_or_else(|| {
-        format!(
-            "fixture isolated target dir must be UTF-8: {}",
-            target_dir.display()
-        )
-    })?;
+    let dir = private_cargo_output_dir(target_dir)?;
     let mut envs: Vec<(&str, &str)> = environment.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    envs.push(("CARGO_TARGET_DIR", dir));
+    envs.push(("CARGO_TARGET_DIR", dir.as_str()));
+    envs.push(("CARGO_BUILD_BUILD_DIR", dir.as_str()));
     crate::run::run_with_envs("cargo", &["build", "-p", "ripr"], &envs).map(|_| ())
 }
 
@@ -153,14 +149,10 @@ fn build_perl_variant_with(
     environment: &[(&str, String)],
     run: &VariantRunner,
 ) -> Result<(), String> {
-    let dir = target_dir.to_str().ok_or_else(|| {
-        format!(
-            "fixture variant target dir must be UTF-8: {}",
-            target_dir.display()
-        )
-    })?;
+    let dir = private_cargo_output_dir(target_dir)?;
     let mut envs: Vec<(&str, &str)> = environment.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    envs.push(("CARGO_TARGET_DIR", dir));
+    envs.push(("CARGO_TARGET_DIR", dir.as_str()));
+    envs.push(("CARGO_BUILD_BUILD_DIR", dir.as_str()));
     run(
         "cargo",
         &["build", "-p", "ripr", "--features", "lang-perl"],
@@ -241,3 +233,6 @@ pub(super) fn prepare(args: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod private_build_tests;

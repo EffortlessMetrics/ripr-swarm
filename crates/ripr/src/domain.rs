@@ -252,3 +252,7 @@ pub use verification_result::{
     VerificationExecutionResultV1, VerificationExecutionResultValidationError,
     VerificationProcessDispositionV1, command_spec_sha256,
 };
+
+/// Advice shared by the TypeScript classifier and its preview card.
+pub(crate) const TERNARY_COMPARISON_NEXT_STEP: &str = "Check whether the two comparisons take different branches for a reachable input. Follow both paths for that input. If the result or side effects differ, assert that difference. If both paths have the same observable behavior, the edit may be behavior-preserving.";
+pub(crate) const TYPESCRIPT_DEFAULT_CONTEXT_PREFIX: &str = "typescript_default_context: ";

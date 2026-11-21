@@ -1,0 +1,28 @@
+{
+  "id": "python_multiline_def_boundary_off",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_multiline_def_boundary_off",
+  "vector": "multi_line_def_header_parameter_read_as_body_rebinding",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "expected_finding_owner",
+      "owner": "python:src/fx/core.py::expired"
+    }
+  ]
+}

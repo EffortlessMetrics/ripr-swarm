@@ -139,6 +139,7 @@ The development extension also exposes the following commands:
 - `ripr: Select Workspace Root`
 - `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
+- `ripr: Start or Continue Repair`
 - `ripr: Copy Current Repair Packet`
 - `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`

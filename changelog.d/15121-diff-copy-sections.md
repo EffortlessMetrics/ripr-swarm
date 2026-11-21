@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check --diff` reads a file a patch creates with `copy from`/`copy to` (git copy detection, `git diff -C`) as new code: every line of the copy is a changed line, the same result as the patch written without copy detection. Before, the run was reported complete with no changed behavior. A copy destination missing from the working tree is disclosed as `changed_file_absent_from_worktree`. (#15121)

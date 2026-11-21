@@ -50,6 +50,7 @@ validate the referenced artifact:
 | Paths | Related tests and command paths must stay inside the active workspace. |
 | Commands | Verify and receipt commands must be present, non-empty, and rooted in the current workspace before copy actions appear. |
 | Static limits | Registered `static_limit_kind` values are preferred; text-only static limits render as evidence only. |
+| File type and size | An artifact path that is not a regular file (a FIFO, a device, or a link to one) or exceeds 256 MiB fails closed without blocking or being read in full; an absent artifact stays absent. |
 
 Fail closed means no gap-specific diagnostic/action/hover claim is projected
 from the invalid artifact. The editor may still show a root, stale, disabled,

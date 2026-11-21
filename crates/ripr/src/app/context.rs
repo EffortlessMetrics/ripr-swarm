@@ -191,12 +191,9 @@ pub(crate) fn collect_context_from_artifact(
     asserted_base: Option<&str>,
     mode_explicit: bool,
 ) -> Result<String, crate::core_error::CoreError> {
-    let findings = super::check_artifact::load_findings_for_reuse_core(
-        artifact_path,
-        &input,
-        config,
-        asserted_base,
-    )?;
+    let findings =
+        super::check_artifact::load_for_reuse(artifact_path, &input, config, asserted_base)?
+            .findings;
     // As in `explain --from`, the navigation names the artifact: replaying
     // it keeps the verified identity without re-running the pipeline.
     // An explicit Draft must survive replay over a non-Draft repo default,

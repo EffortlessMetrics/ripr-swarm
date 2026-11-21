@@ -1,10 +1,11 @@
 //! The unnamed owner calls a test can make through language syntax (#9567):
 //! an operator, a loop or adaptor driving an iterator, the end of a scope that
-//! drops a value. One owner has at most one reading, since each reads a
-//! different trait's method.
+//! drops a value, or `str::parse` running `FromStr::from_str` (#5334). One
+//! owner has at most one reading, since each reads a different trait's method.
 
 use super::{
     FunctionSummary, RustIndex, TestSummary, drop_dispatch, iterator_dispatch, operator_dispatch,
+    parse_dispatch,
 };
 
 /// The syntax-run reading of an owner.
@@ -12,6 +13,7 @@ pub(super) enum ImplicitOwner<'a> {
     Operator(operator_dispatch::OperatorOwner<'a>),
     Iterator(iterator_dispatch::IteratorOwner<'a>),
     Drop(drop_dispatch::DropOwner<'a>),
+    Parse(parse_dispatch::ParseOwner<'a>),
 }
 
 /// Whether `owner` is shaped like a method any reading can attribute. A
@@ -21,6 +23,7 @@ pub(super) fn has_implicit_shape(owner: &FunctionSummary) -> bool {
     operator_dispatch::has_operator_shape(owner)
         || iterator_dispatch::has_iterator_shape(owner)
         || drop_dispatch::has_drop_shape(owner)
+        || parse_dispatch::has_parse_shape(owner)
 }
 
 /// The reading of `owner`, or `None` when no reading attributes it.
@@ -32,6 +35,7 @@ pub(super) fn implicit_owner<'a>(
         .map(ImplicitOwner::Operator)
         .or_else(|| iterator_dispatch::iterator_owner(owner, index).map(ImplicitOwner::Iterator))
         .or_else(|| drop_dispatch::drop_owner(owner, index).map(ImplicitOwner::Drop))
+        .or_else(|| parse_dispatch::parse_owner(owner, index).map(ImplicitOwner::Parse))
 }
 
 /// Whether `test` reaches the owner through the syntax its reading follows.
@@ -55,6 +59,9 @@ pub(super) fn test_reaches_owner(
         }
         ImplicitOwner::Drop(drop) => {
             drop_dispatch::test_drops_owner_value(test, owner, drop, test_source, index)
+        }
+        ImplicitOwner::Parse(parse) => {
+            parse_dispatch::test_parses_into_owner(test, owner, parse, test_source, index)
         }
     }
 }
