@@ -114,6 +114,35 @@ fn number(value: Option<&Value>) -> Option<f64> {
     value.and_then(Value::as_f64)
 }
 
+/// A properties-only branch is satisfied by every formerly valid instance if
+/// each named scalar guard was already required whenever that property existed.
+/// Missing properties still satisfy the branch. Exclude references and other
+/// context-dependent keywords whose meaning can change when moved.
+fn repeats_scalar_properties(old: &serde_json::Map<String, Value>, branch: &Value) -> bool {
+    let Some(branch) = branch.as_object().filter(|branch| branch.len() == 1) else {
+        return false;
+    };
+    let Some(properties) = branch.get("properties").and_then(Value::as_object) else {
+        return false;
+    };
+    let Some(previous) = old.get("properties").and_then(Value::as_object) else {
+        return false;
+    };
+    !properties.is_empty()
+        && properties.iter().all(|(name, guard)| {
+            let Some(guard) = guard.as_object().filter(|g| !g.is_empty()) else {
+                return false;
+            };
+            let Some(prior) = previous.get(name).and_then(Value::as_object) else {
+                return false;
+            };
+            guard.iter().all(|(keyword, value)| {
+                matches!(keyword.as_str(), "type" | "minLength")
+                    && prior.get(keyword) == Some(value)
+            })
+        })
+}
+
 fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
     // Boolean schemas: `true` accepts everything, `false` nothing.
     match (old, new) {
@@ -309,8 +338,18 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
             for (index, (o, n)) in o.iter().zip(n).enumerate() {
                 compare(o, n, &format!("{path}/{key}/{index}"), out);
             }
-        } else if old.get(key).is_none() && new.get(key).is_some() {
-            out.push(format!("{path}: {key} constraint added"));
+        } else if old.get(key).is_none()
+            && let Some(alternatives) = new.get(key)
+        {
+            let covered = key == "anyOf"
+                && alternatives.as_array().is_some_and(|branches| {
+                    branches
+                        .iter()
+                        .any(|branch| repeats_scalar_properties(old, branch))
+                });
+            if !covered {
+                out.push(format!("{path}: {key} constraint added"));
+            }
         }
     }
     if let (Some(Value::Array(o)), Some(Value::Array(n))) = (old.get("allOf"), new.get("allOf")) {
@@ -564,6 +603,47 @@ mod tests {
             assess(&base(), &wider),
             Compat::Compatible { breaking: 0, .. }
         ));
+    }
+
+    #[test]
+    fn added_any_of_preserves_a_repeated_scalar_guard_only() -> Result<(), String> {
+        let old = json!({"type":"object","properties":{"root":{"type":"string","minLength":1},
+            "other":{"type":"integer"}}});
+        let guard = json!({"properties":{"root":{"type":"string","minLength":1}}});
+        let refusal = json!({"required":["status"],"properties":{"status":{"const":"refused"}}});
+        let mut widened = old.clone();
+        widened["properties"]["root"] = json!({"type":"string"});
+        widened["anyOf"] = json!([guard, refusal]);
+        let accepted = |candidate: &Value| {
+            matches!(
+                assess(&old, candidate),
+                Compat::Compatible { breaking: 0, .. }
+            )
+        };
+        if !accepted(&widened) {
+            return Err("optional old field must remain optional; old string guard suffices".into());
+        }
+        for bad in [
+            json!({"properties":{"root":{"minLength":2}}}),
+            json!({"properties":{"root":{"type":"integer"}}}),
+            json!({"properties":{"new":{"type":"string"}}}),
+            json!({"properties":{"root":{"$ref":"#/$defs/root"}}}),
+            json!({"properties":{"root":{"type":"string"}},"required":["root"]}),
+        ] {
+            let mut narrowed = widened.clone();
+            narrowed["anyOf"] = json!([bad, refusal]);
+            if accepted(&narrowed) {
+                return Err(format!("unproven guard accepted: {bad}"));
+            }
+        }
+        let mut exclusive = old.clone();
+        exclusive["oneOf"] = json!([guard, refusal]);
+        let mut sibling = widened.clone();
+        sibling["properties"]["other"]["minimum"] = json!(1);
+        if accepted(&exclusive) || accepted(&sibling) {
+            return Err("oneOf overlap or sibling narrowing escaped the checker".into());
+        }
+        Ok(())
     }
 
     #[test]
