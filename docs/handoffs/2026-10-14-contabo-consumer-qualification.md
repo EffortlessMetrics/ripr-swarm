@@ -164,7 +164,7 @@ A green envelope alone cannot establish product custody. The real portfolio is:
 | --- | --- |
 | `target/nextest/ci/junit.xml`, `run-context.txt` | Fresh nonempty CI nextest execution, actual checkout/run/attempt, exit and tool/config identities; Rust Gates' Required Rust tests block |
 | `target/ripr/pr/check.json` | Native diff analysis; not a repository-wide debt census |
-| `target/ripr/pr/repo-exposure.json`, `.md`, `canonical-delta.json`, `pr.diff` | Exact base/head diff packet and available causal-comparison observations; PR evidence owner |
+| `target/ripr/pr/repo-exposure.json`, `.md`, `pr.diff` | Exact base/head diff packet; PR evidence owner |
 | `target/ripr/review/comments.json`, `.md`, `run-receipt.json`, `annotations.txt` | Guidance/annotations and their actual subject; annotations belong under `review/`, and may truthfully be empty |
 | `target/xtask/impacted-evidence/latest.json`, `.md` | Selected changed surfaces and disclosed routing evidence; impacted-evidence owner |
 | `target/ripr/reports/policy-preflight.json`, `ci-policy.json`, `.md` and applicable policy/fixture reports | Actual source/toolchain-bound policy and selected fixture outcomes; existing report owners |
@@ -172,7 +172,7 @@ A green envelope alone cannot establish product custody. The real portfolio is:
 
 The machine-readable proposed contract is
 [`.ci/contabo-product-contract.json`](../../.ci/contabo-product-contract.json),
-schema `ripr-swarm-product-members/v1`. It declares **19 exact native core
+schema `ripr-swarm-product-members/v1`. It declares **18 exact native core
 members plus the adapter's terminal `target/ripr/contabo/commands.json`** on
 complete product success. It also names retain-if-produced policy/golden/fixture
 reports, source-derived verdict-corpus membership, and the two existing
@@ -192,9 +192,9 @@ may leave no terminal receipt; central pre-proof/failure diagnostics and native
 job status must retain that absence, never invent a completed command portfolio.
 
 Empty `annotations.txt` and `pr.diff` can be legitimate. The nextest producer
-still enforces fresh JUnit with at least one executed test. `canonical-delta.json`
-may disclose unavailable comparison snapshots. The three PR summary files include
-`target/ripr/reports/pr-evidence-summary.{json,md}`; that v1 pair reads optional
+still enforces fresh JUnit with at least one executed test. PR evidence no longer
+produces canonical snapshots or a canonical-delta artifact. The three PR summary
+files include `target/ripr/reports/pr-evidence-summary.{json,md}`; that v1 pair reads optional
 report inputs distinct from `pr/repo-exposure.json` and may honestly report
 unavailable analysis. File presence is not an established causal comparison,
 repository census or analysis completeness. Do not fabricate the optional inputs.
