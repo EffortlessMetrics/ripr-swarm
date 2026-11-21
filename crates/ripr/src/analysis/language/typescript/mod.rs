@@ -1393,7 +1393,18 @@ impl TypeScriptAdapter {
             // (#7524). The three guards below read the old line from one
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
-            let counterparts = changed.aligned_counterparts();
+            // An added run made only of comments, blank lines and lone
+            // brackets replaced nothing: the code it stands on was deleted.
+            // Its lines pair with nothing, so the removed line keeps its own
+            // base-side record instead of leaving no record at all (#15913).
+            let mut counterparts = changed.aligned_counterparts();
+            if !counterparts.is_empty() {
+                let codeless = changed.added_lines_in_quiet_runs(|added| {
+                    should_ignore_typescript_changed_line(&added.text)
+                });
+                counterparts.retain(|added_line, _| !codeless.contains(added_line));
+            }
+            let counterparts = counterparts;
             let mut multiline_lines: Option<Option<MultilineRanges>> = None;
             // #11250: one facts lookup and one line-table build per
             // changed file, not per added line. `file_facts_cached`

@@ -2185,13 +2185,34 @@ impl PythonAdapter {
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed));
+            // Lines inside a multi-line string are string content, not
+            // statements; an unreadable or unlexable file is treated as all
+            // string so the trailing-comment guard fails closed (#10706).
+            let string_line_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
+            // Every removed line of a replacement block shares the new-side
+            // line where the added run starts, so matching on that coordinate
+            // alone finds an old line only for the run's first added line
+            // (#7556, #7524 for TypeScript). Every old-line reader below takes
+            // it from one pairing: by position in an even block, by content in
+            // an uneven one, by coordinate where a removed line interrupts the
+            // run. An added run that holds no code (comments, blank lines,
+            // imports) replaced nothing: the code it stands on was deleted,
+            // and reading the pair as an edit reported the comment text as the
+            // changed behavior (#15913). Its lines pair with nothing, so the
+            // removed line keeps its own base-side record.
+            let mut counterparts = changed.aligned_counterparts();
+            no_behavior::unpair_runs_without_code(
+                changed,
+                string_line_ranges.as_deref(),
+                &mut counterparts,
+            );
+            let counterparts = counterparts;
             // Never mint an ID from a fragment without source-verified string
             // boundaries. Paired deletions do not become deleted findings.
-            let paired_old: BTreeSet<usize> = changed
-                .aligned_counterparts()
-                .values()
-                .map(|line| line.line)
-                .collect();
+            let paired_old: BTreeSet<usize> = counterparts.values().map(|line| line.line).collect();
             let old_identity = old_source.as_deref().and_then(PythonIdentityContext::new);
             let valid_new = identity_context.as_ref().is_some_and(|context| {
                 changed
@@ -2241,13 +2262,6 @@ impl PythonAdapter {
                     )
                 })
                 .unwrap_or_default();
-            // Lines inside a multi-line string are string content, not
-            // statements; an unreadable or unlexable file is treated as all
-            // string so the trailing-comment guard fails closed (#10706).
-            let string_line_ranges = workspace_read
-                .sources
-                .get(&changed.path)
-                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
             // The paired old line gets the same test against the
             // reconstructed old source, so a delimiter edit that turns old
             // string content into code is not read as a spacing edit.
@@ -2282,14 +2296,6 @@ impl PythonAdapter {
             // (`from a import x` -> `from b import x`, or `old as x,` inside a
             // parenthesized import), so it is behavior of its own; any other
             // added import line is not.
-            // Every removed line of a replacement block shares the new-side
-            // line where the added run starts, so matching on that coordinate
-            // alone finds an old line only for the run's first added line
-            // (#7556, #7524 for TypeScript). Every old-line reader below takes
-            // it from one pairing: by position in an even block, by content in
-            // an uneven one, by coordinate where a removed line interrupts the
-            // run.
-            let counterparts = changed.aligned_counterparts();
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {

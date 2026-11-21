@@ -67,6 +67,21 @@ no end-to-end corpus a downstream consumer could run against.
     removed import, re-export, comment or closing bracket records
     nothing, and a module-level deletion has no owner and records
     nothing.
+  - **code replaced by a comment** (#15913) — an added run that holds
+    no code replaced nothing, so its lines pair with no removed line and
+    the removed code keeps the removed-only record above, with the class
+    the same deletion has when nothing is added. In Python the run is
+    comment-only lines, blank lines and `import` statements, read
+    outside multi-line strings (a `#` line inside a string is content
+    and keeps its pairing; an unlexable file unpairs nothing); a removed
+    line an added `import` stands on is unpaired too unless it was an
+    import itself. In
+    TypeScript and JavaScript it is comment-only lines, blank lines and
+    lone brackets. A comment added beside replacement code keeps its
+    pairing: the code line of the run carries the change. Before this
+    rule Python reported the comment text as a changed `predicate` and
+    could grade it `exposed`, and TypeScript recorded nothing for the
+    removed line.
 
 ## Required Evidence
 
@@ -96,6 +111,9 @@ no end-to-end corpus a downstream consumer could run against.
 - Accept: a deleted Python statement in a live owner — one
   `base_deleted` record on that owner; an even replacement block — no
   base-side record, since every removed line pairs with an added one.
+- Accept: a Python or TypeScript guard replaced by one comment line —
+  `base_deleted` records naming the guard and its body, no
+  candidate-side finding naming the comment.
 - Reject: a resolved-move claim without same-text evidence.
 
 ## Test Mapping
@@ -103,7 +121,7 @@ no end-to-end corpus a downstream consumer could run against.
 `lsp/lens.rs` `currentness_lens_tests`;
 `analysis/language/python/deleted_lines_tests.rs`;
 `analysis/language/typescript/deleted_lines_tests.rs`; fixtures
-`currentness_matrix_{tail,reuse,move,whole_delete,python_deleted_statement,typescript_deleted_statement}`.
+`currentness_matrix_{tail,reuse,move,whole_delete,python_deleted_statement,typescript_deleted_statement,python_comment_replaced_code,typescript_comment_replaced_code}`.
 
 ## Non-Goals
 
@@ -119,6 +137,9 @@ no end-to-end corpus a downstream consumer could run against.
   probes.
 - `analysis/language/typescript/deleted_lines.rs` — TypeScript and
   JavaScript removed-only probes.
+- `analysis/diff/model.rs` `added_lines_in_quiet_runs` and
+  `analysis/language/python/no_behavior.rs` `unpair_runs_without_code` —
+  the added runs that pair with no removed line (#15913).
 - `fixtures/currentness_matrix_*` — the corpus.
 
 ## Metrics
