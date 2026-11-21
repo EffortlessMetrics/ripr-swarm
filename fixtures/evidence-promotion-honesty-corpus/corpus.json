@@ -21355,6 +21355,30 @@
       ]
     },
     {
+      "id": "rust_masked_comparison_return",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_masked_comparison_return",
+      "vector": "closed_boolean_gate_masks_changed_return",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
       "id": "typescript_boundary_literal_in_other_parameter",
       "language": "typescript",
       "tier": "pure",
