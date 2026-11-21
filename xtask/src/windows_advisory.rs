@@ -1570,7 +1570,7 @@ mod tests {
     /// publish-stage archive of the candidate (#14198), bound to this run's
     /// rehearsal receipt. Each one is load-bearing: see
     /// `packaged_qualification_stage_contract_rejects_each_missing_binding`.
-    const PACKAGED_STAGE_BINDINGS: [&str; 9] = [
+    const PACKAGED_STAGE_BINDINGS: [&str; 15] = [
         "New-Item -ItemType Directory -Force -Path 'target' | Out-Null",
         "cargo --config $env:CARGO_TEMP_CONFIG xtask publish-dry-run",
         "if ($LASTEXITCODE -ne 0) { throw \"publish-stage packaging failed with exit $LASTEXITCODE\" }",
@@ -1579,6 +1579,14 @@ mod tests {
         "if ($publishReceipt.ripr_sha256 -ne $crateHash) { throw",
         "if ($publishReceipt.contract_sha256 -ne $contractHash) { throw",
         "Copy-Item -LiteralPath $publishReceiptPath -Destination (Join-Path $root 'publish-receipt.json')",
+        // The install step takes exactly the archives the receipt named and
+        // installs what it extracted from them, never a checkout path.
+        "\"RIPR_STAGE_CRATE=$($crate.FullName)\" >> $env:GITHUB_ENV",
+        "$crate = Get-Item $env:RIPR_STAGE_CRATE; $contractCrate = Get-Item $env:RIPR_STAGE_CONTRACT_CRATE",
+        "if ($publishReceipt.ripr_sha256 -ne $crateHash -or $publishReceipt.contract_sha256 -ne $contractHash) { throw",
+        "$packageRoot = Join-Path $env:QUAL_TEMP_ROOT 'crate-source'",
+        "tar -xf $crate.FullName -C $packageRoot",
+        "$packageDir = Get-Item (Join-Path $packageRoot \"ripr-$env:RIPR_PACKAGED_VERSION\")",
         "$contractPatch = \"patch.crates-io.ripr-contract.path='$($contractDir.FullName)'\"",
     ];
 
