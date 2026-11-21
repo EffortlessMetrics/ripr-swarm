@@ -150,7 +150,9 @@ pub(crate) use issue_lifecycle::{
     issue_lifecycle_scorecard_markdown, issue_lifecycle_scorecard_report,
 };
 pub(crate) use lsp::lsp_cockpit_report;
-pub(crate) use lsp_performance::lsp_performance_report;
+pub(crate) use lsp_performance::{
+    SCHEMA_VERSION as LSP_PERFORMANCE_SCHEMA, lsp_performance_report,
+};
 pub(crate) use merge_queue::merge_queue;
 pub(crate) use metrics::metrics_report;
 pub(crate) use module_health::module_health;
