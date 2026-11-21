@@ -2488,6 +2488,13 @@ fn absolute_file_filter_is_relativized_under_the_root_and_refused_outside() -> R
         Ok("src".to_string())
     );
 
+    // A literal `%` takes the rendering item paths carry, so the absolute
+    // spelling matches the item the relative spelling does.
+    assert_eq!(
+        workspace_relative_file_filter(spell(&root.join("sale%off").join("lib.rs"))?, Some(&root)),
+        Ok("sale%25off/lib.rs".to_string())
+    );
+
     // Outside the root, a sibling sharing the root's name as a string prefix,
     // a `..` escape, the root itself and a rootless server are all refused.
     let sibling = std::path::PathBuf::from(format!("{}-sibling", spell(&root)?)).join("lib.rs");
@@ -2541,6 +2548,18 @@ fn absolute_file_filter_resolves_a_symlinked_root_spelling() -> Result<(), Strin
     if let Ok(applied) = workspace_relative_file_filter(missing.to_string(), Some(&root)) {
         return Err(format!("an unresolvable spelling was applied as {applied}"));
     }
+    Ok(())
+}
+
+/// A required argument has no default, so a null there is never answered
+/// with the optional parser's "omit it" sentence.
+#[test]
+fn required_string_null_refusal_does_not_say_to_omit() -> Result<(), String> {
+    let arguments = argument_map(serde_json::json!({"canonical_id": null}));
+    let error = required_string_argument(&arguments, "canonical_id")
+        .err()
+        .ok_or("a null required argument must be refused")?;
+    assert_eq!(error.message, "canonical_id must be a string");
     Ok(())
 }
 

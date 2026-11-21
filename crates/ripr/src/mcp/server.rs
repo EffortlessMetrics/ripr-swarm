@@ -884,8 +884,8 @@ fn wrong_type_message(name: &str, expected: &str, value: &Value) -> String {
 /// can never equal, prefix or suffix a relative item path, so it used to
 /// narrow to an empty page that reads like "no gaps in that file". An
 /// absolute path under this workspace root is rewritten to its relative form
-/// (lexically first, then through the filesystem so a symlinked spelling of
-/// the canonical root still resolves); any other absolute path is refused
+/// (lexically first, then on Unix through the filesystem so a symlinked
+/// spelling of the canonical root still resolves); any other absolute path is refused
 /// with the form to send. The refusal is the same whether or not the path
 /// exists and never echoes a host path.
 fn workspace_relative_file_filter(
@@ -909,25 +909,26 @@ fn workspace_relative_file_filter(
         path.strip_prefix(root)
             .map(std::path::Path::to_path_buf)
             .ok()
-            .or_else(|| {
-                let resolved = std::fs::canonicalize(path).ok()?;
-                resolved
-                    .strip_prefix(root)
-                    .map(std::path::Path::to_path_buf)
-                    .ok()
-            })
+            .or_else(|| resolved_below_root(path, root))
     });
     // A `..` segment could leave the root again and nothing resolves it here,
-    // so only plain UTF-8 segments below the root count as inside.
-    let segments = relative.and_then(|relative| {
-        relative
-            .components()
-            .filter(|component| !matches!(component, std::path::Component::CurDir))
-            .map(|component| match component {
-                std::path::Component::Normal(segment) => segment.to_str().map(str::to_owned),
-                _other => None,
-            })
-            .collect::<Option<Vec<String>>>()
+    // so only plain segments below the root count as inside.
+    let relative = relative.filter(|relative| {
+        relative.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    });
+    // Item paths are rendered by the shared stable-path owner (which escapes
+    // a literal `%`), so the filter takes the same rendering to match them.
+    let segments = relative.map(|relative| {
+        crate::analysis::stable_path_text(&relative)
+            .split('/')
+            .filter(|segment| !segment.is_empty() && *segment != ".")
+            .map(str::to_owned)
+            .collect::<Vec<String>>()
     });
     match segments {
         None => Err(refuse(
@@ -938,6 +939,24 @@ fn workspace_relative_file_filter(
         )),
         Some(segments) => Ok(segments.join("/")),
     }
+}
+
+/// The filesystem spelling of `path` below `root`, for a root reached through
+/// a symlink (macOS `/tmp`). Unix only: on Windows resolving a caller-supplied
+/// path could contact a UNC share before containment is known, so an absolute
+/// filter there is matched lexically or refused.
+#[cfg(unix)]
+fn resolved_below_root(path: &std::path::Path, root: &std::path::Path) -> Option<PathBuf> {
+    let resolved = std::fs::canonicalize(path).ok()?;
+    resolved
+        .strip_prefix(root)
+        .map(std::path::Path::to_path_buf)
+        .ok()
+}
+
+#[cfg(not(unix))]
+fn resolved_below_root(_path: &std::path::Path, _root: &std::path::Path) -> Option<PathBuf> {
+    None
 }
 
 /// The source an omitted `ripr_refresh` `source` selects (#13096): the same
@@ -1305,7 +1324,18 @@ fn required_string_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<String, ErrorData> {
-    let value = optional_string_argument(arguments, name)?;
+    // A required argument has no default to fall back to, so its wrong-type
+    // refusal never borrows the optional parser's "omit it" sentence.
+    let value = match arguments.as_ref().and_then(|arguments| arguments.get(name)) {
+        None => None,
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(_other) => {
+            return Err(ErrorData::invalid_params(
+                format!("{name} must be a string"),
+                Some(serde_json::json!({ "argument": name, "expected": "string" })),
+            ));
+        }
+    };
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),
