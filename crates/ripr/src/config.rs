@@ -28,6 +28,9 @@ mod python;
 #[cfg(test)]
 mod schema_parity_tests;
 mod suggest;
+/// Near-miss spelling hints, shared with the hand-parsed policy manifests
+/// (`.ripr/suppressions.toml`) so their typos read like `ripr.toml` ones.
+pub(crate) use suggest::did_you_mean;
 mod toolchain_file;
 #[cfg(test)]
 mod value_hint_tests;
@@ -71,7 +74,7 @@ pub(crate) use python::{
     is_declared_handwritten_python_path, is_detectable_excluded_python_path,
     is_detectable_generated_python_path, is_detectable_python_source_name,
     is_python_excluded_dir_everywhere, python_project_marker_name, python_source_dir_marker_name,
-    source_dir_contains_detectable_python,
+    root_contains_detectable_python, source_dir_contains_detectable_python,
 };
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{
@@ -1216,7 +1219,10 @@ impl RiprConfig {
                 config.lsp.diagnostic_profile = Some(
                     LspDiagnosticProfile::parse(profile.get_ref()).map_err(|err| {
                         ConfigDiagnostic::at_value(
-                            format!("{err} in [lsp]"),
+                            format!(
+                                "{err} in [lsp]{}",
+                                near_value_hint(profile.get_ref(), &["actionable", "full"])
+                            ),
                             "lsp.diagnostic_profile",
                             profile.span(),
                             text,
@@ -1319,7 +1325,8 @@ impl RiprConfig {
                     if !crate::app::is_managed_perl_producer(name) {
                         return Err(Box::new(ConfigDiagnostic::at_value(
                             format!(
-                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp"
+                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp{}",
+                                near_value_hint(name, &["perl-ripr-facts", "perllsp", "perl-lsp"])
                             ),
                             "perl.producer",
                             value.span(),

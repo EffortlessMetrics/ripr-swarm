@@ -232,7 +232,9 @@ independent runtime oracle; it is a hand-maintained metadata fact.
 
 - `crates/ripr/tests/cli_smoke/closed_stderr.rs` pins unknown card, unknown
   stub and resolved async-owner stub JSON refusals with a preclosed stderr
-  pipe, plus ready-stub, operational-failure and human-refusal controls.
+  pipe, plus ready-stub, operational-failure and human-refusal controls,
+  and (Linux) a full stdout on `--version` and `help` keeping exit `2` with a
+  named write failure instead of an internal-error report (#15369).
 - `crates/ripr/src/cli/help_json.rs` unit tests cover production document
   validity, byte stability and explicit ordering, source-reorder
   normalization, duplicate-identity and zero-row fail-closed behavior,

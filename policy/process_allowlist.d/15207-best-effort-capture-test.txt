@@ -1,0 +1,1 @@
+crates/ripr/src/app/progress.rs|Command::new|1|cli-tests|#15207: test-only child re-enters one exact ignored test in the current unit-test executable to check best-effort diagnostics stay inside libtest capture. No shell, network or descendants.

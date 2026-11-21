@@ -550,7 +550,10 @@ pub(crate) fn render_human_triage(
                     ));
                 }
             } else if let Some(base) = output.base.as_deref()
-                && head_is_on_branch(&output.root, base)
+                && (head_is_on_branch(&output.root, base)
+                    // #15326: a clone's `origin/<branch>` base at HEAD's own
+                    // commit, under the shared #7644 identity rule.
+                    || crate::analysis::base_is_checked_out_head(&output.root, base, None))
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
                 // last commit", so print that command instead of leaving it to

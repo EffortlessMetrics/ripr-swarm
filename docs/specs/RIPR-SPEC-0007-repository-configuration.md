@@ -149,6 +149,19 @@ and a usable output location adds no check. While any `!` check blocks, the
 verbose start-here block gives that recovery instead of packet refresh advice,
 as the compact screen already does.
 
+Without `--root`, doctor diagnoses the root `ripr check` would analyze from the
+invocation directory (#15304): the enclosing Cargo workspace, package,
+JavaScript or Python workspace, or Git top level. It uses the same shared
+resolver and stderr disclosure as check. Language detection, the `enabled`
+tip and `Root:` therefore describe the tree check analyzes, and a run from a
+Python subdirectory of a Rust workspace is not told to replace `rust` with
+`python`. `--root .` diagnoses the invocation directory alone. If that resolver
+fails, doctor says so on stderr and diagnoses the invocation directory.
+The tip's replacement list drops `rust` only when it is the built-in default and
+no Rust marker is found (#7648). A `rust` written in `[languages].enabled` is the
+user's selection and stays in the list; a `[languages]` table without `enabled`,
+or no `ripr.toml`, leaves the default.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with
@@ -580,30 +593,37 @@ then the configuration loads as a regular file would.
 ### Doctor checks the pytest the Python verify route runs (#13617)
 
 ```text
-Given a Python root that is not unittest-only,
+Given a Python root that is not unittest-only and has no project `.venv` or
+`venv`,
 when ripr doctor runs,
 then doctor checks that PATH `python` (the interpreter of the printed
 `python -m pytest` verify command) imports pytest, from a fresh private
 empty directory with PYTHONSAFEPATH=1 and PYTHONPATH unset, without
 starting pytest, so no checkout or temp-directory code is executed;
 
-Given PATH `python` cannot import pytest,
-when doctor reports the probe,
-then the result is an advisory warning that never changes the exit code;
+Given a project `.venv` or `venv` that statically lists pytest in
+site-packages,
+when ripr doctor runs,
+then doctor reports a pass for that venv interpreter (the one the printed
+verify command names) and does not probe PATH `python`;
 
-Given a project `.venv` or `venv` whose site-packages statically lists
-pytest while PATH `python` lacks it,
-when doctor reports the failure,
-then the warning names that venv's activate script, joined to the selected
-root and shell-quoted so it pastes from the caller's directory; a venv
-without pytest gives no activation advice, and an unreadable venv layout is
-reported as not verified, never as a pass.
+Given a project venv whose site-packages statically lacks pytest,
+when doctor reports the probe,
+then it is a non-required failure that never changes the exit code and names
+one install command for the venv interpreter, joined to the selected root and
+shell-quoted: `uv pip install --python <venv python> pytest` when `uv.lock`
+exists, otherwise `<venv python> -m pip install pytest`; the generic static
+hint is suppressed so only one message is shown;
+
+Given a project venv whose layout is not statically readable,
+when doctor reports the probe,
+then it is reported as not verified (a failure, never a pass).
 ```
 
 The virtualenv is read statically and never executed. The printed verify
-command itself names the project venv interpreter when one exists
-(RIPR-SPEC-0028, #13801); doctor still probes only PATH `python`, so it never
-executes an interpreter from the checkout.
+command names the project venv interpreter when one exists (RIPR-SPEC-0028,
+#13801), and doctor now follows that same interpreter via static facts, so it
+never executes an interpreter from the checkout.
 
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 

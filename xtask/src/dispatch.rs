@@ -320,6 +320,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::run("cargo", &["package", "-p", "ripr", "--list"]).map(|_| ())
         }
         XtaskCommand::PublishDryRun => super::publish_rehearsal::run(),
+        XtaskCommand::PublishPrecheck => super::publish_rehearsal::precheck(),
         XtaskCommand::IssueIntake(args) => super::reports::issue_intake(&args),
         XtaskCommand::WorkPortfolio(args) => super::work_portfolio::work_portfolio_command(&args),
         XtaskCommand::WorkCandidates(args) => super::work_portfolio::work_candidates_command(&args),

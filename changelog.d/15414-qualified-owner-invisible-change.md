@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test that calls the changed function through a path, such as `assert_eq!(mycrate::fee(0), 0)` or `mycrate::fee(0).await`, no longer reads `exposed` when the asserted input gives the same value before and after the change. The bare `fee(0)` spelling already read `weakly_exposed` with "the asserted inputs evaluate to the same value"; the qualified spelling skipped that check ([#15414](https://github.com/EffortlessMetrics/ripr-swarm/issues/15414)).
