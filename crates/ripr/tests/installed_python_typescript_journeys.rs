@@ -1407,13 +1407,6 @@ fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
     decoy_untouched(&decoy)
 }
 
-/// #11136: a TypeScript finding whose test sits under a condition static
-/// analysis cannot evaluate leaves the run's analysis incomplete. The after
-/// phase refuses a before artifact like that, so `ripr check` must not print a
-/// gap-bound start (and must say why) instead of offering a repair that cannot
-/// finish. Negative control: the same fixture with an evaluable test, and so a
-/// complete analysis, still prints its start.
-#[cfg(feature = "lang-typescript")]
 /// #15902: an installed dependency tree that `.gitignore` does not cover is
 /// not unanalyzed source. `ripr check` keeps offering the repair start and
 /// stops advising `git add -N` for files no adapter would read. An untracked
@@ -1534,6 +1527,13 @@ fn typescript_unignored_dependency_tree_keeps_the_start_and_names_an_oversized_c
     decoy_untouched(&big_decoy)
 }
 
+/// #11136: a TypeScript finding whose test sits under a condition static
+/// analysis cannot evaluate leaves the run's analysis incomplete. The after
+/// phase refuses a before artifact like that, so `ripr check` must not print a
+/// gap-bound start (and must say why) instead of offering a repair that cannot
+/// finish. Negative control: the same fixture with an evaluable test, and so a
+/// complete analysis, still prints its start.
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), String> {
     let toml = "[languages]\nenabled = [\"typescript\"]\n";
