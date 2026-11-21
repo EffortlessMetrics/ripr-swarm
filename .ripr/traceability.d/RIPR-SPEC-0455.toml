@@ -1,7 +1,7 @@
 [[behavior]]
-id = "RIPR-SPEC-0451"
+id = "RIPR-SPEC-0455"
 name = "DX scoreboard generated recall rows"
-spec = "docs/specs/RIPR-SPEC-0451-dx-scoreboard-generated-recall-rows.md"
+spec = "docs/specs/RIPR-SPEC-0455-dx-scoreboard-generated-recall-rows.md"
 tests = [
   "xtask/src/reports/dx_scoreboard/tests.rs::mutation_spot_check_checked_in_receipt_generates_issue_12900_values",
   "xtask/src/reports/dx_scoreboard/tests.rs::a_config_without_the_generated_rows_still_loads_the_checked_in_receipt",

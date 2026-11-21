@@ -1,0 +1,15 @@
+crates/ripr/src/config.rs|[[overrides]] entry {} must override severity or oracles
+crates/ripr/src/config.rs|[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob)
+crates/ripr/src/config.rs|[[overrides]] entry {} must set exactly one of crate or path, not both
+crates/ripr/src/config.rs|perl.executable must not contain NUL characters
+crates/ripr/src/config.rs|profiles.bun_ub.test_roots must list at least one test root
+crates/ripr/src/config.rs|{field} `{value}` must name a path
+crates/ripr/src/config.rs|{field} `{value}` must stay within the repository
+crates/ripr/src/config.rs|{field} must contain exact file paths, not glob patterns
+crates/ripr/src/config.rs|{field} must identify a file pattern, not `.`
+crates/ripr/src/config.rs|{field} must identify {extension_desc}
+crates/ripr/src/config.rs|{field} must not be empty
+crates/ripr/src/config.rs|{field} must not contain NUL characters
+crates/ripr/src/config.rs|{field} must not contain control characters
+crates/ripr/src/config.rs|{position}.{field} must not be empty
+crates/ripr/src/config.rs|{position}: adapter `{}` does not support kind `{}`; the mismatch fails closed

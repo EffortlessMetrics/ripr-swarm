@@ -9964,6 +9964,8 @@ tests = [
   "xtask/src/tests.rs::evidence_promotion_human_oracle_line_rejects_diagnostic_overrides",
   "xtask/src/tests.rs::evidence_promotion_semantic_assertions_retain_related_test_identity",
   "xtask/src/evidence_promotion.rs::related_test_assertion_tests::requires_source_identity",
+  "xtask/src/evidence_promotion.rs::case_file_tests::a_corpus_language_that_matches_no_finding_language_is_a_violation",
+  "xtask/src/evidence_promotion.rs::case_file_tests::finding_languages_cover_every_router_extension_without_owner_or_summary",
   "crates/ripr/src/analysis/probes/path_only_argument.rs::tests::given_ordering_variant_swap_then_it_is_path_only",
   "crates/ripr/src/analysis/probes/path_only_argument.rs::tests::given_value_argument_change_then_it_is_not_path_only",
   "crates/ripr/src/analysis/probes/path_only_argument.rs::tests::given_other_enums_or_bare_names_then_it_is_not_claimed",
@@ -10738,6 +10740,8 @@ tests = [
   "crates/ripr/src/lsp/actions.rs::tests::gap_repair_packet_projects_only_validated_command_specs",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::gap_ledger_preserves_producer_typed_commands_without_reparsing_legacy_display",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::gap_ledger_rejects_malformed_or_role_mismatched_typed_commands",
+  "crates/ripr/src/cli/rerun.rs::tests::ledger_rerun_admits_only_schema_compatible_working_directories",
+  "crates/ripr-contract/src/domain/command_spec.rs::tests::working_directory_matches_published_line_and_scheme_rules",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::repo_exposure_rejects_malformed_typed_command_specs_with_seam_context",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::typed_gap_commands_project_from_producer_specs_and_queue",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::invalid_typed_gap_command_role_is_rejected_before_projection",
@@ -11963,6 +11967,7 @@ id = "RIPR-SPEC-0123"
 name = "targeted Rust rerun"
 spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
+  "crates/ripr/src/cli/rerun.rs::tests::ledger_rerun_admits_only_schema_compatible_working_directories",
   "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_preserves_independent_byte_oracle_across_buffer_boundaries",
   "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_coalesces_token_writes_without_retaining_the_body",
   "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_consumes_a_stream_before_the_whole_body_is_serialized",

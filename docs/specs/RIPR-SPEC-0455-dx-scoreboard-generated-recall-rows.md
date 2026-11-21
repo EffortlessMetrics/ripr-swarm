@@ -1,4 +1,4 @@
-# RIPR-SPEC-0451: DX scoreboard generates recall-of-missed and no-seam rows
+# RIPR-SPEC-0455: DX scoreboard generates recall-of-missed and no-seam rows
 
 Status: proposed
 
