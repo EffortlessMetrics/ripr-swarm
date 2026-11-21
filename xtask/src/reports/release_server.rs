@@ -487,26 +487,58 @@ pub(crate) fn release_server_readme(version: &str) -> String {
     )
 }
 
+/// Maximum compression for release server archives: download-size only.
+/// The archive formats, file names and entry layout are unchanged, so
+/// existing extractors (Expand-Archive, `tar -xzf`) need no change; only
+/// the deflate effort inside the same gzip/zip containers rises.
+pub(crate) const ARCHIVE_COMPRESSION_LEVEL: u32 = 9;
+
+pub(crate) fn gzip_compression() -> flate2::Compression {
+    flate2::Compression::new(ARCHIVE_COMPRESSION_LEVEL)
+}
+
+pub(crate) fn zip_file_options() -> zip::write::SimpleFileOptions {
+    zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(i64::from(ARCHIVE_COMPRESSION_LEVEL)))
+        .unix_permissions(0o644)
+}
+
 pub(crate) fn create_tar_gz_archive(package_dir: &Path, asset_path: &Path) -> Result<(), String> {
-    run_owned(
-        "tar",
-        &[
-            "-czf".to_string(),
-            asset_path.to_string_lossy().to_string(),
-            "-C".to_string(),
-            package_dir.to_string_lossy().to_string(),
-            ".".to_string(),
-        ],
-    )
+    // In-process tar+gzip instead of shelling out to `tar -czf`: there is
+    // no portable way to pass a gzip level to external tar (GNU tar takes
+    // it from the environment, libarchive/bsdtar from `--options`, and
+    // Windows ships bsdtar), while flate2 level 9 is identical on every
+    // release runner. The output stays a plain `.tar.gz`.
+    let file = fs::File::create(asset_path)
+        .map_err(|err| format!("failed to create {}: {err}", asset_path.display()))?;
+    let encoder = flate2::write::GzEncoder::new(file, gzip_compression());
+    let mut builder = tar::Builder::new(encoder);
+    // `tar` 0.4.46 defaults `sparse` to true and, on Linux/FreeBSD/Android,
+    // emits `GNUSparse` entries for payload files with filesystem holes.
+    // Both in-repo consumers accept only regular files
+    // (`packages::extract_flat_archive` and `first_run::extract_executable`
+    // check `entry_type().is_file()`, which is `Regular` only), so a holed
+    // executable would be rejected downstream. Store the full bytes as a
+    // regular entry instead; gzip removes the zeros anyway.
+    builder.sparse(false);
+    builder
+        .append_dir_all(".", package_dir)
+        .map_err(|err| format!("failed to write {}: {err}", asset_path.display()))?;
+    let encoder = builder
+        .into_inner()
+        .map_err(|err| format!("failed to finish {}: {err}", asset_path.display()))?;
+    encoder
+        .finish()
+        .map_err(|err| format!("failed to finish {}: {err}", asset_path.display()))?;
+    Ok(())
 }
 
 pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Result<(), String> {
     let file = fs::File::create(asset_path)
         .map_err(|err| format!("failed to create {}: {err}", asset_path.display()))?;
     let mut writer = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o644);
+    let options = zip_file_options();
 
     let entries = fs::read_dir(package_dir)
         .map_err(|err| format!("failed to read {}: {err}", package_dir.display()))?;
@@ -619,6 +651,255 @@ mod hash_reader_tests {
             Some(io::ErrorKind::PermissionDenied)
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod archive_compression_tests {
+    use super::*;
+
+    fn fixture_dir(label: &str) -> Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-archive-compression-{label}-{}",
+            std::process::id()
+        ));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        }
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        // Highly compressible payload so level choice changes bytes.
+        fs::write(dir.join("ripr"), vec![b'x'; 64 * 1024]).map_err(|e| e.to_string())?;
+        fs::write(
+            dir.join("README-server.txt"),
+            release_server_readme("0.11.0"),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn compression_level_is_pinned_at_maximum_for_both_formats() {
+        assert_eq!(ARCHIVE_COMPRESSION_LEVEL, 9);
+        assert_eq!(gzip_compression(), flate2::Compression::new(9));
+        let options = zip_file_options();
+        assert_eq!(options.get_compression_level(), Some(9));
+    }
+
+    #[test]
+    fn tar_gz_is_level_nine_gzip_and_round_trips() -> Result<(), String> {
+        let dir = fixture_dir("tar")?;
+        let asset = dir.with_extension("tar.gz");
+        let result = (|| {
+            create_tar_gz_archive(&dir, &asset)?;
+            let bytes = fs::read(&asset).map_err(|e| e.to_string())?;
+            // RFC 1952: magic + deflate, XFL=2 marks maximum compression.
+            assert_eq!(&bytes[0..3], &[0x1f, 0x8b, 8]);
+            assert_eq!(bytes[8], 2, "gzip XFL must mark level 9");
+            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&bytes[..]));
+            let mut names = Vec::new();
+            for entry in archive.entries().map_err(|e| e.to_string())? {
+                let mut entry = entry.map_err(|e| e.to_string())?;
+                let name = entry
+                    .path()
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace("./", "");
+                if name.is_empty() || name.ends_with('/') {
+                    continue;
+                }
+                let mut body = Vec::new();
+                entry.read_to_end(&mut body).map_err(|e| e.to_string())?;
+                assert_eq!(body, fs::read(dir.join(&name)).map_err(|e| e.to_string())?);
+                names.push(name);
+            }
+            names.sort();
+            assert_eq!(names, ["README-server.txt", "ripr"]);
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&asset);
+        result
+    }
+
+    #[test]
+    fn tar_gz_payload_entries_are_regular_and_preserve_executable_mode() -> Result<(), String> {
+        let dir = fixture_dir("tar-regular")?;
+        let asset = dir.with_extension("tar.gz");
+        let result = (|| {
+            // Give the payload a filesystem hole (data, a seek gap, data).
+            // Whether the filesystem stores that gap as a real hole depends
+            // on the platform/filesystem, so on a non-hole filesystem this
+            // also passes before the fix; where holes are stored (Linux
+            // ext4/tmpfs), `tar`'s default sparse detection would emit a
+            // `GNUSparse` entry and this test fails without `sparse(false)`.
+            {
+                use std::io::{Seek, SeekFrom, Write as _};
+                let mut payload = fs::File::create(dir.join("ripr")).map_err(|e| e.to_string())?;
+                payload.write_all(b"ripr").map_err(|e| e.to_string())?;
+                payload
+                    .seek(SeekFrom::Start(128 * 1024))
+                    .map_err(|e| e.to_string())?;
+                payload.write_all(b"end!").map_err(|e| e.to_string())?;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(dir.join("ripr"), fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+                fs::set_permissions(
+                    dir.join("README-server.txt"),
+                    fs::Permissions::from_mode(0o644),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            create_tar_gz_archive(&dir, &asset)?;
+            let bytes = fs::read(&asset).map_err(|e| e.to_string())?;
+            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&bytes[..]));
+            let mut modes: Vec<(String, u32)> = Vec::new();
+            for entry in archive.entries().map_err(|e| e.to_string())? {
+                let mut entry = entry.map_err(|e| e.to_string())?;
+                assert_ne!(
+                    entry.header().entry_type(),
+                    tar::EntryType::GNUSparse,
+                    "payload must not be stored as a GNU sparse entry"
+                );
+                let name = entry
+                    .path()
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace("./", "");
+                if name.is_empty() || name.ends_with('/') {
+                    continue;
+                }
+                // The consumers that read release archives
+                // (`extract_flat_archive`, `extract_executable`) accept
+                // only `entry_type().is_file()`, i.e. `Regular`.
+                assert_eq!(
+                    entry.header().entry_type(),
+                    tar::EntryType::Regular,
+                    "payload entry `{name}` must be a regular file"
+                );
+                let mode = entry.header().mode().map_err(|e| e.to_string())?;
+                let mut body = Vec::new();
+                entry.read_to_end(&mut body).map_err(|e| e.to_string())?;
+                assert_eq!(body, fs::read(dir.join(&name)).map_err(|e| e.to_string())?);
+                modes.push((name, mode));
+            }
+            modes.sort();
+            assert_eq!(modes.len(), 2, "expected both payload files: {modes:?}");
+            let ripr_mode = modes
+                .iter()
+                .find(|(name, _)| name == "ripr")
+                .map(|(_, mode)| *mode)
+                .ok_or_else(|| "archive has no `ripr` entry".to_string())?;
+            #[cfg(unix)]
+            {
+                // `HeaderMode::Complete` copies the Unix mode verbatim, so
+                // the executable bit the release build set must survive.
+                assert_eq!(ripr_mode & 0o777, 0o755, "ripr header mode: {ripr_mode:o}");
+                let readme_mode = modes
+                    .iter()
+                    .find(|(name, _)| name == "README-server.txt")
+                    .map(|(_, mode)| *mode)
+                    .ok_or_else(|| "archive has no `README-server.txt` entry".to_string())?;
+                assert_eq!(
+                    readme_mode & 0o777,
+                    0o644,
+                    "README header mode: {readme_mode:o}"
+                );
+            }
+            #[cfg(windows)]
+            {
+                // Windows has no file mode: the `tar` crate approximates a
+                // writable regular file as 0o644 (0o444 when read-only).
+                // That is all `create_tar_gz_archive` guarantees there; the
+                // executable bit is a Unix-only guarantee, restored for
+                // Unix consumers by the mode above and, on the first-run
+                // path, by explicitly chmodding the extracted file.
+                assert_eq!(ripr_mode, 0o644, "ripr header mode: {ripr_mode:o}");
+            }
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&asset);
+        result
+    }
+
+    #[test]
+    fn package_consumer_extracts_both_server_formats() -> Result<(), String> {
+        for (target, kind, executable, expected_asset) in [
+            (
+                "x86_64-pc-windows-msvc",
+                "zip",
+                "ripr.exe",
+                "ripr-server-v0.11.0-x86_64-pc-windows-msvc.zip",
+            ),
+            (
+                "x86_64-unknown-linux-gnu",
+                "tar.gz",
+                "ripr",
+                "ripr-server-v0.11.0-x86_64-unknown-linux-gnu.tar.gz",
+            ),
+        ] {
+            let root = fixture_dir(&format!("consumer-{kind}"))?;
+            let staged = root.join("staged");
+            let extracted = root.join("extracted");
+            for dir in [&staged, &extracted] {
+                fs::create_dir(dir).map_err(|e| e.to_string())?;
+            }
+            let files = [
+                (executable, &b"synthetic\0\xff"[..]),
+                ("README-server.txt", &b"server fixture"[..]),
+            ];
+            for (name, bytes) in files {
+                fs::write(staged.join(name), bytes).map_err(|e| e.to_string())?;
+            }
+            let asset = root.join(server_asset_name("0.11.0", target, kind));
+            assert_eq!(asset, root.join(expected_asset));
+            if kind == "zip" {
+                create_zip_archive(&staged, &asset)?;
+            } else {
+                create_tar_gz_archive(&staged, &asset)?;
+            }
+            packages::extract_flat_archive(&asset, kind, &extracted)?;
+            assert_eq!(
+                fs::read_dir(&extracted).map_err(|e| e.to_string())?.count(),
+                files.len()
+            );
+            for (name, bytes) in files {
+                assert_eq!(
+                    fs::read(extracted.join(name)).map_err(|e| e.to_string())?,
+                    bytes
+                );
+            }
+            fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn zip_stays_deflated_and_round_trips() -> Result<(), String> {
+        let dir = fixture_dir("zip")?;
+        let asset = dir.with_extension("zip");
+        let result = (|| {
+            create_zip_archive(&dir, &asset)?;
+            let file = fs::File::open(&asset).map_err(|e| e.to_string())?;
+            let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+            assert_eq!(archive.len(), 2);
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
+                assert_eq!(entry.compression(), zip::CompressionMethod::Deflated);
+                let name = entry.name().map_err(|e| e.to_string())?.to_string();
+                let mut body = Vec::new();
+                entry.read_to_end(&mut body).map_err(|e| e.to_string())?;
+                assert_eq!(body, fs::read(dir.join(&name)).map_err(|e| e.to_string())?);
+                assert!(entry.size() > entry.compressed_size());
+            }
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&asset);
+        result
     }
 }
 
