@@ -69,20 +69,23 @@ release framework. At the inspected swarm commit
 `.github/workflows/server-archive-qualification.yml` supplies exact-candidate
 archive qualification. See [binary packaging](RELEASE_BINARIES.md).
 
-Proposed new authoring surfaces:
+Authoring surfaces as they exist in source (the publish workflows remain
+source-repository authorities and are not in swarm):
 
 ```text
 packaging/python/pyproject.toml
 packaging/python/README.md
-packaging/npm/package.json
-packaging/npm/bin/ripr.cjs
-packaging/npm/README.md
-.github/workflows/package-distribution-qualification.yml  (swarm rehearsal)
-.github/workflows/publish-pypi.yml                       (source only)
-.github/workflows/publish-npm.yml                        (source only)
+packaging/npm/launcher/package.json
+packaging/npm/launcher/bin/ripr.cjs
+packaging/npm/launcher/lib/launcher.cjs
+packaging/npm/launcher/README.md
+packaging/npm/qualification/                    (installed-product journey)
+.github/workflows/package-family-qualification.yml  (swarm rehearsal)
+.github/workflows/publish-pypi.yml              (source only)
+.github/workflows/publish-npm.yml               (source only)
 ```
 
-The package authoring and qualification paths above remain implementation work.
+The registry publication paths above remain release-operator work.
 Swarm now owns a typed package-qualification receipt and aggregate gate
 (`cargo xtask package-qualification-gate --receipt <path>`; #4630). That
 command parses one versioned DTO and fails closed on missing, zero-subject,

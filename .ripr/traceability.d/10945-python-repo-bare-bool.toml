@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::bare_bool_credit_requires_a_proven_bool_target_in_both_modes",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/bool_oracle.rs",
+  "crates/ripr/src/analysis/language/python/repo/evidence.rs",
+]

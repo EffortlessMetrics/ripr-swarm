@@ -224,7 +224,14 @@ after movement succeeds but discloses `historical_noncurrent`.
   use explicit owned roots.
   Ordinary archive entries must match committed blobs; only Cargo's original
   manifest, normalized manifest, lock and VCS metadata have explicit generated
-  rules. Archive and installed executable bytes are revalidated before
+  rules. When the committed `crates/ripr/src` holds inline `#[cfg(test)]`
+  modules, the producer packages a publish stage of the admitted commit
+  (#14198, a temporary uploadability bridge) together with its path
+  dependencies, and an entry under `crates/ripr/src` may instead be exactly the
+  inline-test strip of its committed blob. Such an archive is accepted only
+  with all of: a dirty Cargo VCS record, the `.ripr-publish-stage` marker
+  naming the admitted commit, at least one stripped entry and no strippable
+  entry left unstripped; any other difference is refused (#15204). Archive and installed executable bytes are revalidated before
   consumption by installed doctor and the authentic chain. Controller-owned
   reports disclose `qualification_mode`, custody and the exclusive evidence
   root. Without the group, the command remains unqualified legacy smoke;

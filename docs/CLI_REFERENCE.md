@@ -236,7 +236,7 @@ Examples:
 ```text
 Write a bounded brief for a coding agent over the current diff or change.
 
-Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
+Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N] [--line-ranges]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -252,6 +252,9 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
+  --line-ranges    JSON-only lossless grouped inclusive changed-line ranges.
+                   Minifies output; requires --json. May grow for many files.
+                   Does not truncate locations or change the seam cap.
 
 When --files or --base produces a working set that matches no seams, the brief
 falls back to all repo-actionable seams. This scope-widening is disclosed in
@@ -414,7 +417,8 @@ Options:
                        documents stay in their files under target/ripr/.
   --quiet              Drop the phase's progress narration and `wrote <path>`
                        lines from stderr, like `ripr repair --quiet` and
-                       `RIPR_QUIET`. Results and refusal prose always print.
+                       `RIPR_QUIET`. Results, refusal prose and the warning
+                       to write output outside the repo always print.
   --seam-id ID         Select one visible seam; required for `before` and the
                        compatibility selector for `after`. For `--phase before`,
                        a seam ID, a `ripr check` finding ID (`probe:` /
@@ -1579,7 +1583,7 @@ Options:
                            inventory refuses drift, nonregular files and external
                            module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
-                           ripr-check-artifact-v1) for later
+                           ripr-check-artifact-v2) for later
                            `ripr explain --from PATH` /
                            `ripr context --from PATH` reuse. The artifact
                            records the complete finding set plus the input
@@ -2462,7 +2466,7 @@ Options:
   --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
   --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
-  --output-dir <path>           Output directory. Defaults to target/ripr/reports.
+  --output-dir <path>        Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here page is up to date; write nothing.
   --run-chain                Run the commands for missing reports first, each only when its
                              report is missing and each exactly the command first-pr prints,
@@ -3425,13 +3429,16 @@ Summary options:
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
   --run-url URL               https link to the workflow run, shown as the full-report link.
-  --output-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+  --output-dir PATH           Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
 
 `summary` renders one short digest of the changed-behavior findings and writes
 summary.tsv (method, endpoint, payload file, message; empty when there is
 nothing to post) plus summary-request.json. It updates the marked comment that
 github-actions[bot] posted earlier, even when the findings are gone, and posts
-nothing for a clean pull request. It does not call GitHub or read a token.
+nothing for a clean pull request. It reads RIPR_GATE_MODE and the gate's
+target/ripr/reports/gate-decision.json: a blocked or misconfigured gate, or an
+unknown mode, is stated first, and a mode that can fail the job replaces the
+advisory footer. It does not call GitHub or read a token.
 
 Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--output-dir PATH]
 
@@ -3440,7 +3447,7 @@ Requests options:
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
-  --output-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
+  --output-dir PATH           Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
 `existing` keeps only marked comments that github-actions[bot] posted. It
 does not call GitHub or read a token.
@@ -3537,7 +3544,7 @@ Requests options:
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
-  --output-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
+  --output-dir PATH           Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
 `requests` writes one JSON payload per call and requests.tsv, one line per
 call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
@@ -3568,13 +3575,16 @@ Summary options:
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
   --run-url URL               https link to the workflow run, shown as the full-report link.
-  --output-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+  --output-dir PATH           Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
 
 `summary` renders one short digest of the changed-behavior findings and writes
 summary.tsv (method, endpoint, payload file, message; empty when there is
 nothing to post) plus summary-request.json. It updates the marked comment that
 github-actions[bot] posted earlier, even when the findings are gone, and posts
-nothing for a clean pull request. It does not call GitHub or read a token.
+nothing for a clean pull request. It reads RIPR_GATE_MODE and the gate's
+target/ripr/reports/gate-decision.json: a blocked or misconfigured gate, or an
+unknown mode, is stated first, and a mode that can fail the job replaces the
+advisory footer. It does not call GitHub or read a token.
 
 Examples:
   ripr pr-comments summary --root . --pull-request 7 --head-sha 0123abcd --raw -
@@ -3880,9 +3890,10 @@ Options:
                    unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
-                   lines from stderr. Refusal prose, the attempt id and the
-                   next command stay. `RIPR_QUIET` (any value except empty,
-                   `0` or `false`) does the same.
+                   lines from stderr. Refusal prose, the attempt id, the
+                   next command and the warning to write output outside the
+                   repo stay. `RIPR_QUIET` (any value except empty, `0` or
+                   `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded
@@ -3970,8 +3981,8 @@ Kani result options:
   --input PATH          Existing Kani native result JSON. Required.
   --binding PATH        Source, configuration and native-artifact binding JSON. Required.
   --root PATH           Root for the bound source files. Defaults to current directory.
-  --out PATH            JSON report. Defaults to target/ripr/reports/kani.json under --root.
-  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani.md under --root.
+  --out PATH            JSON report. Defaults to target/ripr/reports/kani-import.json under --root.
+  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani-import.md under --root.
 
 TypeScript limitation options:
   --check-output PATH   Existing `ripr check --json` output to aggregate.
@@ -4209,8 +4220,8 @@ Kani result options:
   --input PATH          Existing Kani native result JSON. Required.
   --binding PATH        Source, configuration and native-artifact binding JSON. Required.
   --root PATH           Root for the bound source files. Defaults to current directory.
-  --out PATH            JSON report. Defaults to target/ripr/reports/kani.json under --root.
-  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani.md under --root.
+  --out PATH            JSON report. Defaults to target/ripr/reports/kani-import.json under --root.
+  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani-import.md under --root.
 
 The Kani report imports existing native output and checks its supplied binding
 against the selected source root. Explicit input and output paths are relative

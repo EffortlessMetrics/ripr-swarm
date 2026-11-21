@@ -79,7 +79,11 @@ diverging statement: a removed single-line `None => return R,` arm and the
 added `return R;` seed no probe on either side when the `match` scrutinee and
 the `let ... else` scrutinee are the same text, the added statement is the
 first added line after its opener, and each text occurs exactly once in the
-window (#14428). A changed scrutinee, a changed return value, a multi-line
+window (#14428). The added pattern must use the unqualified spelling
+`Some(...)`, with no space before the opening parenthesis. An added
+`let None = option else {` diverges on the opposite variant. The pairing
+also leaves `Option::Some(x)` and `Some (x)` unpaired. All three forms keep
+both probes (#14498). A changed scrutinee, a changed return value, a multi-line
 `None => { .. }` arm, or a repeated statement keeps both probes. A pattern
 that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
 { .. }`) is not split from its scrutinee, so it fails closed and both probes
@@ -1087,6 +1091,7 @@ Fixture coverage:
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `a_manual_let_else_rewrite_pairs_its_diverging_statement`
 - `manual_let_else_pairing_is_fail_closed`
+- `manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern`
 - `a_reversed_let_else_pattern_never_pairs`
 - `a_neighbouring_functions_arm_never_pairs`
 - `a_scrutinee_with_an_equals_sign_still_pairs`
@@ -1139,6 +1144,21 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 (#4216), and so does any file with no indexed function or no file facts. The
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
+
+A closers-only added line that is its function's `end_line` also seeds no probe
+when Git's diff slider moved it (#15270). This happens when an item such as
+`agent stub --write`'s test module is appended right after a function. Git then
+reports the function's unchanged `}` as the first added line and leaves the
+appended item's identical closer as context. All of the following must hold:
+
+- the line starts a contiguous added run of more than one line;
+- the line right after that run is unchanged;
+- that context line is byte-identical to the added line, ignoring only a CRLF
+  carriage return;
+- that context line is an item-level closer in the sense above.
+
+Any other function-end closer keeps its probe. That includes an indented
+method closer followed by its `impl`'s closer, and a closer whose run has a gap.
 
 A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
 no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header

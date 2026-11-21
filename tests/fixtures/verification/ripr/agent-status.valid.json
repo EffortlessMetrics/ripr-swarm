@@ -1,0 +1,113 @@
+{
+  "artifacts": [
+    {
+      "bytes": 23843,
+      "label": "before snapshot",
+      "modified_unix_ms": 1795170319883,
+      "name": "before_snapshot",
+      "path": "target/ripr/workflow/before.repo-exposure.json",
+      "required": false,
+      "state": "present"
+    },
+    {
+      "bytes": 23013,
+      "label": "after snapshot",
+      "modified_unix_ms": 1795170320071,
+      "name": "after_snapshot",
+      "path": "target/ripr/workflow/after.repo-exposure.json",
+      "required": false,
+      "state": "present"
+    },
+    {
+      "bytes": 1529,
+      "label": "analysis outcome",
+      "modified_unix_ms": 1795170320199,
+      "name": "analysis_outcome",
+      "path": "target/ripr/workflow/analysis-outcome.json",
+      "required": false,
+      "state": "present"
+    },
+    {
+      "bytes": 4429,
+      "label": "agent brief",
+      "modified_unix_ms": 1795170319863,
+      "name": "agent_brief",
+      "path": "target/ripr/workflow/agent-brief.json",
+      "required": false,
+      "state": "present"
+    },
+    {
+      "bytes": 12669,
+      "label": "agent packet",
+      "modified_unix_ms": 1795170319886,
+      "name": "agent_packet",
+      "path": "target/ripr/workflow/agent-packet.json",
+      "required": false,
+      "state": "present"
+    },
+    {
+      "bytes": 7061,
+      "label": "agent verify",
+      "modified_unix_ms": 1795170320235,
+      "name": "agent_verify",
+      "path": "target/ripr/workflow/agent-verify.json",
+      "required": false,
+      "state": "present"
+    },
+    {
+      "bytes": 6968,
+      "label": "agent receipt",
+      "modified_unix_ms": 1795170320523,
+      "name": "agent_receipt",
+      "path": "target/ripr/reports/agent-receipt.json",
+      "required": false,
+      "state": "present"
+    }
+  ],
+  "missing_commands": [],
+  "next_command": null,
+  "repair_attempts": [
+    {
+      "attempt_id": "repair-attempt-4509503e7da81a22210bf39a",
+      "baseline_ambiguous": false,
+      "baseline_unavailable_reason": null,
+      "command": null,
+      "disposition": "finished",
+      "head_current": true,
+      "last_after_refusal": null,
+      "manifest": "target/ripr/repair-attempts/repair-attempt-4509503e7da81a22210bf39a/attempt.json",
+      "receipt": {
+        "analysis_outcome_error": null,
+        "issued_for_attempt": true,
+        "movement": "improved",
+        "path": "target/ripr/repair-attempts/repair-attempt-4509503e7da81a22210bf39a/artifacts/agent-receipt.json",
+        "receipt_state": "receipt_movement_improved",
+        "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.",
+        "shows_gap_closed": true,
+        "status": "advisory",
+        "superseded_by": null,
+        "unavailable": false,
+        "unavailable_reason": null,
+        "unreadable": false,
+        "verification_status": "verification_not_run"
+      },
+      "seam_id": "67fc764ba37d77bd",
+      "state": "ready_to_finish"
+    }
+  ],
+  "root": ".",
+  "schema_version": "0.1",
+  "seam": {
+    "seam_id": "67fc764ba37d77bd",
+    "source": "agent_receipt"
+  },
+  "status": "complete",
+  "test_run": {
+    "attempt_id": "repair-attempt-4509503e7da81a22210bf39a",
+    "next_step": "The repair receipt compares static evidence only and records no run of the focused test (`tests/pricing.rs`); run it with the project's test command and keep it only if it passes. A failing test can still show movement `improved`.",
+    "status": "not_recorded",
+    "test_changed": "tests/pricing.rs"
+  },
+  "tool": "ripr",
+  "warnings": []
+}

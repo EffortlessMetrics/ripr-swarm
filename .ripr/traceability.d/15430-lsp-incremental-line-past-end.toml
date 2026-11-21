@@ -1,0 +1,6 @@
+# Registers the incremental line-past-end clamp (#15430) under RIPR-SPEC-0129.
+[[extend]]
+id = "RIPR-SPEC-0129"
+tests = [
+  "crates/ripr/src/lsp/state.rs::tests::incremental_line_past_end_clamps_to_document_end",
+]

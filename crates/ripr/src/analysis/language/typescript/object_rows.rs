@@ -400,7 +400,11 @@ pub(crate) fn object_each_assertions(
                 }
                 locals.push((local.name.to_string(), key.name.to_string()));
             }
-            if locals.is_empty() {
+            if locals.is_empty()
+                || super::table_rows::callback_writes_row(callback, |p| {
+                    locals.iter().any(|(name, _)| name == p)
+                })
+            {
                 return None;
             }
             destructured_case_assertions(callback_span, body_span, &locals, &rows, source, bindings)

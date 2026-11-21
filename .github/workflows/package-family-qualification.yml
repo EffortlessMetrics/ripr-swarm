@@ -46,6 +46,11 @@ jobs:
       - name: Wrap every target's payload as a wheel and a native npm package
         run: cargo xtask release-server-archive --packages-from "${{ runner.temp }}/archive-artifacts" --out-dir "${{ runner.temp }}/packages"
 
+      - name: Stage the installed-wheel verifier
+        run: |
+          python3 -m unittest discover -s tools/python/installed-wheel-identity
+          cp tools/python/installed-wheel-identity/verify_installed_wheel.py "${{ runner.temp }}/packages/"
+
       - name: Pack the npm launcher
         run: npm pack --ignore-scripts --pack-destination "${{ runner.temp }}/packages/npm" ./packaging/npm/launcher
 
@@ -95,10 +100,16 @@ jobs:
           name: ripr-platform-packages
           path: ${{ runner.temp }}/packages
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-final-native-payload-${{ matrix.target }}
+          path: ${{ runner.temp }}/qualified-payload
+
       - name: Install offline through pip and npm, then start ripr
         env:
           VERSION: ${{ inputs.version }}
           CANDIDATE_SHA: ${{ github.sha }}
+          TARGET: ${{ matrix.target }}
           WHEEL_TAG: ${{ matrix.wheel_tag }}
           NPM_PACKAGE: ${{ matrix.npm_package }}
           MACOS_MIN: ${{ matrix.macos_min }}
@@ -109,27 +120,31 @@ jobs:
           python -m venv "$RUNNER_TEMP/venv"
           bindir="$RUNNER_TEMP/venv/bin"; [ -d "$bindir" ] || bindir="$RUNNER_TEMP/venv/Scripts"
           "$bindir/python" -m pip install --no-index --pre --find-links "$packages/wheels" --report "$RUNNER_TEMP/pip-report.json" ripr-rs
-          chosen=$("$bindir/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["install"][0]["download_info"]["url"])' "$RUNNER_TEMP/pip-report.json")
-          echo "pip chose $chosen"
-          case "$chosen" in *"-py3-none-$WHEEL_TAG.whl") ;; *) echo "::error::pip chose $chosen, not the $WHEEL_TAG wheel"; exit 1 ;; esac
+          wheel_bin=$("$bindir/python" "$packages/verify_installed_wheel.py")
           mkdir "$RUNNER_TEMP/npm-project" && cd "$RUNNER_TEMP/npm-project" && npm init -y > /dev/null
           npm install --offline --ignore-scripts --no-audit --no-fund --cache "$RUNNER_TEMP/npm-cache" \
             "$packages"/npm/effortlessmetrics-ripr-[0-9]*.tgz "$packages"/npm/effortlessmetrics-"$NPM_PACKAGE"-[0-9]*.tgz
           npm_bin="$RUNNER_TEMP/npm-project/node_modules/.bin"
           cd "$RUNNER_TEMP" && cargo new --quiet smoke-project && cd smoke-project
-          for ripr in "$bindir/ripr" "$npm_bin/ripr"; do
+          for ripr in "$wheel_bin" "$npm_bin/ripr"; do
             actual=$("$ripr" --version | tr -d '\r')
             echo "$ripr: $actual"
             if [ "$actual" != "$expected" ]; then echo "::error::$ripr reported '$actual', expected '$expected'"; exit 1; fi
             "$ripr" doctor
           done
           if [ -n "$MACOS_MIN" ]; then
-            minos=$(otool -l "$bindir/ripr" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX' | awk '$1 == "minos" || $1 == "version" { print $2; exit }' || true)
+            minos=$(otool -l "$wheel_bin" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX' | awk '$1 == "minos" || $1 == "version" { print $2; exit }' || true)
             echo "Mach-O minimum macOS $minos; wheel tag claims $MACOS_MIN"
             if [ -z "$minos" ] || [ "$(printf '%s\n%s\n' "$minos" "$MACOS_MIN" | sort -V | tail -n 1)" != "$MACOS_MIN" ]; then
               echo "::error::binary needs macOS $minos, above the $WHEEL_TAG claim"; exit 1
             fi
           fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-installed-wheel-identity-${{ matrix.target }}
+          path: ${{ runner.temp }}/installed-wheel-identity.json
+          if-no-files-found: error
 
   npm-journey:
     # #4632: install the launcher through npm's own optional-dependency

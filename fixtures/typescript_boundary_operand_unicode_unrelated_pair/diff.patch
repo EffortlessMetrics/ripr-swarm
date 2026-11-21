@@ -1,0 +1,10 @@
+diff --git a/src/format.ts b/src/format.ts
+--- a/src/format.ts
++++ b/src/format.ts
+@@ -1,5 +1,5 @@
+ export function formatShort(時: number, unused: number, limit: number): string {
+-  if (時 > limit) {
++  if (時 >= limit) {
+     return "1h";
+   }
+   return "short";

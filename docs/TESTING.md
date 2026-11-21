@@ -285,6 +285,39 @@ Convention: property tests use `Result<(), String>` bodies, no `unwrap`/`expect`
 per the workspace lint posture. See `docs/TEST_TAXONOMY.md` for the Property
 and Fuzz test type definitions.
 
+The classification properties (#12927) generate bounded Python and TypeScript
+source, import relations, registration guards and assertion shapes, then invoke
+the real extractors and retained changed-line classifiers. Each has 24 shrinking
+cases and a deterministic semantic-category sweep; Rust's shared decision
+projection has 32 cases. These run with the default language features and need
+neither external interpreters nor Kani. They cover changed straight-line
+integer returns and a return under an arm the observed input never enters,
+not every adapter rule. The latter keeps an exact oracle fixed while varying
+the values and import relation, so oracle strength cannot stand in for infection.
+The TypeScript arm property supplies isolated complete source/test files because
+its guard authority checks for additional calls outside test bodies; the other
+generated paths use their retained in-memory semantic inputs.
+
+`analysis/classification_properties.rs` shares the exposed/not-exposed projection
+and the partial oracle chain `reachable_unrevealed -> weakly_exposed -> exposed`.
+The chain applies only with the same modeled return seam, active test and direct
+or aliased import relation. Unknown classes have no rank. A stronger assertion
+can reveal an unmodeled path (for example the TypeScript module-entry rule), so
+global oracle monotonicity would encode a false contract.
+
+Explicit language-specific stage exceptions to Rust's five-stage decision are:
+
+| Adapter | Exception | Retained obligation |
+| --- | --- | --- |
+| TypeScript | `propagate` is always `unknown`; unmodeled `infect` is `unknown` | Exposed still requires confirmed reach, observation and discrimination; guarded registration cannot credit an exact assertion. |
+| Python | Field/effect propagation may be `weak`; static limits are decided before the oracle ladder | This bounded return generator has modeled propagation; runtime-guarded tests cannot credit an exact assertion. |
+| Rust | Observe may be unknown/opaque when discriminate is yes | The shared Rust projection preserves the actual `observe != no` rule, rather than claiming all five stages must be yes. |
+
+Non-exposed findings must carry a stop reason, nonempty missing-evidence text,
+or a typed missing discriminator. That obligation includes confident gaps;
+it does not invent an unknown stop reason for them. Unrecognized checks and
+foreign imports cannot promote the generated return seam to exposed.
+
 ## Harness Trial-Subject Evidence Parity Scan
 
 The repository-governed test-harness registry

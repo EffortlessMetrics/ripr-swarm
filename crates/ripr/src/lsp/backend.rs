@@ -14,7 +14,7 @@ use super::capabilities::{
     workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
-use super::config::{LspAnalysisConfig, validated_pulled_options};
+use super::config::{LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
@@ -143,10 +143,10 @@ use tower_lsp_server::ls_types::{
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
     RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    ShowMessageParams, TextDocumentIdentifier, TraceValue, UnchangedDocumentDiagnosticReport,
-    Unregistration, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
-    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
+    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
+    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -212,6 +212,11 @@ pub(super) struct Backend {
     diagnostic_refresh_support: Mutex<bool>,
     /// Negotiated `workspace.codeLens.refreshSupport` (#2032, RIPR-SPEC-0138).
     code_lens_refresh_support: Mutex<bool>,
+    /// Set at the start of `initialized`. tower-lsp-server refuses
+    /// server->client requests while `initialize` is handled (-32002), so a
+    /// lens refresh attempted then only fails; the client requests lenses
+    /// itself once the session starts (RIPR-SPEC-0138).
+    code_lens_refresh_armed: AtomicBool,
     /// The lens-view identity covered by the last `workspace/codeLens/refresh`
     /// request. Compared per committed snapshot; a request is sent only when
     /// the visible lens view changed. `None` until the first commit.
@@ -384,6 +389,7 @@ impl Backend {
             trace: Mutex::new(TraceValue::Off),
             diagnostic_refresh_support: Mutex::new(false),
             code_lens_refresh_support: Mutex::new(false),
+            code_lens_refresh_armed: AtomicBool::new(false),
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
             watched_files_relative_pattern_support: AtomicBool::new(false),
@@ -2098,8 +2104,13 @@ impl Backend {
     }
 
     /// Bare `workspace/codeLens/refresh` send with log-only failure, shared
-    /// by the view-changed and view-cleared paths.
+    /// by the view-changed and view-cleared paths. Nothing is sent before
+    /// `initialized`: the client would reject the request, and it requests
+    /// the current lenses itself once the session starts.
     async fn send_code_lens_refresh(&self) {
+        if !self.code_lens_refresh_armed.load(Ordering::SeqCst) {
+            return;
+        }
         if let Err(error) = self
             .bounded_client_request(self.client.code_lens_refresh())
             .await
@@ -3736,7 +3747,7 @@ impl Backend {
             return;
         }
         match result {
-            Ok(values) => match validated_pulled_options(&values) {
+            Ok(values) => match pulled_options_or_rejections(&values) {
                 Ok(pulled) => {
                     self.apply_pulled_configuration(pulled).await;
                     // The retained layer is scoped to the root it was pulled
@@ -3744,12 +3755,30 @@ impl Backend {
                     // whether a re-pull is needed.
                     self.config_pull.set_scope_root(root);
                 }
-                Err(message) => {
+                Err(rejections) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
                         kind: AnalysisFailureKind::ConfigPullInvalid,
-                        message: bounded_failure_message(&message),
+                        message: bounded_failure_message(&pulled_rejection_summary(&rejections)),
                     }));
                     self.publish_analysis_status().await;
+                    // #15312: the typed state lives only in
+                    // `ripr/analysisStatus`, which generic editors do not
+                    // render, so a rejected setting looked accepted. Say
+                    // which settings were rejected, what is accepted, and
+                    // that the last-known-good settings stay in effect. Each
+                    // rejection is bounded on its own (at most one per
+                    // governed key), so a long value cannot hide the keys
+                    // after it.
+                    let listed = rejections
+                        .iter()
+                        .map(|rejection| bounded_failure_message(&rejection.detail))
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    let warning = format!(
+                        "ripr ignored the editor's ripr settings: {listed}. The previous settings stay in effect."
+                    );
+                    self.disclose_configuration_reload_failure(warning.clone(), warning)
+                        .await;
                 }
             },
             Err(error) => {
@@ -4095,6 +4124,9 @@ impl Backend {
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
+                DocumentStalenessReason::SavedContentNotYetAnalyzed => {
+                    "Saving again cannot change this; the evidence returns when ripr analyzes the saved file. Run `ripr.refresh` if it does not."
+                }
             };
             return markdown_hover(format!(
                 "**ripr** evidence for this file is paused: {}. {route}",
@@ -4393,6 +4425,85 @@ impl Backend {
                 }
             }
         }
+    }
+
+    /// Register one save of `uri` (a client `didSave`, or the save implied
+    /// by an external rewrite the client reloaded). `prior_change` is the
+    /// quarantine edge of a buffer change registered in the same lifecycle
+    /// step and not yet published, with the version captured for its
+    /// decision; it is folded into the save's edge so that step publishes
+    /// once (#15316). If the save cannot be registered, the change edge is
+    /// still published on its own so a withdrawal is never lost.
+    async fn register_save(
+        &self,
+        uri: Uri,
+        save_text: Option<String>,
+        prior_change: Option<(QuarantineTransition, Option<i32>)>,
+    ) {
+        // Deduplicate by saved-content input identity (#1908): a save whose
+        // bytes did not change since the last recorded save cannot change
+        // analysis input, so it neither advances the workspace revision nor
+        // schedules a refresh. The save event is still disclosed.
+        // With includeText: false the save identity would come from the
+        // retained buffer — but only while that buffer is still a
+        // synchronization authority. After a rejected incremental change
+        // (#1746) the client's persisted document may diverge from the frozen
+        // buffer, so the save carries no observable identity: adopt none
+        // rather than invent one from text the server cannot trust.
+        let text = if self.document_buffer_authority_unknown(&uri) {
+            save_text.clone()
+        } else {
+            save_text.clone().or_else(|| self.document_text(&uri))
+        };
+        let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
+        // Update the per-document saved-content identity and quarantine
+        // state first (#1970): the dedup decision below gates the refresh,
+        // never the quarantine lift. A save whose buffer again matches the
+        // analyzed saved content re-serves the document even when no
+        // refresh is scheduled. A failed store lock means the save was never
+        // registered; skip every downstream mutation so the store, the
+        // dedup ledger, and the committed snapshot cannot diverge.
+        let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
+        else {
+            if let Some((change, change_version)) = prior_change {
+                self.handle_document_quarantine_transition(&uri, change, change_version)
+                    .await;
+            }
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    "ripr didSave dropped: the document store is unavailable; the save was not registered and no refresh was scheduled",
+                )
+                .await;
+            return;
+        };
+        let transition = prior_change.map_or(transition, |(change, _)| change.then(transition));
+        if let Some(digest) = &digest
+            && self.saved_content_digest_matches(&uri, digest)
+        {
+            self.handle_document_quarantine_transition(&uri, transition, decision_version)
+                .await;
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    "ripr didSave deduplicated: saved content is unchanged since the last recorded save; no refresh scheduled",
+                )
+                .await;
+            return;
+        }
+        // Only the saved document's own resolution can change; a deduplicated
+        // save returned above and leaves every cached key warm.
+        self.invalidate_rust_index_key(&uri);
+        match digest {
+            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
+            None => self.advance_workspace_revision(),
+        }
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
+            .await;
+        // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
+        // Diff-scoped findings are complete; seams run on explicit refresh only.
+        self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
+            .await;
     }
 
     /// Withdraw a dirty document's line-local diagnostics (#1970/#7771):
@@ -6773,6 +6884,7 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         self.trace_inbound("notification", "initialized", None)
             .await;
+        self.code_lens_refresh_armed.store(true, Ordering::SeqCst);
         let supports_dynamic_registration = self
             .dynamic_file_watch_registration
             .lock()
@@ -7349,21 +7461,22 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.handle_document_quarantine_transition(&uri, transition, decision_version)
-            .await;
         // An external rewrite (formatter, `git checkout`, a coding agent) that
         // the client reloads into an open buffer arrives as a change with no
         // `didSave`, so the evidence would stay paused behind advice to save
         // a file that is not dirty. When the new buffer is exactly the file
         // on disk it is saved content: record it as a save so the normal
-        // digest dedup and refresh path analyze it.
+        // digest dedup and refresh path analyze it. The change edge is
+        // handed to the save so the client receives one marker for this
+        // version, naming the saved-content state (#15316), instead of a
+        // "buffer diverges" marker followed by a same-version re-clear.
         if self.buffer_equals_unanalyzed_disk_content(&uri) {
-            self.did_save(DidSaveTextDocumentParams {
-                text_document: TextDocumentIdentifier { uri },
-                text: None,
-            })
-            .await;
+            self.register_save(uri, None, Some((transition, decision_version)))
+                .await;
+            return;
         }
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
+            .await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -7429,65 +7542,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        // Deduplicate by saved-content input identity (#1908): a save whose
-        // bytes did not change since the last recorded save cannot change
-        // analysis input, so it neither advances the workspace revision nor
-        // schedules a refresh. The save event is still disclosed.
-        let uri = params.text_document.uri;
-        // With includeText: false the save identity would come from the
-        // retained buffer — but only while that buffer is still a
-        // synchronization authority. After a rejected incremental change
-        // (#1746) the client's persisted document may diverge from the frozen
-        // buffer, so the save carries no observable identity: adopt none
-        // rather than invent one from text the server cannot trust.
-        let text = if self.document_buffer_authority_unknown(&uri) {
-            params.text.clone()
-        } else {
-            params.text.clone().or_else(|| self.document_text(&uri))
-        };
-        let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
-        // Update the per-document saved-content identity and quarantine
-        // state first (#1970): the dedup decision below gates the refresh,
-        // never the quarantine lift. A save whose buffer again matches the
-        // analyzed saved content re-serves the document even when no
-        // refresh is scheduled. A failed store lock means the save was never
-        // registered; skip every downstream mutation so the store, the
-        // dedup ledger, and the committed snapshot cannot diverge.
-        let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
-        else {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    "ripr didSave dropped: the document store is unavailable; the save was not registered and no refresh was scheduled",
-                )
-                .await;
-            return;
-        };
-        if let Some(digest) = &digest
-            && self.saved_content_digest_matches(&uri, digest)
-        {
-            self.handle_document_quarantine_transition(&uri, transition, decision_version)
-                .await;
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    "ripr didSave deduplicated: saved content is unchanged since the last recorded save; no refresh scheduled",
-                )
-                .await;
-            return;
-        }
-        // Only the saved document's own resolution can change; a deduplicated
-        // save returned above and leaves every cached key warm.
-        self.invalidate_rust_index_key(&uri);
-        match digest {
-            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
-            None => self.advance_workspace_revision(),
-        }
-        self.handle_document_quarantine_transition(&uri, transition, decision_version)
-            .await;
-        // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
-        // Diff-scoped findings are complete; seams run on explicit refresh only.
-        self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
+        self.register_save(params.text_document.uri, params.text, None)
             .await;
     }
 
@@ -9331,6 +9386,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         }
         DocumentStalenessReason::NoAnalyzedSavedContent => {
             "save the file if it is new, then refresh (`ripr.refresh`)"
+        }
+        DocumentStalenessReason::SavedContentNotYetAnalyzed => {
+            "they return when ripr analyzes the saved file; run `ripr.refresh` if they do not"
         }
     };
     format!(

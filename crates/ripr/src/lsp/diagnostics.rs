@@ -1080,6 +1080,10 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
             "save_then_refresh",
             "Save the file if it is new, then refresh (`ripr.refresh`) so ripr can restore them.",
         ),
+        DocumentStalenessReason::SavedContentNotYetAnalyzed => (
+            "await_analysis_or_refresh",
+            "They return when ripr analyzes the saved file; run `ripr.refresh` if they do not.",
+        ),
     };
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
@@ -2137,7 +2141,9 @@ fn append_withheld_preview_diagnostics(
             classes.dedup();
             withheld_static_gap_diagnostic(anchor.range, count, &classes, recovery, &path)
         };
+        let marker_range = marker.range;
         let entry = grouped.entry(uri).or_default();
+        let marker_index = entry.len();
         entry.push(marker);
         // Name WHICH preview changes lack a visible gap (#13442): one passive
         // row per distinct changed line, bounded per snapshot by the same cap.
@@ -2153,9 +2159,6 @@ fn append_withheld_preview_diagnostics(
                 .push(member);
         }
         for line_members in by_line.into_values() {
-            if rows_left == 0 {
-                break;
-            }
             let Some(representative) = line_members.first() else {
                 continue;
             };
@@ -2168,10 +2171,62 @@ fn append_withheld_preview_diagnostics(
                 origins,
             )
             .range;
-            entry.push(withheld_preview_row_diagnostic(range, &line_members, &path));
+            let row = withheld_preview_row_diagnostic(range, &line_members, &path);
+            // One hint per range (#15315): the marker is anchored on the
+            // first withheld finding, so that line's row would stack a second
+            // hint on the same range. Fold the row into the marker instead;
+            // it spends no row slot because it adds no diagnostic.
+            if range == marker_range
+                && let Some(marker) = entry.get_mut(marker_index)
+                && fold_withheld_preview_row_into_marker(marker, &row)
+            {
+                continue;
+            }
+            if rows_left == 0 {
+                break;
+            }
+            entry.push(row);
             rows_left -= 1;
         }
     }
+}
+
+/// Fold the per-line row that shares the file marker's range into the marker
+/// (#15315): the marker keeps its file-level count, recovery and
+/// `preview_findings_withheld` kind, gains the row's line naming in its text,
+/// and records the row's class summary under `data.line`. Still passive: no
+/// finding id, repair, witness or actionability data is added. Only a
+/// preview marker absorbs a row: any other marker (the static-gap
+/// `gap_findings_withheld` disclosure) is left untouched and the call
+/// returns `false`, so the caller keeps the row as its own diagnostic.
+fn fold_withheld_preview_row_into_marker(marker: &mut Diagnostic, row: &Diagnostic) -> bool {
+    let is_preview_marker = marker
+        .data
+        .as_ref()
+        .and_then(|data| data.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        == Some("preview_findings_withheld");
+    if !is_preview_marker {
+        return false;
+    }
+    let row_body = row
+        .message
+        .split_once(": ")
+        .map_or(row.message.as_str(), |(_, body)| body);
+    marker.message = format!("{}. This line: {row_body}", marker.message);
+    if let (Some(serde_json::Value::Object(marker_data)), Some(row_data)) =
+        (marker.data.as_mut(), row.data.as_ref())
+    {
+        marker_data.insert(
+            "line".to_string(),
+            serde_json::json!({
+                "class": row_data.get("class"),
+                "classes": row_data.get("classes"),
+                "count": row_data.get("count"),
+            }),
+        );
+    }
+    true
 }
 
 /// A passive per-line disclosure for one withheld preview finding (#13442).
@@ -5045,6 +5100,7 @@ mod seam_diagnostic_tests {
 
     fn related_grip(name: &str, file: &str, line: usize) -> std::sync::Arc<RelatedTestGrip> {
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from(file),
             line,
@@ -7560,7 +7616,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            2,
+            1,
             "*_unknown preview findings must disclose on the pull channel"
         );
 
@@ -7571,7 +7627,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            2,
+            1,
             "static-limited preview findings must disclose on the pull channel"
         );
 
@@ -7585,8 +7641,8 @@ mod diagnostic_policy_tests {
             .values()
             .flatten()
             .count(),
-            2,
-            "one file marker plus one passive line row"
+            1,
+            "one file marker with its only line row folded in (#15315)"
         );
 
         let mut stale = preview;
@@ -7678,7 +7734,9 @@ mod diagnostic_policy_tests {
                 .iter()
                 .map(|row| row.range.start.line)
                 .collect::<Vec<_>>();
-            if lines != vec![6, 39] {
+            // The anchor line (6) folds into the file marker (#15315); only
+            // the later line keeps its own row.
+            if lines != vec![39] {
                 return Err(format!("{file}: one row per distinct line: {lines:?}"));
             }
             for row in rows {
@@ -7713,6 +7771,108 @@ mod diagnostic_policy_tests {
                 .ok_or("late row")?;
             if !late_row.message.contains("no_static_path") {
                 return Err(format!("{file}: class must be named: {late_row:?}"));
+            }
+            let markers = grouped
+                .values()
+                .flatten()
+                .filter(|diagnostic| {
+                    diagnostic.data.as_ref().and_then(|data| data.get("kind"))
+                        == Some(&serde_json::json!("preview_findings_withheld"))
+                })
+                .collect::<Vec<_>>();
+            let [marker] = markers.as_slice() else {
+                return Err(format!("{file}: one file marker expected: {markers:?}"));
+            };
+            let line = marker
+                .data
+                .as_ref()
+                .and_then(|data| data.get("line"))
+                .ok_or("the folded marker must carry the anchor line summary")?;
+            if marker.range.start.line != 6
+                || !marker.message.starts_with("preview: 3 preview ")
+                || !marker.message.contains("This line: weakly_exposed for ")
+                || !marker.message.contains("(2 changes on this line)")
+                || !marker.message.ends_with("not an actionable gap")
+                || line["count"] != 2
+            {
+                return Err(format!(
+                    "{file}: anchor row must fold into the marker: {marker:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #15315 negative: only the preview marker absorbs a line row; the
+    /// static-gap marker never gains `This line:` text or `data.line`.
+    #[test]
+    fn withheld_static_gap_marker_never_absorbs_a_line_row() {
+        let finding = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:p");
+        let row = withheld_preview_row_diagnostic(Range::default(), &[&finding], "a.py");
+        let mut gap_marker = withheld_static_gap_diagnostic(
+            Range::default(),
+            1,
+            &["no_static_path"],
+            "recover",
+            "a.py",
+        );
+        let before = gap_marker.clone();
+        assert!(!fold_withheld_preview_row_into_marker(
+            &mut gap_marker,
+            &row
+        ));
+        assert_eq!(gap_marker, before, "a gap marker must stay untouched");
+        let mut preview_marker =
+            withheld_preview_diagnostic(Range::default(), Some("python"), 1, "recover", "a.py");
+        assert!(fold_withheld_preview_row_into_marker(
+            &mut preview_marker,
+            &row
+        ));
+        assert!(preview_marker.message.contains("This line: "));
+    }
+
+    /// #15315: the file marker is anchored on the first withheld finding, so
+    /// the row for that line used to stack a second Hint on the same range.
+    /// Every withheld-preview hint in a file must own a distinct range.
+    #[test]
+    fn withheld_preview_hints_never_share_a_range() -> Result<(), String> {
+        for (language, file) in [
+            (LanguageId::Python, "src/click/utils.py"),
+            (LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            for findings in [
+                vec![preview_policy_finding(language, file, 58, "probe:only")],
+                vec![
+                    preview_policy_finding(language, file, 58, "probe:a"),
+                    preview_policy_finding(language, file, 58, "probe:b"),
+                    preview_policy_finding(language, file, 90, "probe:c"),
+                ],
+            ] {
+                let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+                if grouped.is_empty() {
+                    return Err(format!("{file}: fixture must be withheld"));
+                }
+                for diagnostics in grouped.values() {
+                    let mut ranges = diagnostics
+                        .iter()
+                        .map(|diagnostic| {
+                            (
+                                diagnostic.range.start.line,
+                                diagnostic.range.start.character,
+                                diagnostic.range.end.line,
+                                diagnostic.range.end.character,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let total = ranges.len();
+                    ranges.sort_unstable();
+                    ranges.dedup();
+                    if ranges.len() != total {
+                        return Err(format!(
+                            "{file}: one hint per range expected: {diagnostics:?}"
+                        ));
+                    }
+                }
             }
         }
         Ok(())
@@ -7914,7 +8074,10 @@ mod diagnostic_policy_tests {
         b.probe.location.column = 20;
         a.probe.owner = Some(crate::domain::SymbolId("alpha_fn".to_string()));
         b.probe.owner = Some(crate::domain::SymbolId("beta_fn".to_string()));
-        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[a, b]);
+        // An earlier anchor finding keeps the file marker off line 5, so the
+        // aggregated line keeps its own row rather than folding (#15315).
+        let anchor = preview_policy_finding(LanguageId::Python, "a.py", 2, "probe:anchor");
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[anchor, a, b]);
         let rows = row_diagnostics(&grouped);
         let [row] = rows.as_slice() else {
             return Err(format!("one aggregated row expected: {rows:?}"));
