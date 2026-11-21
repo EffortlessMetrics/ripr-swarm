@@ -47,8 +47,14 @@ pub(super) struct FoldReport {
 }
 
 pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
+    fold_changelog_in(Path::new("."), args)
+}
+
+/// The whole command against `root`, so a test can drive the same path the
+/// CLI takes.
+pub(super) fn fold_changelog_in(root: &Path, args: &[String]) -> Result<(), String> {
     let options = parse_args(args)?;
-    let report = fold_checked(Path::new("."), &options)?;
+    let report = fold_checked(root, &options)?;
     let verb = if options.write {
         "folded"
     } else {
@@ -75,7 +81,7 @@ pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
             println!("{warning}");
         }
         if options.write {
-            let violations = changelog_fragment_violations(Path::new("."), true)?;
+            let violations = changelog_fragment_violations(root, true)?;
             if !violations.is_empty() {
                 return Err(format!(
                     "release-cut check failed after the fold:\n  {}",

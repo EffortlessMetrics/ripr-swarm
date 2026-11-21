@@ -1,5 +1,5 @@
 use super::{
-    ADMISSION_FILE_CAP, FoldOptions, fold_checked, fold_in, fold_text,
+    ADMISSION_FILE_CAP, FoldOptions, fold_changelog_in, fold_checked, fold_in, fold_text,
     oversize_release_cut_warning, parse_args,
 };
 use crate::policy::changelog_fragments::changelog_fragment_violations;
@@ -254,6 +254,47 @@ fn a_tree_the_check_refuses_is_refused_before_any_write() -> Result<(), String> 
     assert_eq!(unchecked.folded.len(), 1);
     assert!(!root.join("changelog.d/a-new.md").exists());
     fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn the_command_itself_refuses_before_any_write_and_folds_a_clean_tree() -> Result<(), String> {
+    // The command entry point, not only `fold_checked`: a command that
+    // called the unchecked fold would write the first tree.
+    let untraceable = CHANGELOG.replace("- Old change (#1).", "- Old change.");
+    let fragment = frag("Fixed", "- A new fix (#11).\n");
+    for flags in [
+        &["--write", "--limit", "149"][..],
+        &["--write", "--release-cut"],
+    ] {
+        let root = checked_root(&untraceable, &[("a-new.md", fragment.clone())])?;
+        let err = fold_changelog_in(&root, &args(flags))
+            .err()
+            .ok_or_else(|| format!("{flags:?}: expected the command to refuse"))?;
+        assert!(err.contains("nothing written"), "{flags:?}: {err}");
+        assert_eq!(
+            fs::read_to_string(root.join("CHANGELOG.md")).map_err(|e| e.to_string())?,
+            untraceable,
+            "{flags:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("changelog.d/a-new.md")).map_err(|e| e.to_string())?,
+            fragment,
+            "{flags:?}"
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+
+        let root = checked_root(CHANGELOG, &[("a-new.md", fragment.clone())])?;
+        fold_changelog_in(&root, &args(flags))?;
+        assert!(!root.join("changelog.d/a-new.md").exists(), "{flags:?}");
+        assert!(
+            fs::read_to_string(root.join("CHANGELOG.md"))
+                .map_err(|e| e.to_string())?
+                .contains("- A new fix (#11)."),
+            "{flags:?}"
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
