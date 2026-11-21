@@ -1,5 +1,7 @@
 pub(crate) use ripr_contract::analysis::cancellation;
 pub(crate) mod canonical_gap;
+#[cfg(test)]
+mod classification_properties;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
@@ -36,16 +38,18 @@ pub(crate) mod python_env;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
 // consumers outside `analysis` ask it instead of matching attribute text.
-pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
+pub(crate) use facts::cfg_predicates::{attribute_is_plain_test_gate, outer_attribute_end};
 // A long-lived server keeps unchanged files' parse facts in memory across
 // refreshes; one-shot commands leave this off.
 pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
+pub(crate) use pipeline::capture_disclosures;
 pub(crate) use pipeline::is_rust_excluded_by_config_detail;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
     diff_changed_python_line_limit, diff_changed_typescript_line_limit,
 };
+mod diff_intake_disclosure;
 /// Honest seam-count reports for repo-scope inventory progress (#8643).
 /// Installed by the app progress owner for the duration of one walk; the
 /// evidence pass reports `processed`/`total` here instead of inventing a
@@ -107,12 +111,13 @@ pub use diff::records::{
 };
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
-    artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head_with_parent,
-    default_base_unresolved_message, is_shallow_repository, load_diff, load_diff_core,
-    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
-    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
-    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head,
+    base_is_checked_out_head_with_parent, default_base_unresolved_message, is_shallow_repository,
+    load_diff, load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
+    load_diff_with_effective_base_core, load_worktree_diff,
+    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
+    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
+    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
     untrack_artifacts_command, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
@@ -788,26 +793,37 @@ fn uppercase_hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-/// The one renderer for a finding's file location across every surface
-/// (#5996): workspace-relative with the CLI `./` prefix when the location
+/// The shared renderer for a finding's file location (#5996):
+/// workspace-relative with the CLI `./` prefix when the location
 /// lives inside the analyzed root, its plain spelling otherwise — never the
 /// Windows verbatim `//?/` drive form, which external consumers cannot join
 /// against a workspace. A remainder containing `..` resolves outside the
 /// root, so it keeps the plain spelling too. A relative location passes
 /// through with stable separators, so a producer that already names the
-/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering on every
-/// surface.
+/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering.
 pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
     finding_location_text_with_platform(root, file, cfg!(windows))
 }
 
-/// The pure core of [`finding_location_text`]: the platform flag stands in
-/// for `cfg!(windows)` so the verbatim-prefix behavior is testable on every
-/// host, the same pure-over-platform pattern the human path renderer uses.
+/// The MCP gap spelling for matched locations, with the shared fallback.
+pub(crate) fn finding_location_text_bare(root: &Path, file: &Path) -> String {
+    render_finding_location_text(root, file, cfg!(windows), "")
+}
+
+/// The platform flag makes verbatim-prefix behavior testable on every host.
 pub(crate) fn finding_location_text_with_platform(
     root: &Path,
     file: &Path,
     windows: bool,
+) -> String {
+    render_finding_location_text(root, file, windows, "./")
+}
+
+fn render_finding_location_text(
+    root: &Path,
+    file: &Path,
+    windows: bool,
+    relative_prefix: &str,
 ) -> String {
     let file = plain_drive_verbatim_path(file, windows);
     let root = plain_drive_verbatim_path(root, windows);
@@ -824,7 +840,7 @@ pub(crate) fn finding_location_text_with_platform(
                 .any(|component| matches!(component, Component::ParentDir))
         });
     match relative {
-        Some(relative) => format!("./{}", stable_path_text(relative)),
+        Some(relative) => format!("{relative_prefix}{}", stable_path_text(relative)),
         None => stable_path_text(&file),
     }
 }

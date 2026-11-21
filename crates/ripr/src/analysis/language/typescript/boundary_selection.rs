@@ -105,8 +105,7 @@ fn token_text(tokens: &[BoundaryToken]) -> String {
     text
 }
 
-// Preserve the established arithmetic-prefix limitation, but never erase
-// computed access, calls, groups, type wrappers or nested predicate ownership.
+// Admit only operands the label reader can represent without truncation.
 fn admitted_operand(expression: &Expression<'_>) -> bool {
     match expression {
         Expression::Identifier(_)
@@ -123,9 +122,6 @@ fn admitted_operand(expression: &Expression<'_>) -> bool {
             }
             _ => false,
         },
-        Expression::BinaryExpression(binary) if binary.operator.is_arithmetic() => {
-            admitted_operand(&binary.left) && admitted_operand(&binary.right)
-        }
         Expression::UnaryExpression(unary) if matches!(unary.operator.as_str(), "+" | "-") => {
             matches!(&unary.argument, Expression::NumericLiteral(_))
         }

@@ -656,7 +656,22 @@ parameter (`storage` in the shorthand `HirLet { storage }`), and an
 assertion naming a test `let` bound from an owner call counts as calling
 the owner, but only while the test never rebinds that name: a later `let`, a
 destructuring pattern, a `for` variable or an assignment drops it (#6973), so
-the assertion is not credited. Effect families keep their existing token rule.
+the assertion is not credited. A wildcard `let _ = tax(..)` discards the
+result and binds no identifier: an unrelated `Some(_)` pattern in an assertion
+cannot stand for that result. Named underscore bindings such as `_amount`
+remain ordinary identifiers. A wildcard's type annotation cannot shadow a
+value binding: `let _: amount = ...` preserves an earlier owner-result local
+named `amount`, even when a type alias uses the same spelling. Effect families
+keep their existing token rule.
+
+Proof for the wildcard distinction:
+`owner_binding_scan_never_treats_a_wildcard_as_a_bound_name` and
+`discarded_owner_result_cannot_confirm_an_unrelated_wildcard_assertion`.
+The public producer fixtures `wildcard_owner_discard` and `wildcard_owner_named`
+retain one finding and an extracted assertion each. Their independent
+RIPR-SPEC-0108 cases pin weak discarded-result credit and exposed named-binding
+credit, including the related test identity. The discarded assertion accepts
+both tax rates; the named assertion rejects the old nine-percent rate.
 
 The owner-return pin (#4478) is then the path that credits an exact pin
 such as `assert_eq!(sku_family("BOLT-M8"), "BOLT")`. Its return-path gate

@@ -84,7 +84,11 @@ Lower rank values are selected first. The final identities make ties stable.
 Per-document and workspace item limits are applied before serialized-byte
 limits. If the first eligible item alone exceeds the byte budget, it remains
 selected so the canonical item is never silently hidden; the result remains
-explicitly overflowed.
+explicitly overflowed. The exception permits only that lone first item: later
+items, including zero-byte items, are omitted while the selected total exceeds
+the limit. A sum that exceeds `usize::MAX` is above every admitted byte limit,
+including a limit of `usize::MAX`; saturating accounting must not admit it.
+Exactly fitting totals remain selectable when count limits permit.
 
 Inline detail that exceeds its limit does not remove its canonical item. The
 item remains selected with 'inline_detail_omitted', and a later typed retrieval
@@ -214,6 +218,29 @@ previous-result controls live in
 Its parity test reads a framed push publication from the real committed-snapshot
 restoration path and compares the complete payload with both pull handlers for
 document, workspace and byte overflow. It does not qualify the editor package.
+
+### Bounded scalar assurance (#12109)
+
+`diagnostic_budget/kani_proofs.rs::budget_item_limits_hold_over_walk` specifies
+one combined four-item walk across two documents, with document/workspace
+limits in `1..=3`, positive byte/detail limits and arbitrary `usize` payloads
+and details. The walk commits actual selected payloads. Independent `u128`
+arithmetic checks exact selection, omission-reason priority, counts, bytes,
+and detail flags, including the maximum admitted byte limit. Reachability
+covers require document-plus-byte pressure and workspace-plus-byte pressure,
+as well as a maximum-limit byte refusal. The byte-only harness retains its
+separate claim without excluding `usize::MAX`.
+
+`diagnostic_budget/budget_composition_tests.rs` supplies ordinary parity:
+73,728 finite four-step scalar walks, plus actual evaluator controls for
+combined document/byte omissions, exact fit at `usize::MAX`, arithmetic
+overflow refusal, and the lone oversized first-item exception. These tests
+use declared sizes; they do not allocate payload buffers of those sizes.
+
+The scalar harnesses do not verify sorting, maps, canonical identity,
+serialization, transport, allocator behavior or filesystem/process behavior.
+Ordinary tests are not native Kani results; native assurance requires exact
+source/configuration execution and complete required covers under SPEC-0371.
 
 ## Implementation Mapping
 

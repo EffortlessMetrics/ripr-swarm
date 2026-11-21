@@ -84,6 +84,13 @@ pub(crate) struct Binding {
 
 pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
     Binding {
+        schema_path: "schemas/ripr/agent-brief.schema.json",
+        pointer: None,
+        corpus: Corpus::FileName("agent-brief.json"),
+        edge_fixtures: &[],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/muse-plugin-eval.schema.json",
         pointer: None,
         corpus: Corpus::Exempt(
@@ -137,10 +144,35 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/agent-status.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_status_json_conforms_at_every_stage_of_a_repair_loop in crates/ripr/tests/agent_status_json_schema.rs validates the real CLI bytes for a fresh workspace, an attempt awaiting its edit, a finished attempt with an issued receipt and a failed attempt, and published_agent_status_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-status.valid.json"],
+        // The VS Code extension's attempt-inventory stimulus is hand-written
+        // and trimmed to the fields `parseAttemptInventory` reads (no
+        // artifacts, no baseline or receipt fields), so it is not producer
+        // output and does not conform.
+        excluded: &[(
+            "editors/vscode/test-fixtures/attempt-status/inventory.json",
+            "hand-written VS Code extension stimulus for parseAttemptInventory, trimmed to the fields the extension reads; not ripr output",
+        )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/cache-export.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: cache_export_json_conforms_and_counts_what_it_copied in crates/ripr/tests/cache_export_json_schema.rs validates the real CLI bytes of an export and holds its counts to the directory it names, cache_export_without_a_cache_writes_no_json pins that a failed export writes no JSON, and published_cache_export_schema_rejects_documents_it_forbids is the negative experiment; the report names a host-absolute directory, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cache-export.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/cache-status.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
-            "narrower authority: cache_status_json_conforms_to_the_published_schema_in_every_portable_state and cache_status_json_through_a_symlink_conforms_and_reports_the_real_directory in crates/ripr/tests/cache_clear_safety.rs validate the real CLI bytes of the not_found, ok, unavailable and aliased states, and published_cache_status_schema_rejects_documents_it_forbids is the negative experiment; the document carries the host's absolute cache directory, so the committed fixture is hand-written",
+            "narrower authority: cache_status_json_conforms_to_the_published_schema_in_every_portable_state and cache_status_json_through_a_symlink_conforms_and_reports_the_real_directory in crates/ripr/tests/cache_clear_safety.rs validate the real CLI bytes of the not_found, ok, unavailable and aliased states, and published_cache_status_schema_rejects_documents_it_forbids is the negative experiment; the document carries a host-specific cache path, so the committed fixture is hand-written",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/cache-status.valid.json"],
         excluded: &[],

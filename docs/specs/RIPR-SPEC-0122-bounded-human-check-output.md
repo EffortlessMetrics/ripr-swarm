@@ -153,6 +153,14 @@ digest, limitation, and outcome schema forms it already rendered (the
 bounded-only triage sentence was never part of that surface), JSON is
 unchanged, and `ripr explain` keeps the exact schema tokens.
 
+`ripr explain`'s Evidence window skips a function-argument source-value row
+when a missing-discriminator reason already lists the same name and value in
+its `observed <name> values:` segment, since the Weakness line right below
+prints that fact (#15421). The skip applies only while the source-value window
+is untruncated, so a `showing N of M` row stays true, and a skipped row still
+counts as an added row, so the literal evidence fallback stays off.
+`human-full`, JSON and agent output keep every row.
+
 The trailing block is state-dependent, because a `Hidden:` heading over a
 literal `0 lower-priority finding(s) omitted` line claims a suppressed
 remainder that does not exist:
@@ -229,12 +237,15 @@ Omitted findings that share file, owner, class, currentness label and reason
 (findings with no resolved owner never group)
 print as one row that names the members' lines, the count, the owner and the
 kinds. The lines print as their consecutive runs (`3, 5` or `10-12, 15`)
-when there are at most three runs, so a row never names a line that no member
-is on; more runs print the covering span with the distinct line count
-(`1078-1241 (31 distinct lines)`) (#14682). For example:
+when there are at most three runs, so such a row never names a line that no
+member is on. More runs print the covering span with the count of distinct
+member lines inside it, not the span length (`1078-1241 (5 distinct lines)`
+means 5 member lines somewhere in the 164-line span); that fallback row can
+name lines between members that no member is on (#14682). The fallback shape is
+pinned end to end by `fixtures/hidden_row_span_fallback`. For example:
 
 ```text
-- src/lib.rs:1078-1241 (31 distinct lines) (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+- src/lib.rs:1078-1241 (5 distinct lines) (weak, lower-priority candidate); 7 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
 ```
 
 Members that share line and kind keep the single
@@ -492,10 +503,11 @@ limited to seams whose kind matches `--kind` (the one seam kind each of the
 four families names: `predicate` boundary, `return_value`, `error_path` error
 variant, `match_arm`), so a seam of another kind never answers for the
 finding. Two equally near seams of that kind whose source spans do not nest
-(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed, and
-the stub is placed inline (integration-file placement needs classified
-evidence and stays with `--seam-id`). The block is printed only when the
-resolver produces a stub. When it refuses, the block is replaced by one line,
+(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed.
+Concrete match arms use their parser ranges, so a long pattern cannot make
+its sibling arm on the same line appear nested. The stub is placed inline
+(integration-file placement needs classified evidence and stays with
+`--seam-id`). The block is printed only when the resolver produces a stub. When it refuses, the block is replaced by one line,
 `No test stub here: <reason>`, naming the producer's refusal. When that
 finding also prints no repair start, one further line follows (#10710):
 `Write this test by hand: <what to call and assert>. ripr has no repair
@@ -528,6 +540,10 @@ does a finding whose expression is not on disk in the function holding its
 line (a `--diff` patch that disagrees with the checkout, or a removed line). Only the
 default human format runs the resolver; JSON and `human-full` output are
 unchanged.
+
+A direct `ripr agent stub --at` value with two numeric suffixes
+(`src/lib.rs:12:4`) is refused with the `FILE:LINE` form and an example rather
+than read as a path ending in `:12` (#15259).
 
 When the file has seams but the function has none of the requested family,
 a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
@@ -800,7 +816,13 @@ consumers parse the old body. An old line with a second `=>` (two arms on one
 line, or a nested match in the body) is never cut: arm selection cannot tell
 which arm changed there and keeps that arm's selection unknown. A changed
 `match` scrutinee is cut the same way (`match kind` rather than
-`match kind {`). Otherwise `before` keeps the whole old line. The same
+`match kind {`). Otherwise `before` keeps the whole old line. Classifiers
+rebuild the old owner from `before`, so the producer never cuts it when the
+edit reaches past the shape. When a predicate's block body changed too
+(`if total >= 100 { total - 10 }` to `if total > 200 { total - 25 }`), the
+human `Changed` block prints the whole old line and the new condition, with a
+note that the after side is the condition only and where the new line is
+(#15420), the same way a head-only match arm row does (#9244). The same
 `before` reaches the MCP `changed_behavior.before` field and the LSP
 diagnostic witness; `ripr check --format json` never serializes
 `probe.before`, so it is unchanged.
@@ -809,7 +831,8 @@ diagnostic witness; `ripr check --format json` never serializes
 
 Repository text (assertion source, test names, observed values, paths) reaches
 the human reports verbatim. Every human report printed to a terminal (`check`
-default and `--format human-full`, `explain`) passes through one final escape:
+default and `--format human-full`, `explain`, the human `ripr diff` report and
+the `ripr pilot` terminal summary) passes through one final escape:
 control characters other than newline and tab, and the bidi
 formatting characters (U+061C, U+200E/F, U+202A-E, U+2066-9), print as `\u{XX}`.
 A repository therefore cannot clear the screen, retitle the window, overwrite a
@@ -1160,8 +1183,11 @@ already be tested, so reading it as a gap would be a wrong actionable signal.
 
 `ripr explain <finding> --format agent` prints the selected finding in the
 `check --format agent` line style: one record, its strongest related test, at
-most one `limit=` line, exactly one terminal line, and a scope-bound
-`next=ripr context ...` command. The terminal states are:
+most one `limit=` line, `owner=` and `before=` lines when the producer recorded
+them (plus a `seen=` line of observed test inputs when `next=` is omitted), exactly one terminal line, and a scope-bound `next=ripr context ...`
+command. `next=` is omitted only for an `open=` test-side gap that names no
+concrete missing discriminator and has at most one related test, because the
+packet then restates the record (#14298). The terminal states are:
 
 - `open=` only for a candidate-current, unsuppressed test-side gap (or a
   reach-only limit that still carries a weak related test), using the same
@@ -1218,6 +1244,10 @@ report with zero records still carries its route.
 - `crates/ripr/tests/weak_reach_hint.rs::guard_refusal_does_not_override_unestablished_reach` — guard refusal positive and unestablished-reach controls (#7330).
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_keeps_context_pointer_when_the_packet_holds_more`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_prints_observed_inputs_only_when_it_drops_the_context_pointer`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_before_line_is_omitted_when_it_repeats_the_expression`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value`

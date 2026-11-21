@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A predicate edited from `n == 1` to `n == 1 || n == 2` on a primitive integer parameter, or from `c == ','` to `c == ',' || c == ';'` on a `char` parameter, now reads infection `yes` when a related test passes exactly the new literal, as the string form already did. When such a chain (string, integer or char) is the owner's returned tail, propagation now reads `yes` too, so a test that passes the new literal and asserts the result reads `exposed` instead of `infection_unknown` or `propagation_unknown` (#15027).

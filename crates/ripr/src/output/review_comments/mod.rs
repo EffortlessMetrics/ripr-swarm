@@ -516,9 +516,10 @@ pub(crate) fn gap_ledger_analysis_scope_json(
     records: &[crate::output::gap_decision_ledger::GapRecord],
     coverage: Option<&Value>,
     refusal: &[String],
+    owner_opt_outs: Option<&Value>,
 ) -> Value {
-    if let Some(coverage) = coverage {
-        return json!({
+    let mut scope = if let Some(coverage) = coverage {
+        json!({
             "scope": "rust_workspace_complete",
             "run_status": "complete",
             "basis": "repo_exposure_complete_run",
@@ -526,13 +527,21 @@ pub(crate) fn gap_ledger_analysis_scope_json(
             "records_total": records.len(),
             "records_digest": coverage.get("records_digest").cloned().unwrap_or(Value::Null),
             "downstream_consumable": true,
-        });
-    }
-    let mut scope = analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
-    // Why a disclosed workspace coverage was refused (additive, inert to
-    // consumers): the input classes that differ from the ledger's disclosure.
-    if !refusal.is_empty() {
-        scope["coverage_refused"] = json!(refusal);
+        })
+    } else {
+        let mut scope =
+            analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
+        // Why a disclosed workspace coverage was refused (additive, inert to
+        // consumers): the input classes that differ from the ledger's disclosure.
+        if !refusal.is_empty() {
+            scope["coverage_refused"] = json!(refusal);
+        }
+        scope
+    };
+    // #14898: what the analyzed scope withheld by an owner opt-out, verbatim
+    // from the ledger. A baseline entry it names is withheld, not resolved.
+    if let Some(disclosure) = owner_opt_outs {
+        scope["owner_opt_outs"] = disclosure.clone();
     }
     scope
 }
@@ -581,6 +590,43 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("  - state: `open`"), "{rendered}");
+    }
+
+    /// #15378: card commands carry the shared translator's PowerShell pair,
+    /// and a command PowerShell runs unchanged gets none.
+    #[test]
+    fn comments_markdown_pairs_commands_with_their_powershell_form() {
+        let redirecting = "ripr agent brief --root . --seam-id s1 --json > 'my dir/brief.json'";
+        let items = json!([{
+            "seam_id": "s1",
+            "reason": "r",
+            "gap_state": "open",
+            "llm_guidance": {
+                "command": redirecting,
+                "analysis_outcome_command": "ripr check --root . --format json"
+            }
+        }]);
+        let mut lines = Vec::new();
+        push_markdown_items(&mut lines, "Inline", Some(&items));
+        let rendered = lines.join("\n");
+        let pair =
+            crate::output::markdown::powershell_text_variant(redirecting).unwrap_or_default();
+        assert!(
+            !pair.is_empty(),
+            "a redirecting command needs a PowerShell form"
+        );
+        assert!(
+            rendered.contains(&format!("  - command (PowerShell): {}", code_span(&pair))),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("  - analysis_outcome_command: `ripr check --root . --format json`"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("analysis_outcome_command (PowerShell)"),
+            "{rendered}"
+        );
     }
 
     /// #4586: an absent path with Markdown-active characters must stay inside

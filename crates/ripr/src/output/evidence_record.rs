@@ -6,6 +6,7 @@
 //! baselines, or change seam grip classifications.
 
 use crate::agent::loop_commands::{
+    PILOT_AFTER_SNAPSHOT_ARTIFACT, PILOT_BEFORE_SNAPSHOT_ARTIFACT,
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
     shell_arg,
@@ -377,7 +378,7 @@ pub(crate) fn evidence_record_for(
 /// against the attempt's retained before snapshot rather than any path the
 /// document itself names, #4379). The command flows into every verify
 /// projection — `recommendation.verify_command`,
-/// `canonical_item.verify_command`, and the parsed
+/// `canonical_item.verify_command`, and the typed
 /// `canonical_item.command_specs.verify` — so the three cannot disagree.
 pub(crate) fn evidence_record_with_verify_command(
     entry: &ClassifiedSeam,
@@ -394,9 +395,8 @@ pub(crate) fn evidence_record_with_verify_command(
 
 /// [`evidence_record_with_verify_command`] for a verify display bound to a
 /// selected root (#3948, #3999). The display names the concrete root so it
-/// replays from any directory; typed recovery binds that same root, so the
-/// parsed `command_specs.verify` keeps the portable argv and a display whose
-/// root was substituted afterwards still fails closed.
+/// replays from any directory. The producer's `command_specs.verify` keeps
+/// portable argv and is present only for a matching snapshot route.
 pub(crate) fn evidence_record_with_bound_verify_command(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
@@ -745,13 +745,7 @@ fn canonical_item_for(
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            // The verify display is the portable `--root .` shape or one
-            // bound to `verify_root`; recovery binds the same root, so either
-            // yields the portable argv.
-            .and_then(|display| {
-                crate::agent::command_specs::agent_command_spec_from_display(display, verify_root)
-                    .or_else(|| bound_snapshot_verify_spec(display, verify_root))
-            }),
+            .and_then(|display| snapshot_verify_spec(display, verify_root)),
         receipt_command_spec: evidence_state.is_actionable().then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
                 ".",
@@ -764,31 +758,27 @@ fn canonical_item_for(
     }
 }
 
-/// Typed spec for the producer's own bound snapshot verify display (#3948).
-/// A root carrying shell punctuation (`&`, `$`, ...) renders quoted and
-/// pastes correctly, but display recovery refuses those characters in any
-/// word. The producer knows its inputs, so it rebuilds the display from them
-/// and grants the trusted spec only on a byte-for-byte match; any other or
-/// substituted display still recovers nothing.
-///
-/// The rebuild uses the same `root_display` builder the display itself
-/// came from, not a fresh bind (#7937): a rooted selected root such as
-/// `/tmp/repo` is absolute on POSIX but only rooted on Windows, where
-/// binding re-spelled it against the process drive and the producer's own
-/// display failed its own byte-match, losing every typed spec. `root_display`
-/// binds absolute roots, keeps the portable relative spellings verbatim, and
-/// agrees with the display on every host and input family.
-fn bound_snapshot_verify_spec(
-    display: &str,
-    verify_root: &std::path::Path,
-) -> Option<crate::domain::CommandSpec> {
+/// Construct argv from the snapshot producer's paths and require its exact
+/// display before attaching it to the record. Other displays remain copyable.
+fn snapshot_verify_spec(display: &str, verify_root: &std::path::Path) -> Option<CommandSpec> {
+    use crate::agent::command_specs::{PORTABLE_ROOT, agent_verify_command_spec};
+
     let root = crate::agent::loop_commands::root_display(&verify_root.to_string_lossy());
-    let spec = crate::agent::command_specs::agent_verify_command_spec(
-        &root,
-        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-        None,
-    );
+    let spec = if root == PORTABLE_ROOT && display == VERIFY_COMMAND {
+        agent_verify_command_spec(
+            PORTABLE_ROOT,
+            PILOT_BEFORE_SNAPSHOT_ARTIFACT,
+            PILOT_AFTER_SNAPSHOT_ARTIFACT,
+            None,
+        )
+    } else {
+        agent_verify_command_spec(
+            &root,
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            None,
+        )
+    };
     (spec.display == display && spec.validate().is_ok()).then_some(spec)
 }
 
@@ -1025,7 +1015,8 @@ fn alignment_confidence_for(
 /// test reaches the seam. Eligibility and the limitation projection share
 /// this one decision.
 fn activation_follows_absent_reach(entry: &ClassifiedSeam) -> bool {
-    matches!(entry.evidence.reach.state, StageState::No)
+    entry.evidence.activate.static_limit_kind.is_none()
+        && matches!(entry.evidence.reach.state, StageState::No)
         && matches!(entry.evidence.activate.state, StageState::Unknown)
         && (entry
             .evidence
@@ -1306,7 +1297,8 @@ pub(crate) fn static_limitations_for(
     if matches!(entry.class, SeamGripClass::Opaque) {
         let reason =
             "seam is classified opaque; inspect static evidence before writing a focused test";
-        let category = static_limitation_category("classification", "opaque", reason).as_str();
+        let category =
+            legacy_static_limitation_category("classification", "opaque", reason).as_str();
         limitations.push(EvidenceRecordStaticLimitation {
             stage: "classification".to_string(),
             state: "opaque".to_string(),
@@ -1425,14 +1417,16 @@ fn push_stage_limitation(
         // "macro" mention as `macro_generated_value` and would otherwise
         // steal this row. Honor the producer token only on the reach stage so
         // examples 21/22 (snapshot/mock/generated name inference) stay out.
-        let category = if panic_unresolved {
+        let category = if let Some(kind) = evidence.static_limit_kind {
+            StageLimitationCategory::from_kind(stage, kind)
+        } else if panic_unresolved {
             StageLimitationCategory::Typed(StaticLimitKind::RustPanicOutcomeUnresolved)
         } else if framework_unresolved {
             StageLimitationCategory::Typed(StaticLimitKind::RustFrameworkOracleUnresolved)
         } else if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary) {
             StageLimitationCategory::Untyped(UntypedStageLimitation::OpaqueStaticEvidence)
         } else {
-            let base_category = static_limitation_category(stage, state, &evidence.summary);
+            let base_category = legacy_static_limitation_category(stage, state, &evidence.summary);
             static_limitation_category_for_entry(base_category, entry)
         }
         .as_str();
@@ -1468,6 +1462,23 @@ enum StageLimitationCategory {
 }
 
 impl StageLimitationCategory {
+    /// The stage record predates several finding tokens and retains its wire vocabulary.
+    fn from_kind(stage: &str, kind: StaticLimitKind) -> Self {
+        use UntypedStageLimitation as U;
+        match kind {
+            StaticLimitKind::MockedModule => Self::Untyped(U::UnsupportedMockShape),
+            StaticLimitKind::Metaprogramming => Self::Untyped(U::MacroGeneratedValue),
+            StaticLimitKind::OpaqueCustomAssertionHelper => Self::Untyped(U::OpaqueHelperCall),
+            StaticLimitKind::RustMacroReachUnresolved
+            | StaticLimitKind::RustMacroWrappedTestCallUnresolved
+                if stage == "reach" =>
+            {
+                Self::Untyped(U::OpaqueStaticEvidence)
+            }
+            _ => Self::Typed(kind),
+        }
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Self::Typed(kind) => kind.as_str(),
@@ -1530,7 +1541,11 @@ untyped_stage_limitations! {
     Unclassified => "static_limitation_unclassified",
 }
 
-fn static_limitation_category(stage: &str, state: &str, reason: &str) -> StageLimitationCategory {
+fn legacy_static_limitation_category(
+    stage: &str,
+    state: &str,
+    reason: &str,
+) -> StageLimitationCategory {
     use UntypedStageLimitation as U;
     let reason = reason.to_ascii_lowercase();
     let untyped = if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
@@ -3266,10 +3281,10 @@ mod tests {
     /// The default family is the editor pilot family (pinned above); a
     /// producer whose document writes its own snapshots replaces the family
     /// in every verify projection at once — `recommendation.verify_command`,
-    /// `canonical_item.verify_command`, and the parsed
+    /// `canonical_item.verify_command`, and the typed
     /// `command_specs.verify` — so the three cannot disagree (#4379).
     #[test]
-    fn verify_command_family_flows_into_every_verify_projection() -> Result<(), String> {
+    fn verify_command_family_flows_into_every_verify_projection() {
         let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
         let workflow = workflow_snapshot_verify_command();
         let json = evidence_record_json_value(&evidence_record_with_verify_command(
@@ -3289,30 +3304,39 @@ mod tests {
         let spec = &json["canonical_item"]["command_specs"]["verify"];
         assert_eq!(
             spec["human_display"], workflow,
-            "command spec must recover from the same display"
+            "command spec must carry the same published display"
         );
-        let args: Vec<String> = spec["args"]
-            .as_array()
-            .ok_or_else(|| format!("verify spec args must be an array: {spec}"))?
-            .iter()
-            .filter_map(|arg| arg.as_str().map(str::to_string))
-            .collect();
-        for family_path in [
-            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-        ] {
-            if !args.contains(&family_path.to_string()) {
-                return Err(format!(
-                    "verify spec args must read {family_path}: {args:?}"
-                ));
-            }
-        }
-        if args.iter().any(|arg| arg.contains("pilot/")) {
-            return Err(format!(
-                "workflow family must not name pilot paths: {args:?}"
-            ));
-        }
-        Ok(())
+        assert_eq!(
+            spec["args"],
+            json!([
+                "agent",
+                "verify",
+                "--root",
+                ".",
+                "--before",
+                "target/ripr/workflow/before.repo-exposure.json",
+                "--after",
+                "target/ripr/workflow/after.repo-exposure.json",
+                "--json"
+            ])
+        );
+        assert_eq!(spec["role"], "verify");
+        assert_eq!(spec["execution_mode"], "direct");
+
+        // Change exactly one snapshot argument. The same public text fields
+        // still carry the supplied display, without publishing typed argv.
+        let changed = "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/other.repo-exposure.json --json";
+        let alternate = evidence_record_json_value(&evidence_record_with_verify_command(
+            &entry,
+            None,
+            Some(changed),
+        ));
+        assert_eq!(alternate["recommendation"]["verify_command"], changed);
+        assert_eq!(alternate["canonical_item"]["verify_command"], changed);
+        assert_eq!(
+            alternate["canonical_item"]["command_specs"]["verify"],
+            Value::Null
+        );
     }
 
     /// #3948: a standalone root with shell punctuation renders a quoted,
@@ -3562,6 +3586,91 @@ mod tests {
                 json["static_limitations"][0]["repair_route"],
                 CROSS_LANGUAGE_ORACLE_VISIBILITY_REPAIR_ROUTE
             );
+        }
+    }
+
+    #[test]
+    fn typed_activation_survives_absent_reach_even_with_legacy_absence_wording() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.reach.state = StageState::No;
+        entry.evidence.activate.summary =
+            "No concrete activation values observed for seam `x`".into();
+        for (kind, expected) in [
+            (None, None),
+            (
+                Some(StaticLimitKind::ActivationBoundaryInputUnresolved),
+                Some("activation_boundary_input_unresolved"),
+            ),
+        ] {
+            entry.evidence.activate.static_limit_kind = kind;
+            let rows = static_limitations_for(&entry);
+            let categories: Vec<_> = rows
+                .iter()
+                .filter(|row| row.stage == "activate")
+                .map(|row| row.category.as_str())
+                .collect();
+            assert_eq!(categories, expected.into_iter().collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn typed_stage_aliases_keep_the_stage_wire_values() {
+        use StaticLimitKind as K;
+        for (stage, kind, expected) in [
+            (
+                "reach",
+                K::RustMacroReachUnresolved,
+                "opaque_static_evidence",
+            ),
+            (
+                "reach",
+                K::RustMacroWrappedTestCallUnresolved,
+                "opaque_static_evidence",
+            ),
+            ("activate", K::MockedModule, "unsupported_mock_shape"),
+            ("activate", K::Metaprogramming, "macro_generated_value"),
+            (
+                "discriminate",
+                K::OpaqueCustomAssertionHelper,
+                "opaque_helper_call",
+            ),
+            ("reach", K::DynamicDispatch, "dynamic_dispatch"),
+        ] {
+            assert_eq!(
+                StageLimitationCategory::from_kind(stage, kind).as_str(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn typed_stage_category_survives_summary_changes_and_legacy_stages_keep_their_category() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        for (kind, summary, expected) in [
+            (
+                Some(StaticLimitKind::RustCallFactBudget),
+                "unresolved",
+                "rust_call_fact_budget",
+            ),
+            (
+                Some(StaticLimitKind::RustCallFactBudget),
+                "mock snapshot",
+                "rust_call_fact_budget",
+            ),
+            (
+                Some(StaticLimitKind::ActivationBoundaryInputUnresolved),
+                "mock snapshot",
+                "activation_boundary_input_unresolved",
+            ),
+            (None, "mock snapshot", "unsupported_mock_shape"),
+        ] {
+            entry.evidence.activate.static_limit_kind = kind;
+            entry.evidence.activate.summary = summary.to_string();
+            let mut rows = Vec::new();
+            push_stage_limitation(&mut rows, "activate", &entry.evidence.activate, &entry);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].category, expected);
+            assert_eq!(rows[0].reason, summary);
         }
     }
 
@@ -4434,7 +4543,11 @@ mod tests {
         // Negative control: the typed arm the classifier takes for dispatch
         // prose renders the enum's own token.
         assert_eq!(
-            static_limitation_category("reach", "unknown", "dynamic dispatch hides the callee"),
+            legacy_static_limitation_category(
+                "reach",
+                "unknown",
+                "dynamic dispatch hides the callee"
+            ),
             StageLimitationCategory::Typed(StaticLimitKind::DynamicDispatch)
         );
         assert!(typed.contains("dynamic_dispatch"));
@@ -4602,7 +4715,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                static_limitation_category(stage, state, reason).as_str(),
+                legacy_static_limitation_category(stage, state, reason).as_str(),
                 expected,
                 "unexpected category for {stage}/{state}: {reason}"
             );

@@ -704,27 +704,85 @@ test "$(git -C "$SOURCE_ROOT" rev-parse HEAD)" = "$SOURCE_RELEASE_HEAD"
 PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
 test "$(git -C "$PUBLISH_STAGE" rev-parse HEAD)" = "$SOURCE_RELEASE_HEAD"
 test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
+PUBLISH_RECEIPT="$PACKET_ROOT/publish-receipt.json"
+cp "$SOURCE_ROOT/target/package/publish-receipt.json" "$PUBLISH_RECEIPT"
+verify_publish_receipt() {
+  cmp "$PUBLISH_RECEIPT" "$SOURCE_ROOT/target/package/publish-receipt.json" &&
+    jq -es --arg v "$VERSION" --arg h "$SOURCE_RELEASE_HEAD" '
+      length == 1 and (.[0] | .version == $v and .source_commit == $h and .stage_commit == $h and
+        .source_dirty == false and .verification == "packaged-check-passed" and
+        (.contract_sha256 | test("^[0-9a-f]{64}$")) and (.ripr_sha256 | test("^[0-9a-f]{64}$")))
+    ' "$PUBLISH_RECEIPT" >/dev/null
+}
+verify_publish_receipt
+```
+
+Use the following steps for a fresh publication. If either version already exists,
+or a previous upload has an uncertain outcome, start with
+[partial-publication recovery](RELEASE.md#partial-publication-recovery). Retain
+each registry response in the packet. Poll a missing version for up to six
+attempts, then stop. A returned version with different metadata stops immediately.
+When resuming in a fresh shell, restore the pinned paths and helper functions,
+set `PUBLISH_RECEIPT="$PACKET_ROOT/publish-receipt.json"`, and use the retained
+receipt and stage. Re-running the rehearsal would replace the evidence for an
+upload that already happened.
+
+```bash
+set -euo pipefail
+# [LOCAL-MUTATING] repo=packet; record a read-only crates.io version query
+verify_registry_response() {
+  jq -es --arg crate "$1" --arg v "$VERSION" --arg sha "$2" '
+    length == 1 and (.[0].version |
+      .crate == $crate and .num == $v and .checksum == $sha and .yanked == false)
+  ' "$3" >/dev/null
+}
+record_crate_version() {
+  local crate="$1" expected_sha="$2" response status attempt
+  response="$(mktemp "$PACKET_ROOT/registry-${crate}-${VERSION}.XXXXXX")" || return 1
+  for attempt in 1 2 3 4 5 6; do
+    status="$(curl -sS --max-time 10 -o "$response" -w '%{http_code}' \
+      -A "ripr-release-transaction/${VERSION} (+https://github.com/EffortlessMetrics/ripr)" \
+      "https://crates.io/api/v1/crates/${crate}/${VERSION}")" || return 1
+    case "$status" in
+      200)
+        if ! verify_registry_response "$crate" "$expected_sha" "$response"; then
+          echo "Registry identity mismatch for $crate $VERSION. Expected SHA-256 $expected_sha. Inspect $response." >&2
+          return 1
+        fi
+        mv "$response" "$PACKET_ROOT/registry-${crate}-${VERSION}.json" || return 1
+        return 0 ;;
+      404) if [ "$attempt" -lt 6 ]; then sleep 5; fi ;;
+      *) echo "crates.io returned HTTP $status for $crate $VERSION" >&2; return 1 ;;
+    esac
+  done
+  echo "crates.io has not reported $crate $VERSION after six attempts" >&2
+  return 1
+}
 ```
 
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source publish stage; explicit #1470 crate authorization only
-PUBLISH_STAGE="$SOURCE_ROOT/target/publish-stage"
+assert_live_pin_guard
+verify_publish_receipt
 test "$(tr -d '\r\n' < "$PUBLISH_STAGE/crates/ripr/.ripr-publish-stage")" = "$SOURCE_RELEASE_HEAD"
 (cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr-contract)
-(cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr)
-```
+record_crate_version ripr-contract "$(jq -er .contract_sha256 "$PUBLISH_RECEIPT")"
 
-```bash
-set -euo pipefail
-# [READ-ONLY] repo=source/public; receipt crate publication before next channel
-curl -fsSL -A "ripr-release-transaction/${VERSION} (+https://github.com/EffortlessMetrics/ripr)" "https://crates.io/api/v1/crates/ripr/${VERSION}" | jq -e --arg version "$VERSION" '.version == $version' >/dev/null
+assert_live_pin_guard
+verify_publish_receipt
+(cd "$SOURCE_ROOT" && cargo xtask publish-precheck)
+(cd "$PUBLISH_STAGE" && cargo publish --allow-dirty -p ripr)
+record_crate_version ripr "$(jq -er .ripr_sha256 "$PUBLISH_RECEIPT")"
 ```
 
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 GitHub-release authorization only
 assert_live_pin_guard
+verify_publish_receipt
+verify_registry_response ripr-contract "$(jq -er .contract_sha256 "$PUBLISH_RECEIPT")" "$PACKET_ROOT/registry-ripr-contract-${VERSION}.json"
+verify_registry_response ripr "$(jq -er .ripr_sha256 "$PUBLISH_RECEIPT")" "$PACKET_ROOT/registry-ripr-${VERSION}.json"
 gh release create "v${VERSION}" --repo EffortlessMetrics/ripr --target "$SOURCE_RELEASE_HEAD" --title "ripr ${VERSION}" --notes-file "$RELEASE_NOTES"
 ```
 

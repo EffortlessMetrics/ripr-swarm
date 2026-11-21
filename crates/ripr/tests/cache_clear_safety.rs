@@ -993,7 +993,7 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     // makes every store fail at create_dir.
     let broken = root.join("broken-cache");
     fs::create_dir_all(broken.join("repo-file-facts")).map_err(|error| error.to_string())?;
-    fs::write(broken.join("repo-file-facts/1.62"), b"blocker")
+    fs::write(broken.join("repo-file-facts/1.63"), b"blocker")
         .map_err(|error| error.to_string())?;
     let (report, _) = rerun(&broken)?;
     let cache = &report["cache"];
@@ -1011,7 +1011,7 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     // ordinary stderr, without RIPR_REPO_EXPOSURE_LATENCY_TRACE.
     let check_cache = root.join("broken-check-cache");
     fs::create_dir_all(check_cache.join("repo-file-facts")).map_err(|error| error.to_string())?;
-    fs::write(check_cache.join("repo-file-facts/1.62"), b"blocker")
+    fs::write(check_cache.join("repo-file-facts/1.63"), b"blocker")
         .map_err(|error| error.to_string())?;
     let check = run_ripr_default_cache(
         &root,
@@ -1377,8 +1377,14 @@ fn cache_status_json_conforms_to_the_published_schema_in_every_portable_state() 
     conforms_to_cache_status_schema(&missing, &schema)
         .map_err(|error| format!("not_found: {error}"))?;
 
-    let cache = populated_cache(&base)?;
-    let ok = cache_status_json(&base, &cache)?;
+    populated_cache(&base)?;
+    let ok = cache_status_json(&base, Path::new("cache"))?;
+    let cache_dir = ok.get("cache_dir").and_then(serde_json::Value::as_str);
+    if cache_dir != Some("cache") {
+        return Err(format!(
+            "expected relative cache_dir 'cache', got {cache_dir:?}"
+        ));
+    }
     conforms_to_cache_status_schema(&ok, &schema).map_err(|error| format!("ok: {error}"))?;
 
     let file = base.join("cache-is-a-file");

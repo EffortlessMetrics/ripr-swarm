@@ -312,6 +312,16 @@ mod tests {
     }
 
     #[test]
+    fn a_named_import_withholds_only_the_matching_bare_owner_call() {
+        let chain = "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);";
+        let harmless = format!("fn t() {{\n    use super::alternate::other;\n    {chain}\n}}\n");
+        assert_eq!(reach_names(&harmless), vec!["inc".to_string()]);
+
+        let rebound = format!("fn t() {{\n    use super::alternate::inc;\n    {chain}\n}}\n");
+        assert!(reach_names(&rebound).is_empty());
+    }
+
+    #[test]
     fn a_glob_import_in_the_body_keeps_the_owner_call() {
         let body = "fn t() {\n    use super::*;\n    assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);\n}\n";
         assert_eq!(reach_names(body), vec!["inc".to_string()]);

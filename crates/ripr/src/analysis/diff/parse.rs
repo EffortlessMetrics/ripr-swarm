@@ -146,6 +146,13 @@ pub(crate) fn parse_unified_diff_with_metadata(input: &str) -> ParsedDiff {
 pub(crate) struct ParsedDiff {
     pub(crate) changed_files: Vec<ChangedFile>,
     pub(crate) deleted_file_count: usize,
+    /// #15324: the old-side path of each deleted file section, in diff
+    /// order, so an empty result can name what the diff removed.
+    pub(crate) deleted_paths: Vec<PathBuf>,
+    /// #15324: the path of each non-deleted file section git rendered as
+    /// `Binary files ... differ`, read from the section's own header or
+    /// rename/copy metadata, so the caller can name unread source files.
+    pub(crate) binary_paths: Vec<PathBuf>,
     pub(crate) submodule_file_count: usize,
     /// Symlink (mode `120000`) file sections, counted once per section (#13659).
     pub(crate) symlink_file_count: usize,
@@ -341,6 +348,7 @@ mod parser_state {
         parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
         parse_rename_to_path, source_line_text,
     };
+    use crate::analysis::diff::path::parse_prefixless_binary_path;
     use crate::analysis::diff::side_prefix::MnemonicSides;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -422,6 +430,8 @@ mod parser_state {
         deletion_section: bool,
         deletion_counted: bool,
         deleted_file_count: usize,
+        deleted_paths: Vec<PathBuf>,
+        binary_paths: Vec<PathBuf>,
         submodule_section: bool,
         submodule_counted: bool,
         submodule_new_file: bool,
@@ -522,6 +532,14 @@ mod parser_state {
 
         pub(super) fn deleted_file_count(&self) -> usize {
             self.deleted_file_count
+        }
+
+        pub(super) fn deleted_paths(&self) -> &[PathBuf] {
+            &self.deleted_paths
+        }
+
+        pub(super) fn binary_paths(&self) -> &[PathBuf] {
+            &self.binary_paths
         }
 
         pub(super) fn symlink_paths(&self) -> &std::collections::BTreeSet<PathBuf> {
@@ -856,8 +874,12 @@ mod parser_state {
         }
 
         fn record_deleted_file_if_ready(&mut self) {
-            if self.deletion_section && !self.deletion_counted && self.section_old_path.is_some() {
+            if self.deletion_section
+                && !self.deletion_counted
+                && let Some(path) = self.section_old_path.clone()
+            {
                 self.deleted_file_count = self.deleted_file_count.saturating_add(1);
+                self.deleted_paths.push(path);
                 self.deletion_counted = true;
             }
         }
@@ -866,6 +888,31 @@ mod parser_state {
             if raw.starts_with("Binary files ") && raw.ends_with(" and /dev/null differ") {
                 self.deletion_section = true;
                 self.record_deleted_file_if_ready();
+            }
+        }
+
+        /// #15324: record the section's path for a binary sentinel that is
+        /// not a deletion. A rename or copy destination comes from its
+        /// metadata (`current_path`); otherwise the header names the path,
+        /// already decoded and stripped of its side prefixes.
+        pub(super) fn record_binary_section(&mut self, raw: &str) {
+            if raw.ends_with(" and /dev/null differ") || self.deletion_section {
+                return;
+            }
+            let path = self
+                .current_path
+                .clone()
+                .or_else(|| self.section_old_path.clone())
+                .or_else(|| {
+                    // #15665: a `--no-prefix` section has no `a/` identity.
+                    self.section_git_header
+                        .as_deref()
+                        .and_then(|header| parse_prefixless_binary_path(header, raw))
+                });
+            if let Some(path) = path
+                && !self.binary_paths.contains(&path)
+            {
+                self.binary_paths.push(path);
             }
         }
 
@@ -1624,6 +1671,7 @@ deleted file mode 100644
         let parsed = parse_unified_diff_with_metadata(deleted);
         assert!(parsed.changed_files.is_empty());
         assert_eq!(parsed.deleted_file_count, 1);
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/old.rs")]);
 
         let empty = "diff --git a/src/empty.rs b/src/empty.rs\ndeleted file mode 100644\n";
         let parsed = parse_unified_diff_with_metadata(empty);
@@ -1634,12 +1682,56 @@ deleted file mode 100644
         let parsed = parse_unified_diff_with_metadata(binary);
         assert!(parsed.changed_files.is_empty());
         assert_eq!(parsed.deleted_file_count, 1);
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/blob.bin")]);
 
         let changed = parse_unified_diff_with_metadata(
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n",
         );
         assert_eq!(changed.deleted_file_count, 0);
+        assert!(changed.deleted_paths.is_empty());
         assert_eq!(changed.changed_files.len(), 1);
+    }
+
+    #[test]
+    fn binary_sections_record_their_own_decoded_path() {
+        // #15324: the path comes from the section's header or rename/copy
+        // metadata, through the same quoting and side-prefix rules as every
+        // other section; a deleted binary file is a deletion instead.
+        let diff = concat!(
+            "diff --git a/src/tax.rs b/src/tax.rs\nindex 1..2 100644\n",
+            "Binary files a/src/tax.rs and b/src/tax.rs differ\n",
+            "diff --git a/src/new.rs b/src/new.rs\nnew file mode 100644\nindex 0..2\n",
+            "Binary files /dev/null and b/src/new.rs differ\n",
+            "diff --git a/src/gone.rs b/src/gone.rs\ndeleted file mode 100644\nindex 2..0\n",
+            "Binary files a/src/gone.rs and /dev/null differ\n",
+            "diff --git \"a/src/caf\\303\\251.rs\" \"b/src/caf\\303\\251.rs\"\nindex 1..2 100644\n",
+            "Binary files \"a/src/caf\\303\\251.rs\" and \"b/src/caf\\303\\251.rs\" differ\n",
+            "diff --git a/src/old.rs b/src/two.rs\nsimilarity index 80%\n",
+            "rename from src/old.rs\nrename to src/two.rs\nindex 1..2 100644\n",
+            "Binary files a/src/old.rs and b/src/two.rs differ\n",
+            "diff --git i/src/m.rs w/src/m.rs\nindex 1..2 100644\n",
+            "Binary files i/src/m.rs and w/src/m.rs differ\n",
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n",
+            "@@ -1 +1 @@\n-old\n+new\n",
+        );
+        let parsed = parse_unified_diff_with_metadata(diff);
+        assert_eq!(
+            parsed.binary_paths,
+            [
+                "src/tax.rs",
+                "src/new.rs",
+                "src/café.rs",
+                "src/two.rs",
+                "src/m.rs"
+            ]
+            .map(PathBuf::from)
+            .to_vec()
+        );
+        assert_eq!(parsed.deleted_paths, vec![PathBuf::from("src/gone.rs")]);
+        assert!(
+            !parsed.binary_paths.contains(&PathBuf::from("src/lib.rs")),
+            "a text section is not binary"
+        );
     }
 
     #[test]
@@ -1654,6 +1746,11 @@ deleted file mode 100644
         assert_eq!(
             parse_unified_diff_with_metadata(traversal).deleted_file_count,
             0
+        );
+        assert!(
+            parse_unified_diff_with_metadata(traversal)
+                .deleted_paths
+                .is_empty()
         );
     }
 

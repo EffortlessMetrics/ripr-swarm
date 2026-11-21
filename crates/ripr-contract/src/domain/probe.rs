@@ -261,6 +261,11 @@ impl StopReason {
         }
     }
 
+    /// The generic stop reason for an unknown class: `infection_evidence_unknown`,
+    /// `propagation_evidence_unknown` or `static_probe_unknown` for the
+    /// matching `*_unknown` class, and `None` for every other class. The
+    /// classifier adds it when an unknown finding has no more specific stop
+    /// reason.
     pub fn for_unknown_class(class: &ExposureClass) -> Option<Self> {
         match class {
             ExposureClass::InfectionUnknown => Some(StopReason::InfectionEvidenceUnknown),
@@ -271,17 +276,49 @@ impl StopReason {
     }
 }
 
+/// One behavior that ripr checks the tests against: a source location, the
+/// family of behavior there, and what a test would need to observe to notice
+/// a change in it.
+///
+/// Most diff probes sit on a changed line. Some sit on an unchanged use of a
+/// changed value, such as a predicate that reads a changed binding, and
+/// repo-mode probes cover existing code with no diff at all.
+///
+/// A probe is static evidence. It names where the behavior is and what kind
+/// of oracle could discriminate it; it makes no claim about any runtime
+/// mutation outcome for the line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probe {
+    /// Identifier for this probe within one run. A [`Finding`] built from the
+    /// probe reuses it as the finding id.
     pub id: ProbeId,
+    /// Where the probed source is. For a diff probe the line is the new-file
+    /// (head-side) coordinate, also for a removed line.
     pub location: SourceLocation,
+    /// The function or other owner that contains the probed source, when one
+    /// was found. `None` otherwise, including for a line of a function the
+    /// diff removed entirely.
     pub owner: Option<SymbolId>,
+    /// What kind of behavior this probe is about.
     pub family: ProbeFamily,
+    /// What kind of program delta the family implies.
     pub delta: DeltaKind,
+    /// Base-side text of the change, when the producer has one. `None` for a
+    /// purely added line and for probes with no base side, such as repo-mode
+    /// probes.
     pub before: Option<String>,
+    /// Head-side text of the change or of the probed source, when the
+    /// producer has one. `None` for a removed-only line.
     pub after: Option<String>,
+    /// The source expression the probe is about, as the producer read it. For
+    /// a probe on a changed line this is the trimmed line; a probe placed on
+    /// another site carries that site's expression.
     pub expression: String,
+    /// Places a test could observe this change, such as `return value` or
+    /// `field:<name>`. Empty when none are named.
     pub expected_sinks: Vec<String>,
+    /// Oracle shapes that would discriminate this change, such as
+    /// `exact error variant assertion`. Empty when none are named.
     pub required_oracles: Vec<String>,
 }
 
@@ -333,23 +370,42 @@ pub fn declared_const_name(expression: &str) -> Option<&str> {
     named_item.then_some(name)
 }
 
+/// Where a changed value appears to become observable. Serialized as the
+/// snake_case token that [`FlowSinkKind::as_str`] returns.
+///
+/// The side-effect kinds (`event_call`, `state_write`, `persistence`,
+/// `log_message`, `config_change`) refine the generic `call_effect` when
+/// syntax-first analysis can name them; `call_effect` stays the fallback for
+/// other observable calls.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowSinkKind {
+    /// `return_value`: the value the owner returns.
     ReturnValue,
+    /// `error_variant`: an error the owner returns or constructs.
     ErrorVariant,
+    /// `struct_field`: a field of a constructed value.
     StructField,
+    /// `event_call`: an event or outbound call.
     EventCall,
+    /// `state_write`: a write to state outside the expression.
     StateWrite,
+    /// `persistence`: a persistence write.
     Persistence,
+    /// `log_message`: a log message.
     LogMessage,
+    /// `config_change`: a configuration change.
     ConfigChange,
+    /// `call_effect`: some other observable call.
     CallEffect,
+    /// `match_arm`: the result of a match arm.
     MatchArm,
+    /// `unknown`: no sink was identified.
     Unknown,
 }
 
 impl FlowSinkKind {
+    /// The snake_case wire token for this kind.
     pub fn as_str(&self) -> &'static str {
         match self {
             FlowSinkKind::ReturnValue => "return_value",
@@ -366,6 +422,7 @@ impl FlowSinkKind {
         }
     }
 
+    /// A short human-readable name for this kind, such as `returned value`.
     pub fn label(&self) -> &'static str {
         match self {
             FlowSinkKind::ReturnValue => "returned value",
@@ -383,30 +440,48 @@ impl FlowSinkKind {
     }
 }
 
+/// One place a changed value appears to flow to, read statically from the
+/// changed source.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlowSinkFact {
+    /// What kind of sink this is.
     pub kind: FlowSinkKind,
+    /// The source text of the sink, such as the returned expression.
     pub text: String,
+    /// The source line of the sink.
     pub line: usize,
+    /// The owner whose sink this is, when the producer named one.
     pub owner: Option<SymbolId>,
 }
 
+/// Where in test source a [`ValueFact`] value was found. Serialized as the
+/// snake_case token that [`ValueContext::as_str`] returns. It records the
+/// value's origin, not an execution state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueContext {
+    /// `function_argument`: an argument to a call.
     FunctionArgument,
+    /// `assertion_argument`: an argument to an assertion.
     AssertionArgument,
+    /// `builder_method`: an argument to a builder-style method.
     BuilderMethod,
+    /// `table_row`: a row of a table-driven test.
     TableRow,
+    /// `enum_variant`: an enum variant path. Ambiguous all-caps paths also
+    /// stay here rather than in `constant`.
     EnumVariant,
     /// A qualified path whose spelling establishes a constant (`u64::MAX`,
     /// `crate::KIB`), not an enum variant (#5357).
     Constant,
+    /// `return_value`: a value in a return position.
     ReturnValue,
+    /// `unknown`: the origin was not identified.
     Unknown,
 }
 
 impl ValueContext {
+    /// The snake_case wire token for this context.
     pub fn as_str(&self) -> &'static str {
         match self {
             ValueContext::FunctionArgument => "function_argument",
@@ -435,9 +510,13 @@ impl ValueContext {
 /// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
+    /// The test source line the value was read from.
     pub line: usize,
+    /// Retained source or value-transfer provenance for the value.
     pub text: String,
+    /// The value itself, such as `amount = 50`.
     pub value: String,
+    /// Where in test source the value was found.
     pub context: ValueContext,
 }
 
@@ -462,10 +541,17 @@ pub enum DiscriminatorShape {
     Other,
 }
 
+/// A discriminating input or check that no related test was seen to supply,
+/// such as an equality boundary value. Static evidence only: it names what
+/// the analysis did not find, not a runtime result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissingDiscriminatorFact {
+    /// The missing discriminator, such as `amount == discount_threshold`.
     pub value: String,
+    /// Why the analysis reports it missing.
     pub reason: String,
+    /// The sink the missing discriminator would be observed through, when
+    /// known.
     pub flow_sink: Option<FlowSinkFact>,
     /// The concrete drafted boundary call for the equality boundary this
     /// fact names, when the analyzer's static model can pin the boundary
@@ -491,7 +577,9 @@ pub struct MissingDiscriminatorFact {
 /// behavior, not an observed or verified result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DraftedBoundaryAssertion {
+    /// The owner-call argument texts, as plain integer literals.
     pub arguments: Vec<String>,
+    /// The statically folded expected value, when the fold derives one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<String>,
 }
@@ -873,23 +961,49 @@ impl RelatedTestMiss {
     }
 }
 
+/// ripr's static verdict on one [`Probe`]: whether the related tests appear
+/// to contain a discriminator that would notice the changed behavior, with
+/// the evidence and gaps behind that verdict.
+///
+/// The class is static exposure evidence. It is not a runtime mutation
+/// outcome and does not establish that the tests are sufficient.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
+    /// Finding identifier. The classifiers set it to the probe id.
     pub id: String,
+    /// Identity parts of the canonical gap this finding belongs to, when a
+    /// producer assigned one. `None` means no canonical gap identity was
+    /// assigned.
     pub canonical_gap: Option<FindingCanonicalGap>,
+    /// The changed behavior this finding is about.
     pub probe: Probe,
+    /// The exposure classification, such as `exposed` or
+    /// `reachable_unrevealed`.
     pub class: ExposureClass,
+    /// Per-stage evidence for reach, infect, propagate and reveal.
     pub ripr: RiprEvidence,
+    /// Headline confidence in the classification, between 0 and 1. For Rust
+    /// it is derived from the stage evidence and capped by the weakest stage;
+    /// preview adapters use a per-class constant that is not on the same
+    /// scale (see `confidence_basis`).
     pub confidence: f32,
     /// Why `confidence` is held at its value, for preview-adapter findings
     /// (#10700). Empty for Rust, whose score is not a per-class constant.
     /// Explains the number only; no decision helper reads it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
+    /// Human-readable lines naming the evidence the analysis found.
     pub evidence: Vec<String>,
+    /// Human-readable lines naming evidence the analysis looked for and did
+    /// not find.
     pub missing: Vec<String>,
+    /// Where the changed value appears to flow, such as a return value.
     pub flow_sinks: Vec<FlowSinkFact>,
+    /// Values related tests were seen to use, and discriminating values no
+    /// related test was seen to use.
     pub activation: ActivationEvidence,
+    /// Why the static analysis stopped short of a firmer verdict. Empty when
+    /// nothing stopped it.
     pub stop_reasons: Vec<StopReason>,
     /// Number of matched related-test/oracle rows after the existing dedup,
     /// before bounded unique-first packing. Metadata only: the retained
@@ -898,7 +1012,12 @@ pub struct Finding {
     /// vector count; absence cannot establish how many rows were discarded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related_tests_matched_total: Option<usize>,
+    /// Tests ripr related to this change, with the oracle each one uses.
+    /// Bounded: see `related_tests_matched_total` for the count before
+    /// packing.
     pub related_tests: Vec<RelatedTest>,
+    /// One suggested next action for a person or agent, when the producer
+    /// named one.
     pub recommended_next_step: Option<String>,
     /// Source language the adapter that produced this finding identifies as.
     /// Additive optional per RIPR-SPEC-0026; populated by the per-language
@@ -1498,8 +1617,9 @@ mod decision_helper_tests {
         ARM_UNSELECTED_REASON_PREFIX, ActivationEvidence, AnalysisScope, DeltaKind,
         DiscriminatorShape, Finding, GUARD_UNENTERED_REASON_PREFIX, MissingDiscriminatorFact,
         Probe, ProbeFamily, RelatedTest, RelatedTestMiss, RelatedTestRole, SourceCurrentness,
-        StopReason, boundary_input_observed_with_weak_oracle, exact_assertion_fact,
-        input_boundary_fact, is_unselected_input_reason, row_exact_discriminator_fact,
+        StopReason, UNREFERENCED_IN_WORKSPACE, boundary_input_observed_with_weak_oracle,
+        exact_assertion_fact, first_observing_related_test, input_boundary_fact,
+        is_unselected_input_reason, row_exact_discriminator_fact,
     };
     use crate::domain::language_capability::{AnalysisMode, REPO_SCOPE_EVIDENCE_LINE};
     use crate::domain::{
@@ -2081,5 +2201,83 @@ mod decision_helper_tests {
             })
             .boundary_input_observed_with_weak_oracle()
         );
+    }
+
+    /// #14820: an unreferenced owner is a test-side gap only when every
+    /// condition holds; dropping any one keeps the finding fail-closed.
+    #[test]
+    fn an_unreferenced_owner_needs_every_condition_of_the_test_side_gap() {
+        let unreferenced = || {
+            edited(|finding| {
+                finding.class = ExposureClass::NoStaticPath;
+                finding.ripr.reach = stage(
+                    StageState::No,
+                    &format!("no caller of over_limit {UNREFERENCED_IN_WORKSPACE}"),
+                );
+            })
+        };
+        assert!(unreferenced().is_unreferenced_no_static_path());
+
+        let mut stale = unreferenced();
+        stale.source_currentness = SourceCurrentness::BaseDeleted;
+        let mut other_class = unreferenced();
+        other_class.class = ExposureClass::StaticUnknown;
+        let mut limited = unreferenced();
+        limited.static_limit_kind = Some(StaticLimitKind::DynamicDispatch);
+        let mut reach_unknown = unreferenced();
+        reach_unknown.ripr.reach.state = StageState::Unknown;
+        let mut unmarked = unreferenced();
+        unmarked.ripr.reach.summary = "no caller of over_limit".to_string();
+        let mut marker_not_last = unreferenced();
+        marker_not_last.ripr.reach.summary =
+            format!("{UNREFERENCED_IN_WORKSPACE} except through a macro");
+        for (label, finding) in [
+            ("stale source", stale),
+            ("another class", other_class),
+            ("a static limit", limited),
+            ("reach not ruled out", reach_unknown),
+            ("no marker", unmarked),
+            ("marker not at the end", marker_not_last),
+        ] {
+            assert!(!finding.is_unreferenced_no_static_path(), "{label}");
+        }
+    }
+
+    /// Higher tiers observe more: a row with no call path ranks below one
+    /// whose assertion misses, which ranks below every other row, and the
+    /// picker takes the first row of the best tier.
+    #[test]
+    fn observation_tiers_rank_no_call_path_lowest_and_pickers_take_the_best() {
+        let with_miss = |name: &str, miss: Option<RelatedTestMiss>| {
+            let mut row = related(name, OracleStrength::Weak);
+            row.miss = miss;
+            row
+        };
+        let cases = [
+            (Some(RelatedTestMiss::NoCallPath), 0),
+            (Some(RelatedTestMiss::AssertionNotObserving), 1),
+            (Some(RelatedTestMiss::NoAssertion), 2),
+            (Some(RelatedTestMiss::WeakAssertion), 2),
+            (None, 2),
+        ];
+        for (miss, tier) in cases {
+            assert_eq!(with_miss("t", miss).observation_tier(), tier, "{miss:?}");
+        }
+        let rows = [
+            with_miss("unreached", Some(RelatedTestMiss::NoCallPath)),
+            with_miss(
+                "not_observing",
+                Some(RelatedTestMiss::AssertionNotObserving),
+            ),
+        ];
+        assert_eq!(
+            first_observing_related_test(&rows).map(|row| row.name.as_str()),
+            Some("not_observing")
+        );
+        assert_eq!(
+            first_observing_related_test(&rows[..1]).map(|row| row.name.as_str()),
+            Some("unreached")
+        );
+        assert_eq!(first_observing_related_test(&[]), None);
     }
 }
