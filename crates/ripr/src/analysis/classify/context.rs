@@ -64,7 +64,7 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// #14936: the removed-only probe is a deleted early-return guard whose
     /// constant equals the candidate owner's whole-body constant tail, so no
     /// pin on the owner's return discriminates it. Only withholds credit.
-    pub deleted_guard_agreement: Option<super::DeletedGuardAgreement>,
+    pub deleted_guard_return: Option<super::DeletedGuardReturn>,
     /// #15104: a test may run some other function in place of the owner (a
     /// `cfg` gate on it, its enclosing items, file or module chain, or a
     /// same-path `cfg` twin), read by the shared base-owner gate decision
@@ -120,7 +120,7 @@ impl<'a> ProbeContext<'a> {
             const_flow: None,
             binding_return_flow: None,
             constant_tail_change: None,
-            deleted_guard_agreement: None,
+            deleted_guard_return: None,
             owner_may_be_swapped: false,
             compile_time_guarded: false,
             unary_tail: None,

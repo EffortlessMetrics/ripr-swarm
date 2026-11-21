@@ -1233,7 +1233,52 @@ impl ClassifiedProbeEvidence {
                 )
             })
         };
+        let guard_return_pin = |test: &TestSummary, assertion: &OracleFact| {
+            let guard = context.deleted_guard_return.as_ref()?;
+            let owner = context.owner_fn?;
+            if !context.workspace_complete
+                || !guard.supports_pin(context.index, pin_syntax)
+                || !pin_syntax.admits(test, assertion, context.index)
+                || import_defeats(test, &owner.name)
+                || cross_package_defeats(test, &owner.name)
+            {
+                return None;
+            }
+            let (call, old_matches) = guard.compared_call(&owner.name, &assertion.text)?;
+            if !OwnerReturnPin::field_call_binds_owner(owner, context.index, test, call, pin_syntax)
+            {
+                return None;
+            }
+            if !guard.values_agree() {
+                if !guard.straight_comparisons(
+                    &owner.name,
+                    &test.body,
+                    test.assertions.len(),
+                    old_matches,
+                ) {
+                    return None;
+                }
+                for sibling in &test.assertions {
+                    let (call, _) = guard.compared_call(&owner.name, &sibling.text)?;
+                    if !pin_syntax.admits(test, sibling, context.index)
+                        || !OwnerReturnPin::field_call_binds_owner(
+                            owner,
+                            context.index,
+                            test,
+                            call,
+                            pin_syntax,
+                        )
+                    {
+                        return None;
+                    }
+                }
+            }
+            Some(())
+        };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            if guard_return_pin(test, assertion).is_some() {
+                return true;
+            }
             // Refuses every owner-pin route, not only token overlap: none of them
             // observes the written output without an admitted display pin.
             if fmt_write_tail && !fmt_literal_edit {
@@ -2420,7 +2465,10 @@ impl ClassifiedProbeEvidence {
         // on the owner's return does not discriminate the deletion.
         let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
             && discriminate.state == StageState::Yes
-            && let Some(agreement) = context.deleted_guard_agreement.as_ref()
+            && let Some(agreement) = context
+                .deleted_guard_return
+                .as_ref()
+                .filter(|guard| guard.values_agree())
         {
             StageEvidence::new(StageState::Weak, Confidence::Medium, agreement.summary())
         } else {

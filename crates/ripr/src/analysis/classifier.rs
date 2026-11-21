@@ -328,13 +328,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     });
     // #14936: a deleted early return giving the value the remaining tail
     // gives is not discriminated by a pin on the owner's return.
-    context.deleted_guard_agreement = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
-        super::classify::deleted_guard_agreement(
+    context.deleted_guard_return = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::deleted_guard_return(
             probe,
             owner,
             changed,
             index,
             candidate_index.module_declarations(),
+            candidate_index.base_may_rebind_trusted_macros(),
         )
     });
     // #15104: the legacy constant-tail edge reads only the new-side owner,
