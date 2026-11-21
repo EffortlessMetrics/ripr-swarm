@@ -645,6 +645,7 @@ impl ClassifiedProbeEvidence {
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
                 unary_tail: context.unary_tail.as_ref(),
+                literal_condition: context.literal_condition.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -818,6 +819,11 @@ impl ClassifiedProbeEvidence {
             }
             None => (flow_sinks, propagation_witness),
         };
+        // #15104: the changed whole-body constant tail is the owner's return,
+        // but a `cfg` gate may compile this owner out for a twin the tests
+        // run instead (the shared owner's gate decision). No direct-return
+        // edge on it completes, whichever witness proposed one.
+        let propagation_witness = propagation_witness.filter(|_| !context.owner_may_be_swapped);
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -912,6 +918,23 @@ impl ClassifiedProbeEvidence {
                         ),
                     )
                 }
+            }
+            _ => propagate,
+        };
+        // #15104: nor may the sinks alone credit it (fail closed).
+        let propagate = match context.owner_fn {
+            Some(owner)
+                if context.owner_may_be_swapped
+                    && matches!(propagate.state, StageState::Yes | StageState::Weak) =>
+            {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Propagation unknown: a `cfg` gate may compile `{}` out for a twin the related tests run instead (cfg_gated_owner)",
+                        owner.name
+                    ),
+                )
             }
             _ => propagate,
         };
@@ -2059,6 +2082,18 @@ impl ClassifiedProbeEvidence {
         } else {
             discriminate
         };
+        // #14936: a deleted `if <cond> { return <constant>; }` whose constant
+        // is the candidate owner's whole-body constant tail returns the same
+        // value on both sides for every input the guard took, so an exact pin
+        // on the owner's return does not discriminate the deletion.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(agreement) = context.deleted_guard_agreement.as_ref()
+        {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, agreement.summary())
+        } else {
+            discriminate
+        };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
         let reach_ruled_out = reach.state == StageState::No
@@ -2499,6 +2534,19 @@ impl ClassifiedProbeEvidence {
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
 
+        // A file or module link can hide a real call through an entry point.
+        // Report only that reach was not established for this assertion-free row.
+        for test in &mut related_tests {
+            if test.miss == Some(RelatedTestMiss::NoAssertion)
+                && matches!(
+                    test.relation_reason,
+                    Some(RelationReason::SameTestFile | RelationReason::SameModule)
+                )
+                && !implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+            {
+                test.miss = Some(RelatedTestMiss::NoCallPath);
+            }
+        }
         super::super::classify::split_assertion_not_credited_misses(
             context,
             pin_syntax,

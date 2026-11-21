@@ -68,7 +68,9 @@ Options:
 The command uses the same ancestor-aware loader as analysis and fails with the
 path-qualified parser or policy error. A missing ripr.toml follows the normal
 built-in-defaults path; use `ripr init` when you want to materialize those
-defaults into a file.
+defaults into a file. It also checks the suppressions manifest the config
+selects: a configured [suppressions] path that does not exist fails, and a
+present manifest (default .ripr/suppressions.toml) must parse.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
@@ -100,7 +102,7 @@ Progress:
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
   reports them, including `processed_<n>_of_<total>` once the inventory has
   an honest seam denominator. Non-TTY / CI output is newline-delimited with
-  no control sequences; stdout and the pilot packet stay byte-clean. When
+  no control sequences and starts after the first 2s of a run; stdout and the pilot packet stay byte-clean. When
   the default timeout passes, the same run continues under the same progress
   stream. `--quiet` turns this stream off.
 
@@ -378,7 +380,12 @@ Options:
                            suppressed: true; per-class summary counts cover
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
-                           policy fails the run.
+                           policy fails the run. Every other format (sarif,
+                           sarif-compact, agent, json-terse, badge and repo
+                           formats) refuses the flag as a usage error. sarif,
+                           sarif-compact, badge-json, badge-shields and the
+                           badge-plus formats read [suppressions] path from
+                           ripr.toml (default .ripr/suppressions.toml) instead.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member
@@ -453,7 +460,9 @@ Progress:
   github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
   missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
-  `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
+  `RIPR_PROGRESS=1` restores it. A terminal keeps it. A human format on a
+  non-terminal stderr holds it for the first 2s, so a run that finishes
+  sooner prints nothing; `RIPR_PROGRESS=1` makes those lines immediate. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
   or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
@@ -529,10 +538,12 @@ Environment variables:
                                           an unparseable value fails the run.
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
-                                          like --quiet (check, explain, context,
-                                          pilot, repair, continue). Any value except
-                                          empty, 0 or false silences it; stdout, exit
-                                          codes and errors are unchanged.
+                                          like --quiet on every command that takes
+                                          it (check, explain, context, pilot,
+                                          evidence-health, repair, continue, status,
+                                          agent repair, reports ci-packet). Any value
+                                          except empty, 0 or false silences it;
+                                          stdout, exit codes and errors are unchanged.
   RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
                                           machine format on a non-terminal stderr,
                                           where it is off by default. Any value
@@ -612,8 +623,9 @@ Options:
                directory).
   --format F   human (default; text is an alias) or agent. agent prints the selected finding as
                compact `check --format agent` lines (one record, its related
-               test, and an explicit done=/open=/stop= terminal line plus
-               next=<ripr context command>), static advisory only. For the
+               test, owner=/before= lines, and an explicit done=/open=/stop=
+               terminal line plus next=<ripr context command> when the JSON
+               packet holds more), static advisory only. For the
                JSON packet use `ripr context --at <finding-id>`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
@@ -673,10 +685,11 @@ pub(super) const CONTEXT_HELP: &str = r#"Print one finding's changed code and re
 Use this when an agent or tool needs the facts behind one `ripr check`
 finding: the changed expression ripr examined, the tests that appear to
 reach it, the values they check, and any assertion that seems to be missing.
-Output is always JSON. To read the same finding as prose, run `ripr explain`
-with the same selector.
+Output is always JSON; `--json` is accepted and changes nothing.
+`--format json-compact` removes JSON whitespace. To read the same finding as
+prose, run `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json|--format json|json-compact] [--quiet]
 
 Options:
   --at <finding-id|file:line>
@@ -684,6 +697,8 @@ Options:
                `ripr check --json`, or a changed `file:line`.
   --finding ID
                Same as --at.
+  --format FORMAT
+               JSON presentation: json (default) or json-compact.
   --max-related-tests N
                List at most N related tests. Defaults to
                `reports.max_related_tests` in ripr.toml, otherwise 5.
@@ -798,7 +813,9 @@ pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace
 Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 
 Options:
-  --root PATH   Diagnose the selected workspace (defaults to `.`).
+  --root PATH   Workspace to diagnose. Defaults to the root `ripr check` would
+                use: the current directory, then the enclosing workspace or
+                package, or the git top level; `--root .` pins this directory.
   --json        Emit the core checks as stable JSON and use the same exit status.
   --timings     With --json, include the volatile timing fields (elapsed_ms,
                 segments). Default --json output is byte-stable across runs

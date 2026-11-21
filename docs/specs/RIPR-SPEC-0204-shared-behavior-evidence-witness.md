@@ -65,6 +65,12 @@ project the same producer facts into the shared internal `TestEvidenceSummary`
 used by #1658/#3507 cargo-allow relevance work. Diff findings and repo
 `TestGripEvidence` share one constructor (`from_parts`) and fingerprint rules.
 
+For provider receipts (#11532), converting a row of this summary into
+`RiprProviderEvidenceEntryV1` preserves the test name, portable file path,
+source line, oracle kind and strength, relation reason, and target-presence
+flag. Receipt validation accepts the producer spelling `guarded_result_match`
+and rejects an unrecognized spelling with `MalformedIdentity`.
+
 The witness retains portable item identity, language and family, owner and
 normalized expression, required discriminator and expected sink, candidate
 versus established test relations, five stage records, selected target or

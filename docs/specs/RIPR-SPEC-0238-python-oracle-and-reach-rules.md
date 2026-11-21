@@ -179,8 +179,12 @@ Only the test function's own body is read. The walker enters `if`, `for`,
 
 1. a comparison with any `==` in its chain: `exact_value` / strong
    (rule 1 narrows this to chains whose operators are all `==`);
-2. any other comparison (`!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`,
-   `in`, `not in`): `relational_check` / weak;
+2. a single `is` whose one side is the literal `True` or `False` and whose
+   two sides are not the same tokens (`f(x) is False`, `True is f(x)`):
+   `exact_value` / strong, like `== True|False`, whatever `f` returns (#15250);
+   any other comparison (`!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`,
+   `in`, `not in`, including `is None` and `is not True|False`):
+   `relational_check` / weak;
 3. a call to `isinstance`: `relational_check` / weak;
 4. any other call: the call table below, else `smoke_only` / smoke;
 5. anything else (a name, `not x`, `a and b`, a subscript): `smoke_only` /
@@ -603,6 +607,9 @@ Relations, first match wins (rank, oracle-eligible):
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
   one `x = Class(...)` bound once;
+- R5a: `property_read` (4, eligible): a plain builtin `@property` owner
+  read as `Class(...).<name>` or through one `x = Class(...)` bound once
+  (Decision 10);
 - R6: otherwise the test must reference the owner (RIPR-SPEC-0028), or
   the test is unrelated;
 - R7: `same_stem` (3, heuristic), `test_name_similarity` (2, heuristic),
@@ -642,7 +649,8 @@ This order is the existing behavior and is normative:
   internal `async_def` marker, a static route decorator, a `click` or
   `typer` command, group, option, argument or callback decorator, and a
   `<receiver>.command` or `<receiver>.callback` decorator when the owner's
-  module imports `typer` and binds that receiver;
+  module imports `typer` and binds that receiver. A plain builtin
+  `@property` is not an indirection once its Decision 10 credit holds;
 - L6: `mocked_module` from any related candidate, heuristic ones included;
 - L7: `property_based_test`: an eligible candidate with a `given` or
   `example` decorator and no strong assertion;
@@ -996,7 +1004,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     exception (#9542, RIPR-SPEC-0028): a bare `assert f(lit, ..)` or
     `assert not f(lit, ..)` whose single resolved workspace function owner
     provably returns `bool` is an exact pin, read as `f(lit, ..) == True` /
-    `== False`.
+    `== False`. A plain-name argument counts as such a literal only when it
+    is a direct, settled pytest parametrize argname of the test with
+    recorded cases, rebound nowhere in the test body (no statement binding
+    and no `:=`) and not a Hypothesis input (#15310); every other name keeps
+    the assertion smoke. Native Python repo analysis uses this same bare-call
+    rule when the selected inventory is complete and the source identifies
+    the callee. A capped or incomplete inventory cannot establish uniqueness
+    for this credit (#10945).
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is
@@ -1258,6 +1273,19 @@ mutant calibrates the rule; ripr reports only the static shape.
     `from pytest import fixture as fx`, unless a later import, assignment, `def` or `class`
     rebinds that name before the decorated def); otherwise the reading abstains. An assertion about
     unrelated text keeps its verdict.
+    When the new line, and the old line if there is one, is a logging call
+    (`.exception`, `.fatal`, `.log` and keyword arguments included) on one
+    receiver whose last name segment contains `log` and whose arguments are
+    built from literals and names without a call, the edit cannot change
+    what the owner returns, so an exact, field, status-code or exception
+    assertion that does not itself read `caplog` (`assert f(5) is False`,
+    `== False`, or a bound `r = f(5)` then `assert r is False`) is not
+    applicable to it and never credits it, however exact. Relational reads
+    stay applicable for the caplog evaluation; an exact compare of a
+    captured-log alias (`msgs == [...]`) is not read. A result pin in the same
+    assertion as a `caplog` read (`f(5) is False and "x" not in caplog.text`),
+    or with `caplog` only in its failure message, is `static_unknown` with
+    `unsupported_syntax` rather than credited (#15250).
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or
@@ -1423,8 +1451,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
     `addopts`) withholds credit for its scope. A `norecursedirs` entry with
     exactly one trailing `/` and no other `/` (`env/`) is read as the
-    basename pattern without the slash; every other `/`-bearing entry
-    (`a/b/`, `/`, `env//`) still refuses the config as unevaluated. This
+    basename pattern without the slash. A plain relative path with an
+    interior `/` (`tests/mypy_test_cases`: no glob metacharacter, no `\`,
+    no empty, `.` or `..` segment) is evaluated as pytest's `*/<entry>`
+    match: it excludes a directory whose config-relative path equals the
+    entry or ends in `/<entry>`, and, because ancestors above the config
+    directory are unseen, also a directory that is a tail of the entry.
+    Every other `/`-bearing entry (`a/b/`, `/`, `env//`, `tests/*_cases`)
+    still refuses the config as unevaluated. This
     deliberately over-withholds relative to pytest, whose path-pattern match
     likely excludes nothing for `env/`; it never grants credit. Not modelled, so credit is
     unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
@@ -1931,9 +1965,49 @@ rejected alternative. Any can be reversed later without touching the rest.
    `KeyError("blank")` mutant, so the R7 reading is a false actionable
    verdict. Rejected: relate any name passed to any call, because only
    these assertions are documented to call their argument.
-10. **Non-transparent decorators.** Adopted: unchanged, `@property` and
-    `@functools.lru_cache` stay `decorator_indirection`. Rejected for now:
-    make `@property` transparent, because it adds credit.
+10. **Non-transparent decorators.** Adopted: unchanged, `@functools.lru_cache`
+    stays `decorator_indirection`, and so does `@property` by default.
+    Amended (#15490): a plain builtin `@property` getter is credited, and
+    its limit lifted, only by a strong exact read. The owner is a method of
+    a top-level class with no bases, keywords or decorators, decorated
+    exactly `@property`; its module is ASCII, spells `property` only on the
+    bare `@property` decorator line, never binds or imports it (no star
+    import, no `builtins`), names the class nowhere outside its body, and
+    holds no attribute hook (`__getattr__`, `__getattribute__`,
+    `__setattr__`, `__dict__`, `__class__`, `type`, `setattr(`,
+    `delattr(`, `vars(`, a metaclass). The class body holds only methods
+    and literal attributes, never names the class (`Box.total = 6` in
+    `__init__`), never stores or deletes the property name
+    (`self.total = 0`, `del self.total`), and binds the owner name once: a
+    same-name setter, deleter or getter sibling, or any decorator naming
+    the property, keeps the limit. The getter is an optional docstring and
+    simple assignments followed by its one `return`, and the changed line
+    is that return, with no conditional expression, `and`/`or`,
+    comprehension, lambda or walrus anywhere in the getter: a branching
+    getter, a changed return under an `if` or a changed line before the
+    return keeps the limit. A
+    related pytest test relates as `property_read` (R5a) when it reads
+    `Cls(...).<name>` or `v.<name>` with `v` bound once to `Cls(...)`, `Cls`
+    imported once under its own name from the owner's module; every use of
+    the class is a construction, every use of a bound local is that read,
+    the body is straight-line with no other call, no write, `del` or call
+    of the attribute, and no patch or mock marker (`PropertyMock` among
+    them). Nothing outside the test body may reach the class first: the
+    test module neither rebinds the class nor writes an attribute named
+    like the class, the property or any dunder, holds no namespace writer
+    anywhere (`setattr`, `patch`, `sys.modules`, even in a sibling test or
+    on an unrelated receiver), no autouse fixture, setup hook or
+    definition-time call, no conftest fixture or hook on its directory
+    chain, and no fixture substitutes the owner. The credit (`strong_oracle_observes_property_read`, `direct`)
+    needs a changed `return` line of the getter (`return_value` family)
+    and the test's row-selected strong assertion to be a top-level
+    `assert <read> == <literal>` with no message. A bare `assert v.<name>`,
+    `!=`, `is`, `in`, a chained comparison, an `or` chain, a message, an
+    assertion under `if` or `with`, a relational or computed comparison, a read through a helper, a class
+    access `Cls.<name>` or any doubt keeps `decorator_indirection`.
+    `functools.cached_property` is unchanged. Rejected: make `@property`
+    transparent, because the earlier lift alone (#8551) read a direct
+    property assertion as a false actionable `weakly_exposed`.
 11. **`and` chains.** Adopted (2026-10-05, #6599): rule 15, the strongest
     conjunct. The first draft kept example 5's `smoke_only` reading, but
     the corpus case `py-spec0233-ex05-and-chain` fails on its mutant, so
@@ -2241,7 +2315,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `mocker.patch('os.getcwd')`: `static_unknown`, `mocked_module`
     (unchanged).
 30. Owner `@property def v(self)` in `class C`, changed body line:
-    `static_unknown`, `decorator_indirection` (unchanged).
+    `static_unknown`, `decorator_indirection` (unchanged). Decision 10's
+    one exception: in a plain `class C` whose getter is a single changed
+    `return`, a related test `assert C().v == 1` in a test module with no
+    namespace writer, autouse fixture or setup hook reads `exposed`,
+    `strong_oracle_observes_property_read` (#15490). The corpus case
+    `py-spec0233-ex30-property` keeps the limit: a sibling test in its
+    module calls `client.patch(...)`, a namespace writer.
 31. Owner `def fmt(n): return f"NO:{n}"`, changed from `f"ID:{n}"`.
     `test_a` asserts `assert len(fmt(7)) == 4`; `test_b` calls `fmt(7)` and
     asserts `assert other == "x"`: `weakly_exposed`, `orthogonal` (today
@@ -2668,6 +2748,10 @@ strong assertions is retained.
   swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
   module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
   the `py-trap-*` corpus cases.
+- `crates/ripr/src/analysis/language/python/property_read.rs`: the R5a
+  `property_read` relation and its Decision 10 credit, applied by
+  `static_limits.rs` (L5) and `classify.rs`, pinned by
+  `property_read_tests.rs` and `py-spec0233-ex30-property`.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.

@@ -142,6 +142,10 @@ The typed `ProbeFamily` is authoritative for behavior-family prose; source
 text such as ` == ` never decides whether a fact is a boundary, return value,
 field, error variant, effect, call deletion or match arm.
 
+In the Rust slice-table boundary fixture (#14808), the assertion-free direct
+caller carries `no_assertion`. Its neighbor, linked only by file proximity,
+carries `no_call_path`. Known implicit dispatch also establishes row reach.
+
 ### Adapter capability table
 
 This table documents which propositions each adapter may emit today. It is
@@ -573,6 +577,10 @@ written and must not copy these gaps.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
+  A refused assertion contributes the always-run assertion recipe only when its
+  row records `assertion_inert`. Rows with `assertion_admission_unproven` or
+  legacy `assertion_not_credited` leave the recipe to independently established
+  test or input evidence (#5446).
 
 ### Assertion admission prerequisite (Python, TypeScript)
 

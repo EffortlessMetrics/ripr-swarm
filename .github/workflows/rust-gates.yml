@@ -105,6 +105,8 @@ on:
           The candidate admission reason. Only `history_sync_admitted` on a
           pull_request whose head equals admission-head changes anything: the
           diff-scoped PR evidence is then recorded not_applicable (#12437).
+          `mechanical_relocation_admitted` (#15217) does the same for a
+          verified relocation, on its pull_request run or singleton group.
         required: false
         default: ''
         type: string
@@ -129,7 +131,7 @@ on:
       scratch_message:
         value: ${{ jobs.rust-gates.outputs.scratch_message }}
       pr_evidence:
-        description: "`produced`, `not_applicable:history_sync:<head>`, or empty when the step did not run."
+        description: "`produced`, `not_applicable:history_sync:<head>`, `not_applicable:mechanical_relocation:<head>`, or empty when the step did not run."
         value: ${{ jobs.rust-gates.outputs.pr_evidence }}
 
 permissions:
@@ -454,6 +456,9 @@ jobs:
 
       - name: Evidence promotion honesty
         id: promotion_honesty
+        env:
+          RIPR_HONESTY_PROFILE: ${{ inputs.proof-profile }}
+          RIPR_HONESTY_ADMITTED_BASE: ${{ steps.admitted.outputs.base }}
         run: cargo xtask check-evidence-promotion-honesty
 
       # Lint optional-feature code as well as type-checking it (#13152).
@@ -471,6 +476,46 @@ jobs:
           CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # PR-side `actions/checkout` checks out `refs/pull/N/merge`, whose base can
+      # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
+      # `origin/$BASE_REF` for the goldens gate so stale-base golden drift fails PR
+      # qualification instead of passing and ejecting in `merge_group` (#14999),
+      # then restore the admitted checkout so downstream steps keep `HEAD`.
+      - name: Prepare fresh base merge for goldens
+        id: goldens_fresh_merge
+        if: github.event_name == 'pull_request' && inputs.subject-sha == ''
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          orig_head="$(git rev-parse HEAD)"
+          echo "orig_head=$orig_head" >> "$GITHUB_OUTPUT"
+          pr_head="$(git rev-parse --verify -q HEAD^2 || true)"
+          if [ -z "$pr_head" ]; then
+            echo "::warning title=Fresh base merge skipped::HEAD^2 is unavailable; running goldens on checkout."
+            exit 0
+          fi
+          if ! git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"; then
+            echo "::warning title=Base fetch failed::could not re-read $BASE_REF; running goldens on checkout."
+            exit 0
+          fi
+          fresh_base="$(git rev-parse "origin/$BASE_REF")"
+          if [ "$(git rev-parse HEAD^1)" = "$fresh_base" ]; then
+            exit 0
+          fi
+          rc=0
+          git merge-tree --write-tree --no-messages "$pr_head" "$fresh_base" > /dev/null || rc=$?
+          if [ "$rc" -eq 1 ]; then
+            echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short "$pr_head"). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
+            echo "::warning title=Fresh base merge unavailable::git merge-tree exited $rc; running goldens on checkout."
+            exit 0
+          fi
+          git -c user.name=ci -c user.email=ci@invalid checkout --detach "$fresh_base"
+          git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit "$pr_head"
+          echo "switched=true" >> "$GITHUB_OUTPUT"
+
       # The gates below need only the `ripr` build, not the test run. They run before
       # the ~18-minute nextest step so a main-side drift (goldens, fixtures, capability
       # inventory, verdict corpora) fails the required run within minutes instead of
@@ -480,6 +525,13 @@ jobs:
       - name: Golden and fixture contracts
         id: goldens_fixtures
         run: cargo xtask goldens check-with-fixtures
+
+      - name: Restore admitted checkout after goldens
+        id: goldens_restore_checkout
+        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'
+        env:
+          ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}
+        run: git checkout --detach "$ORIG_HEAD"
 
       # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.
@@ -556,6 +608,17 @@ jobs:
           fi
           echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
           exit 1
+
+      # #14263: the Rust-only build (`--no-default-features --features lang-rust`)
+      # is a supported configuration, and between Nov 11 and Nov 18 main added
+      # seven preview-only items that warned there because nothing failed. Lint
+      # its library here on routes that run tests in this job; with
+      # `test-shards: 2` shard 2 of rust-test-shards.yml runs the same command,
+      # off this job's critical path. Library only: test helpers still warn.
+      - name: Strict Rust-only ripr library Clippy
+        id: rust_only_clippy
+        if: inputs.test-shards == 1
+        run: cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings
 
       # Skipped only when the caller passes `test-shards: 2`; it then owns running
       # the same tests as two partitions in rust-test-shards.yml and must fail
@@ -679,6 +742,17 @@ jobs:
             echo "evidence=not_applicable:history_sync:$HEAD_SHA" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # #15217: a verified relocation moves inline test bodies out of line token for
+          # token, so these diff-scoped producers have no changed behavior to read.
+          if [ "$ADMISSION_REASON" = mechanical_relocation_admitted ]; then
+            [[ "$ADMISSION_HEAD" =~ ^[0-9a-f]{40}$ ]] && { [ "$EVENT_NAME" != pull_request ] || [ "$ADMISSION_HEAD" = "$HEAD_SHA" ]; } || { echo "::error::relocation binding refused: admitted head '$ADMISSION_HEAD' does not bind this $EVENT_NAME head '$HEAD_SHA'"; exit 1; }
+            mkdir -p target/ripr/pr
+            jq -n --arg head "$ADMISSION_HEAD" --arg tested "$HEAD_SHA" '{status: "not_applicable", reason: "mechanical_relocation", issue: 15217, head: $head, tested_commit: $tested, skipped: ["ripr-pr", "ripr-pr --check", "ripr-review-comments", "impacted-evidence", "ripr-pr-summary", "ripr-annotations", "schema sweep pr-evidence/review-comments rows"]}' > target/ripr/pr/not-applicable.json
+            echo "::notice title=PR evidence not_applicable: mechanical_relocation::diff-scoped PR evidence is not applicable to verified relocation head $ADMISSION_HEAD (tested $HEAD_SHA); every other gate ran (#15217)"
+            { echo "### PR evidence"; echo ""; echo "- status: \`not_applicable\`"; echo "- reason: \`mechanical_relocation\`"; echo "- head: \`$ADMISSION_HEAD\`; tested: \`$HEAD_SHA\`"; } >> "$GITHUB_STEP_SUMMARY"
+            echo "evidence=not_applicable:mechanical_relocation:$ADMISSION_HEAD" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check
           cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check-output target/ripr/pr/check.json
@@ -709,7 +783,7 @@ jobs:
           cargo run --quiet -p ripr -- doctor --json > target/ripr/sweep/doctor.json
           artifacts=(--artifact schemas/ripr/doctor.schema.json=target/ripr/sweep/doctor.json)
           # Only the typed history-sync record (#12437) withholds the PR rows.
-          if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [[ "$PR_EVIDENCE" != not_applicable:history_sync:* ]]; then
+          if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [[ "$PR_EVIDENCE" != not_applicable:* ]]; then
             artifacts+=(
               --artifact schemas/ripr/pr-evidence.schema.json=target/ripr/pr/repo-exposure.json
               --artifact schemas/ripr/review-comments.schema.json=target/ripr/review/comments.json

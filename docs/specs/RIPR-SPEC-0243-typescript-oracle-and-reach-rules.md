@@ -128,6 +128,18 @@ normative.
 
 ### Verdict ladder
 
+For #12951, a whole-file single-line replacement of one decimal safe-integer
+return in a straight-line switch can keep the weak-oracle verdict when one
+related direct Vitest test selects that unique literal-string case and its
+direct `toBeLessThan` assertion passes for both values. The function module,
+switch arms, imports, test registration, call and assertion must satisfy the
+bounded AST witness; a changed case label, a competing related test, a
+shadowed binding, a failing or distinguishing threshold, or an unresolved
+selector keeps the existing conservative verdict. This exception does not
+populate a positive infection stage: the generic TypeScript preview infection
+stage remains unknown. Repair readiness remains subject to the shared packet
+validator and the available package and runner evidence.
+
 `classifier.rs` decides the class in this order; the first match wins:
 
 1. no related test: `no_static_path`; reach, observe and discriminate are
@@ -1743,9 +1755,23 @@ sibling rule (#14814) covers exactly one changed value. A compound assertion
 subject is not a field projection of the owner's result: in
 `expect(f() ?? defaults.config)` the trailing `config` belongs to the
 fallback while the assertion receives the whole object `f()` returns, so it
-keeps its credit. A key-list change, a
+keeps its credit. A plain projection is a base with no top-level operator,
+or a call or member-access chain that a small grammar accepts (#14928): a
+postfix non-null assertion (`f()!.timeout`), optional chaining, a prefix
+negation (`!f().enabled`) and a balanced generic call (`f<string>()`) are all
+projections of the owner's result, so an untouched field read through any of
+them drops to `weakly_exposed` too (a generic call is not yet resolved as an
+owner call, so it already reads `weakly_exposed`). A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
-fields are not this shape and keep their old reading.
+fields are outside this multi-value rule.
+
+For the two-member form `return { retries: 5, verbose };`, a change between
+decimal integer literals on the explicit field cannot change the unchanged
+shorthand binding. A direct assertion on `config().verbose` therefore reads
+`weakly_exposed`, while `config().retries` keeps its exact-field credit. This
+case requires the same two distinct names in the same positions and a bare
+zero-argument owner call. An expression that could write to `verbose` while
+building the object remains outside this rule.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -2630,6 +2656,13 @@ keys); do not take the next number.
   reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
   rebound parameter, helper or member call, file-level call, CRLF, deleted
   line) keeps the ladder verdict.
+  For a single literal message edit in a final `throw new Error(...)`, a
+  one-parameter function can also exclude the throw with a preceding
+  `if (b !== 0) return b;`. When every related call supplies a numeric
+  literal that takes that return, the finding is `reachable_unrevealed` with
+  infection `no`. The adapter test `isolated_throw_message_after_a_nonzero_return`
+  pairs this case with a zero input checking the message and a zero input
+  checking only that an error is thrown.
   The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
   `comments_before_if_do_not_shift_the_condition_text`,
   `mock_module_loaders_and_call_result_chains_are_unreadable`,
@@ -2671,6 +2704,45 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15393: an edit that changes only one default parameter value of the owner
+  (on a one-line signature or its own parameter line) is not observed when
+  every call of every direct, aliased or barrel-followed related test passes
+  a value at that position that cannot be `undefined` (a literal, object,
+  array, function, template or whole `new` expression, under any trailing
+  `as T`, `satisfies T` or `!` cast). Every owner call elsewhere in a related
+  test file, and in the owner's own module (its own body included), must fill
+  the position the same way, and no other workspace file may name the owner
+  outside a pure re-export. It reads `reachable_unrevealed` with infection
+  `no` (`default_not_applied`), naming the parameter and the observed calls.
+  The verdict stands on: an omitted argument; `undefined`, an identifier or a
+  spread argument; a relation through a wrapper or entry; another caller; a
+  default export or renaming re-export; an import that renames a binding or
+  has code after it on its line; a namespace import, `require`, dynamic
+  `import()`, `requireActual` or `importActual` of the owner's module or
+  of a barrel that re-exports it (its file stem, or its directory for an
+  `index` file) in another file; an import or re-export line with code after
+  its specifier; a loader or computed
+  key; an owner reference whose call arguments the reader cannot parse (a
+  comment before the parenthesis, an unbalanced argument); and a truncated
+  scan or a skipped symlink. The advice asks for a test call that omits the
+  argument.
+  Scope limit: the scan reads the TypeScript adapter's default handwritten
+  workspace files and ignores configured handwritten overrides, so callers
+  in pruned build directories, generated or minified files,
+  non-TS sources (`.vue`, `.svelte`, `.mdx`) or outside the workspace root
+  are not seen. `tests/unused_default_tests.rs` pins the reader
+  (`only_a_lone_default_value_edit_is_located`,
+  `only_arguments_that_cannot_be_undefined_fill_a_default`) and the
+  production path (`a_default_every_call_fills_is_not_exposed`,
+  `a_call_that_may_use_the_default_keeps_the_verdict`,
+  `a_call_the_argument_reader_drops_keeps_the_verdict`,
+  `a_caller_the_scan_cannot_resolve_keeps_the_verdict`,
+  `a_describe_titled_with_the_owner_name_is_not_a_caller`,
+  `a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses`,
+  `a_barrel_import_under_the_owner_name_is_followed`,
+  `code_after_an_import_and_a_namespace_import_keep_the_verdict`); the
+  honesty corpus case `typescript_vitest_unused_default_parameter` rejects
+  promotion independently.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -2784,6 +2856,10 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15393: `crates/ripr/src/analysis/language/typescript/unused_default_guard.rs`
+  locates the changed default and reads call arguments; `ts_unused_default`
+  in `classifier.rs` applies it in `ts_apply_post_ladder_rules` and the
+  infection stage, withdrawing credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 

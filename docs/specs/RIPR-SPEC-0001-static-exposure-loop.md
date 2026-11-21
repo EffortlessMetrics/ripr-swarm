@@ -197,6 +197,29 @@ nested macro or a control-flow keyword refuses too, even when the call would
 run (`assert!(true && f(5) == 5)`), because the parser does not read inside
 macro input (#14968).
 
+A predicate whose `if` (or `else if`) condition became the literal `true` or
+`false` reads its infection from the two owner versions (#14816), but only
+for a free owner when, inside the owner's span, the diff replaces exactly the
+condition's line and nothing else, and the two lines differ only by that one
+condition: a bare bool literal on the current side, and on the base side a
+single-line condition that is not itself a bool literal and holds no `let`
+(an `if let` pattern binds and tests, which a literal cannot stand in for). A
+condition spanning lines, two conditions starting on one line, or an
+attribute in the owner's body refuses. The base-side item must pass the same
+base-owner identity the unary-tail reading uses (same function, not
+`cfg`-gated, equal to the current item with the line restored), and the
+reading refuses when another function, import rename, `include!` or
+`macro_rules!` may answer the owner's name. The infection stage then folds
+both versions at the related tests' literal calls: `yes` when an exact
+assertion pins a call whose folded result differs, or every owner call in
+every related test that names it is such a call; `weak` when only a
+relational or inequality assertion separates them, or every asserted input
+already took the forced branch on the base side; `unknown` when the fold
+cannot read an argument, the condition or the body, or the workspace rebinds
+an assertion macro. An ignored or `should_panic` test supplies no reaching
+call. Infection credit does not confirm the predicate's reveal pairing, so an
+exact pin at a separating input stays `weakly_exposed`, not `exposed`.
+
 A removed line that is one bare literal (a number, `true`/`false`, or one
 quoted string or char, optionally followed by `,` or `;`) adds no removed-side
 `static_unknown` probe when its positional replacement in the same block
@@ -290,6 +313,37 @@ nested `name! { .. }` call, at most eight levels deep. A fn-pointer type
 a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
 line (`&self,`) has no type and is not classified by this rule, and a fn nested
 inside another fn body in a macro keeps `field_construction`.
+
+A complete Rust item moved within its file and its owner, with no other
+change, seeds no probe on either side (#15110). The removed run and the added
+run must hold the same text and the same code once comments and strings are
+blanked, no other run may hold that text, the block must be one or more
+complete items starting at an item boundary, and both copies must sit in the
+same owner: the file's top level, or the same chain of `mod` headers ending in
+a `mod`, `impl` or `trait` header. An owner block that opens with an inner
+attribute is never that owner. A file where order or source position is
+observable keeps every move probed: `macro_rules!` or `#[macro_use]`,
+`std::panic::Location`, `line` or `column` imported under another name, or a
+macro invocation outside a short list of position-free standard macros. A
+statement, field or variant reordered inside its parent, a move into another
+owner, a fragment of an item and a move with an edit keep their probes.
+
+A replaced line whose code is unchanged seeds no probe on either side when
+the only difference is a trailing `//` comment, its line ending, or a block
+comment inside the line (`if x > 1 /* old */ {`) added, removed or reworded
+(#14175, #15232). For a block comment, each line is read on its own: its code
+with comment and literal contents masked and whitespace kept only where it
+separates two word characters or two characters of a longer Rust token
+(`&&`, `==`, `::`), and the raw text of each string and character literal,
+must equal the other line's. At least one side must hold an actual block
+comment before any line comment.
+These keep their probes:
+- a comment that held two tokens apart (`a/*x*/b` against `ab`);
+- a documentation comment (`///`, `//!`, `/**`, `/*!`) on either side;
+- a line that ends inside a comment or string, or that reads differently in
+  its file than alone (inside a multi-line comment or string);
+- a changed literal;
+- a position macro or string continuation on either line.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
@@ -1085,6 +1139,21 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 (#4216), and so does any file with no indexed function or no file facts. The
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
+
+A closers-only added line that is its function's `end_line` also seeds no probe
+when Git's diff slider moved it (#15270). This happens when an item such as
+`agent stub --write`'s test module is appended right after a function. Git then
+reports the function's unchanged `}` as the first added line and leaves the
+appended item's identical closer as context. All of the following must hold:
+
+- the line starts a contiguous added run of more than one line;
+- the line right after that run is unchanged;
+- that context line is byte-identical to the added line, ignoring only a CRLF
+  carriage return;
+- that context line is an item-level closer in the sense above.
+
+Any other function-end closer keeps its probe. That includes an indented
+method closer followed by its `impl`'s closer, and a closer whose run has a gap.
 
 A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
 no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header

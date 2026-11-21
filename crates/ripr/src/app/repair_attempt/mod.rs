@@ -719,17 +719,28 @@ fn recompute_after_verdict_binding_of_delta(
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let protected = if manifest.gap_binding.is_some() {
-        GAP_WORKFLOW_PROJECTIONS.as_slice()
+    let mut protected: Vec<&str> = if manifest.gap_binding.is_some() {
+        GAP_WORKFLOW_PROJECTIONS.to_vec()
     } else {
-        &[]
+        Vec::new()
     };
+    // A finish since #15060 leaves the derived scan bundle out of its bound
+    // delta, so a later re-check's rewrite of it is ignored here too. A staged
+    // copy is kept and protected from the later-write filter, so it still
+    // breaks the binding. A receipt whose bound verdict lists the bundle was
+    // finished before that rule and keeps its original reading.
+    let bundle = crate::edit_cage::derived_cache_bundle_path(&baseline)
+        .filter(|path| !after.verdict.changed_paths.contains(path));
+    if let Some(bundle) = &bundle {
+        crate::edit_cage::omit_derived_cache_bundle(&mut delta, &baseline);
+        protected.push(bundle.as_str());
+    }
     let normalize = |delta: &crate::edit_cage::AttemptDelta| {
         crate::edit_cage::without_later_operational_writes_protecting(
             baseline.policy(),
             delta,
             &after.verdict.changed_paths,
-            protected,
+            &protected,
         )
     };
     let matches = |delta: &crate::edit_cage::AttemptDelta| -> Result<_, String> {
@@ -828,6 +839,9 @@ fn recompute_after_verdict_binding_of_delta(
                 &baseline,
                 &manifest_relative_path(manifest),
             )?;
+            if bundle.is_some() {
+                crate::edit_cage::omit_derived_cache_bundle(&mut candidate, &baseline);
+            }
             let candidate = normalize(&candidate);
             // The absent gap projection and present A-to-B receipt slot
             // are disjoint identities; both may need reconstruction before
@@ -4085,6 +4099,9 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         &manifest_relative_path(&manifest),
     )?;
     crate::edit_cage::omit_owned_workflow_backups(&mut delta, &baseline, backups)?;
+    // The derived module-tree scan bundle is rewritten by every check; it is
+    // not attempt evidence, so the finish does not bind its bytes (#15060).
+    crate::edit_cage::omit_derived_cache_bundle(&mut delta, &baseline);
     let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
@@ -5781,6 +5798,43 @@ fn operational_write_rules(
     Ok(rules)
 }
 
+/// Whether file content carries the governed inline `#[cfg(test)]` module
+/// marker. The preflight must treat multiline attribute spellings the same as
+/// one-line gates (#11808); the cfg owner already parses both when given the
+/// full attribute text.
+fn file_content_contains_plain_test_gate(content: &str) -> bool {
+    if content
+        .lines()
+        .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim()))
+    {
+        return true;
+    }
+    let mut index = 0usize;
+    while index < content.len() {
+        let Some(relative) = content[index..].find("#[") else {
+            break;
+        };
+        index += relative;
+        let Some(end) = crate::analysis::outer_attribute_end(&content[index..]) else {
+            // Ambiguous text must fall through to the exact policy; do not
+            // rescan each nested opener in an unterminated attribute.
+            return true;
+        };
+        let attribute = content[index..index + end].trim();
+        if crate::analysis::attribute_is_plain_test_gate(attribute) {
+            return true;
+        }
+        // An apparent opener can itself be inside a literal or comment. If
+        // its extent contains another opener, it may have swallowed a real
+        // gate; defer rather than refusing or rescanning overlapping suffixes.
+        if attribute[2..].contains("#[") {
+            return true;
+        }
+        index += end;
+    }
+    false
+}
+
 fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // Canonical test-surface recognition first: the policy constructor
     // admits only `is_test_surface_path` targets (or the confined #5210
@@ -5829,9 +5883,7 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
         return false;
     }
     match std::fs::read_to_string(&candidate_path) {
-        Ok(content) => !content
-            .lines()
-            .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim())),
+        Ok(content) => !file_content_contains_plain_test_gate(&content),
         Err(_) => false,
     }
 }
@@ -7584,10 +7636,51 @@ mod tests {
             if dirty_path_cannot_be_repair_target(&root, "src/inline.rs") {
                 return Err("preflight must not name src/inline.rs".to_string());
             }
+            // Multiline `#[cfg(test)]` must defer the same way (#11808).
+            std::fs::write(
+                root.join("src/multiline_inline.rs"),
+                "#[cfg(\n    test\n)]\nmod t {}\n",
+            )
+            .map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/multiline_inline.rs") {
+                return Err("preflight must not name src/multiline_inline.rs".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
         result
+    }
+
+    #[test]
+    fn file_content_plain_test_gate_recognises_multiline_cfg_test() {
+        assert!(file_content_contains_plain_test_gate(
+            "#[cfg(test)]\nmod t {}\n"
+        ));
+        assert!(file_content_contains_plain_test_gate(
+            "#[cfg(\n    test\n)]\nmod t {}\n"
+        ));
+        assert!(!file_content_contains_plain_test_gate(
+            "#[cfg(\n    feature = \"slow\"\n)]\nmod t {}\n"
+        ));
+    }
+
+    #[test]
+    fn multiline_gate_ignores_brackets_in_comments_and_literals() {
+        for source in [
+            "#[cfg(/* ] */\n test)]\nmod tests {}",
+            "#[cfg(/* [ /* ] */ ] */\n test)]\nmod tests {}",
+            "#[doc = r#\"[ ]\"#]\n#[cfg(\n test)]\nmod tests {}",
+            "é\n#[cfg(// ]\n test)]\nmod tests {}",
+        ] {
+            assert!(file_content_contains_plain_test_gate(source), "{source}");
+        }
+        assert!(!file_content_contains_plain_test_gate(
+            "#[cfg(\nfeature = \"slow]\"\n)]"
+        ));
+        assert!(file_content_contains_plain_test_gate("#[cfg(\n test"));
+        assert!(file_content_contains_plain_test_gate(
+            "const X: &str = \"#[\";\n#[cfg(\n test)]\nmod tests {}\nconst Y: &str = \"]\";"
+        ));
     }
 
     /// #11458: TypeScript adapter test conventions (`*.spec.*`, `test-*`,

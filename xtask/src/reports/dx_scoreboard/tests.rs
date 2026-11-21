@@ -1,12 +1,13 @@
 #[cfg(unix)]
 use super::measure::linked_target;
 use super::measure::{
-    CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL,
-    PasteVerdict, Probe, WARM_CHECK_MODE, admit_check_document, builds_ripr_from_source,
-    check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
-    extract_commands, git_path_text, hostile_outcome, parse_test_result, permissive_json_exit_zero,
-    probe_result, record_warm_check, repo_exposure_contradictions, rss_sample,
-    scan_check_contradictions, warm_check_args, warm_check_envs, warm_check_subject,
+    CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, DECLARED_PARTIAL_WARM_JSON,
+    OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL, PasteVerdict, Probe, WARM_CHECK_MODE,
+    admit_check_document, builds_ripr_from_source, check_args_without_explicit_mode,
+    check_contradictions, classify_replay, contradiction_outcome, extract_commands, git_path_text,
+    hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result, record_warm_check,
+    repo_exposure_contradictions, rss_sample, scan_check_contradictions, warm_check_args,
+    warm_check_envs, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -5822,17 +5823,122 @@ fn an_expected_partial_warm_check_is_a_value_that_trust_does_not_scan() -> Resul
     if !warm.detail.contains("expected partial outcome") || !warm.detail.contains(limit) {
         return Err(format!("the row must read as partial, got {}", warm.detail));
     }
-    if contradictions.is_some() || !missing.contains(&"warm check JSON") {
+    if contradictions.is_some() || missing != [DECLARED_PARTIAL_WARM_JSON] {
         return Err(format!(
             "a partial document must not be scanned: {contradictions:?} {missing:?}"
         ));
     }
-    // The same document on a row that did not declare it stays incomplete.
-    let (samples, _, _) = record_with_subject(&admission_subject(), Ok(run()), Ok(vec![run()]));
+    // The same document on a row that did not declare it stays incomplete,
+    // and its unscanned document is an ordinary missing source.
+    let (samples, _, missing) =
+        record_with_subject(&admission_subject(), Ok(run()), Ok(vec![run()]));
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     if !matches!(warm.outcome, SampleOutcome::Incomplete(_)) {
         return Err(format!("expected incomplete, got {:?}", warm.outcome));
     }
+    if missing != ["warm check JSON"] {
+        return Err(format!(
+            "an undeclared partial is a missing source: {missing:?}"
+        ));
+    }
+    // A declared row whose measured run was not admitted is not out of
+    // scope: the document is missing, so the sample stays incomplete.
+    let mut rejected = run();
+    rejected.output.stdout = "{}".to_string();
+    let (_, _, missing) = record_with_subject(&subject, Ok(run()), Ok(vec![rejected]));
+    if missing != ["warm check JSON"] {
+        return Err(format!("a rejected run is a missing source: {missing:?}"));
+    }
+    Ok(())
+}
+
+/// The contradiction sample of a declared expected partial row is out of
+/// scope, not stopped short, so a new such row is not a lost completion
+/// (#10809, nightly 44478861915: `vscode-typescript`, `typescript-compiler`).
+/// A contradiction the pilot found, or any other missing document, keeps it
+/// incomplete and so still fails a new row closed.
+#[test]
+fn a_declared_partial_contradiction_sample_is_out_of_scope_not_incomplete() -> Result<(), String> {
+    let (outcome, detail) =
+        contradiction_outcome(Some((0, Vec::new())), &[DECLARED_PARTIAL_WARM_JSON]);
+    assert!(matches!(outcome, SampleOutcome::NotMeasured), "{outcome:?}");
+    assert!(
+        detail.contains("declared expected partial outcome"),
+        "{detail}"
+    );
+    let (outcome, _) = contradiction_outcome(
+        Some((1, vec!["seam x".to_string()])),
+        &[DECLARED_PARTIAL_WARM_JSON],
+    );
+    assert!(matches!(outcome, SampleOutcome::Incomplete(n) if (n - 1.0).abs() < 1e-9));
+    let (outcome, _) = contradiction_outcome(
+        Some((0, Vec::new())),
+        &[DECLARED_PARTIAL_WARM_JSON, "pilot repo-exposure.json"],
+    );
+    assert!(
+        matches!(outcome, SampleOutcome::Incomplete(_)),
+        "{outcome:?}"
+    );
+    // A declared partial row whose pilot document was not scanned has no
+    // count at all; that is stopped short, so it stays incomplete.
+    let (outcome, _) = contradiction_outcome(
+        None,
+        &["pilot repo-exposure.json", DECLARED_PARTIAL_WARM_JSON],
+    );
+    assert!(
+        matches!(outcome, SampleOutcome::Incomplete(_)),
+        "{outcome:?}"
+    );
+    // An undeclared row with nothing to scan keeps its earlier reading.
+    let (outcome, _) = contradiction_outcome(None, &["pilot repo-exposure.json"]);
+    assert!(matches!(outcome, SampleOutcome::NotMeasured), "{outcome:?}");
+
+    // The gate: a new repository whose sample is out of scope passes, while
+    // the same repository read as incomplete fails. The completion-loss rule
+    // is the same for every per-repository metric; MINIMAL configures one.
+    let config = parse_config(MINIMAL)?;
+    let metric = "speed.warm_check_ms";
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &[sample(metric, Some("a"), SampleOutcome::Value(0.0))],
+        &pinned_context("r", &["a"]),
+        None,
+        false,
+    );
+    let run = |new: SampleOutcome| {
+        build_report(
+            &config,
+            &all_boards(),
+            &[
+                sample(metric, Some("a"), SampleOutcome::Value(0.0)),
+                sample(metric, Some("c"), new),
+            ],
+            &pinned_context("r", &["a", "c"]),
+            Some(&baseline),
+            true,
+        )
+    };
+    let scoped = run(SampleOutcome::NotMeasured);
+    assert_ne!(
+        scoped["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        scoped["gate"]
+    );
+    assert_eq!(
+        scoped["gate"]["regressions"],
+        json!([]),
+        "{}",
+        scoped["gate"]
+    );
+    let incomplete = run(SampleOutcome::Incomplete(0.0));
+    assert_eq!(incomplete["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&incomplete).contains("c: new in this run and did not complete"),
+        "{}",
+        gate_failure_message(&incomplete)
+    );
     Ok(())
 }
 

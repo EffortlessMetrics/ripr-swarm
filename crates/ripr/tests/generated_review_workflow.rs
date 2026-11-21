@@ -16,6 +16,7 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
         std::process::id()
     ));
     fs::create_dir_all(&root)?;
+    ensure_fixture_repo_root(&root)?;
 
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["init", "--root"])
@@ -5112,7 +5113,18 @@ fn run_ripr_in(
         .output()?)
 }
 
+/// Make a CI fixture root its own Git repository when it is not one yet.
+/// Cargo pins TMPDIR under this checkout's `target/`, and `init --ci` refuses
+/// a root below a Git top level (#15389); an adopter's root is the repository.
+fn ensure_fixture_repo_root(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    if !root.join(".git").exists() {
+        fixture_git_ok(root, &["init", "-q"])?;
+    }
+    Ok(())
+}
+
 fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    ensure_fixture_repo_root(root)?;
     let root = root.to_string_lossy();
     run_ripr_in(
         std::path::Path::new("."),
@@ -5343,6 +5355,7 @@ fn comment_writing_steps_skip_fork_and_dependabot_pull_requests() -> Result<(), 
 /// `reports ci-summary` states it before the findings. Checked for a blocking
 /// decision, a configuration error and an unknown `RIPR_GATE_MODE`, against a
 /// `visible-only` run of the same input that adds neither.
+#[cfg(unix)]
 #[test]
 fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
 -> Result<(), Box<dyn Error>> {
@@ -5475,5 +5488,146 @@ fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
     assert!(errors(&stdout).is_empty(), "{stdout}");
     assert!(!summary.contains("### RIPR gate"), "{summary}");
     assert!(summary.contains("\n- Status: `advisory`\n"), "{summary}");
+    Ok(())
+}
+
+/// #15718: the real `pr-comments summary` step reads the job's
+/// `RIPR_GATE_MODE` and the decision the real gate step wrote. A blocked gate
+/// leads the pull request comment and the footer stops saying RIPR does not
+/// block merging; a `visible-only` run of the same input keeps the advisory
+/// comment.
+#[cfg(unix)]
+#[test]
+fn the_pull_request_comment_states_a_blocking_gate() -> Result<(), Box<dyn Error>> {
+    let guidance = fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json"),
+    )?;
+    let removed = [
+        "GITHUB_BASE_REF",
+        "GITHUB_EVENT_NAME",
+        "GITHUB_EVENT_PATH",
+        "RIPR_UPLOAD_SARIF",
+        "RIPR_COMMENT_MODE",
+        "RIPR_GATE_BASELINE",
+        "RIPR_GATE_MODE",
+        "RIPR_PILOT_TIMEOUT_MS",
+    ];
+    let comment = |mode: &str| -> Result<(Option<i32>, String), Box<dyn Error>> {
+        let root = replay::unique_temp_dir("gate-comment")?;
+        fs::create_dir_all(root.join("target/ripr/review"))?;
+        fs::write(root.join("target/ripr/review/comments.json"), &guidance)?;
+        let packet = replay::ripr_with_env(
+            &root,
+            &[
+                "reports",
+                "ci-packet",
+                "--root",
+                ".",
+                "--step",
+                "Evaluate RIPR gate decision",
+            ],
+            &removed,
+            &[("RIPR_GATE_MODE", mode)],
+        )?;
+        let summary = replay::ripr_with_env(
+            &root,
+            &[
+                "pr-comments",
+                "summary",
+                "--root",
+                ".",
+                "--pull-request",
+                "7",
+                "--head-sha",
+                "abcdef0123",
+            ],
+            &removed,
+            &[("RIPR_GATE_MODE", mode)],
+        )?;
+        if !summary.status.success() {
+            return Err(format!(
+                "pr-comments summary failed under {mode}: {}",
+                String::from_utf8_lossy(&summary.stderr)
+            )
+            .into());
+        }
+        let request: serde_json::Value = serde_json::from_slice(&fs::read(
+            root.join("target/ripr/review/summary/summary-request.json"),
+        )?)?;
+        let body = request["body"]
+            .as_str()
+            .ok_or("summary request has no body")?
+            .to_string();
+        let _ = fs::remove_dir_all(&root);
+        Ok((packet.status.code(), body))
+    };
+
+    // The fixture input must really block, or the rest proves nothing.
+    let (code, body) = comment("acknowledgeable")?;
+    assert_eq!(code, Some(3), "{body}");
+    let verdict = "**The RIPR gate blocked this pull request** under `acknowledgeable` mode: 1 blocking gap. First: `policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: 'ripr-waive')` at `src/pricing.rs:88`.";
+    assert!(
+        body.starts_with(&format!(
+            "<!-- ripr:summary -->\n### RIPR test-evidence review\n\n{verdict}"
+        )),
+        "{body}"
+    );
+    assert!(!body.contains("does not block merging"), "{body}");
+    assert!(
+        body.contains("Not advisory: `RIPR_GATE_MODE` is set to `acknowledgeable`, so this check can block merging."),
+        "{body}"
+    );
+
+    let (code, body) = comment("visible-only")?;
+    assert_eq!(code, Some(0), "{body}");
+    assert!(!body.contains("RIPR gate"), "{body}");
+    assert!(body.contains("and it does not block merging."), "{body}");
+    Ok(())
+}
+
+/// #14148: the real `reports ci-summary` reads the run's event from the
+/// environment, and a manual run says it has no pull request where a
+/// `pull_request` run of the same tree does not.
+#[cfg(unix)]
+#[test]
+fn a_manual_run_summary_says_there_is_no_pull_request() -> Result<(), Box<dyn Error>> {
+    let root = replay::unique_temp_dir("manual-run-summary")?;
+    let summary = |event: &str| -> Result<String, Box<dyn Error>> {
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &[
+                "GITHUB_BASE_REF",
+                "GITHUB_EVENT_PATH",
+                "RIPR_UPLOAD_SARIF",
+                "RIPR_COMMENT_MODE",
+                "RIPR_GATE_BASELINE",
+                "RIPR_GATE_MODE",
+                "RIPR_PILOT_TIMEOUT_MS",
+            ],
+            &[("GITHUB_EVENT_NAME", event)],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "ci-summary failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8(output.stdout)?)
+    };
+    // The directory is kept when a run fails, for inspection.
+    let manual = summary("workflow_dispatch")?;
+    let pull_request = summary("pull_request")?;
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        manual.contains("#### First-run status\n- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced."),
+        "{manual}"
+    );
+    assert!(
+        !pull_request.contains("No pull request in this run"),
+        "{pull_request}"
+    );
     Ok(())
 }

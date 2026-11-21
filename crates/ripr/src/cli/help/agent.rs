@@ -73,7 +73,7 @@ with the cause on stderr.
 "#;
 pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
 
-Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
+Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N] [--line-ranges]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -89,6 +89,9 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
+  --line-ranges    JSON-only lossless grouped inclusive changed-line ranges.
+                   Minifies output; requires --json. May grow for many files.
+                   Does not truncate locations or change the seam cap.
 
 When --files or --base produces a working set that matches no seams, the brief
 falls back to all repo-actionable seams. This scope-widening is disclosed in
@@ -303,7 +306,7 @@ owned child is terminated.
 
 Every parsed attempt, including refusals, emits typed JSON on stdout; usage
 errors stay on stderr. Exit status is 0 when a bounded observation was committed
--- including an observed command failure -- 3 for a typed refusal, and 2 when
+-- including an observed command failure -- 3 when ripr declined the request, and 2 when
 the result could not be written. It
 records process evidence only; it does not issue receipts, run mutation testing,
 prove adequacy, or grant gate or merge authority.
@@ -416,6 +419,9 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
+  --quiet              Drop the phase's progress narration and `wrote <path>`
+                       lines from stderr, like `ripr repair --quiet` and
+                       `RIPR_QUIET`. Results and refusal prose always print.
   --seam-id ID         Select one visible seam; required for `before` and the
                        compatibility selector for `after`. For `--phase before`,
                        a seam ID, a `ripr check` finding ID (`probe:` /

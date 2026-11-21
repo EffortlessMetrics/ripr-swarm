@@ -1158,11 +1158,17 @@ fn commit_step_names_dirty_files_outside_the_analyzed_root() -> Result<(), Strin
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
         .ok_or_else(|| format!("check must still name the repair start:\n{check}"))?;
-    // Precondition: the start's own preflight refuses over the outside file.
+    // Precondition: the start refuses. Since #15363 it refuses `crate` first,
+    // before writing anything, because a repair attempt starts only at the
+    // exact Git top-level; withholding this start in check is #15488.
     let (code, repair) = repo.ripr_status(&["repair", seam_id, "--root", "crate"])?;
     assert!(
-        code != Some(0) && repair.contains("Uncommitted: src/lib.rs"),
-        "precondition, the start refuses over the outside file:\n{repair}"
+        code != Some(0) && repair.contains("is not the exact Git top-level"),
+        "precondition, the start refuses the subdirectory root:\n{repair}"
+    );
+    assert!(
+        !repo.0.join("crate/target/ripr/repair-attempts").exists(),
+        "the refusal must take no attempt lock under the subdirectory root:\n{repair}"
     );
     let json = repo.ripr(&[
         "check", "--root", "crate", "--base", "HEAD", "--format", "json",

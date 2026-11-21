@@ -51,6 +51,11 @@ analysis knew.
 
 ## Behavior
 
+`context --format json-compact` is a presentation of the same live or
+artifact-backed packet and structured refusal. It removes only insignificant
+JSON whitespace; default bytes, source verification, exit codes and prose-only
+selector misses remain unchanged.
+
 ### Explicit artifact pair, no implicit cache
 
 `ripr check` gains `--write-artifact <path>`; `ripr explain` and
@@ -168,6 +173,8 @@ The artifact embeds an input identity computed at check time:
   unclassified new field fails compilation; a unit test pins the role of
   every field. Any PR that adds a finding-affecting config field must
   classify it and bump `config_identity_version` in the same PR.
+  The `perl.executable` field preserves the case of the configured spelling.
+  It treats backslashes as separators on Windows and as filename characters on Unix.
   Render-only knobs (severity display, `reports.max_related_tests`),
   LSP-only fields, fields not consumed by the diff-check pipeline
   (`profiles.bun_ub`, `suppressions.path`), and loader container metadata
@@ -341,6 +348,9 @@ even though the `check --json` render caps related tests at 8.
 ```
 
 ## Test Mapping
+
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_identity_uses_native_separators`
+  checks Unix literal backslashes, Windows separator equivalence, and case preservation in the config hash.
 
 - `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report`
   — unsupported-input report parity, new and sentinel destinations, absent

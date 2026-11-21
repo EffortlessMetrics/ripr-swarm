@@ -79,6 +79,7 @@ mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod commonjs_default_class;
+mod commonjs_reexports;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -183,6 +184,7 @@ mod self_comparing_assertion_tests;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
+mod switch_return_witness;
 mod table_loop_rows;
 mod table_rows;
 mod ternary_arm_guard;
@@ -191,6 +193,7 @@ mod tests;
 mod typeof_kind;
 #[cfg(test)]
 mod typeof_kind_tests;
+mod unused_default_guard;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;

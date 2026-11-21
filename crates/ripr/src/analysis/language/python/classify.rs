@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod property_tests;
+
 use super::approx_band::{
     PythonBandReading, PythonBandSource, PythonBandVerdict, python_band_reading,
 };
@@ -925,6 +928,36 @@ fn classify_change_for_owner_inner<'a>(
         },
         None => alignment,
     };
+    // A strong exact read of a plain builtin `@property` owner (#15490): the
+    // same credit that lifts its `decorator_indirection` limit.
+    let property_read = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            owner_source.and_then(|source| {
+                super::property_read::property_read_credit(
+                    owner,
+                    source,
+                    line_text,
+                    &focus,
+                    &related_candidates,
+                )
+            })
+        })
+        .flatten();
+    let alignment = match property_read {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_property_read".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
     let log_evidence = python_log_evidence(
         old_line_text,
         line_text,
@@ -1827,7 +1860,21 @@ fn classify_change_for_owner_inner<'a>(
     };
 
     let related_count = related.len();
-    let reach_summary = if module_constant.unresolved_string_read {
+    let unbound_dunder_reach = related_count == 0
+        && static_limit
+            .as_ref()
+            .is_some_and(super::static_limits::is_implicit_dunder_dispatch_limit);
+    let reach_state = if unbound_dunder_reach {
+        StageState::Unknown
+    } else {
+        reach_state
+    };
+    let reach_summary = if unbound_dunder_reach {
+        format!(
+            "`{}` may be reached through a dunder method Python invokes by syntax; the preview adapter cannot bind a test instance to its class, so test reach is not established.",
+            owner.name
+        )
+    } else if module_constant.unresolved_string_read {
         "The preview adapter could not resolve the module string's consumer path.".to_string()
     } else if related_count == 0 {
         format!("0 related Python test(s) found for owner `{}`", owner.name)

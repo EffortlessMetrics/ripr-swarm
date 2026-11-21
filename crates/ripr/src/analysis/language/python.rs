@@ -422,6 +422,7 @@ mod param_fixtures;
 mod parametrize;
 mod parse_budget;
 mod probe_shape;
+mod property_read;
 mod reexports;
 mod related_tests;
 mod repo;
@@ -1027,9 +1028,17 @@ struct PythonBareBoolCall {
     /// The call's source text, without the `not`.
     call_text: String,
     /// `Some(b)` for a `True`/`False` literal argument, `None` for any other
-    /// literal, by position.
+    /// argument, by position.
     bool_arguments: Vec<Option<bool>>,
     negated: bool,
+    /// The plain-name positional arguments (`f(line)`), in order (#15310).
+    /// A call with any is credited only once its test settles every one as
+    /// a pytest parametrize argname ([`Self::names_settled`]).
+    name_arguments: Vec<String>,
+    /// Test extraction proved every name argument is a direct, settled
+    /// pytest parametrize argname with recorded cases, that the body does
+    /// not rebind and Hypothesis does not generate (#15310).
+    names_settled: bool,
 }
 
 #[derive(
@@ -1942,7 +1951,10 @@ impl PythonAdapter {
                 .iter()
                 .map(|changed| changed.path.as_path()),
         );
-        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
+        limitations.extend(limitations_for_absent_changed_files(
+            &options.root,
+            &absent_changed_files,
+        )?);
         let absent_changed_paths = absent_changed_files
             .iter()
             .map(|path| normalized_path(path))
@@ -2701,6 +2713,8 @@ mod helper_owner_call_tests;
 mod imported_literal_tests;
 #[cfg(test)]
 mod owner_result_field_tests;
+#[cfg(test)]
+mod property_read_tests;
 #[cfg(test)]
 mod repo_module_identity_tests;
 #[cfg(test)]

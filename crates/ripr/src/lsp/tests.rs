@@ -578,31 +578,35 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
             .iter()
             .find(|registration| registration["id"] == "ripr-diagnostics-input-watch")
             .ok_or_else(|| format!("no diagnostics-input registration: {registrations:?}"))?;
-        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"]
-            .iter()
-            .map(|relative| {
-                serde_json::json!({
-                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
-                })
+        let expected = [
+            "target/ripr/reports/gap-decision-ledger.json",
+            ".git/HEAD",
+            "*.py",
+        ]
+        .iter()
+        .map(|relative| {
+            serde_json::json!({
+                "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
             })
-            // #14099: a change watcher for analyzed sources and a delete
-            // watcher for every path under the root (a folder deleted as one
-            // entry is reported as the folder) ride the same root-anchored
-            // registration.
-            .chain([
-                serde_json::json!({
-                    "globPattern": {
-                        "baseUri": root_uri.as_str(),
-                        "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
-                    },
-                    "kind": 2,
-                }),
-                serde_json::json!({
-                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": "**/*"},
-                    "kind": 4,
-                }),
-            ])
-            .collect::<Vec<_>>();
+        })
+        // #14099: a change watcher for analyzed sources and a delete
+        // watcher for every path under the root (a folder deleted as one
+        // entry is reported as the folder) ride the same root-anchored
+        // registration.
+        .chain([
+            serde_json::json!({
+                "globPattern": {
+                    "baseUri": root_uri.as_str(),
+                    "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                },
+                "kind": 2,
+            }),
+            serde_json::json!({
+                "globPattern": {"baseUri": root_uri.as_str(), "pattern": "**/*"},
+                "kind": 4,
+            }),
+        ])
+        .collect::<Vec<_>>();
         if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
             return Err(format!(
                 "diagnostics watchers not root-anchored: {diagnostics}"
@@ -6243,6 +6247,176 @@ fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Resu
             "{case}: the evidence-context packet must carry a null repair command"
         );
     }
+    Ok(())
+}
+
+/// #13636: on a seam past the repair-packet flip, a dirty production premise
+/// turns the repair start inert for a disabled-capable client, naming the
+/// shared commit step; the hover names the same commit first. The check is
+/// live: committing re-enables the start on the same snapshot, no refresh.
+#[test]
+fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() -> Result<(), String>
+{
+    let fixture = unique_lsp_test_root("repair-start-uncommitted")?;
+    let root = fixture.path().to_path_buf();
+    fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    fs::write(root.join("src/pricing.rs"), "pub fn discount() {}\n")
+        .map_err(|err| format!("write production: {err}"))?;
+    fs::write(root.join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| format!("write test: {err}"))?;
+    run_lsp_scope_git(&root, &["init", "-q"])?;
+    run_lsp_scope_git(&root, &["add", "-A"])?;
+    let commit_all = |message: &str| {
+        run_lsp_scope_git(
+            &root,
+            &[
+                "-c",
+                "user.email=ripr-test@example.com",
+                "-c",
+                "user.name=ripr-test",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qam",
+                message,
+            ],
+        )
+    };
+    commit_all("base")?;
+    fs::write(
+        root.join("src/pricing.rs"),
+        "pub fn discount() { let _ = 1; }\n",
+    )
+    .map_err(|err| format!("dirty production: {err}"))?;
+
+    let seam = sample_classified_seam();
+    assert!(repair_packet_eligibility(&seam).eligible());
+    let diagnostic = diagnostic_for_classified_seam(&root, &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = crate::lsp::uri::file_uri_for_path(&root.join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.clone(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let params =
+        code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic.clone()])?;
+    let commands = vscode_advertised_client_commands()?;
+    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
+    let disabled_client = client_features_with_disabled_support(&borrowed)?;
+    let start_title = "Start repair: copy repair command";
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    let commit = crate::app::commit_prerequisite_command(&bound, &["src/pricing.rs".to_string()])
+        .ok_or("commit step for one file")?;
+
+    // Dirty: the start is present, inert, names the reason and the commit.
+    super::actions::forget_recent_premise();
+    let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the inert start must be listed: {literals:?}"))?;
+    assert!(
+        start.command.is_none(),
+        "an inert start carries no command: {start:?}"
+    );
+    let reason = start
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str())
+        .ok_or("the start must be disabled")?;
+    assert_eq!(
+        reason,
+        format!(
+            "Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted. Commit command: {commit}"
+        )
+    );
+    let data = start.data.as_ref().ok_or("inert start carries data")?;
+    assert_eq!(data["disabled_reason"], "uncommitted_production_change");
+    assert_eq!(data["action_name"], "copy_agent_repair_command");
+    assert_disabled_action_invariants(start)?;
+    // The rest of the agent loop stays, so the change is the start alone.
+    assert!(
+        literals.iter().any(
+            |action| action.title == "Agent handoff: copy packet command"
+                && action.command.is_some()
+        ),
+        "{literals:?}"
+    );
+    // A client without disabled support keeps the legacy omission.
+    let legacy = code_action_commands(&code_action_response(
+        &params,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    ))?;
+    assert!(
+        legacy.iter().all(|(title, command, _)| title != start_title
+            && command != COPY_AGENT_REPAIR_COMMAND),
+        "{legacy:?}"
+    );
+    let hover = match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+        HoverContents::Markup(markup) => markup.value,
+        other => return Err(format!("expected markdown hover, got {other:?}")),
+    };
+    let commit_at = hover
+        .find(&format!("- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"))
+        .ok_or_else(|| format!("hover must name the commit first:\n{hover}"))?;
+    let then_at = hover
+        .find("- then repair: `ripr agent repair ")
+        .ok_or_else(|| format!("hover must keep the start after the commit:\n{hover}"))?;
+    assert!(
+        commit_at < then_at && !hover.contains("repair (start here)"),
+        "{hover}"
+    );
+
+    // The retained-health conversion keeps the more specific refusal and its
+    // commit step instead of rewriting it to "refresh analysis".
+    let mut retained = actions.clone();
+    super::actions::disable_retained_analysis_actions(
+        &mut retained,
+        &AnalysisHealth {
+            state: AnalysisAttemptState::Succeeded,
+            ..AnalysisHealth::default()
+        },
+    );
+    let retained_start = code_action_literals(&retained)?
+        .into_iter()
+        .find(|action| action.title == start_title)
+        .ok_or("retained start listed")?;
+    assert_eq!(
+        retained_start
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str()),
+        Some(reason)
+    );
+
+    // Committed: the same snapshot offers the enabled start again.
+    commit_all("change")?;
+    super::actions::forget_recent_premise();
+    let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the start must be listed: {literals:?}"))?;
+    assert!(
+        start.disabled.is_none() && start.command.is_some(),
+        "{start:?}"
+    );
+    let hover = match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+        HoverContents::Markup(markup) => markup.value,
+        other => return Err(format!("expected markdown hover, got {other:?}")),
+    };
+    assert!(
+        hover.contains("- repair (start here): `ripr agent repair ")
+            && !hover.contains("commit first"),
+        "{hover}"
+    );
     Ok(())
 }
 
@@ -16736,6 +16910,16 @@ fn lsp_fixture_outputs(fixture: &str) -> Result<(serde_json::Value, serde_json::
 /// The production diagnostics, code actions and seam hover for a fixture's
 /// single classified seam, with the workspace projected to `<root>`.
 fn lsp_fixture_render(
+    fixture: &str,
+) -> Result<(serde_json::Value, serde_json::Value, String), String> {
+    // #13636: the fixture root sits inside this checkout, so pin a clean
+    // repair-start premise; the goldens pin the committed-fixture form.
+    super::actions::test_premise::with_pinned_premise(Vec::new(), || {
+        lsp_fixture_render_unpinned(fixture)
+    })
+}
+
+fn lsp_fixture_render_unpinned(
     fixture: &str,
 ) -> Result<(serde_json::Value, serde_json::Value, String), String> {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -27327,6 +27511,179 @@ fn framed_push_diagnostics_bind_the_observed_document_version() -> Result<(), St
 
 #[test]
 #[serial]
+fn framed_push_external_revert_publishes_one_saved_content_marker_per_version() -> Result<(), String>
+{
+    // #15316: a push-only client reloads a file that `git checkout` reverted
+    // on disk. The buffer change and the save it implies are one lifecycle
+    // step, so the client receives one withdrawal marker for that version,
+    // and the marker names the saved-content state: the buffer equals the
+    // file on disk, so "save the file" is not the recovery.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-external-revert")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err("fixture no longer carries the equality boundary".to_string());
+        }
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Analyze the boundary edit as saved content so findings are served.
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("write dirty lib.rs failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 5,
+                        "text": dirty_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let opened = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let served_findings = opened.iter().any(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"].as_str() == Some(text_uri.as_str())
+                && message["params"]["diagnostics"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+        });
+        if !served_findings {
+            return Err(format!(
+                "fixture must serve diagnostics before the revert: {opened:?}"
+            ));
+        }
+
+        // `git checkout` reverts the file on disk; the client reloads it.
+        std::fs::write(&lib_path, &saved_text)
+            .map_err(|err| format!("revert lib.rs failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 6 },
+                    "contentChanges": [{ "text": saved_text }]
+                }
+            }),
+        )
+        .await?;
+        let reverted = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let markers = reverted
+            .iter()
+            .filter(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"].as_str() == Some(text_uri.as_str())
+            })
+            .flat_map(|message| {
+                let version = message["params"]["version"].clone();
+                message["params"]["diagnostics"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|diagnostic| {
+                        diagnostic["code"] == "ripr-diagnostic-quarantine-withdrawn"
+                    })
+                    .map(move |diagnostic| (version.clone(), diagnostic))
+            })
+            .collect::<Vec<_>>();
+        let [(version, marker)] = markers.as_slice() else {
+            return Err(format!(
+                "one withdrawal marker per version expected, got {}: {markers:?}",
+                markers.len()
+            ));
+        };
+        if version.as_i64() != Some(6)
+            || marker["data"]["reason"] != "saved_content_not_yet_analyzed"
+            || marker["data"]["recovery"] != "await_analysis_or_refresh"
+        {
+            return Err(format!(
+                "marker must name the saved-content state: {marker}"
+            ));
+        }
+        let message = marker["message"].as_str().unwrap_or_default();
+        if message.contains("diverges") || message.contains("Save the file") {
+            return Err(format!(
+                "a saved buffer must not be told to save: {message}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -> Result<(), String>
 {
     // #8732: a push-only client used to see permanent silence before the
@@ -27622,11 +27979,12 @@ fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Resul
 
 #[test]
 #[serial]
-fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
+fn framed_push_client_pending_marker_names_the_failure_after_a_failed_first_analysis()
 -> Result<(), String> {
     // #14447 review: "in progress" must not outlive the attempt. When the
     // first analysis fails without a snapshot and nothing follows it, the
-    // push marker returns to the save/refresh route that starts analysis.
+    // push marker names that failure and its fix: the cold-start
+    // save/refresh route would fail the same way.
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("push-pending-reverts-after-failure")?;
         let file = root.path().join("lib.rs");
@@ -27680,7 +28038,7 @@ fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_f
             }),
         )
         .await?;
-        let recoveries = tokio::time::timeout(Duration::from_mins(1), async {
+        let (recoveries, failed_message) = tokio::time::timeout(Duration::from_mins(1), async {
             let mut recoveries = Vec::new();
             loop {
                 let message = read_lsp_message(&mut client_read).await?;
@@ -27695,25 +28053,40 @@ fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_f
                     .and_then(|marker| marker["data"]["recovery"].as_str())
                     .unwrap_or_default()
                     .to_string();
-                let done = recovery == "save_or_refresh";
+                let done = recovery == "fix_failure_then_refresh";
                 recoveries.push(recovery);
                 if done {
-                    return Ok::<_, String>(recoveries);
+                    let message = message["params"]["diagnostics"][0]["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    return Ok::<_, String>((recoveries, message));
                 }
             }
         })
         .await
         .map_err(|elapsed| {
-            format!("no save_or_refresh marker after the failed attempt: {elapsed}")
+            format!("no failed-attempt marker after the failed attempt: {elapsed}")
         })??;
         if recoveries.first().map(String::as_str) != Some("analysis_running") {
             return Err(format!(
                 "the didOpen marker must name the running analysis first: {recoveries:?}"
             ));
         }
-        if recoveries.last().map(String::as_str) != Some("save_or_refresh") {
+        if recoveries
+            .iter()
+            .any(|recovery| recovery == "save_or_refresh")
+        {
             return Err(format!(
-                "a failed attempt must restore the start route: {recoveries:?}"
+                "a failed attempt must not fall back to the start route: {recoveries:?}"
+            ));
+        }
+        if !failed_message.contains("The last analysis attempt failed:")
+            || !failed_message.contains("Fix that cause")
+            || failed_message.contains("has not analyzed this workspace yet")
+        {
+            return Err(format!(
+                "the marker must name the recorded failure and its fix: {failed_message}"
             ));
         }
 

@@ -72,9 +72,12 @@ pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
                 i += 1;
                 options.receipts_dir = non_empty_arg(args, i, "--receipts-dir")?.to_string();
             }
-            "--out-dir" => {
+            // `--output-dir` is the directory spelling `check` uses (#10543
+            // item 4); `--out-dir` stays accepted as a hidden alias so
+            // existing scripts keep working.
+            "--output-dir" | "--out-dir" => {
                 i += 1;
-                options.out_dir = non_empty_arg(args, i, "--out-dir")?.to_string();
+                options.out_dir = non_empty_arg(args, i, "--output-dir")?.to_string();
             }
             "--check" => options.check = true,
             "--run-chain" => options.run_chain = true,
@@ -160,6 +163,17 @@ mod tests {
                     "first-pr typo must suggest --gap-ledger from its help body, got {other:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #10543 item 4: `--output-dir` is the documented spelling and
+    /// `--out-dir` the hidden alias; both set the same directory.
+    #[test]
+    fn output_dir_and_its_out_dir_alias_set_the_same_directory() -> Result<(), String> {
+        for flag in ["--output-dir", "--out-dir"] {
+            let parsed = parse_options(&[flag.to_string(), "reports-here".to_string()])?;
+            assert_eq!(parsed.out_dir, "reports-here", "{flag}");
         }
         Ok(())
     }

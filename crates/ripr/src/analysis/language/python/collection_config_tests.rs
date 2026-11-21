@@ -472,7 +472,11 @@ fn norecursedirs_trailing_slash_names_the_directory() -> Result<(), String> {
         ("slash-only", "/"),
         ("double", "env//"),
         ("leading", "/env/"),
-        ("inner", "a/b"),
+        ("glob-star", "tests/*_cases"),
+        ("glob-question", "tests/mypy_test_case?"),
+        ("glob-class", "tests/[a]"),
+        ("dot-segment", "tests/./mypy_test_cases"),
+        ("parent-segment", "tests/../mypy_test_cases"),
     ] {
         assert_withheld(
             label,
@@ -487,6 +491,69 @@ fn norecursedirs_trailing_slash_names_the_directory() -> Result<(), String> {
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn norecursedirs_plain_interior_slash_path_is_evaluated() -> Result<(), String> {
+    let ini = "[pytest]\nnorecursedirs = .git docs tests/mypy_test_cases\n";
+    // Tests outside the named directory keep their credit.
+    assert_credited(
+        "outside",
+        &[("pytest.ini", ini), ("tests/test_calc.py", TEST_BODY)],
+    )?;
+    // A sibling whose name merely starts like the entry is not excluded.
+    let sibling = "tests/mypy_test_cases_extra/test_calc.py";
+    let got = controls_of(
+        "sibling-prefix",
+        &[("pytest.ini", ini), (sibling, TEST_BODY)],
+        sibling,
+    )?;
+    if !got.is_empty() {
+        return Err(format!("{sibling} should keep credit: {got:?}"));
+    }
+    // Tests inside it, at any depth, are excluded by norecursedirs.
+    for file in [
+        "tests/mypy_test_cases/test_calc.py",
+        "tests/mypy_test_cases/deep/test_calc.py",
+        // pytest's `*/tests/mypy_test_cases` also matches below a prefix.
+        "pkg/tests/mypy_test_cases/test_calc.py",
+    ] {
+        let got = controls_of("inside", &[("pytest.ini", ini), (file, TEST_BODY)], file)?;
+        if got != ["pytest.collection(norecursedirs)"] {
+            return Err(format!("{file} should be excluded: {got:?}"));
+        }
+    }
+    // A config below the entry's first segment: pytest's `*/tests/mypy_test_cases`
+    // still matches the absolute path, so the config-relative tail
+    // `mypy_test_cases` is excluded too.
+    let nested = "tests/mypy_test_cases/test_calc.py";
+    let got = controls_of(
+        "config-below-entry",
+        &[
+            (
+                "tests/pytest.ini",
+                "[pytest]\nnorecursedirs = tests/mypy_test_cases\n",
+            ),
+            (nested, TEST_BODY),
+        ],
+        nested,
+    )?;
+    if got != ["pytest.collection(norecursedirs)"] {
+        return Err(format!(
+            "{nested} under tests/pytest.ini should be excluded: {got:?}"
+        ));
+    }
+    // The pyproject spelling from marshmallow.
+    assert_credited(
+        "pyproject",
+        &[
+            (
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\nnorecursedirs = [\"tests/mypy_test_cases\"]\n",
+            ),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )
 }
 
 #[test]

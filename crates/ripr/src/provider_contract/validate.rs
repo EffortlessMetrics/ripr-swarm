@@ -367,6 +367,7 @@ fn require_oracle_kind(value: &str) -> Result<OracleKind, RiprProviderContractEr
         OracleKind::BroadError,
         OracleKind::SmokeOnly,
         OracleKind::MockExpectation,
+        OracleKind::GuardedResultMatch,
         OracleKind::Unknown,
     ]
     .into_iter()

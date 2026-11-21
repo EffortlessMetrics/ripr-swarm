@@ -657,7 +657,8 @@ Two pattern terms are used below.
    Row cells are also the function's inputs (#6641). Each row runs the
    body with its cells bound to the parameters positionally, so activation
    reads a `test_case` row's literal cells as it reads an rstest `#[case]`
-   row: `#[test_case(10, 90)]`, `#[test_case(10 => 90)]` and
+   row (a named rstest row, `#[case::ten(10, 90)]` or `#[case :: ten(..)]`,
+   binds like `#[case(10, 90)]`; #15341): `#[test_case(10, 90)]`, `#[test_case(10 => 90)]` and
    `#[test_case(10, 90 ; "ten")]` each pass `10` to `q`. The cells are the
    text before the one top-level `=>` or the `;` that starts the name;
    strings and brackets do not split. A row binds nothing when its cell
@@ -740,7 +741,10 @@ Two pattern terms are used below.
     the assertion with comments and string literals masked, so a message
     that merely contains the placeholder's name does not lower it, and the
     rule applies on both extraction paths: the parser adapter and the
-    line-scanned `ensure!`/custom-helper path.
+    line-scanned `ensure!`/custom-helper path. Braces in a literal operand,
+    including quoted JSON in a raw string, do not read a local. A capture
+    in a formatting macro’s template reads it in both ordinary and raw
+    strings. Escaped braces and literal value arguments retain credit (#14897).
 
 ### Reveal admission of an excluded sibling
 
@@ -1257,6 +1261,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/tests/test_case_row_boundary_inputs.rs` (rule 9 row inputs,
   examples 45 to 47) and the `test_case_*` unit tests in
   `crates/ripr/src/analysis/value_resolution/tests.rs`.
+- `crates/ripr/tests/rstest_named_case_rows.rs` (rule 9 named rstest rows,
+  #15341) and `extract_rstest_cases_reads_named_case_rows`.
 
 ## Implementation Mapping
 

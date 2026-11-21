@@ -47,6 +47,14 @@ const fn producer(
 // no producer can drift unreconciled.
 const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
+        "agent-brief",
+        &[producer(
+            "crates/ripr/src/output/agent_brief.rs",
+            "pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // Input contract: the native DX ingestion consumer owns this version.
         "muse-plugin-eval",
         &[producer(
@@ -77,12 +85,66 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The refusal envelope `ripr rerun --json` writes when it cannot
+        // produce a targeted rerun report, keyed with that report's version
+        // through its own mirrored constant.
+        "rerun-refusal",
+        &[producer(
+            "crates/ripr/src/cli/rerun.rs",
+            "const TARGETED_RERUN_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // The refusal envelope `ripr agent brief --json` writes when it
+        // cannot produce a brief. The brief's own version constant keys it;
+        // the brief document itself is not a published schema.
+        "agent-brief-refusal",
+        &[producer(
+            "crates/ripr/src/output/agent_brief.rs",
+            "pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // The refusal envelope `ripr agent packet --json` writes when it
+        // cannot produce a seam packet. The packet's own version constant
+        // keys it; the packet document itself is not a published schema.
+        "agent-packet-refusal",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr agent status --json`, the inventory document. The one-attempt
+        // document (`--attempt <id>`) has its own constant and is not
+        // published here.
+        "agent-status",
+        &[producer(
+            "crates/ripr/src/app/agent_status.rs",
+            "pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // `ripr cache status --json`. This versions the status report, not
         // the on-disk cache layers.
         "cache-status",
         &[producer(
             "crates/ripr/src/cli/commands/cache.rs",
             "const CACHE_STATUS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr cache export` success stdout. This versions the export report,
+        // not the copied cache layers.
+        "cache-export",
+        &[producer(
+            "crates/ripr/src/analysis/seam_cache/export.rs",
+            "pub(crate) const CACHE_EXPORT_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -274,6 +336,14 @@ struct VerificationContract {
 }
 
 const CONTRACTS: &[VerificationContract] = &[
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-brief.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["changed_line_ranges", "agent-brief-line-ranges-v1"],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/muse-plugin-eval.schema.json",
         schema_pointer: None,
@@ -519,8 +589,57 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["analysis_scope.scope", "run_limitations"],
     },
+    // The refusal envelopes of `ripr rerun --json`, `ripr agent brief --json`
+    // and `ripr agent packet --json`: captures of real refusals with the
+    // host path replaced by `.`, kept as edge fixtures.
+    VerificationContract {
+        schema_path: "schemas/ripr/rerun-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/rerun-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["ripr-targeted-rerun-v1", "run_limitations"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-brief-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-brief-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["--base", "run_limitations"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-packet-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["seam_id_unknown", "run_limitations"],
+    },
+    // `ripr agent status --json`. The fixture is a capture of a finished
+    // repair loop with the host's absolute root replaced by `.`; the
+    // producer-byte authority is `agent_status_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-status.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-status.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["repair_attempts", "missing_commands"],
+    },
+    // `ripr cache export` success stdout. The fixture is a capture with the
+    // host's absolute export directory replaced by a portable path; the
+    // producer-byte authority is `cache_export_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/cache-export.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cache-export.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["classified_entries", "logical_file_bytes"],
+    },
     // `ripr cache status --json`. The fixture is hand-written with a portable
-    // path: the real document carries the host's absolute cache directory.
+    // path. The real document carries a host-specific cache path.
     // The producer-byte authority is `cache_clear_safety.rs`.
     VerificationContract {
         schema_path: "schemas/ripr/cache-status.schema.json",
@@ -1416,7 +1535,7 @@ fn supported_numeric_bounds(
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
             }),
-            "allOf" | "anyOf" | "oneOf" => value.as_array().is_none_or(|entries| {
+            "allOf" | "anyOf" | "oneOf" | "prefixItems" => value.as_array().is_none_or(|entries| {
                 entries.iter().all(|entry| {
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
@@ -2015,10 +2134,37 @@ fn validate_array(
         }
     }
 
+    // Draft 2020-12: `prefixItems` binds a schema to each leading position,
+    // and `items` then applies only to the positions after the prefix. A
+    // `prefixItems` that is not an array is reported, never skipped.
+    let prefix = match schema.get("prefixItems") {
+        None => &[][..],
+        Some(prefix) => match prefix.as_array() {
+            Some(prefix) => prefix.as_slice(),
+            None => {
+                violations.push(format!("{location}: unsupported prefixItems value"));
+                return;
+            }
+        },
+    };
+    for (index, (item, item_schema)) in items.iter().zip(prefix).enumerate() {
+        if !charge_validation_work(budget, 1 + location.len() / 1024) {
+            return;
+        }
+        validate_value_against_schema_inner(
+            item,
+            item_schema,
+            root_schema,
+            format!("{location}[{index}]"),
+            violations,
+            budget,
+        );
+    }
+
     let Some(items_schema) = schema.get("items") else {
         return;
     };
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in items.iter().enumerate().skip(prefix.len()) {
         if !charge_validation_work(budget, 1 + location.len() / 1024) {
             return;
         }
@@ -2320,6 +2466,68 @@ mod tests {
 
     fn parse_exact_text(text: &str) -> Result<ExactValue, String> {
         crate::exact_schema_json::parse(text.as_bytes())
+    }
+
+    #[test]
+    fn agent_brief_schema_profiles_reject_mixed_missing_and_unknown_forms() -> Result<(), String> {
+        let root = crate::repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/agent-brief.schema.json"))?;
+        let full = read_json(
+            root.join("fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json"),
+        )?;
+        let mut profile = full.clone();
+        profile["rendering_profile"] = serde_json::json!("agent-brief-line-ranges-v1");
+        let working = profile["working_set"]
+            .as_object_mut()
+            .ok_or("working set")?;
+        working.remove("changed_lines");
+        working.insert(
+            "changed_line_ranges".to_string(),
+            serde_json::json!([{"file":"雪.rs","ranges":[[1,2],[2,2],[0,0]]}]),
+        );
+        for value in [&full, &profile] {
+            let mut errors = Vec::new();
+            validate_value_against_schema(value, &schema, &schema, "$".to_string(), &mut errors);
+            assert!(errors.is_empty(), "{errors:?}");
+        }
+        let mut bad = Vec::new();
+        let mut mixed = profile.clone();
+        mixed["working_set"]["changed_lines"] = serde_json::json!([]);
+        bad.push(mixed);
+        let mut missing_marker = profile.clone();
+        missing_marker
+            .as_object_mut()
+            .ok_or("object")?
+            .remove("rendering_profile");
+        bad.push(missing_marker);
+        let mut unknown = profile.clone();
+        unknown["rendering_profile"] = serde_json::json!("unknown");
+        bad.push(unknown);
+        let mut full_with_marker = full.clone();
+        full_with_marker["rendering_profile"] = serde_json::json!("agent-brief-line-ranges-v1");
+        bad.push(full_with_marker);
+        let mut missing = full.clone();
+        missing["working_set"]
+            .as_object_mut()
+            .ok_or("working set")?
+            .remove("changed_lines");
+        bad.push(missing);
+        for pair in [
+            serde_json::json!([1]),
+            serde_json::json!([1, 2, 3]),
+            serde_json::json!([-1, 2]),
+            serde_json::json!([1.5, 2]),
+        ] {
+            let mut invalid = profile.clone();
+            invalid["working_set"]["changed_line_ranges"][0]["ranges"][0] = pair;
+            bad.push(invalid);
+        }
+        for value in bad {
+            let mut errors = Vec::new();
+            validate_value_against_schema(&value, &schema, &schema, "$".to_string(), &mut errors);
+            assert!(!errors.is_empty(), "invalid profile accepted: {value}");
+        }
+        Ok(())
     }
 
     #[test]
@@ -3814,6 +4022,66 @@ mod tests {
         assert!(
             violations.is_empty(),
             "a satisfied conditional must not report violations: {violations:#?}"
+        );
+    }
+
+    /// `prefixItems` binds each leading position to its own schema, and
+    /// `items` then covers only the positions after the prefix (draft
+    /// 2020-12). Before this was evaluated, a positional contract such as the
+    /// agent status artifact order was silently unchecked.
+    #[test]
+    fn prefix_items_bind_positions_and_items_covers_the_rest() {
+        let schema = serde_json::json!({
+            "type": "array",
+            "prefixItems": [{ "const": "first" }, { "const": "second" }],
+            "items": { "type": "integer" }
+        });
+        let violations_for = |value: serde_json::Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "list".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert_eq!(
+            violations_for(serde_json::json!(["first", "second", 3])),
+            Vec::<String>::new()
+        );
+        let swapped = violations_for(serde_json::json!(["second", "first"]));
+        assert!(
+            swapped
+                .iter()
+                .any(|violation| violation.starts_with("list[0]"))
+                && swapped
+                    .iter()
+                    .any(|violation| violation.starts_with("list[1]")),
+            "swapped positions must be rejected: {swapped:#?}"
+        );
+        let trailing = violations_for(serde_json::json!(["first", "second", "third"]));
+        assert!(
+            trailing
+                .iter()
+                .any(|violation| violation.starts_with("list[2]")),
+            "items must apply after the prefix: {trailing:#?}"
+        );
+        let malformed = serde_json::json!({ "prefixItems": { "const": 1 } });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &serde_json::json!([1]),
+            &malformed,
+            &malformed,
+            "list".to_string(),
+            &mut violations,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unsupported prefixItems")),
+            "a non-array prefixItems must be reported: {violations:#?}"
         );
     }
 

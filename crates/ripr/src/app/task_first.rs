@@ -546,8 +546,7 @@ fn route_not_ready_reason(
             ));
             return label;
         }
-        let file = crate::analysis::stable_path_text(entry.seam.file());
-        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let selector = super::test_stub::stub_selector_args(root.source, &entry.seam, "predicate");
         let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
@@ -560,7 +559,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} {selector}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -599,8 +598,7 @@ fn route_not_ready_reason(
             ));
             return label;
         }
-        let file = crate::analysis::stable_path_text(entry.seam.file());
-        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let selector = super::test_stub::stub_selector_args(root.source, &entry.seam, kind);
         let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
@@ -613,7 +611,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
+            ": write the test by hand, or run `ripr agent stub{root_flag} {selector}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // A named stub route already answers "no test calls this"; a second
@@ -1798,8 +1796,8 @@ pub(crate) fn no_test_route_refusal(
     let file = crate::analysis::stable_path_text(entry.seam.file());
     let line = entry.seam.display_line();
     let family = crate::analysis::probe_family_for_seam_kind(entry.seam.kind());
-    let at = shell_arg(&format!("{file}:{line}"));
-    let stub = format!("ripr agent stub --root {root_arg} --at {at} --kind {family}");
+    let selector = super::test_stub::stub_selector_args(Some(root), &entry.seam, family);
+    let stub = format!("ripr agent stub --root {root_arg} {selector}");
     let inline: Vec<String> = source
         .and_then(crate::analysis::governed_cfg_test_modules)
         .map(|modules| {
@@ -3570,6 +3568,35 @@ pub(crate) fn preview_only_scope_languages(
     languages
 }
 
+/// The disabled-Python sibling of [`preview_only_scope_languages`]
+/// (#13571): `["Python"]` when a scope has at least one routed file, every
+/// routed file routes to Python, and Python is not in `enabled` — the
+/// flat-layout repo with no root marker and no `ripr.toml`, where `ripr
+/// check` analyzes none of the change. Unrouted files are ignored; any
+/// Rust, TypeScript, Perl or other routed file, an enabled Python adapter,
+/// or no routed file at all returns empty, so callers keep their generic
+/// or preview wording. Routing is the shared language router's.
+pub(crate) fn disabled_python_scope_languages(
+    files: &[std::path::PathBuf],
+    enabled: &[crate::domain::LanguageId],
+) -> Vec<&'static str> {
+    use crate::domain::LanguageId;
+    if enabled.contains(&LanguageId::Python) {
+        return Vec::new();
+    }
+    let mut routed = false;
+    for file in files {
+        let Some(id) = crate::analysis::route(file) else {
+            continue;
+        };
+        if id != LanguageId::Python {
+            return Vec::new();
+        }
+        routed = true;
+    }
+    if routed { vec!["Python"] } else { Vec::new() }
+}
+
 /// The TypeScript/Python subset of [`non_rust_item_language`] (#13791): the
 /// preview languages whose finding and gap ids the seam surfaces route to
 /// `ripr check --format agent`. Other non-Rust ids keep their terminal
@@ -3614,6 +3641,19 @@ pub(crate) fn preview_check_command(root: &Path, input: PreviewCheckInput<'_>) -
     format!("ripr check --root {root_arg}{scope} --format agent")
 }
 
+/// What a preview route's `check` command reports for its input: a
+/// `--files` brief points at the current diff, which need not match the
+/// selected files, so the wording qualifies that instead of presenting
+/// the current diff as equivalent to the selection.
+pub(crate) fn preview_check_findings(input: PreviewCheckInput<'_>) -> &'static str {
+    match input {
+        PreviewCheckInput::CurrentDiffNotFiles => {
+            "for the current diff's findings (that diff need not match the --files selection)"
+        }
+        _ => "for its findings",
+    }
+}
+
 /// The one-line working route for a seam-addressed agent command (`agent
 /// brief`, `agent card`, `agent packet`) whose subject is TypeScript/Python
 /// preview code (#13791). The seam inventory those commands read covers
@@ -3633,14 +3673,24 @@ pub(crate) fn preview_seam_route(
         PreviewCheckInput::Base(base) => shell_arg(base),
         _ => "<base>".to_string(),
     };
-    let findings = match input {
-        PreviewCheckInput::CurrentDiffNotFiles => {
-            "for the current diff's findings (that diff need not match the --files selection)"
-        }
-        _ => "for its findings",
-    };
+    let findings = preview_check_findings(input);
     format!(
         "run `{command}` {findings}, and when that prints a `ripr agent repair --gap-id <gap> --base {base_value} --phase before` start, run that start. The seam inventory behind `agent brief`, `agent card` and `agent packet` covers Rust files only, so no seam exists for {subject} and no config change adds one",
+    )
+}
+
+/// A diff probe can identify a changed expression for inspection even when
+/// its family has no corresponding seam. The id alone carries no diff scope.
+pub(crate) fn static_unknown_repair_hint(item: &str) -> Option<&'static str> {
+    let (file, suffix) = item.strip_prefix("probe:")?.split_once(':')?;
+    let fingerprint = suffix.strip_prefix("static_unknown:")?;
+    let hash = match fingerprint.split_once('.') {
+        Some((hash, ordinal)) if ordinal.parse::<u32>().ok()? >= 2 => hash,
+        Some(_) => return None,
+        None => fingerprint,
+    };
+    (!file.is_empty() && hash.len() == 8 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(
+        "a static_unknown finding ID has no repair seam; inspect this ID with `ripr explain` using the same root and diff options as the original `ripr check`",
     )
 }
 
@@ -3659,6 +3709,9 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
             no_seam_inventory_reason(language, ""),
             gap_bound_start_pointer(language)
         );
+    }
+    if let Some(hint) = static_unknown_repair_hint(item) {
+        return format!("repair item `{item}` cannot start a repair: {hint}");
     }
     let list = match root {
         Some(root) => format!(
@@ -6870,6 +6923,38 @@ pub(crate) mod tests {
             assert!(
                 preview_only_scope_languages(&scope, enabled).is_empty(),
                 "{scope:?} under {enabled:?} must not read as preview-only"
+            );
+        }
+    }
+
+    /// #13571: only a scope whose routed files are all Python, with Python
+    /// not enabled, reads as disabled-Python; enabled Python, any other
+    /// routed language, or no routed file stays empty.
+    #[test]
+    fn disabled_python_scope_languages_requires_all_routed_python_and_disabled() {
+        use crate::domain::LanguageId::{Python, Rust, TypeScript};
+        use std::path::PathBuf;
+        let files = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert_eq!(
+            disabled_python_scope_languages(
+                &files(&["lib/pricing.py", "README.md", "t/test_pricing.py"]),
+                &[Rust]
+            ),
+            vec!["Python"]
+        );
+        for (scope, enabled) in [
+            (files(&["lib/pricing.py"]), &[Rust, Python][..]),
+            (files(&["lib/pricing.py", "src/lib.rs"]), &[Rust][..]),
+            (files(&["lib/pricing.py", "src/a.ts"]), &[Rust][..]),
+            (files(&["lib/pricing.py", "lib/Pricing.pm"]), &[Rust][..]),
+            (files(&["web/app.js"]), &[Rust][..]),
+            (files(&["README.md"]), &[Rust][..]),
+            (Vec::new(), &[Rust][..]),
+            (files(&["src/a.ts"]), &[Rust, TypeScript][..]),
+        ] {
+            assert!(
+                disabled_python_scope_languages(&scope, enabled).is_empty(),
+                "{scope:?} under {enabled:?} must not read as disabled-Python"
             );
         }
     }
