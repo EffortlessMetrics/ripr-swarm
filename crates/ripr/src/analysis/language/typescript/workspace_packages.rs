@@ -600,7 +600,10 @@ mod tests {
         assert_eq!(map.resolve("@acme/utils"), None);
         // No package of this name exists, so the claiming project's answer
         // is the only one.
-        assert_eq!(map.resolve("@/utils"), Some(PathBuf::from("local/utils.ts")));
+        assert_eq!(
+            map.resolve("@/utils"),
+            Some(PathBuf::from("local/utils.ts"))
+        );
         Ok(())
     }
 
