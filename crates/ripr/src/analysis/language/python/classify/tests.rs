@@ -4976,6 +4976,9 @@ fn loop_boundary_non_literal_elements_or_pins_keep_prior_class() -> Result<(), S
         "assert largest([None, None]) == None",
         // A container element is outside the literal rule.
         "assert largest([(1, 'a'), (1, 'b')]) == (1, 'b')",
+        // Identity on literal inputs can still tell `>` from `>=`: on
+        // `[1, True]`, only `>=` selects `True`.
+        "assert largest([1, True]) is True",
         // Identity on equal strings can still tell `>` from `>=`.
         "first, second = 'ab' * 1, ''.join(['a', 'b'])\n    assert largest([first, second]) is first",
     ] {
