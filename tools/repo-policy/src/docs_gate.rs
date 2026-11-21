@@ -877,23 +877,31 @@ pub fn run_docs_gate_at_revision(
     verify_checkout_at(checkout, &head_id, head)?;
     let (changed, risks) = revision_changes(checkout, &base_id, &head_id)?;
     if !risks.is_empty() {
-        let mut plan = plan(&changed);
-        plan.gates.clear();
-        plan.widen_reasons.extend(risks);
-        return Ok(DocsGateReport {
-            plan,
-            violations: Vec::new(),
-        });
+        return Ok(widen_report(&changed, risks));
     }
-    let tree = materialize_tree(checkout, &head_id)?;
+    let tree = match materialize_tree(checkout, &head_id) {
+        Ok(tree) => tree,
+        Err(reason) => return Ok(widen_report(&changed, vec![reason])),
+    };
     let result = run_docs_gate(&tree, &changed);
     let _ = std::fs::remove_dir_all(&tree);
     result
 }
 
+fn widen_report(changed: &[String], reasons: Vec<String>) -> DocsGateReport {
+    let mut plan = plan(changed);
+    plan.gates.clear();
+    plan.widen_reasons.extend(reasons);
+    DocsGateReport {
+        plan,
+        violations: Vec::new(),
+    }
+}
+
 fn materialize_tree(checkout: &Path, head_id: &str) -> Result<PathBuf, String> {
     let tree = create_staging_dir(head_id)?;
     let mut archive = std::process::Command::new("git")
+        .arg("--no-lazy-fetch")
         .args(["archive", "--format=tar", head_id])
         .current_dir(checkout)
         .stdout(std::process::Stdio::piped())
@@ -1053,6 +1061,7 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
 /// cannot denote different commits at selection time and at read time.
 fn resolve_commit(checkout: &Path, rev: &str) -> Result<String, String> {
     let output = std::process::Command::new("git")
+        .arg("--no-lazy-fetch")
         .args(["rev-parse", &format!("{rev}^{{commit}}")])
         .current_dir(checkout)
         .output()
@@ -1093,6 +1102,7 @@ fn revision_changes(
 ) -> Result<(Vec<String>, Vec<String>), String> {
     // Fail closed on any git error: an unavailable diff widens, never passes.
     let output = std::process::Command::new("git")
+        .arg("--no-lazy-fetch")
         .args([
             "diff",
             "--no-renames",
@@ -1136,10 +1146,15 @@ fn revision_changes(
             ("A", "000000", "100644") => (),
             ("M", "100644", "100644") if !path.to_ascii_lowercase().ends_with(".md") => (),
             ("M", "100644", "100644") => {
-                let old = blob_headings(checkout, old_blob)?;
-                let new = blob_headings(checkout, new_blob)?;
-                if let Some(missing) = old.difference(&new).next() {
-                    risks.push(format!("{path}: removed Markdown anchor #{missing}; full incoming-link check required"));
+                let anchors = blob_headings(checkout, old_blob)
+                    .and_then(|old| blob_headings(checkout, new_blob).map(|new| (old, new)));
+                match anchors {
+                    Ok((old, new)) => {
+                        if let Some(missing) = old.difference(&new).next() {
+                            risks.push(format!("{path}: removed Markdown anchor #{missing}; full incoming-link check required"));
+                        }
+                    }
+                    Err(reason) => risks.push(format!("{path}: {reason}; full incoming-link check required")),
                 }
             }
             _ => risks.push(format!(
@@ -1152,6 +1167,7 @@ fn revision_changes(
 
 fn blob_headings(checkout: &Path, oid: &str) -> Result<BTreeSet<String>, String> {
     let output = std::process::Command::new("git")
+        .arg("--no-lazy-fetch")
         .args(["cat-file", "blob", oid])
         .current_dir(checkout)
         .output()

@@ -534,3 +534,90 @@ fn outgoing_links_keep_the_scoped_empty_heading_rule() -> TestResult {
     fs::remove_dir_all(root)?;
     Ok(())
 }
+
+#[test]
+fn missing_promised_heading_blob_widens_without_hydrating_it() -> TestResult {
+    let origin = fixture(&[("note.md", "# Release\nOld prose.\n")])?;
+    git(&origin, &["init", "-q"])?;
+    git(&origin, &["config", "uploadpack.allowFilter", "true"])?;
+    git(&origin, &["add", "."])?;
+    git(&origin, &["commit", "-qm", "old note"])?;
+    let old = rev_parse(&origin, "HEAD:note.md")?;
+    fs::write(origin.join("note.md"), "# Release\nNew prose.\n")?;
+    git(&origin, &["commit", "-qam", "new note"])?;
+    let clone = origin.with_extension("partial");
+    let clone_path = clone.to_str().ok_or("non-UTF8 test directory")?;
+    git(
+        &origin,
+        &[
+            "clone",
+            "--no-local",
+            "--filter=blob:none",
+            "--no-checkout",
+            ".",
+            clone_path,
+        ],
+    )?;
+    git(&clone, &["checkout", "-q", "--detach", "HEAD"])?;
+    let missing = || -> Result<bool, Box<dyn std::error::Error>> {
+        let out = git_output(
+            &clone,
+            &[
+                "--no-lazy-fetch",
+                "rev-list",
+                "--objects",
+                "--all",
+                "--missing=print",
+            ],
+        )?;
+        Ok(String::from_utf8(out.stdout)?
+            .lines()
+            .any(|line| line.strip_prefix('?') == Some(old.as_str())))
+    };
+    if !missing()? {
+        return Err("historical blob already present before gate".into());
+    }
+    let report = run_docs_gate_at_revision(&clone, "HEAD~1", "HEAD")?;
+    if !missing()?
+        || !report
+            .plan
+            .widen_reasons
+            .iter()
+            .any(|reason| reason.contains(&old))
+    {
+        return Err(format!(
+            "promised blob must stay absent and require full proof: {}",
+            report.render()
+        )
+        .into());
+    }
+    fs::remove_dir_all(clone)?;
+    fs::remove_dir_all(origin)?;
+    Ok(())
+}
+
+#[test]
+fn revision_encoding_repair_requires_full_proof_for_the_unknown_old_anchor_set() -> TestResult {
+    let root = fixture(&[("note.md", "")])?;
+    fs::write(root.join("note.md"), b"# Title\n\xff")?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "legacy bytes"])?;
+    fs::write(root.join("note.md"), "# Title\n")?;
+    git(&root, &["commit", "-qam", "repair encoding"])?;
+    let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !report
+        .plan
+        .widen_reasons
+        .iter()
+        .any(|reason| reason.contains("not UTF-8"))
+    {
+        return Err(format!(
+            "unreadable old heading set was unaccounted for: {}",
+            report.render()
+        )
+        .into());
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
