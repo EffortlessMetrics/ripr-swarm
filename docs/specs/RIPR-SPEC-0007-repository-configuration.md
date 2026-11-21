@@ -262,6 +262,18 @@ is exact and fails closed: another file, another function in the same file, a
 missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
 (duplicate owners) never matches. Expired entries still do not apply.
 
+**Stale id warning and suppression health (#14129).** An unmatched
+`finding_id` entry that is not a known ripr 0.10 id keeps its "did not match
+any current finding" warning and adds that finding ids hash the parsed
+expression and that `path` + `function` selects the owning function across
+edits. An unmatched path-glob or `path` + `function` entry keeps the plain
+warning. `ripr policy suppression-health` names a `path` + `function` entry
+`<path>::<function>`, the label the check matcher reports for it, and reports
+a rejected `function` entry as a `config_error` finding. A finding with no
+function owner (a changed `const` or `static`), a same-named function in
+another file, and a same-named function in a nested module of the same file
+are not matched by the selector.
+
 **Review-comments.** `ripr review-comments --suppression-policy PATH` loads
 the same file with the same loader as `ripr check` (relative paths resolve
 against `--root`; a missing or malformed file is an error; not combinable with

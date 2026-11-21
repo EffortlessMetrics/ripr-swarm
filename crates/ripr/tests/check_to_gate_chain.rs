@@ -1209,3 +1209,314 @@ fn sarif_marks_function_selector_results_suppressed_and_spares_the_sibling() -> 
     }
     Ok(())
 }
+
+// ---- #14129: owner selector negatives, the stale-id warning, suppression-health ----
+
+/// `src/retry.rs` declares `retry_allowed` at the top level (line 6) and again
+/// inside `mod inner` (line 11), next to a `const` and a `static` no function
+/// owns (lines 1 and 3). `src/other.rs` declares a third `retry_allowed`.
+fn same_name_retry_source(limit: u32) -> String {
+    format!(
+        "pub const LIMIT: u32 = if cfg!(test) {{ {limit} }} else {{ 9 }};\n\npub static FLOOR: bool = LIMIT > {limit};\n\npub fn retry_allowed(attempts: u32) -> bool {{\n    attempts < {limit}\n}}\n\npub mod inner {{\n    pub fn retry_allowed(attempts: u32) -> bool {{\n        attempts <= {limit}\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn t() {{\n        assert!(retry_allowed(0));\n        assert!(inner::retry_allowed(0));\n    }}\n}}\n"
+    )
+}
+
+fn same_name_other_source(limit: u32) -> String {
+    format!(
+        "pub fn retry_allowed(attempts: u32) -> bool {{\n    attempts > {limit}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn t() {{\n        assert!(!retry_allowed(0));\n    }}\n}}\n"
+    )
+}
+
+const OWNERLESS_LINES: [u64; 2] = [1, 3];
+const TOP_LEVEL_RETRY_LINE: u64 = 6;
+const INNER_RETRY_LINE: u64 = 11;
+const OTHER_FILE_RETRY_LINE: u64 = 2;
+
+fn build_same_name_repo(label: &str) -> Result<Fixture, String> {
+    let root = unique_root(label)?;
+    std::fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("create {}: {error}", root.display()))?;
+    let fixture = Fixture(root);
+    let root = &fixture.0;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"same_name_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| format!("write Cargo.toml: {error}"))?;
+    std::fs::write(root.join("src/lib.rs"), "pub mod retry;\npub mod other;\n")
+        .map_err(|error| format!("write lib.rs: {error}"))?;
+    fixture_git_ok(root, &["init"]).map_err(|error| format!("fixture git init: {error}"))?;
+    fixture_git_ok(root, &["config", "core.autocrlf", "false"])
+        .map_err(|error| format!("fixture git config: {error}"))?;
+    for (limit, message) in [(3, "base"), (4, "edit")] {
+        write_retry_source(root, &same_name_retry_source(limit))?;
+        std::fs::write(root.join("src/other.rs"), same_name_other_source(limit))
+            .map_err(|error| format!("write other.rs: {error}"))?;
+        fixture_git_ok(root, &["add", "-A"])
+            .map_err(|error| format!("fixture git add: {error}"))?;
+        commit_fixture(root, message)?;
+    }
+    Ok(fixture)
+}
+
+/// `(file suffix, line)` of every finding, split by its `suppressed` flag,
+/// plus the policy warnings, for one `check --suppression-policy` run.
+struct PolicyRun {
+    suppressed: Vec<(String, u64)>,
+    reported: Vec<(String, u64)>,
+    warnings: Vec<String>,
+}
+
+fn run_check_with_policy(root: &Path, policy: &str) -> Result<PolicyRun, String> {
+    let dest = root.join("target/ripr/pr/check-policy.json");
+    let output = run_ripr_to(
+        root,
+        &[
+            "check",
+            "--root",
+            ".",
+            "--base",
+            "HEAD~1",
+            "--format",
+            "json",
+            "--suppression-policy",
+            policy,
+        ],
+        &dest,
+    )?;
+    if !output.status.success() {
+        return Err(diagnose("check --suppression-policy", &output));
+    }
+    let check = read_json(&dest)?;
+    let mut run = PolicyRun {
+        suppressed: Vec::new(),
+        reported: Vec::new(),
+        warnings: check
+            .pointer("/suppression_policy/warnings")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("check JSON lost suppression_policy.warnings: {check}"))?
+            .iter()
+            .filter_map(|warning| warning.as_str().map(str::to_string))
+            .collect(),
+    };
+    let findings = check["findings"]
+        .as_array()
+        .ok_or_else(|| format!("check JSON lost findings: {check}"))?;
+    for finding in findings {
+        let file = finding
+            .pointer("/probe/file")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("finding without probe.file: {finding}"))?
+            .replace('\\', "/");
+        let file = file.trim_start_matches("./").to_string();
+        let line = finding
+            .pointer("/probe/line")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("finding without probe.line: {finding}"))?;
+        if finding["suppressed"] == true {
+            run.suppressed.push((file, line));
+        } else {
+            run.reported.push((file, line));
+        }
+    }
+    Ok(run)
+}
+
+fn has_finding(findings: &[(String, u64)], file: &str, line: u64) -> bool {
+    findings
+        .iter()
+        .any(|(found_file, found_line)| found_file == file && *found_line == line)
+}
+
+/// An owner selector names one function in one file: the same leaf name in
+/// another file or in a nested module, and a changed item no function owns,
+/// all stay reported.
+#[test]
+fn function_selector_spares_same_named_owners_and_ownerless_findings() -> Result<(), String> {
+    let fixture = build_same_name_repo("policy-same-name")?;
+    let root = &fixture.0;
+
+    write_policy(root, "policy-fn.toml", &function_entry("retry_allowed"))?;
+    let run = run_check_with_policy(root, "policy-fn.toml")?;
+    assert!(
+        !run.suppressed.is_empty()
+            && run
+                .suppressed
+                .iter()
+                .all(|(file, line)| file == "src/retry.rs" && *line == TOP_LEVEL_RETRY_LINE),
+        "only the top-level src/retry.rs retry_allowed is suppressed: {:?}",
+        run.suppressed
+    );
+    assert!(
+        !has_finding(&run.reported, "src/retry.rs", TOP_LEVEL_RETRY_LINE),
+        "every finding of the named owner is suppressed: {:?}",
+        run.reported
+    );
+    // The negatives must be real findings of this run, not absent ones.
+    assert!(
+        has_finding(&run.reported, "src/other.rs", OTHER_FILE_RETRY_LINE),
+        "retry_allowed in another file stays reported: {:?}",
+        run.reported
+    );
+    assert!(
+        has_finding(&run.reported, "src/retry.rs", INNER_RETRY_LINE),
+        "inner::retry_allowed in the same file stays reported: {:?}",
+        run.reported
+    );
+    for line in OWNERLESS_LINES {
+        assert!(
+            has_finding(&run.reported, "src/retry.rs", line),
+            "the ownerless item on line {line} stays reported: {:?}",
+            run.reported
+        );
+    }
+    assert!(run.warnings.is_empty(), "{:?}", run.warnings);
+
+    // Control: the nested function is selectable by its own owner path, so the
+    // spared finding above is a different identity, not an unselectable one.
+    write_policy(
+        root,
+        "policy-inner.toml",
+        &function_entry("inner::retry_allowed"),
+    )?;
+    let inner = run_check_with_policy(root, "policy-inner.toml")?;
+    assert!(
+        !inner.suppressed.is_empty()
+            && inner
+                .suppressed
+                .iter()
+                .all(|(file, line)| file == "src/retry.rs" && *line == INNER_RETRY_LINE),
+        "{:?}",
+        inner.suppressed
+    );
+
+    // Naming the ownerless items themselves matches nothing and says so.
+    for item in ["LIMIT", "FLOOR"] {
+        write_policy(root, "policy-item.toml", &function_entry(item))?;
+        let run = run_check_with_policy(root, "policy-item.toml")?;
+        assert!(
+            run.suppressed.is_empty(),
+            "{item}: an owner selector never matches a finding without a function owner: {:?}",
+            run.suppressed
+        );
+        assert_eq!(
+            run.warnings,
+            vec![format!(
+                "exposure_gap suppression for `src/retry.rs::{item}` did not match any current finding"
+            )],
+        );
+    }
+    Ok(())
+}
+
+/// An id-keyed entry that no longer matches says which selector survives the
+/// edit; an unmatched owner selector does not get that advice.
+#[test]
+fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
+    let fixture = build_retry_repo("policy-stale-warning")?;
+    let root = &fixture.0;
+    mkdir_chain_dirs(root)?;
+    let before = run_check_json(root, &root.join(CHECK_JSON))?;
+    let stale_id = predicate_finding_id(&before, RETRY_LINE)?;
+    edit_retry_expressions(root)?;
+
+    write_policy(root, "policy-id.toml", &id_entry(&stale_id))?;
+    let run = run_check_with_policy(root, "policy-id.toml")?;
+    assert!(run.suppressed.is_empty(), "{:?}", run.suppressed);
+    assert_eq!(run.warnings.len(), 1, "{:?}", run.warnings);
+    let warning = &run.warnings[0];
+    assert!(
+        warning.contains(&format!(
+            "exposure_gap suppression for `{stale_id}` did not match any current finding"
+        )) && warning.contains("select it with `path` + `function` instead of `finding_id`"),
+        "the stale-id warning must name the owner selector: {warning}"
+    );
+
+    write_policy(root, "policy-gone.toml", &function_entry("removed_fn"))?;
+    let run = run_check_with_policy(root, "policy-gone.toml")?;
+    assert_eq!(
+        run.warnings,
+        vec![
+            "exposure_gap suppression for `src/retry.rs::removed_fn` did not match any current finding"
+                .to_string()
+        ],
+    );
+    Ok(())
+}
+
+fn run_suppression_health(root: &Path, manifest: &str) -> Result<Value, String> {
+    let out = "target/ripr/reports/suppression-health.json";
+    run_ok(
+        root,
+        "policy suppression-health",
+        &[
+            "policy",
+            "suppression-health",
+            "--root",
+            ".",
+            "--manifest",
+            manifest,
+            "--out",
+            out,
+            "--out-md",
+            "target/ripr/reports/suppression-health.md",
+        ],
+    )?;
+    read_json(&root.join(out))
+}
+
+/// `policy suppression-health` reads a `path` + `function` entry as a valid
+/// selector named by its owner label, and reports a malformed one.
+#[test]
+fn suppression_health_reads_a_function_selector_and_reports_a_malformed_one() -> Result<(), String>
+{
+    let fixture = build_retry_repo("policy-health")?;
+    let root = &fixture.0;
+    mkdir_chain_dirs(root)?;
+    let metadata = "scope = \"function:retry_allowed\"\ncreated_at = \"2026-01-01\"\nlast_seen = \"2026-05-01\"\nreview_by = \"2999-12-01\"\nexpected_visibility = \"suppressed_visible\"\nstatic_class = \"weakly_exposed\"\nlanguage = \"rust\"\n";
+
+    write_policy(
+        root,
+        "health-fn.toml",
+        &format!("{}{metadata}", function_entry("retry_allowed")),
+    )?;
+    let report = run_suppression_health(root, "health-fn.toml")?;
+    assert_eq!(report["status"], "healthy", "{report}");
+    assert_eq!(report["summary"]["suppressions"], 1, "{report}");
+    assert_eq!(report["summary"]["config_errors"], 0, "{report}");
+    assert_eq!(report["summary"]["unknown_selector"], 0, "{report}");
+    assert_eq!(
+        report["records"][0]["identity"], "src/retry.rs::retry_allowed",
+        "{report}"
+    );
+    assert_eq!(report["records"][0]["health"], "healthy", "{report}");
+
+    for (label, entry, needle) in [
+        (
+            "glob path",
+            function_entry("retry_allowed").replace("src/retry.rs", "src/*.rs"),
+            "`function` selects by exact file",
+        ),
+        (
+            "ambiguous owner",
+            function_entry("retry_allowed#L12"),
+            "names a line-disambiguated duplicate owner",
+        ),
+        (
+            "function without path",
+            function_entry("retry_allowed").replace("path = \"src/retry.rs\"\n", ""),
+            "requires `finding_id`, a `path` glob, or `path` + `function`",
+        ),
+    ] {
+        write_policy(root, "health-bad.toml", &format!("{entry}{metadata}"))?;
+        let report = run_suppression_health(root, "health-bad.toml")?;
+        assert_eq!(report["status"], "config_error", "{label}: {report}");
+        assert_eq!(report["summary"]["suppressions"], 0, "{label}: {report}");
+        assert_eq!(report["summary"]["config_errors"], 1, "{label}: {report}");
+        let message = report["findings"][0]["message"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(message.contains(needle), "{label}: {report}");
+    }
+    Ok(())
+}

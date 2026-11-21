@@ -1,5 +1,6 @@
 use crate::output::suppressions::{
-    SUPPRESSIONS_PATH, SuppressionEntry, SuppressionKind, is_expired, parse_suppressions_manifest,
+    SUPPRESSIONS_PATH, SuppressionEntry, SuppressionKind, function_selector_label, is_expired,
+    parse_suppressions_manifest,
 };
 use serde_json::{Value, json};
 
@@ -431,10 +432,13 @@ fn record_for_entry(
 
 fn identity_for_entry(entry: &SuppressionEntry) -> String {
     match entry.kind {
-        SuppressionKind::ExposureGap => entry
-            .finding_id
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string()),
+        // #14129: a `path` + `function` entry is named by the same label the
+        // check matcher reports for it, not as `unknown`.
+        SuppressionKind::ExposureGap => match (&entry.finding_id, &entry.path, &entry.function) {
+            (Some(finding_id), _, _) => finding_id.clone(),
+            (None, Some(path), Some(function)) => function_selector_label(path, function),
+            _ => "unknown".to_string(),
+        },
         SuppressionKind::TestEfficiency => match (&entry.test, &entry.path) {
             (Some(test), Some(path)) => format!("{test}@{path}"),
             (Some(test), None) => test.clone(),
