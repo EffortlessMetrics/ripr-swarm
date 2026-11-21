@@ -38080,7 +38080,8 @@ fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
 /// root, the shallow doctor marker scan finds nothing at the root. With the
 /// `ripr.toml` that `init` writes there, doctor names the languages the config
 /// enables instead of "none detected"; without a config the ordinary line
-/// stays.
+/// stays. `init` only enables TypeScript when its adapter is compiled in.
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn doctor_names_config_enabled_languages_when_the_root_scan_finds_none() -> Result<(), String> {
     let repo = unique_temp_workspace("doctor-monorepo-languages");
