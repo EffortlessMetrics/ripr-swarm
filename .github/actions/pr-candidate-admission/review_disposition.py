@@ -221,6 +221,20 @@ NEGATED_CHANGE = re.compile(
 )
 # Sentence position: the phrase is followed by '.', '!' or ';' (or the line ends).
 NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
+# #8157/#14355: a negated blocker phrase reports a resolved finding, not a
+# blocker. "No source blocker found." and "no source blockers remain" say that
+# nothing blocks, so they must not veto the same reviewer's attestation. The
+# filler set is closed and the phrase is stripped only in sentence position with
+# no refuting cue, exactly like NEGATED_CHANGE; a later blocker sentence
+# ("The build is red.") or a same-line continuation ("but the fixture is still
+# wrong") still refuses.
+NEGATED_BLOCKER = re.compile(
+    r"\b(?:no|without)\b[ \t]+"
+    r"(?:(?:a|an|any|further|source|code|production|open|remaining|unresolved)[ \t]+){0,3}"
+    r"(?:blockers?|blocking[ \t]+findings?)\b[ \t]+"
+    r"(?:found|remain|remains|remaining|open|exists?)\b",
+    re.IGNORECASE,
+)
 # A recognized cue that refutes a negated change phrase, so it is not resolved
 # work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
 # sentence does not reach across the '.' or ';'. The same cue set is checked
@@ -401,7 +415,7 @@ def verdict_disposition(line: str) -> bool | None:
     remainder = _strip_negated_verdict_words(stripped[approve.end() :])
     if VERDICT_ALTERNATIVE.search(remainder) is not None:
         return False
-    if NEGATION.search(strip_negated_change(remainder)) is not None:
+    if NEGATION.search(strip_negated_blocker(strip_negated_change(remainder))) is not None:
         return False
     return None
 
@@ -580,6 +594,32 @@ def strip_negated_change(line: str) -> str:
     return NEGATED_CHANGE.sub(replace, line)
 
 
+def strip_negated_blocker(line: str) -> str:
+    """Remove a negated blocker phrase only when it reports a resolved finding.
+
+    #8157: "No source blocker found." says nothing blocks, so it must not veto
+    the same reviewer's attestation. The phrase is stripped only when it ends a
+    sentence, no preceding cue refutes it, and the remainder carries no
+    refutation cue. "No source blocker found. The build is red." keeps its
+    second sentence, and a same-line continuation after a comma is not a
+    sentence end, so both still refuse.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        before = line[: match.start()]
+        after = line[match.end() :]
+        before_clause = before.rsplit(",", 1)[-1]
+        if (
+            NEGATED_CHANGE_TAIL.match(after)
+            and not REFUTES_NEGATION.search(before_clause)
+            and not REFUTATION_AFTER.search(after)
+        ):
+            return " "
+        return match.group(0)
+
+    return NEGATED_BLOCKER.sub(replace, line)
+
+
 # #14592: on a verdict line, "no blocking findings", "no `block` remains",
 # "non-blocking" and "no failures" are resolved findings. Only spacing, emphasis
 # or inline-code markup, or one bare hyphen, may separate the negator from the
@@ -631,7 +671,13 @@ def negation_hit(line: str) -> bool:
         return not verdict
     # #14592 landed after this branch: keep its resolved-negating-verdict-word scan
     # for lines that are not recognized verdict fields.
-    return bool(NEGATION.search(strip_negated_verdict_word(strip_negated_change(line))))
+    return bool(
+        NEGATION.search(
+            strip_negated_verdict_word(
+                strip_negated_blocker(strip_negated_change(line))
+            )
+        )
+    )
 
 
 def comment_body_ready(body: str) -> bool:
@@ -1130,7 +1176,9 @@ def body_refusal_reason(body: str, head: str) -> str | None:
 
 def _phrase(line: str) -> str:
     """The blocker or retraction phrase ``line`` matches, quoted, or empty."""
-    match = NEGATION.search(strip_negated_verdict_word(strip_negated_change(line)))
+    match = NEGATION.search(
+        strip_negated_verdict_word(strip_negated_blocker(strip_negated_change(line)))
+    )
     if match is None or not match.group(0).strip():
         return ""
     return f" (phrase '{_snippet(match.group(0))}')"

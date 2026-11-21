@@ -716,6 +716,56 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
     Ok(())
 }
 
+/// #15980: a negated blocker phrase reports a resolved finding, not a blocker.
+/// The witness is the #15525 body; the controls are the genuine blocker forms.
+#[test]
+fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-11-21T21:52:20Z";
+    let cases: [(&str, bool); 10] = [
+        // The strip-exercising witness: this admits only because the strip ran.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
+             current main; the current head is clean.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nno blockers found.", true),
+        ("SOURCE_REVIEW_READY\nNo source blockers remain.", true),
+        ("SOURCE_REVIEW_READY\nNO   SOURCE   BLOCKERS   REMAIN", true),
+        // Un-negated control: a genuine blocker refuses.
+        ("SOURCE_REVIEW_READY\nBlocker found.", false),
+        // A later blocker sentence keeps its own refusal.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is red.",
+            false,
+        ),
+        // A same-line continuation after a comma is not a sentence end.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found, but the fixture is still wrong.",
+            false,
+        ),
+        // A later refutation of the negated phrase refuses.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blockers remain. That is not true.",
+            false,
+        ),
+        // A refutation ahead of the phrase refuses.
+        (
+            "SOURCE_REVIEW_READY\nIt is not true that no source blockers remain.",
+            false,
+        ),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    Ok(())
+}
+
 /// Full, untrimmed bodies of real review-of-record comments: every `ready-*`
 /// body must admit and every `refuse-*` body (REVIEW_INCOMPLETE shapes) must refuse.
 #[test]
