@@ -167,6 +167,11 @@ pub(super) struct PythonNoBehaviorContext<'a> {
     /// module that can replace the imported pytest framework. Only the bounded
     /// class-only exception reading consumes this positive admission fact.
     pub(super) pytest_import_unshadowed: bool,
+    /// The changed line raises a class its module imports plainly, and the
+    /// workspace scan found that class defined once as a plain exception in
+    /// one unshadowed source and named by no other production source
+    /// (`exception_variant::imported_raise_class_sole_site`, #15356).
+    pub(super) imported_raise_class_sole_site: bool,
     /// This owner's loop header changed in a multi-line diff. Without an
     /// isolated old-body witness, sibling edits cannot borrow oracle credit.
     pub(super) compound_loop_edit: bool,
@@ -762,6 +767,7 @@ fn classify_change_for_owner_inner<'a>(
                     owner,
                     module_owner,
                     &related_candidates,
+                    no_behavior.imported_raise_class_sole_site,
                 )
             })
             .unwrap_or_default()

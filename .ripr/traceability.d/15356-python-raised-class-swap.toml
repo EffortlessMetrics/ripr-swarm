@@ -8,6 +8,14 @@ tests = [
   "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::match_pattern_naming_the_new_imported_class_stays_exposed",
   "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::an_exact_context_that_does_not_run_the_owner_credits_nothing",
   "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::a_local_alias_of_a_raised_name_credits_nothing",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::class_only_context_on_the_sole_raise_site_of_an_imported_class_is_exposed",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::class_only_context_on_a_base_or_foreign_class_stays_a_gap",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::class_only_credit_needs_the_changed_raise_to_be_the_owner_modules_only_use",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::sole_site_fact_reads_one_plain_class_named_by_no_other_production_source",
+  "crates/ripr/tests/python_imported_raise_class_sole_site.rs::base_class_context_does_not_tell_the_raises_apart",
+  "crates/ripr/tests/python_imported_raise_class_sole_site.rs::defining_module_class_context_on_the_sole_raise_site_is_exposed",
+  "crates/ripr/tests/python_imported_raise_class_sole_site.rs::same_spelling_from_another_module_stays_a_gap",
+  "crates/ripr/tests/python_imported_raise_class_sole_site.rs::a_second_production_use_of_the_class_stays_a_gap",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/message_pin.rs",

@@ -432,6 +432,23 @@ one changed raise only (#12952); the general class-only table row stays weak.
    edit and fails before; naming the class raised before the edit (a test
    written before the diff) passes before and fails after. Both distinguish
    the edit, and the evidence names which class the context rejects.
+   Imported class on its sole construction site (#15356): the new class may
+   instead be bound in the owner module by one plain, unaliased
+   `from M import NewError` when the changed line is the only place the
+   production tree names it. Exactly one workspace source is module `M`, the
+   import resolves to it unshadowed, and it defines the name once as
+   `class NewError(Base): pass` over `Exception` or a listed builtin, naming
+   it nowhere else. The owner module names it only in that import and on the
+   changed line, and no other production source or `conftest.py` names it.
+   The old class is a listed builtin. The test imports the class by the same
+   plain import, names it once, in `with pytest.raises(NewError):`, and that
+   context runs the owner. A passing context then saw an instance only the
+   changed line can construct, and the old raise never produces one, so the
+   base class may be an ancestor of the old class (`ValueError` to an
+   imported `ValueError` subclass). A context naming the old or a base class
+   passes against both raises and stays weak, as does the same spelling
+   imported from another module, a second production use of the class, a
+   class body other than `pass`, or any name the scan cannot count.
    Module identity needs a separate positive per-file admission, defaulting
    to false and computed from the raw foreign-module view before legacy path
    refusal flags. Every supported dotted spelling is checked at all known

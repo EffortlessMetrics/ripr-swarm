@@ -2419,6 +2419,31 @@ impl PythonAdapter {
                     ),
                     module_import_unshadowed: unshadowed_modules.contains(&changed.path),
                     pytest_import_unshadowed,
+                    imported_raise_class_sole_site: pytest_import_unshadowed
+                        && unshadowed_modules.contains(&changed.path)
+                        && added.text.trim_start().starts_with("raise ")
+                        && owner_for_changed_line(&changed.path, added.line, &all_owners)
+                            .is_some_and(|owner| {
+                                exception_variant::imported_raise_class_sole_site(
+                                    &added.text,
+                                    &changed.path,
+                                    &owner.imports,
+                                    &workspace_read.sources,
+                                    |file| {
+                                        let foreign = foreign_index.excluding(file);
+                                        import_identity::module_import_unshadowed(
+                                            &options.root,
+                                            file,
+                                            &workspace_read.sources,
+                                            &import_roots,
+                                            extension_names.as_ref(),
+                                            import_path_admission,
+                                            &foreign,
+                                        )
+                                        .then_some(foreign)
+                                    },
+                                )
+                            }),
                     compound_loop_edit: owner_for_changed_line(
                         &changed.path,
                         added.line,
