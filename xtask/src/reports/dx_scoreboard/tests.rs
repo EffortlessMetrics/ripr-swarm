@@ -1688,10 +1688,9 @@ fn a_receipt_counting_more_ungripped_than_flagged_or_unknown_fails_ingest() {
             "no_containing_seam_share": 0.483,
         },
     });
-    let error = mutation_spot_check_to_input(&receipt).expect_err("contradictory counts");
     assert!(
-        error.contains("counts 2 ungripped of 1 flagged-or-unknown"),
-        "{error}"
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|error| error.contains("counts 2 ungripped of 1 flagged-or-unknown"))
     );
 }
 
