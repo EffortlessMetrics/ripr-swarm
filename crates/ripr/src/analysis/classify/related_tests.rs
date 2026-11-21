@@ -2973,6 +2973,54 @@ pub(super) fn own_crate_qualified_entry_path(
     .then_some(spelled_path)
 }
 
+/// `assertion_text` with each call of `owner` that an integration test spells
+/// through the package's own library path (`pkg::owner(..)`,
+/// `pkg::module::owner(..)`) rewritten to the bare `owner(..)` spelling, for
+/// a reader that evaluates only a bare owner call (the reached-tail pin).
+///
+/// The path is [`own_crate_qualified_entry_path`]'s, so the same authority
+/// that relates the test to the owner decides the spelling: no second
+/// resolver. `None` when no call of the owner in `test` is established that
+/// way, or when the assertion does not write that path at a token boundary;
+/// the caller then keeps the assertion as written.
+pub(in crate::analysis) fn own_crate_qualified_owner_call_spelled_bare(
+    index: &RustIndex,
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    assertion_text: &str,
+) -> Option<String> {
+    let path = test.calls.iter().find_map(|call| {
+        (call.name == owner.name)
+            .then(|| own_crate_qualified_entry_path(index, test, owner, call.line))
+            .flatten()
+    })?;
+    let mut bare = String::with_capacity(assertion_text.len());
+    let mut rest = assertion_text;
+    let mut rewrote = false;
+    while let Some(at) = rest.find(path.as_str()) {
+        let after = &rest[at + path.len()..];
+        // A longer path (`other::pkg::owner`, `pkg::owner_v2`) is another item.
+        let starts_a_path = !rest[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == ':' || ch == '_' || ch.is_alphanumeric());
+        let ends_the_path = !after
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == ':' || ch == '_' || ch.is_alphanumeric());
+        bare.push_str(&rest[..at]);
+        if starts_a_path && ends_the_path {
+            bare.push_str(&owner.name);
+            rewrote = true;
+        } else {
+            bare.push_str(&path);
+        }
+        rest = after;
+    }
+    bare.push_str(rest);
+    rewrote.then_some(bare)
+}
+
 /// Whether `owner` is a top-level `impl` item of a file of the root package's library (`src/lib.rs` or a
 /// module composed under it), the only owner a root integration test reaches
 /// through the library's own crate name.
