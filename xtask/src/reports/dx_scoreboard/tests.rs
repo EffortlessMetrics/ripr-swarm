@@ -1778,7 +1778,7 @@ fn a_config_without_the_generated_rows_still_loads_the_checked_in_receipt() -> R
     for id in GENERATED_RECALL_ROWS {
         assert!(
             !ids.contains(&id),
-            "{id} survived a config that never declared it: {ids:?}"
+            "{id} persisted through a config that never declared it: {ids:?}"
         );
     }
     assert!(
