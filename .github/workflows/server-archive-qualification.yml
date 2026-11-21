@@ -655,8 +655,8 @@ jobs:
           node --test out/test/managedDownload/contract.test.js
 
       - name: Exercise packaged VSIX against the same-run qualified Linux archive
-        # A distinct local-mirror manifest is bound before packaging. Original
-        # qualification bytes stay intact; no publish-extension job is called.
+        # The local mirror serves the exact qualified manifest and archive.
+        # The VSIX carries the catalog bound to those manifest bytes.
         run: xvfb-run -a node editors/vscode/out/test/managedDownload/rehearse.js
 
       - name: Retain managed-download composition evidence

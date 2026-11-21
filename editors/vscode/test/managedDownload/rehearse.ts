@@ -77,21 +77,17 @@ async function main(): Promise<void> {
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     const mirror = `https://127.0.0.1:${address.port}`;
-    // Keep the qualified archive bytes/digest. Only placement URLs change in
-    // this separate local-mirror manifest, before raw-byte descriptor binding.
-    const mirrorManifest = JSON.parse(originalManifest.toString('utf8'));
-    for (const asset of Object.values(mirrorManifest.assets) as Array<{ url: string }>) {
-      asset.url = `${mirror}/${new URL(asset.url).pathname.split('/').pop()}`;
-    }
-    const admittedManifest = Buffer.from(`${JSON.stringify(mirrorManifest, null, 2)}\n`);
     const manifestPath = path.join(root, manifestName);
-    fs.writeFileSync(manifestPath, admittedManifest);
-    const manifestSha256 = digest(admittedManifest);
+    fs.writeFileSync(manifestPath, originalManifest);
+    const manifestSha256 = digest(originalManifest);
     receipt.mirror_manifest_sha256 = manifestSha256;
     command('cargo', ['xtask', 'release-bind-server-descriptor', '--version', subject.version,
       '--manifest', manifestPath, '--manifest-sha256', manifestSha256]);
-    command('npm', ['run', 'compile'], editor);
-    command('npm', ['run', 'package'], editor);
+    const catalog = path.join(root, 'distribution.json');
+    command('cargo', ['xtask', 'release-distribution-catalog', '--product-version', subject.version,
+      '--channel', 'stable', '--stable-tag', `v${subject.version}`, '--manifest', manifestPath,
+      '--repository', process.env.GITHUB_REPOSITORY ?? subject.sourceRepository, '--out', catalog]);
+    command('cargo', ['xtask', 'vscode-package', '--catalog', catalog]);
     command('cargo', ['xtask', 'vscode-verify-vsix', '--', builtVsix]);
     const vsix = path.join(root, `ripr-${subject.version}.vsix`);
     fs.copyFileSync(builtVsix, vsix, fs.constants.COPYFILE_EXCL);
@@ -108,7 +104,7 @@ async function main(): Promise<void> {
       const receiptPath = path.join(profile, 'host.json');
       try {
         await retainHostCase(caseRecord, async () => {
-          const served = servedBytes(kind, admittedManifest, archive);
+          const served = servedBytes(kind, originalManifest, archive);
           manifestBytes = served.manifest;
           archiveBytes = served.archive;
           const userData = path.join(profile, 'user');
@@ -122,7 +118,7 @@ async function main(): Promise<void> {
           fs.writeFileSync(path.join(workspace, 'src/lib.rs'), 'pub fn answer() -> u32 { 42 }\n');
           fs.writeFileSync(path.join(userData, 'User/settings.json'), JSON.stringify({
             'ripr.server.path': '', 'ripr.server.autoDownload': true,
-            'ripr.server.version': subject.version, 'ripr.server.downloadBaseUrl': mirror
+            'ripr.server.version': '', 'ripr.server.downloadBaseUrl': mirror
           }));
           command(cli, [...cliArgs, '--no-sandbox', '--user-data-dir', userData,
             '--extensions-dir', extensions, '--install-extension', vsix], repo, environment);
@@ -131,6 +127,7 @@ async function main(): Promise<void> {
           assert.strictEqual(installed.length, 1, 'CLI must install the actual VSIX');
           const installedExtension = path.join(extensions, installed[0].name);
           assert.ok(fs.readFileSync(path.join(installedExtension, 'out/src/serverDescriptor.js'), 'utf8').includes(manifestSha256));
+          assert.deepStrictEqual(fs.readFileSync(path.join(installedExtension, 'distribution.json')), fs.readFileSync(catalog));
           const inputPath = path.join(profile, 'input.json');
           fs.writeFileSync(inputPath, JSON.stringify({ kind, ...subject, manifestSha256, mirror,
             userData, installedExtension, receiptPath }));

@@ -187,9 +187,10 @@ override.
 The read-only `server-archive-qualification.yml` workflow consumes its own
 Linux x64 archive and schema-4 archive receipt in
 `editors/vscode/test/managedDownload/rehearse.ts` (#9469). After the existing
-manifest producer and archive readback checks, it binds a distinct local HTTPS
-mirror manifest with `release-bind-server-descriptor`, packages and verifies
-one VSIX, and installs those exact VSIX bytes through the VS Code CLI.
+manifest producer and archive readback checks, it binds the exact schema-2
+manifest digest with `release-bind-server-descriptor` and produces the release
+distribution catalog. It packages the catalog with `vscode-package --catalog`,
+verifies the VSIX, and installs those exact bytes through the VS Code CLI.
 
 Three fresh extension-host profiles exercise successful managed download,
 parseable raw-manifest tampering, and archive tampering. The successful case
@@ -199,8 +200,9 @@ negative requires the intended checksum diagnostic, no running fallback server,
 and no completed install receipt. Request counts distinguish manifest refusal
 from archive refusal. Tests cannot use `RIPR_TEST_SERVER_PATH`.
 
-The mirror changes only manifest placement URLs before descriptor binding;
-the original manifest, archive and qualification receipt remain intact. A
+The HTTPS mirror serves the original placement-independent manifest and archive
+bytes. An empty server-version override selects the installed distribution
+catalog. Archive tampering changes one byte at the same size. A
 throwaway certificate is trusted only by the disposable test-host process via
 `NODE_EXTRA_CA_CERTS`; the CA private key is removed and excluded from uploads.
 Source and compiled descriptors are restored, and user profiles/settings are

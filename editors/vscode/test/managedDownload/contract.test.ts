@@ -8,30 +8,54 @@ function fixture() {
   const source = 'a'.repeat(40);
   const tree = 'b'.repeat(40);
   const file = `ripr-server-v0.11.0-${TARGET}.tar.gz`;
-  const manifest = Buffer.from(JSON.stringify({ version: '0.11.0', assets: {
-    [TARGET]: { url: `https://example.invalid/${file}`, sha256: digest(archive) }
-  } }));
+  const manifest = Buffer.from(JSON.stringify({ schema_version: '2', product_version: '0.11.0',
+    distribution_generation: 'd'.repeat(64), source_repository: 'EffortlessMetrics/ripr-swarm',
+    build_identity: { candidate_sha: source, candidate_tree: tree, repository: 'EffortlessMetrics/ripr-swarm' },
+    target_set: { targets: [TARGET], digest: 'e'.repeat(64) }, assets: {
+      [TARGET]: { subject: file, archive_format: 'tar.gz', archive_size: archive.length, sha256: digest(archive),
+        executable: { path: 'ripr', size: 12, sha256: 'c'.repeat(64) } }
+    } }));
   const receipt = { schema_version: 4, status: 'qualified_payload_and_archive_shape', candidate_sha: source,
     version: '0.11.0', manifest_sha256: digest(manifest), archive_readback_verified: true,
-    build_identities: [{ target: TARGET, archive_file: file, candidate_sha: source, candidate_tree: tree,
+    build_identities: [{ target: TARGET, version: '0.11.0', archive_size_bytes: archive.length,
+      producer_executable_sha256: 'c'.repeat(64), archive_file: file, candidate_sha: source, candidate_tree: tree,
       archive_sha256: digest(archive), archive_readback_verified: true }],
     payload_identities: [{ target: TARGET, version: '0.11.0', source: { commit_sha: source, tree_sha: tree },
-      files: [{ path: 'ripr', role: 'executable', sha256: 'c'.repeat(64) }] }] };
+      files: [{ path: 'ripr', role: 'executable', size_bytes: 12, sha256: 'c'.repeat(64) }] }] };
   return { archive, source, tree, manifest, receipt };
 }
 
 test('admits exactly the receipted source, archive and executable identities', () => {
   const f = fixture();
   assert.deepStrictEqual(admitSubject(f.manifest, f.archive, f.receipt, f.source, f.tree), {
-    version: '0.11.0', archiveFile: `ripr-server-v0.11.0-${TARGET}.tar.gz`,
+    version: '0.11.0', sourceRepository: 'EffortlessMetrics/ripr-swarm', archiveFile: `ripr-server-v0.11.0-${TARGET}.tar.gz`,
     archiveSha256: digest(f.archive), executableSha256: 'c'.repeat(64)
   });
+});
+
+test('refuses rehashed wrong manifest subjects, archive and executable identities', () => {
+  const f = fixture();
+  for (const patch of [{ subject: 'other.tar.gz' }, { subject: undefined, url: 'https://example.invalid/archive' },
+    { archive_format: 'zip' }, { archive_size: f.archive.length + 1 }, { sha256: '0'.repeat(64) },
+    ...[{ path: 'other' }, { size: 13 }, { sha256: '0'.repeat(64) }].map((change) =>
+      ({ executable: { path: 'ripr', size: 12, sha256: 'c'.repeat(64), ...change } }))]) {
+    const parsed = JSON.parse(f.manifest.toString());
+    Object.assign(parsed.assets[TARGET], patch);
+    const bytes = Buffer.from(JSON.stringify(parsed));
+    assert.throws(() => admitSubject(bytes, f.archive, { ...f.receipt, manifest_sha256: digest(bytes) }, f.source, f.tree));
+  }
 });
 
 test('refuses nearby source and tree, unqualified receipt, and missing readback', () => {
   const f = fixture();
   assert.throws(() => admitSubject(f.manifest, f.archive, f.receipt, 'd'.repeat(40), f.tree));
   assert.throws(() => admitSubject(f.manifest, f.archive, f.receipt, f.source, 'd'.repeat(40)));
+  for (const patch of [{ candidate_sha: 'd'.repeat(40) }, { candidate_tree: 'd'.repeat(40) }, { repository: 'other/repo' }]) {
+    const parsed = JSON.parse(f.manifest.toString());
+    Object.assign(parsed.build_identity, patch);
+    const bytes = Buffer.from(JSON.stringify(parsed));
+    assert.throws(() => admitSubject(bytes, f.archive, { ...f.receipt, manifest_sha256: digest(bytes) }, f.source, f.tree));
+  }
   for (const patch of [{ status: 'not_qualified' }, { archive_readback_verified: false }]) {
     assert.throws(() => admitSubject(f.manifest, f.archive, { ...f.receipt, ...patch }, f.source, f.tree));
   }
@@ -65,6 +89,7 @@ test('tamper controls change only their selected byte subject and preserve manif
   assert.deepStrictEqual(manifest.archive, f.archive);
   const archive = servedBytes('archive_tampered', f.manifest, f.archive);
   assert.deepStrictEqual(archive.manifest, f.manifest);
+  assert.strictEqual(archive.archive.length, f.archive.length);
   assert.notStrictEqual(digest(archive.archive), digest(f.archive));
 });
 

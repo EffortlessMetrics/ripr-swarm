@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { admitManifestBytes } from '../../src/manifestTrust';
 import { createHash } from 'crypto';
 
 export const TARGET = 'x86_64-unknown-linux-gnu';
@@ -29,6 +30,7 @@ export async function retainHostCase(record: any, action: () => Promise<void>, r
 
 export interface RehearsalSubject {
   version: string;
+  sourceRepository: string;
   archiveFile: string;
   archiveSha256: string;
   executableSha256: string;
@@ -43,30 +45,47 @@ export function admitSubject(manifestBytes: Buffer, archive: Buffer, receipt: an
   assert.strictEqual(receipt.candidate_sha, source);
   assert.strictEqual(receipt.manifest_sha256, digest(manifestBytes));
   assert.strictEqual(receipt.archive_readback_verified, true);
-  const manifest = JSON.parse(manifestBytes.toString('utf8'));
-  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-  assert.strictEqual(receipt.version, manifest.version);
+  const manifest = admitManifestBytes(manifestBytes, receipt.manifest_sha256);
+  // The host's parser returns runtime fields. The rehearsal also binds the
+  // producer's source coordinates to this exact checkout and qualification.
+  const provenance = JSON.parse(manifestBytes.toString('utf8')).build_identity;
+  assert.strictEqual(provenance.candidate_sha, source);
+  assert.strictEqual(provenance.candidate_tree, tree);
+  assert.strictEqual(provenance.repository, manifest.sourceRepository);
+  const version = manifest.productVersion;
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  assert.strictEqual(receipt.version, version);
+  const asset = manifest.assets[TARGET];
+  assert.ok(asset, `missing qualified platform ${TARGET}`);
   const builds = receipt.build_identities.filter((row: any) => row.target === TARGET);
   const payloads = receipt.payload_identities.filter((row: any) => row.target === TARGET);
   assert.strictEqual(builds.length, 1);
   assert.strictEqual(payloads.length, 1);
   const build = builds[0];
   const payload = payloads[0];
-  const archiveFile = `ripr-server-v${manifest.version}-${TARGET}.tar.gz`;
-  assert.strictEqual(new URL(manifest.assets[TARGET].url).pathname.split('/').pop(), archiveFile);
+  const archiveFile = `ripr-server-v${version}-${TARGET}.tar.gz`;
+  assert.strictEqual(asset.subject, archiveFile);
+  assert.strictEqual(asset.archiveFormat, 'tar.gz');
+  assert.strictEqual(asset.archiveSize, archive.length);
+  assert.strictEqual(build.version, version);
+  assert.strictEqual(build.archive_size_bytes, archive.length);
   assert.strictEqual(build.archive_file, archiveFile);
   assert.strictEqual(build.candidate_sha, source);
   assert.strictEqual(build.candidate_tree, tree);
   assert.strictEqual(build.archive_readback_verified, true);
-  assert.strictEqual(build.archive_sha256, digest(archive));
-  assert.strictEqual(manifest.assets[TARGET].sha256, digest(archive));
+  assert.strictEqual(build.archive_sha256, asset.sha256);
+  assert.strictEqual(asset.sha256, digest(archive));
   assert.strictEqual(payload.source.commit_sha, source);
   assert.strictEqual(payload.source.tree_sha, tree);
-  assert.strictEqual(payload.version, manifest.version);
+  assert.strictEqual(payload.version, version);
   const executables = payload.files.filter((row: any) => row.role === 'executable' && row.path === 'ripr');
   assert.strictEqual(executables.length, 1);
   assert.match(executables[0].sha256, /^[0-9a-f]{64}$/);
-  return { version: manifest.version, archiveFile, archiveSha256: digest(archive),
+  assert.strictEqual(asset.executable.path, executables[0].path);
+  assert.strictEqual(asset.executable.size, executables[0].size_bytes);
+  assert.strictEqual(asset.executable.sha256, executables[0].sha256);
+  assert.strictEqual(build.producer_executable_sha256, asset.executable.sha256);
+  return { version, sourceRepository: manifest.sourceRepository, archiveFile, archiveSha256: asset.sha256,
     executableSha256: executables[0].sha256 };
 }
 
@@ -75,6 +94,6 @@ export function servedBytes(kind: DownloadCase, manifest: Buffer, archive: Buffe
   // challenges raw-byte admission rather than JSON parsing.
   return {
     manifest: kind === 'manifest_tampered' ? Buffer.concat([manifest, Buffer.from(' ')]) : manifest,
-    archive: kind === 'archive_tampered' ? Buffer.concat([archive, Buffer.from('tampered')]) : archive
+    archive: kind === 'archive_tampered' ? Buffer.from(archive).fill(archive[0] ^ 1, 0, 1) : archive
   };
 }
