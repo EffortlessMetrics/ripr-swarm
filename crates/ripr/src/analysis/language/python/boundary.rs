@@ -2472,7 +2472,7 @@ pub(super) fn unresolved_loop_list_boundary(
                 // then compares the rest exactly as the `xs[0]` forms do.
                 initial.trim() == format!("{right} = None")
                     && loop_line.trim() == format!("for {left} in {}:", parameter.name)
-            } else if unspaced(initial).starts_with(&format!("{right}=float(")) {
+            } else if initial.trim().starts_with(&format!("{right} = float(")) {
                 // `best = float("-inf")` (`"inf"` for a minimum) takes the first
                 // finite element under either operator, then compares the rest
                 // exactly as the `xs[0]` forms do.
@@ -2482,10 +2482,10 @@ pub(super) fn unresolved_loop_list_boundary(
                     "inf"
                 };
                 [
-                    format!("{right}=float(\"{infinity}\")"),
-                    format!("{right}=float('{infinity}')"),
+                    format!("{right} = float(\"{infinity}\")"),
+                    format!("{right} = float('{infinity}')"),
                 ]
-                .contains(&unspaced(initial))
+                .contains(&initial.trim().to_string())
                     && loop_line.trim() == format!("for {left} in {}:", parameter.name)
             } else {
                 initial.trim() == format!("{right} = {}[0]", parameter.name)

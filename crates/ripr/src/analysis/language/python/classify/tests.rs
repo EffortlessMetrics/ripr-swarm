@@ -4909,6 +4909,12 @@ fn loop_boundary_infinity_seed_needs_its_own_sign_and_shape() -> Result<(), Stri
             "sliced loop",
             "def largest(xs):\n    best = float(\"-inf\")\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n",
         ),
+        // A space inside the literal is not an infinity (`float("- inf")`
+        // raises), so the seed line is matched exactly.
+        (
+            "spaced literal",
+            "def largest(xs):\n    best = float(\"- inf\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
     ] {
         let finding = classify_edit_case(source, tests, 4, edit.0, edit.1)?;
         assert_ne!(
