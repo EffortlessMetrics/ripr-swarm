@@ -1,6 +1,6 @@
 {
   "issue": 12922,
-  "basis": "7c1087709bdecb88f1fd25b0e813e86ffc2213dc",
+  "basis": "31f7c2c3d258b2384eb64d6f25856de34449ae6b",
   "scope": "Authored source, original/edited baselines and independent mutants; assertion failures only. TypeScript alternates are supplementary, not corpus truth for behavior_change cases. No population or static adequacy claim.",
   "inputs": {
     "py-partial-arithmetic": {
