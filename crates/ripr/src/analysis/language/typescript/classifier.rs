@@ -430,6 +430,8 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     &owner_names,
                     owner_is_method,
                     &namespace_receivers,
+                    candidate.test,
+                    &changed_tokens,
                 )
             {
                 merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
@@ -446,6 +448,8 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                     &owner_names,
                     owner_is_method,
                     &namespace_receivers,
+                    candidate.test,
+                    &changed_tokens,
                 )
             {
                 merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
@@ -778,6 +782,8 @@ fn ts_value_observed_reads_sibling_field(
     owner_names: &[&str],
     owner_is_method: bool,
     namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
 ) -> bool {
     fn is_ident_char(ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_' || ch == '$'
@@ -821,7 +827,109 @@ fn ts_value_observed_reads_sibling_field(
     ) {
         return false;
     }
-    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+    // #14856: the same read through a one-hop local alias of the owner call
+    // (`const cfg = f(); cfg.verbose`) is a sibling read too. A path that
+    // reads THROUGH the changed field off the alias (`cfg.retries.n`) is a
+    // projection of the change, not a sibling.
+    if ts_masked_reads_key_as_alias_member(
+        &masked,
+        changed.key.as_str(),
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+        test,
+        changed_tokens,
+    ) {
+        return false;
+    }
+    ts_sibling_base_is_owner_result(
+        base,
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+        test,
+        changed_tokens,
+    )
+}
+
+/// Whether `base` (the expression a trailing field read hangs off) is the
+/// owner's result: either the owner call itself, or a plain member chain
+/// rooted at a one-hop local alias of that call (#14856, the same alias
+/// credit [`ts_observed_local_aliases_owner`] grants a bare local). A
+/// compound base, a foreign local and a mutated alias are not the owner's
+/// result, so a read off them is not claimed as a sibling read.
+fn ts_sibling_base_is_owner_result(
+    base: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
+) -> bool {
+    if ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers) {
+        return true;
+    }
+    if !ts_chain_is_plain_projection(base) {
+        return false;
+    }
+    let Some(root) = ts_chain_root_identifier(base) else {
+        return false;
+    };
+    ts_observed_local_aliases_owner(
+        root,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+    )
+}
+
+/// The root identifier of a plain member chain (`cfg?.nested` -> `cfg`),
+/// or `None` when the chain does not start with an identifier.
+fn ts_chain_root_identifier(base: &str) -> Option<&str> {
+    let base = base.trim();
+    let end = base.find(['.', '?', '!', '(', '[']).unwrap_or(base.len());
+    let root = base[..end].trim();
+    (!root.is_empty()).then_some(root)
+}
+
+/// Whether `masked` reads `key` as a member segment of a chain rooted at a
+/// one-hop local alias of the owner call (`cfg.retries.n` for alias `cfg`).
+/// The alias form of [`ts_masked_reads_changed_field_as_member`]: a bare
+/// local spelling the key is not a field read.
+fn ts_masked_reads_key_as_alias_member(
+    masked: &str,
+    key: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
+) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    let mut segments = masked.split('.');
+    let Some(root_segment) = segments.next() else {
+        return false;
+    };
+    let root = root_segment.trim().trim_end_matches(['?', '!']);
+    if !ts_observed_local_aliases_owner(
+        root,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+    ) {
+        return false;
+    }
+    segments.any(|segment| {
+        let segment = segment.trim().trim_end_matches(['?', '!']);
+        let segment = segment.split(['(', '[']).next().unwrap_or(segment);
+        segment == key
+    })
 }
 
 /// #14857: whether `observed` reads a field of the owner's returned literal
@@ -838,6 +946,8 @@ fn ts_value_observed_reads_untouched_field(
     owner_names: &[&str],
     owner_is_method: bool,
     namespace_receivers: &[String],
+    test: &TypeScriptTest,
+    changed_tokens: &[String],
 ) -> bool {
     fn is_ident_char(ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_' || ch == '$'
@@ -877,6 +987,21 @@ fn ts_value_observed_reads_untouched_field(
     }) {
         return false;
     }
+    // #14856: a path through a changed field off an alias local reads
+    // THROUGH the change too (`cfg.retries.n`), not an untouched field.
+    if changed.iter().any(|field| {
+        ts_masked_reads_key_as_alias_member(
+            &masked,
+            field.key.as_str(),
+            owner_names,
+            owner_is_method,
+            namespace_receivers,
+            test,
+            changed_tokens,
+        )
+    }) {
+        return false;
+    }
     let base = base.trim();
     if base.is_empty() {
         return false;
@@ -889,7 +1014,14 @@ fn ts_value_observed_reads_untouched_field(
     if !ts_chain_is_plain_projection(base) {
         return false;
     }
-    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+    ts_sibling_base_is_owner_result(
+        base,
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+        test,
+        changed_tokens,
+    )
 }
 
 /// #14857: whether `base` is a plain member-access chain (`f()`, `a.f()`,
