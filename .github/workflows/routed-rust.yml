@@ -764,6 +764,7 @@ jobs:
       admission-head: ${{ needs.admission.outputs.head }}
       history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
       history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      group-members: ${{ github.event_name == 'merge_group' && needs.admission.outputs.constituents || '' }}
       artifact-name: ripr-rust-small-github
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -1247,6 +1248,16 @@ jobs:
             [ "$(git -C "$trusted" rev-parse "HEAD:$path")" = "$(git hash-object --no-filters "$trusted/$path")" ]
           done
           python3 "$trusted/.github/actions/pr-candidate-admission/history_sync_live.py" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD" --base "$EXPECTED_BASE" --integration "$EXPECTED_G" --source "$SYNC_SOURCE" --destination-base "$SYNC_BASE" --expect-digest "$EXPECTED_DIGEST"
+      # The optional observer reads the resolved step name from this attempt's
+      # Result job. Missing telemetry must never change the protected decision.
+      - name: Hosted group receipt ${{ needs.rust-github.outputs.group_digest }}
+        if: >-
+          success() && github.event_name == 'merge_group' &&
+          needs.rust-github.result == 'success' && needs.rust-github.outputs.group_digest != ''
+        env:
+          DIGEST: ${{ needs.rust-github.outputs.group_digest }}
+        run: |
+          printf 'Hosted group checkout receipt: %s\n' "$DIGEST"
       - name: Summarize routed result
         if: always()
         env:
