@@ -1077,6 +1077,51 @@ mod tests {
         Ok(())
     }
 
+    /// The negative experiment for #14071: the rehearsal itself refuses a
+    /// packaged crate the registry would refuse, and accepts one exactly at
+    /// the limit. Sparse files stand in for archives; only length is measured.
+    #[test]
+    fn the_rehearsal_refuses_a_packaged_crate_over_the_upload_limit() -> Result<(), String> {
+        let io = |e: std::io::Error| e.to_string();
+        let limit = crate::reports::release::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES;
+        assert_eq!(limit, 10_485_760);
+        let dir =
+            std::env::temp_dir().join(format!("ripr-upload-guard-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(io)?;
+        let sized = |name: &str, bytes: u64| -> Result<PathBuf, String> {
+            let path = dir.join(name);
+            fs::File::create(&path)
+                .and_then(|file| file.set_len(bytes))
+                .map_err(io)?;
+            Ok(path)
+        };
+        let small = sized("ripr-contract-9.9.9.crate", 1)?;
+        let at_limit = sized("ripr-9.9.9.crate", limit)?;
+        upload_size_guard(&small, &at_limit)?;
+
+        let over = sized("ripr-9.9.9.crate", limit + 1)?;
+        match upload_size_guard(&small, &over) {
+            Err(problem) => {
+                assert!(problem.contains("ripr-9.9.9.crate is 10485761 bytes, 1 bytes over"));
+                assert!(!problem.contains("ripr-contract"), "{problem}");
+            }
+            Ok(()) => return Err("an over-limit ripr crate passed the rehearsal".to_string()),
+        }
+        // Either archive can be the oversized one.
+        let big_contract = sized("ripr-contract-9.9.9.crate", limit + 1)?;
+        let fits = sized("ripr-9.9.9.crate", limit)?;
+        assert!(
+            matches!(upload_size_guard(&big_contract, &fits), Err(e) if e.contains("ripr-contract-9.9.9.crate is 10485761 bytes"))
+        );
+        // An archive that cannot be measured is refused, never assumed to fit.
+        assert!(
+            matches!(upload_size_guard(&dir.join("absent.crate"), &fits), Err(e) if e.starts_with("cannot measure"))
+        );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
     #[test]
     fn picks_exact_crate_file() -> Result<(), String> {
         let dir = std::env::temp_dir().join(format!("ripr-pick-test-{}", std::process::id()));
