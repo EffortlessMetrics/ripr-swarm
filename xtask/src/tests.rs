@@ -90,12 +90,11 @@ use super::{
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
     EvidenceQualityTrendReport, FixKind, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
-    GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
-    Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
-    PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
+    Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
+    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, MarkdownLink,
+    PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
@@ -887,6 +886,29 @@ fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> 
     Ok(())
 }
 
+fn seed_honesty_git_base() -> Result<(), String> {
+    run("git", &["init", "--quiet"])?;
+    run(
+        "git",
+        &["add", "fixtures/evidence-promotion-honesty-corpus"],
+    )?;
+    run(
+        "git",
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ],
+    )?;
+    run("git", &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    Ok(())
+}
+
 #[test]
 fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cases()
 -> Result<(), String> {
@@ -911,7 +933,8 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
             write_evidence_promotion_check(fixture, classification)?;
         }
 
-        let corpus_json = serde_json::json!({
+        let mut corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -963,11 +986,70 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
                 }
             ]
         });
+        // Seed a required, stamped report and a real consumer in the accepted base.
+        write(
+            &root.join("crates/ripr/src/analysis/seam_cache.rs"),
+            "pub(crate) const CACHE_SCHEMA_VERSION: &str = \"1.0\";\n",
+        );
+        let report = "fixtures/evidence-promotion-honesty-corpus/reports/retained.json";
+        let placeholder = format!("sha256:{}", "0".repeat(64));
+        let report_json = serde_json::json!({
+            "artifact": {"canonicalization": "raw_json_placeholder_v1", "content_sha256": placeholder},
+            "summary": {"findings": 1},
+            "findings": [{"id": "retained", "classification": "weakly_exposed"}]
+        });
+        let template = serde_json::to_string_pretty(&report_json).map_err(|err| err.to_string())?;
+        let stamped = template.replace(
+            &placeholder,
+            &format!("sha256:{}", sha256_hex(template.as_bytes())),
+        );
+        write(&root.join(report), &stamped);
+        corpus_json["report_digest_required"] = serde_json::json!([report]);
+        corpus_json["cases"]
+            .as_array_mut()
+            .ok_or("no cases")?
+            .push(serde_json::json!({
+                "id": "retained_report", "language": "python", "tier": "pure",
+                "source_report": report, "must_remain_non_promoted": true
+            }));
         write(
             &corpus,
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
+        super::check_evidence_promotion_honesty(&[])?;
+        // Remove both the requirement and the stamp while retaining the report.
+        corpus_json["report_digest_required"] = serde_json::json!([]);
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
+        let mut unstamped = report_json;
+        unstamped
+            .as_object_mut()
+            .ok_or("report object")?
+            .remove("artifact");
+        write(
+            &root.join(report),
+            &serde_json::to_string_pretty(&unstamped).map_err(|err| err.to_string())?,
+        );
+        let error = super::check_evidence_promotion_honesty(&[])
+            .expect_err("retained report omission must fail");
+        assert!(
+            error.contains("required digest entry removed while report still exists"),
+            "{error}"
+        );
+        // Actual deletion and removal of its case is an allowed retirement.
+        fs::remove_file(root.join(report)).map_err(|err| err.to_string())?;
+        corpus_json["cases"]
+            .as_array_mut()
+            .ok_or("no cases")?
+            .retain(|case| case["id"] != "retained_report");
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
         super::check_evidence_promotion_honesty(&[])?;
         let summary_path = root.join("target/ripr/reports/corpus-summary.json");
         let summary_text = fs::read_to_string(&summary_path)
@@ -1148,6 +1230,7 @@ fn evidence_promotion_corpus_summary_reports_pinned_external_setup_failure() -> 
         }
 
         let corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -1203,6 +1286,7 @@ fn evidence_promotion_corpus_summary_reports_pinned_external_setup_failure() -> 
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
         let err = super::check_evidence_promotion_honesty(&["--pinned-external".to_string()])
             .expect_err("malformed pinned_external case should fail");
         assert!(
@@ -1831,6 +1915,7 @@ fn evidence_promotion_honesty_pass_report_names_clean_guard() -> Result<(), Stri
         }
 
         let corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -1876,6 +1961,7 @@ fn evidence_promotion_honesty_pass_report_names_clean_guard() -> Result<(), Stri
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
         super::check_evidence_promotion_honesty(&[])?;
         let report =
             fs::read_to_string(root.join("target/ripr/reports/evidence-promotion-honesty.md"))
@@ -5717,6 +5803,24 @@ fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
             .read_to_string(&mut binary_contents)
             .map_err(|err| format!("read ripr.exe entry: {err}"))?;
         assert_eq!(binary_contents, "binary");
+
+        // Only the executable carries an execute bit; licenses and the notice
+        // are plain data files.
+        for (name, expected) in [
+            ("ripr.exe", 0o755),
+            ("LICENSE-MIT", 0o644),
+            ("LICENSE-APACHE", 0o644),
+            ("README-server.txt", 0o644),
+        ] {
+            let entry = archive
+                .by_name(name)
+                .map_err(|err| format!("locate {name} entry: {err}"))?;
+            assert_eq!(
+                entry.unix_mode().map(|mode| mode & 0o777),
+                Some(expected),
+                "{name}"
+            );
+        }
         Ok(())
     })
 }
@@ -6590,6 +6694,34 @@ fn non_rust_programming_policy_requires_retention_rule() {
     );
     assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
     assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+    assert!(
+        non_rust_programming_retention_reason(
+            "benchmarks/mutation_spot_check/run_python_calibration.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("benchmarks/mutation_spot_check/other.py").is_none()
+    );
+}
+
+#[test]
+fn installed_wheel_identity_retention_is_exact() -> Result<(), String> {
+    for (file, retained) in [
+        ("verify_installed_wheel.py", true),
+        ("test_verify.py", true),
+        ("other.py", false),
+        ("nested/test_verify.py", false),
+    ] {
+        let path = format!("tools/python/installed-wheel-identity/{file}");
+        let observed = non_rust_programming_retention_reason(&path);
+        if observed.is_some() != retained {
+            return Err(format!(
+                "unexpected installed wheel retention for {path}: {observed:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -7645,6 +7777,66 @@ fn allow_attributes_gate_enforces_raw_reason_suppressions_and_exact_budgets() ->
             );
         }
         Ok(())
+    })
+}
+
+#[test]
+fn unguarded_allow_requires_its_own_reason() {
+    let source = r####"
+        #![allow(clippy::never_loop)]
+        // #[allow(comment_only)]
+        const SAMPLE: &str = "#[allow(string_only)]";
+        #[cfg_attr(unix, cfg_attr(test, allow(clippy::never_loop)), allow(other, reason = "conditional"))]
+        #[allow(clippy::documented, reason /* explanation */ = r#"conditional"#)]
+        #[allow(clippy::mixed, GUARDED)]
+        #[r#cfg_attr(test, cfg_attr(windows, r#allow(clippy::raw_missing)))]
+        #[r#allow(clippy::raw_documented, r#reason = "documented")]
+        #[expect(clippy::outside_budget)]
+        fn example() {}
+    "####;
+    let findings = super::unguarded_allows_without_reason(
+        &source.replace("GUARDED", "dead_code"),
+        &guarded_allow_attribute_lints(),
+    );
+    assert_eq!(
+        findings,
+        vec![
+            (2, "clippy::never_loop".to_owned()),
+            (5, "clippy::never_loop".to_owned()),
+            (7, "clippy::mixed".to_owned()),
+            (8, "clippy::raw_missing".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attributes_gate_requires_a_reason_outside_the_budget() -> Result<(), String> {
+    with_temp_cwd("allow-attributes-unguarded", |root| {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        write(&root.join(".ripr/allow-attributes.txt"), "");
+        let source = "#[cfg_attr(windows, allow(clippy::never_loop))]\nfn example() {}";
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            source,
+        );
+        write(&root.join("fixtures/demo/src/lib.rs"), source);
+        badge_fixture_git(&["add", "."])?;
+        assert!(super::check_allow_attributes_impl().is_err());
+        let report = std::fs::read_to_string(root.join("target/ripr/reports/allow-attributes.md"))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            report.contains("xtask/src/reports/fixtures/preparation.rs:1 allow(clippy::never_loop) needs a written reason"),
+            "{report}"
+        );
+        assert!(!report.contains("fixtures/demo"), "{report}");
+        write(
+            &root.join("xtask/src/reports/fixtures/preparation.rs"),
+            &source.replace(
+                "never_loop)",
+                "never_loop, reason = \"platform-specific loop\")",
+            ),
+        );
+        super::check_allow_attributes_impl()
     })
 }
 
@@ -19706,6 +19898,15 @@ jobs:
           path: |
             target/ripr/reports
 ";
+    let first_pr_line = concat!(
+        "- Safe next action: run `ripr first-pr --root . --base origin/main --head HEAD",
+        " --gap-ledger target/ripr/reports/gap-decision-ledger.json",
+        " --first-action target/ripr/reports/first-useful-action.json",
+        " --review-comments target/ripr/review/comments.json",
+        " --agent-packet target/ripr/workflow/agent-packet.json",
+        " --gate-decision target/ripr/reports/gate-decision.json",
+        " --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`.",
+    );
     let summary = format!(
         "\
 ## RIPR advisory summary
@@ -19715,7 +19916,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 ### Start here
 - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
-- {GENERATED_CI_FIRST_PR_REPAIR}
+{first_pr_line}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
 - {GENERATED_CI_PACKET_INDEX_REPAIR}
 
@@ -19740,6 +19941,31 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
     assert!(run.default_advisory);
     assert!(run.artifact_upload);
     assert_eq!(run.language_grouping_status, "checked");
+
+    for (name, changed_summary) in [
+        (
+            "wrong-first-pr-output-dir",
+            summary.replace(
+                "--output-dir target/ripr/reports`",
+                "--output-dir target/ripr/reports-wrong`",
+            ),
+        ),
+        ("missing-first-pr", summary.replace(first_pr_line, "")),
+    ] {
+        let changed = dogfood_generated_ci_cockpit_run_from_surfaces(
+            name,
+            command,
+            10,
+            workflow,
+            &changed_summary,
+        );
+        assert_eq!(changed.repair_commands, 3, "{name}");
+        assert_eq!(
+            changed.errors,
+            ["expected 4 cockpit regeneration commands, got 3"],
+            "{name}"
+        );
+    }
 
     let missing =
         dogfood_generated_ci_cockpit_run_from_surfaces("missing", command, 10, "name: RIPR", "");
@@ -19863,10 +20089,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 
     // Generated CI names the PR range since #4260; the unscoped form it
     // replaced must not satisfy the first-pr repair command.
-    let unscoped = summary.replace(
-        GENERATED_CI_FIRST_PR_REPAIR,
-        "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
-    );
+    let unscoped = summary.replace(" --base origin/main --head HEAD", "");
     let stale = dogfood_generated_ci_cockpit_run_from_surfaces(
         "unscoped-first-pr",
         command,
@@ -20594,6 +20817,7 @@ fn dogfood_pr_review_front_panel_scenarios_have_checked_receipts() -> Result<(),
             ("baseline_resolved", "already_improved"),
             ("blocked", "actionable"),
             ("missing_proof", "missing_required_input"),
+            ("absent_optional_guidance", "missing_required_input"),
             ("advisory_only", "no_actionable_seam"),
             ("coverage_flat_grip_improved", "already_improved"),
         ] {
@@ -49167,6 +49391,44 @@ fn vsix_inventory_rejects_cargo_artifacts_outside_target() -> Result<(), String>
 }
 
 #[test]
+fn vsix_inventory_rejects_extension_development_tests() -> Result<(), String> {
+    for name in [
+        "extension/out/test/suite/required_journeys.test.js",
+        "extension/out/test/clientLaunch.js",
+        "extension/out/src/test/helper.js",
+        "extension/test/fixtures/workspace/Cargo.toml",
+        "extension/test-fixtures/tls/a.pem",
+        "extension/out/src/client.spec.js",
+        "extension/out/src/__tests__/client.js",
+        "extension/tsconfig.setup.json",
+    ] {
+        let entries = vec![
+            vsix_entry("extension/package.json", 2),
+            vsix_entry(name, 10),
+        ];
+        let Err(error) = super::check_vsix_inventory(&entries, 10, 1_000) else {
+            return Err(format!(
+                "{name} must be rejected as an extension test entry"
+            ));
+        };
+        assert!(error.contains(name), "{error}");
+        assert!(error.contains("1 extension test entries"), "{error}");
+    }
+    // The shipped runtime and a production dependency's own layout pass:
+    // names that merely contain "test" are not test directories.
+    let shipped = vec![
+        vsix_entry("extension/package.json", 2),
+        vsix_entry("extension/out/src/attemptStatus.js", 2),
+        vsix_entry("extension/out/src/latestRelease.js", 2),
+        vsix_entry("extension/walkthrough/setup.md", 2),
+        vsix_entry("extension/node_modules/semver/test/index.js", 2),
+        vsix_entry("extension/node_modules/dep/lib/a.test.js", 2),
+        vsix_entry("extension.vsixmanifest", 2),
+    ];
+    super::check_vsix_inventory(&shipped, 10, 1_000)
+}
+
+#[test]
 fn vsix_inventory_fails_closed_on_missing_or_non_zip_package() -> Result<(), String> {
     with_temp_cwd("vsix-inventory-unreadable", |root| {
         // A package step that produced no archive must fail, not pass an empty inventory.
@@ -54180,47 +54442,48 @@ const NEXTEST_CI_MEASURED_BUILD_SECONDS: u64 = 774;
 const NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS: u64 = 494;
 const NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS: u64 = 210;
 
-/// The trimmed key and value of a `key = value` line, tolerating any spacing
-/// around the `=`: `slow-timeout={...}` and `slow-timeout = {...}` are the
-/// same key, so a spelling cannot slip past a prefix match.
-fn toml_key_value(line: &str) -> Option<(&str, &str)> {
-    let (key, value) = line.split_once('=')?;
-    Some((key.trim(), value.trim()))
+/// Parse a nextest duration string (`"120s"`, `"10m"`, `"10h"`) into seconds.
+fn parse_nextest_duration_seconds(raw: &str) -> Result<u64, String> {
+    let trimmed = raw.trim();
+    let (digits, multiplier) = if let Some(s) = trimmed.strip_suffix('s') {
+        (s, 1u64)
+    } else if let Some(m) = trimmed.strip_suffix('m') {
+        (m, 60u64)
+    } else if let Some(h) = trimmed.strip_suffix('h') {
+        (h, 3600u64)
+    } else {
+        return Err(format!("cannot read a s/m/h period from {raw:?}"));
+    };
+    let count = digits
+        .parse::<u64>()
+        .map_err(|err| format!("cannot read a s/m/h period from {raw:?}: {err}"))?;
+    count
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("period {raw:?} overflows u64 seconds"))
 }
 
 /// One `slow-timeout = { period = "Ns", terminate-after = N }` value as its
 /// window in seconds: `period` seconds of silence marked SLOW, terminated
-/// after `terminate-after` periods. Keys are read by name, so spacing and key
-/// order do not matter.
-fn parse_nextest_slow_timeout(value: &str) -> Result<u64, String> {
-    let inner = value
-        .trim()
-        .strip_prefix('{')
-        .and_then(|rest| rest.strip_suffix('}'))
-        .unwrap_or(value);
-    let mut period = None;
-    let mut terminate_after = None;
-    for part in inner.split(',') {
-        let Some((key, value)) = toml_key_value(part) else {
-            continue;
-        };
-        match key {
-            "period" => {
-                period = value
-                    .trim_matches('"')
-                    .strip_suffix('s')
-                    .and_then(|secs| secs.parse::<u64>().ok());
-            }
-            "terminate-after" => {
-                terminate_after = value.parse::<u64>().ok();
-            }
-            _ => {}
-        }
-    }
-    let period = period.ok_or_else(|| format!("cannot read a seconds period from {value:?}"))?;
-    let terminate_after =
-        terminate_after.ok_or_else(|| format!("cannot read terminate-after from {value:?}"))?;
-    Ok(period * terminate_after)
+/// after `terminate-after` periods.
+fn parse_nextest_slow_timeout(value: &toml::Value) -> Result<u64, String> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| format!("slow-timeout must be a table, got {value}"))?;
+    let period_raw = table
+        .get("period")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| format!("cannot read a s/m/h period from {value}"))?;
+    let period = parse_nextest_duration_seconds(period_raw)?;
+    let terminate_after_i64 = table
+        .get("terminate-after")
+        .and_then(toml::Value::as_integer)
+        .ok_or_else(|| format!("cannot read terminate-after from {value}"))?;
+    let terminate_after = u64::try_from(terminate_after_i64).map_err(|err| {
+        format!("negative terminate-after {terminate_after_i64} in {value}: {err}")
+    })?;
+    period
+        .checked_mul(terminate_after)
+        .ok_or_else(|| format!("slow-timeout window overflows u64 seconds in {value}"))
 }
 
 /// The `[profile.ci]` `slow-timeout` window plus every
@@ -54229,74 +54492,50 @@ fn parse_nextest_slow_timeout(value: &str) -> Result<u64, String> {
 /// so a check that read only the profile-level value would pass a test whose
 /// own window is far past the budget.
 ///
-/// Fails closed: an override that sets `slow-timeout` but cannot be parsed is
-/// an error, not a skip.
+/// Fails closed: an override that sets `slow-timeout` (by inline table, dotted
+/// key, or quoted key) but cannot be parsed is an error, not a skip.
 fn nextest_ci_hang_windows(config: &str) -> Result<(u64, Vec<(String, u64)>), String> {
-    let ci = config
-        .split("[profile.ci]")
-        .nth(1)
+    let doc: toml::Value =
+        toml::from_str(config).map_err(|err| format!("nextest.toml is not valid TOML: {err}"))?;
+    let ci = doc
+        .get("profile")
+        .and_then(|p| p.get("ci"))
+        .and_then(toml::Value::as_table)
         .ok_or("nextest.toml has no [profile.ci] section")?;
-    let section = ci
-        .split("\n[")
-        .next()
-        .ok_or("cannot isolate the [profile.ci] section")?;
-    let profile_value = section
-        .lines()
-        .find_map(|line| {
-            let (key, value) = toml_key_value(line.trim())?;
-            (key == "slow-timeout").then_some(value)
-        })
+    let profile_value = ci
+        .get("slow-timeout")
         .ok_or("[profile.ci] has no slow-timeout")?;
     let profile_window = parse_nextest_slow_timeout(profile_value)?;
 
-    fn finish(
-        block: &mut Option<(usize, Option<String>, Option<u64>)>,
-        overrides: &mut Vec<(String, u64)>,
-    ) {
-        if let Some((ordinal, filter, window)) = block.take()
-            && let Some(window) = window
-        {
-            let name = filter.unwrap_or_else(|| format!("[[profile.ci.overrides]] #{ordinal}"));
+    let mut overrides = Vec::new();
+    if let Some(entries) = ci.get("overrides") {
+        let entries = entries
+            .as_array()
+            .ok_or("[profile.ci.overrides] must be an array")?;
+        for (idx, entry) in entries.iter().enumerate() {
+            let ordinal = idx + 1;
+            let table = entry
+                .as_table()
+                .ok_or_else(|| format!("[[profile.ci.overrides]] #{ordinal} must be a table"))?;
+            let Some(timeout) = table.get("slow-timeout") else {
+                continue;
+            };
+            let filter = table
+                .get("filter")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned);
+            let name = filter
+                .clone()
+                .unwrap_or_else(|| format!("[[profile.ci.overrides]] #{ordinal}"));
+            let window = parse_nextest_slow_timeout(timeout).map_err(|err| {
+                format!(
+                    "cannot parse the slow-timeout of override {}: {err}",
+                    filter.as_deref().unwrap_or("<unnamed>")
+                )
+            })?;
             overrides.push((format!("override {name}"), window));
         }
     }
-
-    let mut overrides = Vec::new();
-    // (ordinal, filter, window) for the block being read.
-    let mut block: Option<(usize, Option<String>, Option<u64>)> = None;
-    let mut ordinal = 0usize;
-    for line in config.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("[[profile.ci.overrides]]") {
-            finish(&mut block, &mut overrides);
-            ordinal += 1;
-            block = Some((ordinal, None, None));
-            continue;
-        }
-        if trimmed.starts_with('[') {
-            finish(&mut block, &mut overrides);
-            continue;
-        }
-        let Some((_, filter, window)) = block.as_mut() else {
-            continue;
-        };
-        let Some((key, value)) = toml_key_value(trimmed) else {
-            continue;
-        };
-        match key {
-            "filter" => *filter = Some(value.to_string()),
-            "slow-timeout" => {
-                *window = Some(parse_nextest_slow_timeout(value).map_err(|err| {
-                    format!(
-                        "cannot parse the slow-timeout of override {}: {err}",
-                        filter.as_deref().unwrap_or("<unnamed>")
-                    )
-                })?);
-            }
-            _ => {}
-        }
-    }
-    finish(&mut block, &mut overrides);
     Ok((profile_window, overrides))
 }
 
@@ -54325,20 +54564,9 @@ fn workflow_step_timeout_seconds(workflow: &str, name_fragment: &str) -> Result<
     ))
 }
 
-/// #14906 acceptance: the hang window plus the measured build and test-phase
-/// time stays inside the shard step's cap, and the window sits above the
-/// slowest legitimate test. Widening `terminate-after` past the budget fails
-/// here, naming the window and the cap.
-#[test]
-fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
-    let root = repo_root()?;
-    let config = std::fs::read_to_string(root.join(".config/nextest.toml"))
-        .map_err(|err| format!("read nextest.toml: {err}"))?;
-    let shard_workflow =
-        std::fs::read_to_string(root.join(".github/workflows/rust-test-shards.yml"))
-            .map_err(|err| format!("read rust-test-shards.yml: {err}"))?;
-    let (window, overrides) = nextest_ci_hang_windows(&config)?;
-    let cap = workflow_step_timeout_seconds(&shard_workflow, "Required Rust tests")?;
+fn check_nextest_hang_window_budget(config: &str, shard_workflow: &str) -> Result<(), String> {
+    let (window, overrides) = nextest_ci_hang_windows(config)?;
+    let cap = workflow_step_timeout_seconds(shard_workflow, "Required Rust tests")?;
 
     if window <= NEXTEST_CI_SLOWEST_LEGITIMATE_TEST_SECONDS {
         return Err(format!(
@@ -54359,6 +54587,200 @@ fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
             }
         }
     }
+    Ok(())
+}
+
+/// The analytics timeout covers the entire partition job. Both measured
+/// phases consume its budget before a late hang can be named (#14946).
+#[test]
+fn nextest_hang_window_fits_the_analytics_job_budget() -> Result<(), String> {
+    let workflow = include_str!("../../.github/workflows/test-analytics.yml");
+    let (_, job) = workflow
+        .split_once("\n  rust-tests:\n")
+        .ok_or("missing analytics rust-tests job")?;
+    let minutes: u32 = job
+        .lines()
+        .take_while(|line| {
+            line.trim().is_empty() || line.starts_with("    ") || line.trim_start().starts_with('#')
+        })
+        .find_map(|line| line.strip_prefix("    timeout-minutes: "))
+        .ok_or("missing analytics rust-tests job timeout")?
+        .trim()
+        .parse()
+        .map_err(|err| format!("invalid analytics job timeout: {err}"))?;
+    let cap = u64::from(minutes) * 60;
+    let (default, overrides) = nextest_ci_hang_windows(include_str!("../../.config/nextest.toml"))?;
+    for (name, window) in std::iter::once(("ci profile".to_owned(), default)).chain(overrides) {
+        let elapsed = NEXTEST_CI_MEASURED_BUILD_SECONDS + NEXTEST_CI_MEASURED_TEST_PHASE_SECONDS;
+        if window >= cap.saturating_sub(elapsed) {
+            return Err(format!(
+                "{name}: {elapsed}s of measured build and test time plus a {window}s hang window reaches the analytics job cap of {cap}s"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #14906 acceptance: the hang window plus the measured build and test-phase
+/// time stays inside the shard step's cap, and the window sits above the
+/// slowest legitimate test. Widening `terminate-after` past the budget fails
+/// here, naming the window and the cap.
+#[test]
+fn nextest_hang_window_fits_the_shard_step_budget() -> Result<(), String> {
+    let root = repo_root()?;
+    let config = std::fs::read_to_string(root.join(".config/nextest.toml"))
+        .map_err(|err| format!("read nextest.toml: {err}"))?;
+    let shard_workflow =
+        std::fs::read_to_string(root.join(".github/workflows/rust-test-shards.yml"))
+            .map_err(|err| format!("read rust-test-shards.yml: {err}"))?;
+    check_nextest_hang_window_budget(&config, &shard_workflow)
+}
+
+const SAMPLE_SHARD_WORKFLOW_40M: &str =
+    "      - name: Required Rust tests\n        timeout-minutes: 40\n";
+
+#[test]
+fn nextest_ci_hang_windows_reads_dotted_key_override() -> Result<(), String> {
+    let oversized = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=dotted_keys)'
+slow-timeout.period = "10h"
+slow-timeout.terminate-after = 10
+"#;
+    let (profile_window, overrides) = nextest_ci_hang_windows(oversized)?;
+    assert_eq!(profile_window, 1200);
+    assert_eq!(
+        overrides,
+        vec![("override test(=dotted_keys)".to_string(), 360_000)]
+    );
+    let err = check_nextest_hang_window_budget(oversized, SAMPLE_SHARD_WORKFLOW_40M)
+        .expect_err("oversized dotted-key override must fail budget check");
+    assert!(
+        err.contains("test(=dotted_keys)") && err.contains("360000s"),
+        "unexpected error: {err}"
+    );
+
+    let in_budget = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=dotted_keys_ok)'
+slow-timeout.period = "10m"
+slow-timeout.terminate-after = 2
+"#;
+    let (_, ok_overrides) = nextest_ci_hang_windows(in_budget)?;
+    assert_eq!(
+        ok_overrides,
+        vec![("override test(=dotted_keys_ok)".to_string(), 1200)]
+    );
+    check_nextest_hang_window_budget(in_budget, SAMPLE_SHARD_WORKFLOW_40M)
+}
+
+#[test]
+fn nextest_ci_hang_windows_reads_quoted_key_override() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=quoted_key)'
+"slow-timeout" = { period = "10h", terminate-after = 10 }
+"#;
+    let (_, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(
+        overrides,
+        vec![("override test(=quoted_key)".to_string(), 360_000)]
+    );
+    let err = check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+        .expect_err("oversized quoted-key override must fail budget check");
+    assert!(
+        err.contains("test(=quoted_key)") && err.contains("360000s"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nextest_ci_hang_windows_accepts_trailing_comment_on_slow_timeout() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 } # keep
+
+[[profile.ci.overrides]]
+filter = 'test(=commented)'
+slow-timeout = { period = "120s", terminate-after = 10 } # keep
+"#;
+    let (profile_window, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(profile_window, 1200);
+    assert_eq!(
+        overrides,
+        vec![("override test(=commented)".to_string(), 1200)]
+    );
+    check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+}
+
+#[test]
+fn nextest_ci_hang_windows_fails_closed_on_partial_dotted_override() {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=partial_dotted)'
+slow-timeout.period = "10h"
+"#;
+    let err = nextest_ci_hang_windows(config)
+        .expect_err("partial slow-timeout override must fail closed, not be dropped");
+    assert!(
+        err.contains("partial_dotted") && err.contains("terminate-after"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn nextest_ci_hang_windows_ignores_override_without_slow_timeout() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'package(=xtask) & test(=no_window)'
+junit.store-success-output = true
+"#;
+    let (profile_window, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(profile_window, 1200);
+    assert!(
+        overrides.is_empty(),
+        "expected no overrides, got {overrides:?}"
+    );
+    check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+}
+
+#[test]
+fn nextest_ci_hang_windows_reads_oversized_inline_override() -> Result<(), String> {
+    let config = r#"
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.ci.overrides]]
+filter = 'test(=oversized_inline)'
+slow-timeout = { period = "600s", terminate-after = 10 }
+"#;
+    let (_, overrides) = nextest_ci_hang_windows(config)?;
+    assert_eq!(
+        overrides,
+        vec![("override test(=oversized_inline)".to_string(), 6000)]
+    );
+    let err = check_nextest_hang_window_budget(config, SAMPLE_SHARD_WORKFLOW_40M)
+        .expect_err("oversized inline override must fail budget check");
+    assert!(
+        err.contains("test(=oversized_inline)") && err.contains("6000s"),
+        "unexpected error: {err}"
+    );
     Ok(())
 }
 

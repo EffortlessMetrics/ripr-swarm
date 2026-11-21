@@ -157,10 +157,7 @@ impl GapListFilter {
     }
 
     fn excludes_exposed_by_default(&self, item: &GapItem) -> bool {
-        self.class.is_none()
-            && item.class() == crate::domain::ExposureClass::Exposed.as_str()
-            && item.repair_readiness.ineligibility
-                == Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED)
+        self.class.is_none() && item.is_closed_gap()
     }
 
     /// Items the default exposure exclusion removed: they satisfy every
@@ -1381,6 +1378,37 @@ impl WorkspaceSession {
                 .map(|limitation| limitation.kind.as_str())
                 .collect::<Vec<_>>(),
         });
+        // Closed gap: every selected item is an `exposed` item the shared seam
+        // gate refused as already gripped, so the default listing is empty
+        // because nothing remains to do. The typed `kind` stays
+        // `complete_with_findings` (findings exist, all already pinned); the
+        // label must not say "findings below" over an empty list.
+        if snapshot.outcome.kind == AnalysisOutcomeKind::CompleteWithFindings
+            && scope.exposed_omitted > 0
+            // Fail closed: an overflowed budget omits items this list cannot
+            // see, and a narrowed list says nothing about the rest.
+            && selection.omitted.is_empty()
+            // An owner opt-out withholds a finding no item serves and no test
+            // was shown to grip, so the snapshot is not all-clear.
+            && snapshot.withheld.is_empty()
+            && snapshot.items.len() == selection.selected.len()
+            && scope.filter.file.is_none()
+            && scope.filter.language.is_none()
+            && scope.filter.repair_ready.is_none()
+            && scope.filter.class.is_none()
+            && snapshot
+                .items
+                .iter()
+                .filter(|item| {
+                    selection
+                        .selected_ids()
+                        .any(|id| id == item.canonical_id.as_str())
+                })
+                .all(|item| GapListFilter::default().excludes_exposed_by_default(item))
+        {
+            outcome["label"] =
+                json!("no test gap found: every finding is already gripped by existing tests");
+        }
         // #13280: a zero-item no-scope snapshot examined no behavior, from
         // either capture source (#13096); say so beside the typed kind so
         // zero items never read as clean.
@@ -3754,6 +3782,165 @@ mod tests {
         assert_eq!(analyzed_language_label(&no_language), "source");
         Ok(())
     }
+    /// Closed gap: when every selected item is an already-gripped `exposed`
+    /// item the empty default list says "no test gap found", not "findings
+    /// below"; one open (non-exposed) item keeps the original label.
+    #[test]
+    fn closed_gap_list_label_says_no_test_gap_found() -> Result<(), String> {
+        let list_with = |all_exposed: bool,
+                         budget_omission: bool,
+                         ineligibility: &'static str,
+                         withheld: bool,
+                         filter: GapListFilter|
+         -> Result<Value, String> {
+            let mut session = session_with_findings(2)?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for (index, item) in snapshot.items.iter_mut().enumerate() {
+                if all_exposed || index == 0 {
+                    item.class = crate::domain::ExposureClass::Exposed.as_str().to_string();
+                    item.repair_readiness.ineligibility = Some(ineligibility);
+                }
+            }
+            if budget_omission {
+                snapshot
+                    .selection
+                    .omitted
+                    .push(crate::lsp::diagnostic_budget::OmittedDiagnosticItem {
+                    canonical_id: "gap:test:budget-omitted".to_string(),
+                    reason:
+                        crate::lsp::diagnostic_budget::OmittedDiagnosticReason::DocumentItemLimit,
+                });
+            }
+            if withheld {
+                snapshot.withheld.push(WithheldItem {
+                    canonical_id: "gap:test:owner-opted-out".to_string(),
+                    finding_id: "finding:test:owner-opted-out".to_string(),
+                    owner: Some("skipped_owner".to_string()),
+                });
+            }
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    &filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let list = |all_exposed: bool, budget_omission: bool, filter: GapListFilter| {
+            list_with(
+                all_exposed,
+                budget_omission,
+                crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+                false,
+                filter,
+            )
+        };
+        let closed = list(true, false, GapListFilter::default())?;
+        assert_eq!(closed["items"], json!([]), "{closed}");
+        assert_eq!(closed["exposed_omitted"], json!(2), "{closed}");
+        assert!(
+            closed["outcome"]["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("no test gap found")),
+            "{closed}"
+        );
+        let keeps_label =
+            |document: &Value| document["outcome"]["label"] == json!("findings below");
+        // Negative control: one open item keeps the typed outcome's label.
+        let open = list(false, false, GapListFilter::default())?;
+        assert_eq!(open["exposed_omitted"], json!(1), "{open}");
+        assert!(keeps_label(&open), "{open}");
+        // Exposed but refused for another cause: listed as open, never closed.
+        let truncated = list_with(
+            true,
+            false,
+            crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+            false,
+            GapListFilter::default(),
+        )?;
+        assert!(keeps_label(&truncated), "{truncated}");
+        assert_eq!(
+            truncated["items"].as_array().map(Vec::len),
+            Some(2),
+            "{truncated}"
+        );
+        // Budget-omitted items are unseen and may be open: never an all-clear.
+        let overflow = list(true, true, GapListFilter::default())?;
+        assert_eq!(overflow["exposed_omitted"], json!(2), "{overflow}");
+        assert!(keeps_label(&overflow), "{overflow}");
+        // An owner opt-out withholds a finding the list never serves: every
+        // served item closed is still not an all-clear, and the disclosure stays.
+        let opted_out = list_with(
+            true,
+            false,
+            crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            true,
+            GapListFilter::default(),
+        )?;
+        assert_eq!(opted_out["items"], json!([]), "{opted_out}");
+        assert_eq!(opted_out["exposed_omitted"], json!(2), "{opted_out}");
+        assert!(keeps_label(&opted_out), "{opted_out}");
+        assert!(
+            opted_out.to_string().contains("\"withheld\":1"),
+            "owner opt-out disclosure must stay: {opted_out}"
+        );
+        // A narrowed list says nothing about the rest of the snapshot.
+        let by_file = list(
+            true,
+            false,
+            GapListFilter {
+                file: Some("src/module0.rs".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(by_file["exposed_omitted"], json!(1), "{by_file}");
+        assert!(keeps_label(&by_file), "{by_file}");
+        let by_language = list(
+            true,
+            false,
+            GapListFilter {
+                language: Some("rust".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert!(
+            by_language["exposed_omitted"]
+                .as_u64()
+                .is_some_and(|n| n > 0),
+            "{by_language}"
+        );
+        assert!(keeps_label(&by_language), "{by_language}");
+        // An explicit class lists the exposed items and omits none.
+        let by_class = list(
+            true,
+            false,
+            GapListFilter {
+                class: Some("exposed".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert!(keeps_label(&by_class), "{by_class}");
+        let by_ready = list(
+            true,
+            false,
+            GapListFilter {
+                repair_ready: Some(true),
+                ..Default::default()
+            },
+        )?;
+        assert!(
+            by_ready["exposed_omitted"].as_u64().is_some_and(|n| n > 0),
+            "{by_ready}"
+        );
+        assert!(keeps_label(&by_ready), "{by_ready}");
+        Ok(())
+    }
+
     /// #14327: with no `class` filter the list leaves out `exposed` items the
     /// shared seam gate refused as `seam_already_gripped` and discloses them as
     /// `exposed_omitted`. An `exposed` item refused for limited evidence (a

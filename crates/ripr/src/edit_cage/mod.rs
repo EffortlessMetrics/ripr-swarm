@@ -1923,6 +1923,71 @@ pub(crate) fn omit_owned_workflow_backups(
     Ok(())
 }
 
+/// The module-tree scan bundle is the one fixed-name analysis cache file:
+/// every Rust check, the after phase included, rewrites it in place with
+/// derived data. Binding its bytes would make an ordinary re-check after a
+/// finished repair read as drift (#15060). Content-keyed cache entries get
+/// new names, so the later-write filter already drops them; this exception is
+/// that single file, not the cache directory. It never applies to a tracked,
+/// selected, authored or forbidden path, nor to a staged copy, so staging the
+/// bundle after the finish still moves the recomputed delta. With
+/// `RIPR_CACHE_DIR` set, checks write the bundle elsewhere, so the default
+/// path is an ordinary file and keeps its binding.
+pub(crate) fn derived_cache_bundle_path(baseline: &AttemptBaseline) -> Option<String> {
+    derived_cache_bundle_path_with(
+        baseline,
+        crate::analysis::seam_cache::cache_base_is_relocated(),
+    )
+}
+
+fn derived_cache_bundle_path_with(baseline: &AttemptBaseline, relocated: bool) -> Option<String> {
+    if relocated {
+        return None;
+    }
+    let path = crate::analysis::seam_cache::module_tree_scan_bundle_default_relative_path();
+    let policy = baseline.policy();
+    if baseline.index_entry(&path).is_some()
+        || policy.selected_target.matches(&path)
+        || policy
+            .allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || policy
+            .forbidden_paths
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || !policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(&path))
+    {
+        return None;
+    }
+    Some(path)
+}
+
+/// Remove the unstaged derived cache bundle change (see
+/// [`derived_cache_bundle_path`]) from `delta`. A staged or renamed change of
+/// that path stays, so it still breaks the binding.
+pub(crate) fn omit_derived_cache_bundle(delta: &mut AttemptDelta, baseline: &AttemptBaseline) {
+    if let Some(path) = derived_cache_bundle_path(baseline) {
+        omit_unstaged_change_at(delta, &path);
+    }
+}
+
+fn omit_unstaged_change_at(delta: &mut AttemptDelta, path: &str) {
+    delta.changes.retain(|change| {
+        let derived = change.kind != AttemptPathChangeKind::Renamed
+            && change.previous_path.is_none()
+            && normalize_repo_relative_path(&change.path).is_ok_and(|name| name == path)
+            && change
+                .after_state
+                .as_ref()
+                .is_none_or(|state| state.index_entry.is_none());
+        !derived
+    });
+}
+
 /// The compatibility receipt is a single fixed producer output, not a
 /// directory exemption. Only an already-bound regular-file change can carry
 /// a predecessor witness; all authored, tracked and forbidden paths stay bound.
@@ -2091,13 +2156,40 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     let top =
         fs::canonicalize(&top).map_err(|err| format!("canonicalize Git top-level {top}: {err}"))?;
     if requested != top {
-        return Err(format!(
-            "attempt root {} is not the exact Git top-level {}",
-            requested.display(),
-            top.display()
-        ));
+        return Err(not_exact_top_level_message(&requested, &top));
     }
     Ok(requested)
+}
+
+fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
+    format!(
+        "attempt root {} is not the exact Git top-level {}",
+        requested.display(),
+        top.display()
+    )
+}
+
+/// The Git top-level a repair attempt would need when `root` is a proper
+/// subdirectory of its work tree, `None` for the exact top-level or when Git
+/// cannot say (those cases keep the attempt's own refusals). The before-phase
+/// entry uses it to refuse a subdirectory `--root` before writing anything;
+/// surfaces that print a repair start should share it too (#15488). It asks Git exactly as
+/// [`canonical_repository_root`] does (same command, environment and deadline),
+/// so check never withholds a start the cage would accept, for example under
+/// an exported `GIT_DIR`.
+pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
+    let requested = fs::canonicalize(root).ok()?;
+    let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = fs::canonicalize(&top).ok()?;
+    (requested != top).then_some(top)
+}
+
+/// The cage's refusal text for a non-top-level attempt root, produced before
+/// any attempt state is written.
+pub(crate) fn subdirectory_attempt_root_refusal(root: &Path) -> Option<String> {
+    let top = enclosing_git_top_level_above(root)?;
+    let requested = fs::canonicalize(root).ok()?;
+    Some(not_exact_top_level_message(&requested, &top))
 }
 
 /// Repository-relative prefix of the repair-attempt store, the only place

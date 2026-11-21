@@ -1,0 +1,23 @@
+# Registers the multi-line def header rebinding fix (#15292) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::multiline_signature_parameters_are_not_rebinding",
+  "crates/ripr/src/analysis/language/python/tests.rs::multi_line_def_header_span_skips_string_literals",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/guard_activation.rs",
+  "crates/ripr/src/analysis/language/python/no_behavior.rs",
+]
+fixtures = [
+  "fixtures/python_multiline_def_boundary_off",
+  "fixtures/python_multiline_def_boundary_control",
+]
+
+# The multi-line header false `exposed` graduates into the honesty corpus (#15292).
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_multiline_def_boundary_off",
+  "fixtures/python_multiline_def_boundary_control",
+]

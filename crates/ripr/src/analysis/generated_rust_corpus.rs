@@ -33,7 +33,7 @@ pub(crate) fn absent_changed_rust_file_limitations(
             .map(PathBuf::as_path)
             .filter(|path| route(path) == Some(LanguageId::Rust) && !generated.contains(path)),
     );
-    workspace::supplement_absent_file_limitations(&absent)
+    workspace::supplement_absent_file_limitations(root, &absent)
 }
 
 /// Discovered Rust files after the generated-source predicate `ripr check`
@@ -58,6 +58,28 @@ pub(crate) struct CorpusPayloadSize {
     pub(crate) total_bytes: u64,
 }
 
+/// Classification retained in the review-comments receipt when admission fails.
+#[derive(Debug)]
+pub(crate) struct CorpusPayloadError {
+    pub(crate) category: &'static str,
+    pub(crate) detail: String,
+}
+
+impl From<String> for CorpusPayloadError {
+    fn from(detail: String) -> Self {
+        Self {
+            category: "analysis_failed",
+            detail,
+        }
+    }
+}
+
+impl From<CorpusPayloadError> for String {
+    fn from(error: CorpusPayloadError) -> Self {
+        error.detail
+    }
+}
+
 /// Use the inventory's discovery/generated-file predicate, without computing
 /// its cache fingerprint. Add changed owner inputs because attribution also
 /// reads files outside that canonical corpus. Count each present path once;
@@ -66,16 +88,32 @@ pub(crate) fn analyzable_corpus_payload_size(
     root: &Path,
     config: &RiprConfig,
     owner_files: &[PathBuf],
-) -> Result<CorpusPayloadSize, String> {
+) -> Result<CorpusPayloadSize, CorpusPayloadError> {
+    let (discovered, unreadable) = workspace::discover_rust_files_tolerating_unreadable(root)?;
+    if !unreadable.is_empty() {
+        let owners = owner_files.iter().cloned().collect();
+        workspace::refuse_unreadable_dir_over_changed_path(&unreadable, &owners)?;
+        let paths = unreadable
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        if let Some(reason) = workspace::unreadable_paths_partial_reason(&paths) {
+            return Err(CorpusPayloadError {
+                category: crate::analysis_outcome::AnalysisLimitationKind::LanguageScopeUnsupported
+                    .as_str(),
+                detail: format!("review-comments evidence is incomplete: {reason}"),
+            });
+        }
+    }
     let generated_sources = GeneratedRustSources::for_repo(root, &config.languages().rust);
     let mut analyzable = Vec::new();
-    for path in workspace::discover_rust_files(root)? {
+    for path in discovered {
         super::cancellation::checkpoint()?;
         if !generated_sources.contains(&path) {
             analyzable.push(path);
         }
     }
-    corpus_payload_size_for_paths(root, analyzable, owner_files)
+    corpus_payload_size_for_paths(root, analyzable, owner_files).map_err(Into::into)
 }
 
 fn corpus_payload_size_for_paths(

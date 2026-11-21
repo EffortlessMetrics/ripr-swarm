@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-stage-rate",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "220bcdb7af205cefe333396be788df81176843462eb33d0bad898c14753ddc34"
+    },
+    {
+      "path": "src/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/subject.py",
+      "sha256": "44ca1f0b7aadb505fa75da61f25e9be362338c12df8744549a604b7a526accd4"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_subject.py",
+      "sha256": "c8a31bd29e5fb34c452cf6ed9db9b50f075947def6fcbecfac6cf4c52dd437db"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+[[behavior]]
+id = "RIPR-SPEC-0452"
+name = "Offline release milestone fixture comparison"
+spec = "docs/specs/RIPR-SPEC-0452-release-milestone-fixture-parity.md"
+tests = [
+  "xtask/src/policy/release_targets/milestone_parity/tests.rs::complete_fixture_has_nonzero_subjects_and_clean_parity",
+  "xtask/src/policy/release_targets/milestone_parity/tests.rs::comparable_drift_pins_each_role_and_both_renderings",
+  "xtask/src/policy/release_targets/milestone_parity/tests.rs::exact_titles_and_unique_milestone_numbers_define_candidates",
+  "xtask/src/policy/release_targets/milestone_parity/tests.rs::omitted_tail_page_cannot_hide_rows_outside_the_manifest",
+  "xtask/src/policy/release_targets/milestone_parity/tests.rs::pagination_requires_a_contiguous_chain_and_exact_row_coverage",
+  "xtask/src/policy/release_targets/milestone_parity/tests.rs::boolean_alone_and_implicit_terminal_marker_are_refused",
+  "xtask/src/policy/release_targets/milestone_parity/tests.rs::incomplete_or_invalid_evidence_cannot_report_parity",
+]
+fixtures = []
+code = [
+  "xtask/src/dispatch.rs",
+  "xtask/src/policy/release_targets.rs",
+  "xtask/src/policy/release_targets/milestone_parity.rs",
+]
+outputs = ["docs/PR_AUTOMATION.md"]
+metrics = ["unit_test_pass_rate"]

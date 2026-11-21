@@ -1,0 +1,7 @@
+diff --git a/partial/core.py b/partial/core.py
+--- a/partial/core.py
++++ b/partial/core.py
+@@ -1,2 +1,2 @@
+ def value_of(age):
+-    return age >= 67
++    return 67 <= age

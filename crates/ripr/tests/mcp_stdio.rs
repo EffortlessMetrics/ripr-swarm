@@ -8164,3 +8164,219 @@ fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), St
     }
     Ok(())
 }
+
+/// Committed inline-test fixture: `main` holds the old comparison, the
+/// checked-out `journey` branch changes it, and the production file owns the
+/// only (weak) tests.
+fn install_inline_fixture(
+    label: &str,
+    base_source: &str,
+    changed_source: &str,
+) -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-{label}-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-inline-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), base_source).map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])?;
+    std::fs::write(root.join("src/lib.rs"), changed_source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "change")?;
+    Ok(root)
+}
+
+const ERRVAR_BASE: &str = "#[derive(Debug, PartialEq)]\npub enum E { Empty, TooLong }\npub fn check(s: &str) -> Result<usize, E> {\n    if s.is_empty() { return Err(E::Empty); }\n    Ok(s.len())\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn empty_is_err() { assert!(check(\"\").is_err()); }\n    #[test]\n    fn ok_len() { assert_eq!(check(\"abc\"), Ok(3)); }\n}\n";
+
+const BOUNDARY_BASE: &str = "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn far_above() { assert!(is_adult(50)); }\n    #[test]\n    fn far_below() { assert!(!is_adult(3)); }\n}\n";
+
+/// One item's readiness as every MCP surface reports it.
+struct ItemReadiness {
+    list_ready: bool,
+    list_ineligibility: Value,
+    prepare: Value,
+    card_reply: Value,
+}
+
+fn item_readiness_over_stdio(root: &Path, id_fragment: &str) -> Result<ItemReadiness, String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let mut session = SequentialStdio::spawn(root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let item = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.pointer("/canonical_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| id.contains(id_fragment))
+            })
+        })
+        .ok_or_else(|| format!("no item names {id_fragment}: {list}"))?
+        .clone();
+    let canonical_id = item
+        .pointer("/canonical_id")
+        .and_then(Value::as_str)
+        .ok_or("item omitted canonical_id")?
+        .to_string();
+    let prepare = session.call_tool(
+        "prepare",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
+    let card_reply = session.call_tool(
+        "card",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    Ok(ItemReadiness {
+        list_ready: item
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        list_ineligibility: item
+            .pointer("/repair_ineligibility")
+            .cloned()
+            .unwrap_or(Value::Null),
+        prepare,
+        card_reply,
+    })
+}
+
+/// The card's `readiness.repair_ready` when it served a card, `None` when it
+/// refused (a refusal never claims ready).
+fn served_card_repair_ready(reply: &Value) -> Option<bool> {
+    let result = reply.get("result")?;
+    if result.pointer("/isError").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    result
+        .pointer("/structuredContent/card/readiness/repair_ready")
+        .and_then(Value::as_bool)
+}
+
+/// An `error_variant` gap whose `probe:` finding id does not re-mint from the
+/// seam must still resolve through the readable gap id, so list, prepare and
+/// the card agree it is ready, exactly as `ripr repair` starts it.
+#[test]
+fn error_variant_item_readiness_agrees_across_list_prepare_and_card() -> Result<(), String> {
+    let changed = ERRVAR_BASE.replace("Err(E::Empty)", "Err(E::TooLong)");
+    let root = install_inline_fixture("errvar-ready", ERRVAR_BASE, &changed)?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let state = item_readiness_over_stdio(&root, "err_e_toolong")?;
+    let prepare_ready = state.prepare.pointer("/repair_packet_ready") == Some(&json!(true));
+    let card_ready = served_card_repair_ready(&state.card_reply) == Some(true);
+    // The card's seam is the Err-variant seam of this very item, not another
+    // finding's seam the gap id happens to name.
+    let card = state
+        .card_reply
+        .pointer("/result/structuredContent/card")
+        .ok_or("card missing")?;
+    let subject_gap = card
+        .pointer("/subject/canonical_gap_id")
+        .and_then(Value::as_str);
+    let fix_file = state
+        .prepare
+        .pointer("/fix_site/file")
+        .and_then(Value::as_str);
+    if subject_gap.is_none_or(|id| !id.contains("err_e_toolong"))
+        || card
+            .pointer("/subject/seam_id")
+            .and_then(Value::as_str)
+            .is_none()
+        || fix_file != Some("src/lib.rs")
+    {
+        return Err(format!(
+            "card/prepare name another subject: gap {subject_gap:?} fix {fix_file:?}: {card}"
+        ));
+    }
+    if !state.list_ready || !prepare_ready || !card_ready {
+        return Err(format!(
+            "list_ready={} (ineligibility {}) prepare_ready={prepare_ready} card_ready={card_ready}: {}",
+            state.list_ready, state.list_ineligibility, state.prepare
+        ));
+    }
+    Ok(())
+}
+
+/// An uncommitted edit of the inline test target holds the repair start: list
+/// and prepare refuse, the card never claims ready, and the next step names
+/// the commit (#11397).
+#[test]
+fn uncommitted_inline_target_refuses_every_surface_and_names_the_commit() -> Result<(), String> {
+    let changed = BOUNDARY_BASE.replace("age > 18", "age >= 18");
+    let root = install_inline_fixture("inline-held", BOUNDARY_BASE, &changed)?;
+    let _guard = FixtureGuard { root: root.clone() };
+    // An uncommitted edit of the production file that owns the inline tests;
+    // it adds no boundary pin, so the gap stays open.
+    let edited = changed.replace(
+        "    #[test]\n    fn far_below()",
+        "    #[test]\n    fn unrelated_note() { assert!(is_adult(99)); }\n    #[test]\n    fn far_below()",
+    );
+    std::fs::write(root.join("src/lib.rs"), edited).map_err(|error| error.to_string())?;
+    let state = item_readiness_over_stdio(&root, "is_adult")?;
+    if state.list_ready
+        || state.list_ineligibility != json!("seam_gate_refused")
+        || state.prepare.pointer("/repair_packet_ready") != Some(&json!(false))
+    {
+        return Err(format!(
+            "the held item must be refused by list and prepare: {} {}",
+            state.list_ineligibility, state.prepare
+        ));
+    }
+    if let Some(ready) = served_card_repair_ready(&state.card_reply) {
+        return Err(format!(
+            "the card served repair_ready={ready} for a seam the gate refuses: {}",
+            state.card_reply
+        ));
+    }
+    let next = state
+        .prepare
+        .pointer("/next")
+        .ok_or("prepare omitted next")?;
+    let detail = next
+        .pointer("/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if next.pointer("/kind") != Some(&json!("commit_then_refresh"))
+        || !detail.contains("commit or stash `src/lib.rs`")
+        || next.pointer("/mcp/tool") != Some(&json!("ripr_refresh"))
+        || !next
+            .pointer("/after_editing_tests")
+            .is_some_and(Value::is_null)
+    {
+        return Err(format!(
+            "next must name the commit, not a recheck loop: {next}"
+        ));
+    }
+    let card_text = state.card_reply.to_string();
+    if !card_text.contains("commit or stash") {
+        return Err(format!(
+            "card refusal must name the commit step: {card_text}"
+        ));
+    }
+    Ok(())
+}

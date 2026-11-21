@@ -8,6 +8,7 @@ mod identifier_rename;
 mod ids;
 mod lexical;
 mod macro_definition;
+mod moved_item;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
@@ -120,6 +121,8 @@ mod parameter_boundary_tests;
 mod record_field_boundary_tests;
 #[cfg(test)]
 mod replacement_identity_tests;
+#[cfg(test)]
+mod unsafe_interior_line_tests;
 #[cfg(test)]
 mod where_bound_boundary_tests;
 

@@ -192,6 +192,56 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
 }
 
 #[test]
+fn literal_json_identity_accepts_each_audited_release_with_its_own_checksum() -> Result<(), String>
+{
+    const OLD: &str = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14";
+    const NEW: &str = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6";
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_return_pin_json_real_literal/input");
+    let manifest = std::fs::read_to_string(fixture.join("Cargo.toml"))
+        .map_err(|e| e.to_string())?
+        .replace("=1.0.151", "=1.0.154");
+    let lock = std::fs::read_to_string(fixture.join("Cargo.lock")).map_err(|e| e.to_string())?;
+    let release_lock = lock.replace("version = \"1.0.151\"", "version = \"1.0.154\"");
+    assert_ne!(release_lock, lock, "fixture locks serde_json 1.0.151");
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "json-release",
+        &[
+            ("Cargo.toml", &manifest),
+            ("Cargo.lock", &release_lock.replace(OLD, NEW)),
+            ("src/lib.rs", "pub fn weight(x:u32)->u32{x*3}"),
+            ("tests/save.rs", "#[test] fn checks() {}"),
+        ],
+    )?;
+    let result = (|| -> Result<(), String> {
+        let file = Path::new("tests/save.rs");
+        let verified = || {
+            crate::analysis::facts::drop_in::DropInManifests::new(&root).verified_literal_json(file)
+        };
+        assert!(verified(), "1.0.154 with its crates.io checksum");
+        // Each release is bound to its own checksum, not to any audited one.
+        std::fs::write(root.join("Cargo.lock"), &release_lock).map_err(|e| e.to_string())?;
+        assert!(!verified(), "1.0.154 carrying the 1.0.151 checksum");
+        std::fs::write(
+            root.join("Cargo.lock"),
+            release_lock
+                .replace(OLD, NEW)
+                .replace("version = \"1.0.154\"", "version = \"1.0.153\""),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            manifest.replace("=1.0.154", "=1.0.153"),
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(!verified(), "an unaudited release");
+        Ok(())
+    })();
+    std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    result
+}
+
+#[test]
 fn literal_json_binding_in_a_withheld_file_remains_a_refusal() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/owner_return_pin_json_real_literal/input");

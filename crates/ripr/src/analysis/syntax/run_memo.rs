@@ -47,6 +47,10 @@ pub(crate) enum Product {
     LocalMacroCalls,
     CfgGatesOfFn,
     OwnerFoldPlan,
+    OwnerBranchIndex,
+    ModuleDeclarationGate,
+    ClosedOwnerRead,
+    ExitRecordTypes,
 }
 
 impl Product {
@@ -73,6 +77,10 @@ impl Product {
             Self::LocalMacroCalls => "local_macro_calls",
             Self::CfgGatesOfFn => "cfg_gates_of_fn",
             Self::OwnerFoldPlan => "owner_fold_plan",
+            Self::OwnerBranchIndex => "owner_branch_index",
+            Self::ModuleDeclarationGate => "module_declaration_gate",
+            Self::ClosedOwnerRead => "closed_owner_read",
+            Self::ExitRecordTypes => "exit_record_types",
         }
     }
 }

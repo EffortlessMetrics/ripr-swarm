@@ -1,0 +1,112 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_whole_value_associated_constructor_field/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:cae3f132246fa9f35658d4d0e5bd34d55fd4bc47572c5d22a6d2788b7504605f","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:8970552f",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Cfg::new:field_construction:field_construction:retries_4",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Cfg::new:field_construction:field_construction:retries_4",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Cfg::new",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "retries_4"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:8970552f",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 10,
+        "expression": "retries: 4"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach new: defaults"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: retries: 4"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: whole-object equality assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach new: defaults", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: retries: 4", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: whole-object equality assertion", "local flow reaches constructed field: retries: 4 (line 10)", "related test tests/defaults.rs:4 defaults uses strong whole object equality oracle: assert_eq!(\n        Cfg::new(),\n        Cfg {\n            retries: 3,\n            verbose: false\n        }\n    );", "source assertion argument value 3 at line 5", "source assertion argument value false at line 5"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"retries: 4","line":10}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: retries: 4", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach new: defaults", "Strong oracle found: whole-object equality assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "5": "assert_eq!(\n        Cfg::new(),\n        Cfg {\n            retries: 3,\n            verbose: false\n        }\n    );"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "false",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "false",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "defaults",
+          "file": "tests/defaults.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(\n        Cfg::new(),\n        Cfg {\n            retries: 3,\n            verbose: false\n        }\n    );",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

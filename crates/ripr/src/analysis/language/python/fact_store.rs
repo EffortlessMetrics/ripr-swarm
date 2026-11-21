@@ -77,7 +77,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// factory discovery; `24` entries lack that return-identity evidence.
 /// `26`: try-body assertions respect ordered, binding-checked exception
 /// handlers; older entries may omit a re-raised assertion or credit an unknown handler.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "26";
+/// `27`: a bare boolean assertion records its plain-name arguments and whether
+/// the test settled each as a pytest parametrize argname (#15310); `26` entries
+/// drop such calls, so a parametrized bare assertion stays smoke.
+/// `28`: each test records the same-file value helpers its body calls
+/// (#15350); older entries lack them, so the helper never relates the test.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "28";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
