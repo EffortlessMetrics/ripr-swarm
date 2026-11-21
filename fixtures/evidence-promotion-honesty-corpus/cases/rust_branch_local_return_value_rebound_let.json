@@ -9,6 +9,20 @@
     {
       "type": "expected_repo_seam_grip",
       "owner": "src/lib.rs::discounted_total",
+      "expression": "amount >= discount_threshold",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::discounted_total",
+      "expression": "amount >= discount_threshold",
+      "category": "missing_discriminator_evidence",
+      "present": true
+    },
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discounted_total",
       "expression": "return amount - 10",
       "grip_class": "weakly_gripped",
       "reach": "yes"
