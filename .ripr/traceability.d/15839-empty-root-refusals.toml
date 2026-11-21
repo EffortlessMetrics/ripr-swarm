@@ -1,0 +1,3 @@
+[[extend]]
+id = "RIPR-SPEC-0241"
+tests = ["crates/ripr/tests/refusal_envelope_schemas.rs::empty_root_refusals_preserve_the_supplied_string"]

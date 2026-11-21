@@ -63,8 +63,8 @@ routes the missing producer proof to its owning issue.
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` validates; `crates/ripr/src/output/executed_control.rs` projects JSON/Markdown | live (library contract) | `fixtures/executed-control-contract/expected/valid-pass-after-repair.json` | `cargo xtask check-verification-contracts --check`; `cargo test -p ripr --lib domain::executed_control output::executed_control` | domain negatives: ordinary positive test, review prose, other head, unexercised subject, duplicate ids, unknown obligation | registered | Corpus negatives are advertised `invalid` and skipped by the schema contract; the domain validator is the satisfaction authority. #3858/#4063 is a `not_proven` documentation fixture, not pass. |
 | `schemas/ripr/ripr-intervention-study.schema.json` | `ripr_intervention_study.v1` | `crates/ripr/src/output/intervention_study.rs` sealing `RiprInterventionStudyV1` | live | `fixtures/intervention-study/valid.json` | `cargo xtask check-verification-contracts --check` | domain study-law tests reject the ten #4649 falsifiers; `protocol_digest` mismatch is a separate projection check | registered | Preregistration-only. No producer executes agents, grades repairs, or emits an intervention-value conclusion. |
 
-The diff, rerun, agent brief and agent packet operational refusals echo
-the caller's root spelling, including an explicitly empty string.
+The diff, rerun, agent brief and agent packet operational refusals render
+the root with stable slash separators. An explicitly empty root stays empty.
 `empty_root_refusals_preserve_the_supplied_string` checks all four real
 exit-2 documents and rejects a missing or numeric root.
 

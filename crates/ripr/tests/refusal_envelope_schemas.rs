@@ -88,8 +88,18 @@ fn empty_root_refusals_preserve_the_supplied_string() -> Result<(), String> {
             "repository_root_unusable",
         ),
     ];
-    for &(path, args, identity) in cases {
-        let mut refusal = refusal_json(args, Path::new(""), 2)?;
+    // An empty root resolves config from the invocation directory. Run from
+    // a controlled repository so ambient ripr.toml cannot change the identity.
+    let workdir = fixture_repo("empty-root", false)?;
+    let refusals: Result<Vec<_>, String> = cases
+        .iter()
+        .map(|&(path, args, identity)| {
+            refusal_json_in(args, Path::new(""), 2, Some(&workdir)).map(|doc| (path, identity, doc))
+        })
+        .collect();
+    std::fs::remove_dir_all(&workdir)
+        .map_err(|error| format!("remove {}: {error}", workdir.display()))?;
+    for (path, identity, mut refusal) in refusals? {
         let schema = published_schema::read(path)?;
         conforms(&refusal, &schema)?;
         if refusal.get("root").and_then(Value::as_str) != Some("")
@@ -153,8 +163,21 @@ fn fixture_repo(label: &str, broken_config: bool) -> Result<PathBuf, String> {
 
 /// Stdout of a `ripr` run that must exit with `exit` and write a refusal.
 fn refusal_json(args: &[&str], root: &Path, exit: i32) -> Result<Value, String> {
+    refusal_json_in(args, root, exit, None)
+}
+
+fn refusal_json_in(
+    args: &[&str],
+    root: &Path,
+    exit: i32,
+    cwd: Option<&Path>,
+) -> Result<Value, String> {
     let root_arg = root.display().to_string();
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    if let Some(directory) = cwd {
+        command.current_dir(directory);
+    }
+    let output = command
         .args(args)
         .args(["--root", &root_arg])
         .output()
