@@ -58,13 +58,18 @@ that postponed the entire source sync until after the swarm cut is historical.
 Reordering the runbook does not invent transport authority, waive a protected
 check, select an RC ordinal, or authorize publication.
 
-The selected swarm head includes all history reachable from that exact commit.
-Do not squash, rebase, cherry-pick, or reconstruct a tree-equivalent source
-join. The promotion PR head must itself be the reviewed join, with source as
-parent 1 and the selected swarm head as parent 2. The back-sync must preserve
-the source release ancestry through a controlled merge exception or another
-explicitly reviewed ancestry-preserving path, even when swarm branch settings
-normally disable merge commits.
+The selected swarm head includes all history reachable from that exact commit,
+including the inbound public-history merge (`ripr#1627` →
+`ripr#1768`/`#1769`/`#1770`, tracked in `ripr-swarm#13325`). Do not squash,
+rebase, cherry-pick, reconstruct a tree-equivalent source join, or construct a
+raw `git merge` promotion branch by hand. For `0.11.0`, the return to
+`EffortlessMetrics/ripr` runs through the source repository's trusted/guarded
+admission, constructor, and merge route (`ripr#1627`/`#1889`, `ripr#1771` →
+`ripr#1772`/`#1773`; see `ripr` `docs/SOURCE_PROMOTION.md`) with source as
+parent 1 and the selected qualified swarm head as parent 2. The post-release
+back-sync `K` must preserve the source release ancestry through a controlled
+merge exception or another explicitly reviewed ancestry-preserving path, even
+when swarm branch settings normally disable merge commits.
 
 After the swarm pin, later `ripr-swarm/main` merges are outside the release and
 must not move the pin. Development may continue on branches, but no main merge
@@ -84,19 +89,23 @@ issuance. Never copy a historical blanket no-execution sentence, and never
 claim correctness, test adequacy, mutation adequacy, requirement satisfaction,
 or merge safety.
 
-The two history-preserving joins have separate identities and parent order:
+The history-preserving public return (`J`, via `ripr#1627`/`#1889` and
+`ripr#1771`–`#1773`) and post-publication back-sync (`K`, via `#3419`–`#3313`)
+have separate identities and parent order:
 
 ```text
-J = source promotion
+J = guarded public return (source promotion after swarm qualification)
 J.parent[0] = exact SOURCE_PARENT
 J.parent[1] = exact SWARM_PARENT
 
-K = post-publication back-sync
+K = post-publication back-sync (after terminal #1481 public verification)
 K.parent[0] = exact swarm main before back-sync
 K.parent[1] = exact released source main
 ```
 
-The promotion head must itself be `J`; an appended repair commit, squash,
+For `0.11.0`, `J` is built and merged only through the source repository's
+guarded constructor and merge route (`ripr#1772`/`#1773`), never by raw
+`git merge` or a direct branch push; an appended repair commit, squash,
 rebase, cherry-pick, or tree-equivalent reconstruction fails the promotion
 contract. After public verification, review and transport `K` under an
 expected-head guard. If swarm policy has merge commits disabled, use a

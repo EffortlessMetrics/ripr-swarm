@@ -244,7 +244,7 @@ set -euo pipefail
 # [READ-ONLY] repo=packet+source+swarm; load pins and reject drift
 SOURCE_OBSERVED_HEAD="$(tr -d '\r\n' < "$PACKET_ROOT/source-observed-head")"
 SWARM_PARENT="$(tr -d '\r\n' < "$PACKET_ROOT/SWARM_PARENT")"
-# SOURCE_OBSERVED_HEAD is observation only; source #1769 binds SOURCE_PARENT later.
+# SOURCE_OBSERVED_HEAD is observation only; public-return admission (ripr#1771 under ripr#1627/#1889) binds SOURCE_PARENT after swarm qualification.
 test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$SWARM_PARENT"
 ```
 
@@ -271,11 +271,16 @@ gh pr list --repo EffortlessMetrics/ripr --state open --limit 100 --json number,
 jq -n --arg observed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg source_observed_head "$SOURCE_OBSERVED_HEAD" --arg swarm_parent "$SWARM_PARENT" --slurpfile swarm "$PACKET_ROOT/swarm-open-prs.json" --slurpfile source "$PACKET_ROOT/source-open-prs.json" '{schema_version: 1, kind: "precut_queue_observation", observed_at_utc: $observed_at, source_observed_head: $source_observed_head, swarm_parent: $swarm_parent, queues: {swarm: $swarm[0], source: $source[0]}, claim: "observation only; not a candidate manifest or source hold"}' > "$PACKET_ROOT/precut-queue-observation.json"
 ```
 
-Before W, swarm movement extends the denominator and requires a new current
-#2766/#2768/#3807 handoff. Source observations may change during this stage;
-source #1769 does not select or hold SOURCE_PARENT until swarm qualification.
-After that later source hold, movement invalidates the corresponding source
-transaction. Never update only a SHA in an existing immutable receipt.
+Before W, inbound public → swarm integration (`ripr#1627` →
+`ripr#1768`/`#1769`/`#1770`, tracked in `ripr-swarm#13325`) must already be
+merged into `ripr-swarm`, and swarm movement extends the denominator and
+requires a new current #2766/#2768/#3807 handoff. Source observations may
+change during this stage; public-return admission (`ripr#1771` under
+`ripr#1627`/`#1889`) re-reads public `main`, confirms public `P` is still
+current and an ancestor of `SWARM_PARENT`, and binds `SOURCE_PARENT` only
+after swarm qualification (`#2769`). After that source hold, movement
+invalidates the corresponding source transaction. Never update only a SHA in
+an existing immutable receipt.
 
 ## 2. Guarded swarm pin
 
@@ -464,8 +469,10 @@ QUALIFICATION_BUNDLE="${QUALIFICATION_BUNDLE:?controller-relative accepted compl
 A missing, timed-out, or differently headed hosted result is unavailable, not
 a pass. A generic successful CI run is never the #2769 acceptance record.
 The native decision and bundle field contract is in
-[SOURCE_PROMOTION_PREFLIGHT.md](SOURCE_PROMOTION_PREFLIGHT.md#native-selection-and-complete-qualification-admission). After #2769 accepts the complete exact-candidate bundle, source #1769
-rereads and dispositions the source queue, then binds the source parent:
+[SOURCE_PROMOTION_PREFLIGHT.md](SOURCE_PROMOTION_PREFLIGHT.md#native-selection-and-complete-qualification-admission). After #2769 accepts the complete exact-candidate bundle, public-return admission
+(`ripr#1771` under `ripr#1627`/`#1889`/`#1762`) rereads and dispositions the
+source queue, confirms public `P` has not moved and is an ancestor of
+`SWARM_PARENT`, and binds `SOURCE_PARENT`:
 
 ```bash
 set -euo pipefail
@@ -504,114 +511,74 @@ PREFLIGHT_JSON="$PACKET_ROOT/source-promotion/source-promotion-preflight.json"
 test "$(jq -r '.dry_merge.reviewed_resolved_tree // empty' "$PREFLIGHT_JSON")" = "$JOIN_TREE"
 ```
 
-The v2 receipt cannot be supplied to source main
-`82b2d7c262d229d5244263d458d10cd0189cb966`'s v1-only verifier. The transaction
-remains held until [ripr#1769](https://github.com/EffortlessMetrics/ripr/issues/1769)
-delivers coordinated v2 acceptance consumption; no v1 fallback waives it.
+The v2 receipt cannot be supplied to a v1-only source verifier. Public-return
+admission remains held until
+[ripr#1627](https://github.com/EffortlessMetrics/ripr/issues/1627) /
+[ripr#1889](https://github.com/EffortlessMetrics/ripr/pull/1889) and
+[ripr#1771](https://github.com/EffortlessMetrics/ripr/issues/1771) deliver
+trusted v2 qualification admission and guarded merge-composition verification;
+no v1 fallback waives it.
 
 Review every conflict path, survivor, swarm exclusion, authority candidate,
 and separately reviewed `JOIN_TREE`; record a resolution manifest. A clean
 textual merge is not semantic approval. Parent, ref, identity, ancestry,
 digest, conflict, or tree changes invalidate the receipt.
 
-## 4. Construct and prove J in source
+## 4. Guarded public return (`ripr#1771` → `ripr#1772`/`#1773`)
 
-J is the source-promotion join:
+Do **not** construct or merge `J` with raw `git merge`, a direct
+`promote/${VERSION}-swarm` branch push, or a manual `gh pr merge` command.
+Under `#2379`, `ripr#1627`/`#1889`, and `ripr#1771`–`#1773`, raw `git merge`
+construction is rejected, and a manual merge PR creates an unintended
+double-merge instead of the guarded return composition.
+
+For `0.11.0`, the source repository's trusted/guarded constructor and merge
+route owns this step:
+
+1. **`ripr#1771` (qualification admission):** verifies the `#2769` qualification
+   receipt against the exact pinned `SWARM_PARENT` and confirms public
+   `SOURCE_PARENT` (`P`) has not moved and is an ancestor of `SWARM_PARENT`.
+2. **`ripr#1772` (guarded construction):** builds and publishes the reviewed
+   return candidate via the source repository's guarded constructor
+   (`source-promotion admit-resolved-tree`, `construct-exact-join`,
+   `publish-candidate-ref`; see `EffortlessMetrics/ripr`
+   `docs/SOURCE_PROMOTION.md` and
+   [`swarm-development.md`](swarm-development.md#resolving-the-join)).
+3. **`ripr#1773` (guarded merge and proof):** merges the exact reviewed return
+   under expected-head and expected-base guards, preserving both histories and
+   the reviewed tree `JOIN_TREE` (`T`).
+
+Required graph invariants for the guarded return (replacing the historical
+direct-`J` shell blocks):
 
 ```text
 J.parent[0] = SOURCE_PARENT
 J.parent[1] = SWARM_PARENT
+J^{tree}    = JOIN_TREE
 ```
 
-The exact-J verifier is the separate source contract from
-[#1493](https://github.com/EffortlessMetrics/ripr/issues/1493), merged at
-[`9c53b12b`](https://github.com/EffortlessMetrics/ripr/commit/9c53b12b73aa5a11c198f8c5265902127a6d7dff).
-Use its verifier and receipt; this runbook does not duplicate its semantics.
+The exact-J verifier contract originates from
+[#1493](https://github.com/EffortlessMetrics/ripr/issues/1493) (merged at
+[`9c53b12b`](https://github.com/EffortlessMetrics/ripr/commit/9c53b12b73aa5a11c198f8c5265902127a6d7dff))
+and is bound to trusted public-return admission under
+[ripr#1627](https://github.com/EffortlessMetrics/ripr/issues/1627) /
+[ripr#1889](https://github.com/EffortlessMetrics/ripr/pull/1889). Never append
+a repair commit; squash, rebase, cherry-pick, and tree-equivalent
+reconstruction fail the contract. Rebuild through `ripr#1772` from the held
+exact pair after any changed resolution or receipt.
 
-> **Do not run the construction and publication blocks below for 0.11.0.**
-> They state the required graph only. ripr#1772 rejects a `J` built with raw
-> `git merge` and pushed as a branch. For 0.11.0, ripr#1772 builds and
-> publishes `J` with the source repository's guarded constructor
-> (`source-promotion admit-resolved-tree`, `construct-exact-join`,
-> `publish-candidate-ref`; see ripr `docs/SOURCE_PROMOTION.md`), and ripr#1773
-> merges it with a guarded expected-head and expected-base merge commit.
-> Conflict dispositions, the trial join, and tree qualification are described
-> in [`swarm-development.md`](swarm-development.md#resolving-the-join).
+After `ripr#1773` completes and lands on `EffortlessMetrics/ripr` `main`,
+bind and verify the resulting `SOURCE_JOIN_HEAD` (read-only):
 
 ```bash
 set -euo pipefail
-# [LOCAL-MUTATING] repo=source promotion checkout; construct reviewed J
-assert_live_pin_guard
-git -C "$SOURCE_ROOT" fetch "$SWARM_ORIGIN" "$SWARM_PARENT"
-test "$(git -C "$SOURCE_ROOT" rev-parse "$SWARM_PARENT^{commit}")" = "$SWARM_PARENT"
-git -C "$SOURCE_ROOT" switch -c "promote/${VERSION}-swarm" "$SOURCE_PARENT"
-git -C "$SOURCE_ROOT" merge --no-ff --no-commit "$SWARM_PARENT"
-# Resolve only paths named by the reviewed preflight manifest.
-git -C "$SOURCE_ROOT" commit -m "promote: join frozen ripr-swarm candidate for ${VERSION}"
-J="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
-```
-
-```bash
-set -euo pipefail
-# [EXTERNAL-PUBLISHING] repo=source; publish the reviewed promotion branch
-git -C "$SOURCE_ROOT" push origin "promote/${VERSION}-swarm:refs/heads/promote/${VERSION}-swarm"
-REMOTE_PROMOTION_HEAD="$(git -C "$SOURCE_ROOT" ls-remote origin "refs/heads/promote/${VERSION}-swarm" | awk '{print $1}')"
-test "$REMOTE_PROMOTION_HEAD" = "$J"
-SOURCE_PROMOTION_PR_URL="$(gh pr create --repo EffortlessMetrics/ripr --head "promote/${VERSION}-swarm" --base main --title "promote: join frozen swarm ${VERSION}" --body "Review exact J=${J}; parents are SOURCE_PARENT=${SOURCE_PARENT} and SWARM_PARENT=${SWARM_PARENT}. Ref #1493.")"
-SOURCE_PROMOTION_PR="${SOURCE_PROMOTION_PR_URL##*/}"
-test -n "$SOURCE_PROMOTION_PR"
-```
-
-```bash
-set -euo pipefail
-# [READ-ONLY] repo=source; bind exactly one reviewed promotion PR
-SOURCE_PROMOTION_PR="$(gh pr list --repo EffortlessMetrics/ripr --head "$(git -C "$SOURCE_ROOT" branch --show-current)" --state open --json number --jq 'if length == 1 then .[0].number else empty end')"
-test -n "$SOURCE_PROMOTION_PR"
-```
-
-```bash
-set -euo pipefail
-# [READ-ONLY] repo=source promotion checkout; exact J shape/tree/ancestry
-assert_live_pin_guard
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print NF}')" -eq 2
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $1}')" = "$SOURCE_PARENT"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $2}')" = "$SWARM_PARENT"
-git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SOURCE_PARENT" "$J"
-git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SWARM_PARENT" "$J"
-test "$(git -C "$SOURCE_ROOT" rev-parse "$J^{tree}")" = "$JOIN_TREE"
-```
-
-Never append a repair commit; squash, rebase, cherry-pick, and tree-equivalent
-reconstruction fail the contract. Rebuild J from the held exact pair after a
-changed resolution or receipt.
-
-```bash
-set -euo pipefail
-# [LOCAL-MUTATING] repo=source remote; fetch and guard expected head before J transport
-git -C "$SOURCE_ROOT" fetch origin main
-test "$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)" = "$SOURCE_PARENT"
-```
-
-```bash
-set -euo pipefail
-# [EXTERNAL-PUBLISHING] repo=source PR; merge only reviewed J with expected head
-assert_live_pin_guard
-gh pr merge "$SOURCE_PROMOTION_PR" --repo EffortlessMetrics/ripr --merge --match-head-commit "$J"
-```
-
-```bash
-set -euo pipefail
-# [LOCAL-MUTATING] repo=source remote; fetch and bind source main to the new merge result
+# [READ-ONLY] repo=source remote; verify guarded public-return result after ripr#1773
 assert_live_pin_guard
 git -C "$SOURCE_ROOT" fetch origin main
 SOURCE_JOIN_HEAD="$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)"
-test "$SOURCE_JOIN_HEAD" != "$J"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print NF}')" -eq 2
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print $1}')" = "$SOURCE_PARENT"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print $2}')" = "$J"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print NF}')" -eq 2
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $1}')" = "$SOURCE_PARENT"
-test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $2}')" = "$SWARM_PARENT"
+git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SOURCE_PARENT" "$SOURCE_JOIN_HEAD"
+git -C "$SOURCE_ROOT" merge-base --is-ancestor "$SWARM_PARENT" "$SOURCE_JOIN_HEAD"
+test "$(git -C "$SOURCE_ROOT" rev-parse "$SOURCE_JOIN_HEAD^{tree}")" = "$JOIN_TREE"
 ```
 
 ## 5. Metadata and source artifact qualification
@@ -1164,7 +1131,6 @@ git -C "$SWARM_ROOT" worktree remove "$QUAL_ROOT"
 git -C "$SWARM_ROOT" switch --detach "$K"
 git -C "$SWARM_ROOT" branch -d "back-sync/${VERSION}"
 git -C "$SOURCE_ROOT" switch --detach "$SOURCE_RELEASE_HEAD"
-git -C "$SOURCE_ROOT" branch -d "promote/${VERSION}-swarm"
 git -C "$SOURCE_ROOT" branch -d "release/${VERSION}" 2>/dev/null || true
 ```
 
