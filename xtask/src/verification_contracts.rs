@@ -3881,6 +3881,54 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn review_comments_accepts_both_receipt_generations_and_rejects_mixed_fields()
+    -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
+        let fixtures = root.join("tests/fixtures/verification/ripr");
+        let prior = read_json(fixtures.join("review-comments.receipt-v0-1.valid.json"))?;
+        let current = read_json(fixtures.join("review-comments.valid.json"))?;
+        let check = |name: &str, value: &serde_json::Value, valid: bool| -> Result<(), String> {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                name.to_owned(),
+                &mut violations,
+            );
+            if violations.is_empty() != valid {
+                return Err(format!(
+                    "unexpected schema result for {name}: {violations:?}"
+                ));
+            }
+            Ok(())
+        };
+        check("published 0.1 receipt", &prior, true)?;
+        check("current 0.2 receipt", &current, true)?;
+        for field in [
+            "requested_mode",
+            "analysis_identity",
+            "phase_evidence",
+            "primary_failure",
+        ] {
+            let mut incomplete = current.clone();
+            incomplete
+                .get_mut("run_receipt")
+                .and_then(serde_json::Value::as_object_mut)
+                .and_then(|receipt| receipt.remove(field))
+                .ok_or_else(|| format!("current fixture is missing {field}"))?;
+            check(field, &incomplete, false)?;
+        }
+        for (fixture, version) in [(prior, "0.2"), (current.clone(), "0.1"), (current, "0.3")] {
+            let mut mixed = fixture;
+            mixed["run_receipt"]["schema_version"] = serde_json::json!(version);
+            check("mismatched receipt version", &mixed, false)?;
+        }
+        Ok(())
+    }
+
     /// Turning on `if`/`then` evaluation in this validator made the
     /// review-comments conditionals enforceable for the first time, and they
     /// immediately rejected an honest producer packet.
