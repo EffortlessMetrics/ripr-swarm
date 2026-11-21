@@ -154,9 +154,11 @@ is the field contract, not an accepted packet or permission to mint one:
   letters/digits/period/underscore/hyphen, 1–128 bytes. The owner set equals the
   selected applicable execution-owner roster exactly. The native owners must
   include the complete broad #2769 matrix and every applicable successor row;
-  a narrow successful workflow is not a complete denominator. No fixed template
-  owner list is hardcoded. In the current successor, selected #4505–#4508 and
-  #4604 obligations cannot be dropped without a new native selection decision.
+  a narrow successful workflow is not a complete denominator. The
+  `ledger-range-touched` row described below is required alongside the
+  candidate's applicable execution owners. In the current successor, selected
+  #4505–#4508 and #4604 obligations require a new native selection decision
+  before they can be dropped.
 - #2769: `schema_version: 1`, `kind: ripr_native_qualification_acceptance`,
   `status: qualified`, `subject`, `selection_decision` (exact native #1609 URL),
   `selection_decision_sha256` (exact body bytes),
@@ -172,6 +174,14 @@ is the field contract, not an accepted packet or permission to mint one:
   selected subjects: `selected > 0`, `executed == selected`, `failed == 0`,
   `skipped == 0`. Required pending/failed/skipped/zero-subject rows refuse even
   when a native decision contains the bundle's matching digest.
+- The `ledger-range-touched` row has owner #2768 and references the exact
+  denominator packet retained by the accepted #1609 manifest. The swarm reader
+  compares the ledger's base and cut and its `path_inventories.range_touched`
+  count, NUL-record digest, and recipe with the manifest bound to the bundle's
+  candidate SHA/tree/ref. The bundle retains the ledger by path and raw digest.
+  A missing row or inventory, a different packet, or a disagreement refuses.
+  The row selects and executes exactly one ledger check. The producer's
+  path-record count remains a separate field in the retained ledger.
 - `excluded_subjects` is an explicit list, empty when none. Each entry has
   `id`, `owner_issue`, `count > 0`, `disposition` (`excluded` or `deferred`),
   and a nonblank `reason`. IDs cannot overlap required rows. The bundle must

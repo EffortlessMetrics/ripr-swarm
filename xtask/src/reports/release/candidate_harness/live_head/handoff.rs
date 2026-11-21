@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROWS: usize = 256;
+const LEDGER_RANGE_ROW: &str = "ledger-range-touched";
 
 #[derive(Clone, Debug)]
 pub(crate) struct HandoffInput {
@@ -367,6 +368,24 @@ fn admit_with(
     if required_rows(&actual_rows)? != expected_rows {
         return Err("complete qualification bundle omits or changes required rows".to_string());
     }
+    let ledger_row = bundle
+        .rows
+        .iter()
+        .find(|row| row.id == LEDGER_RANGE_ROW)
+        .ok_or_else(|| {
+            "complete qualification bundle is missing ledger-range-touched".to_string()
+        })?;
+    // Carry the inventory through the existing row's raw packet reference.
+    // The accepted manifest already binds the producer's bytes and subject.
+    if ledger_row.packet != prerequisites.denominator.packet {
+        return Err(
+            "ledger-range-touched does not reference the accepted #2768 ledger".to_string(),
+        );
+    }
+    if ledger_row.selected != 1 {
+        return Err("ledger-range-touched must check exactly one retained ledger".to_string());
+    }
+    manifest.verify_range_path_inventory()?;
     let mut remaining = remaining - qualification_bundle_bytes.len() as u64;
     let mut paths = BTreeSet::from([bundle_path.to_string()]);
     for row in &bundle.rows {
