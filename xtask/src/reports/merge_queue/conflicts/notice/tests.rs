@@ -109,6 +109,7 @@ struct FakeApi {
     comments: RefCell<Value>,
     writes: Cell<u64>,
     fail_read: Cell<bool>,
+    lose_acknowledgement: bool,
 }
 impl NoticeApi for FakeApi {
     fn live(&self, s: &Subject<'_>) -> Result<Member, String> {
@@ -124,6 +125,9 @@ impl NoticeApi for FakeApi {
         self.writes.set(self.writes.get() + 1);
         *self.comments.borrow_mut() =
             json!([[{"body":body,"user":{"login":"maintainer"},"author_association":"MEMBER"}]]);
+        if self.lose_acknowledgement {
+            return Err("server accepted the comment but the reply was lost".into());
+        }
         Ok(47)
     }
 }
@@ -136,6 +140,7 @@ fn explicit_notice_rechecks_membership_and_suppresses_the_next_serial_post() -> 
         comments: RefCell::new(json!([[]])),
         writes: Cell::new(0),
         fail_read: Cell::new(false),
+        lose_acknowledgement: false,
     };
     let body = advisory(&s, &conflict()).ok_or("missing fixture notice")?;
     if deliver(&api, &s, &initial, Some(&body), false)? != Disposition::Preview
@@ -171,6 +176,27 @@ fn explicit_notice_rechecks_membership_and_suppresses_the_next_serial_post() -> 
     .is_ok()
     {
         return Err("treated unreadable history as empty".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn accepted_comment_with_missing_acknowledgement_is_found_on_retry() -> Result<(), String> {
+    let target = subject();
+    let initial = target.member(&membership())?;
+    let body = advisory(&target, &conflict()).ok_or("missing fixture notice")?;
+    let api = FakeApi {
+        state: RefCell::new(membership()),
+        comments: RefCell::new(json!([[]])),
+        writes: Cell::new(0),
+        fail_read: Cell::new(false),
+        lose_acknowledgement: true,
+    };
+    if deliver(&api, &target, &initial, Some(&body), true).is_ok()
+        || deliver(&api, &target, &initial, Some(&body), true)? != Disposition::AlreadyPosted
+        || api.writes.get() != 1
+    {
+        return Err("an unacknowledged remote write must be discovered before retry".into());
     }
     Ok(())
 }

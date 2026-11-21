@@ -1606,7 +1606,7 @@ and the scheduled watchdog does not invoke it (#14705).
 
 From a conflict row in `queue-conflicts.json`, copy the PR number, the observed
 main SHA and the PR head SHA. Use a separate, new output directory for every
-attempt. Preview requires read access to the private repository and its queue.
+attempt. Preview requires authenticated read access to the repository and its queue.
 
 ```sh
 cargo xtask merge-queue conflict-notice <new-output-directory> <pr> <main-sha> <head-sha>
