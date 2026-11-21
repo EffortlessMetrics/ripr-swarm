@@ -882,6 +882,18 @@ fn appended_value_discriminator_names_contents_not_length() {
         python_output_or_call_discriminator("print(\"queued\")").as_deref(),
         Some("output contains \"queued\"")
     );
+    // A literal append keeps its concrete discriminator; the placeholder
+    // contents shape applies only when no string literal names the value.
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(\"queued\")").as_deref(),
+        Some("call includes \"queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append('queued')").as_deref(),
+        Some("call includes 'queued'")
+    );
+    // `.push(` is not a Python list append and names no discriminator.
+    assert_eq!(python_output_or_call_discriminator("buf.push(msg)"), None);
 }
 
 #[test]

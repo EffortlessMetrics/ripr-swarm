@@ -523,10 +523,13 @@ pub(super) fn python_output_or_call_discriminator(line_text: &str) -> Option<Str
     if let Some(exit_code) = python_exit_code_discriminator(text) {
         return Some(format!("exit_code == {exit_code}"));
     }
-    if let Some(appended) = python_appended_value_discriminator(text) {
+    let literal = first_python_string_literal(text);
+    if literal.is_none()
+        && let Some(appended) = python_appended_value_discriminator(text)
+    {
         return Some(appended);
     }
-    let literal = first_python_string_literal(text)?;
+    let literal = literal?;
     if python_stdout_output_call(text) {
         Some(format!("stdout contains {literal}"))
     } else if python_stderr_output_call(text) {
@@ -545,26 +548,22 @@ pub(super) fn python_output_or_call_discriminator(line_text: &str) -> Option<Str
 /// length. The expected side stays the placeholder the return-value shape
 /// uses, so the suggested oracle never restates the changed computation.
 fn python_appended_value_discriminator(text: &str) -> Option<String> {
-    for method in [".append(", ".push("] {
-        let Some(idx) = text.find(method) else {
-            continue;
-        };
-        let receiver = text[..idx]
-            .rsplit(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
-            .next()
-            .filter(|receiver| is_simple_python_identifier(receiver))?;
-        let argument = text[idx + method.len()..]
-            .trim()
-            .trim_end_matches([')', ';'])
-            .trim();
-        if argument.is_empty() {
-            return None;
-        }
-        return Some(format!(
-            "{receiver} contents == [{PYTHON_EXPECTED_VALUE_PLACEHOLDER}]"
-        ));
+    let method = ".append(";
+    let idx = text.find(method)?;
+    let receiver = text[..idx]
+        .rsplit(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+        .next()
+        .filter(|receiver| is_simple_python_identifier(receiver))?;
+    let argument = text[idx + method.len()..]
+        .trim()
+        .trim_end_matches([')', ';'])
+        .trim();
+    if argument.is_empty() {
+        return None;
     }
-    None
+    Some(format!(
+        "{receiver} contents == [{PYTHON_EXPECTED_VALUE_PLACEHOLDER}]"
+    ))
 }
 
 fn python_cli_output_call(text: &str) -> bool {
