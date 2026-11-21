@@ -5,7 +5,7 @@ import * as https from 'https';
 import * as path from 'path';
 import { networkInterfaces } from 'os';
 import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath, runTests, SilentReporter } from '@vscode/test-electron';
-import { admitSubject, CASES, digest, retainHostCase, servedBytes, TARGET } from './contract';
+import { admitSubject, CASES, digest, retainHostCase, servedBytes, TARGET, withHostUserData } from './contract';
 
 const repo = path.resolve(__dirname, '../../../../..');
 const editor = path.join(repo, 'editors/vscode');
@@ -119,11 +119,11 @@ async function main(): Promise<void> {
       const profile = path.join(root, kind);
       const receiptPath = path.join(profile, 'host.json');
       try {
-        await retainHostCase(caseRecord, async () => {
+        await retainHostCase(caseRecord, () => withHostUserData(async (userData) => {
           const served = servedBytes(kind, originalManifest, archive);
           manifestBytes = served.manifest;
           archiveBytes = served.archive;
-          const userData = path.join(profile, 'user');
+          fs.mkdirSync(profile);
           const extensions = path.join(profile, 'extensions');
           const workspace = path.join(profile, 'workspace');
           fs.mkdirSync(path.join(userData, 'User'), { recursive: true });
@@ -163,7 +163,7 @@ async function main(): Promise<void> {
           assert.strictEqual(manifestRequests - before.manifest, 1);
           assert.strictEqual(archiveRequests - before.archive, kind === 'manifest_tampered' ? 0 : 1);
           assert.strictEqual(digest(fs.readFileSync(vsix)), vsixSha256);
-        }, () => fs.existsSync(receiptPath) ? JSON.parse(fs.readFileSync(receiptPath, 'utf8')) : undefined);
+        }), () => fs.existsSync(receiptPath) ? JSON.parse(fs.readFileSync(receiptPath, 'utf8')) : undefined);
       } finally {
         receipt.executed += caseRecord.executed;
         caseRecord.manifest_requests = manifestRequests - before.manifest;
