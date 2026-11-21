@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr gate check` and `ripr review-comments`: a test line that calls the changed function twice, such as `assert_eq!(ok(12), true); assert_eq!(ok(11), false);`, now gives the seam both inputs, the way `ripr check` already reads them. The seam used to read only the first call on the line, name the second input as a missing equality boundary, and send a weak-grip gap to the gate while `ripr check` called the same change exposed. A same-line call that resolves to a different function of the same name still lends no input (#14487).

@@ -58,33 +58,47 @@ fold inside an ordinary feature PR.
 
 ```bash
 cargo xtask fold-changelog                       # dry run: print the plan, write nothing
-cargo xtask fold-changelog --write --limit 150   # fold and delete one batch
+# preflight, then fold and delete one batch; the write runs only if the check passes
+cargo xtask check-changelog-fragments && cargo xtask fold-changelog --write --limit 150
 ```
 
 The default is a dry run. `--limit N` takes the first N fragments in name
-order so each PR stays within 150 files (the candidate-admission size limit);
+order, so a 150-fragment batch plus `CHANGELOG.md` is 151 files, under the
+160-file candidate-admission cap;
 rerun for the next batch. The command refuses, naming the file, any fragment
 with an unknown section, a missing section line or another format violation,
-and any entry whose text is already in `Unreleased`, and then writes nothing.
+and any fragment whose whole entry text already appears in `Unreleased`, and
+then writes nothing. That fold-time guard compares each fragment's entry text
+as one block, not bullet by bullet, so a fragment that repeats one existing
+bullet next to a new one still folds and duplicates the old bullet.
+`check-changelog-fragments` compares each bullet; run it and require it to pass
+before either `--write` command (including `--release-cut`, whose own check
+runs only after it has rewritten `CHANGELOG.md` and deleted the fragments).
 Once folded fragments are deleted, a rerun has nothing left to fold.
 
 The fold may also run ahead of the cut as a snapshot, so the cut itself folds
-only what is left: `--write --keep-fragments` adds the roll-up for every
-fragment present to `CHANGELOG.md` and changes nothing else, then
-deletion-only batch PRs (150 files or fewer) remove exactly the files that
-snapshot covered, and only after the roll-up has merged. A fragment added
-after a snapshot stays until the next snapshot or the cut. After the final
+only what is left. Fold and delete each batch in the same PR (`--write
+--limit 150`, or a rolled-up summary for `Internal / CI` per
+`docs/CHANGELOG_POLICY.md`): `check-changelog-fragments` fails any fragment
+whose entry exactly duplicates an `Unreleased` entry, so a
+`--keep-fragments` roll-up that leaves its fragments in place cannot pass on
+its own. Batches built from one base can insert at different bullets of a
+section so they merge in any order. A fragment added after a snapshot stays
+until the next snapshot or the cut. After the final
 fold, `cargo xtask check-changelog-fragments --release-cut` must pass: it
 fails on any fragment still here.
 
-On cut day use one command. `--release-cut` folds every fragment (it cannot be
-combined with `--limit` or `--keep-fragments`), deletes them, and then requires
-`check-changelog-fragments --release-cut` to pass, so a leftover or malformed
-fragment fails the same step:
+On cut day run the preflight, then one write command. `--release-cut` folds
+every fragment (it cannot be combined with `--limit` or `--keep-fragments`),
+deletes them, and then requires `check-changelog-fragments --release-cut` to
+pass, so a leftover or malformed fragment fails the same step. That final
+check runs after the write, so a duplicated bullet is caught only once the
+inputs are already rewritten; the preflight check catches it first:
 
 ```bash
 cargo xtask fold-changelog --release-cut           # dry run: plan only
-cargo xtask fold-changelog --write --release-cut   # fold, delete, verify
+# preflight, then fold, delete, verify; the write runs only if the check passes
+cargo xtask check-changelog-fragments && cargo xtask fold-changelog --write --release-cut
 ```
 
 It prints a warning when the PR (every fragment plus `CHANGELOG.md`) would exceed

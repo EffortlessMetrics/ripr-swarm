@@ -2131,12 +2131,13 @@ fn non_empty_string_arg(
     }
 }
 
+pub(super) const OUTCOME_FORMAT_NAMES: &[&str] = &["md", "markdown", "text", "json"];
+
 fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
-    const ACCEPTED: &[&str] = &["md", "markdown", "text", "json"];
     match value {
         "md" | "markdown" | "text" => Ok(OutcomeFormat::Markdown),
         "json" => Ok(OutcomeFormat::Json),
-        _ => Err(unknown_value("outcome format", value, ACCEPTED)),
+        _ => Err(unknown_value("outcome format", value, OUTCOME_FORMAT_NAMES)),
     }
 }
 

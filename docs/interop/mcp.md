@@ -443,10 +443,10 @@ commit-time repair-readiness projection (`repair_packet_ready` with its typed
 `repair_ineligibility` reason, `null` when ready) — the same
 `repair_packet_ready` fact the item's `ripr_get_gap` readiness block reports,
 so actionable items sort without one evidence call per candidate. `file` is
-the finding location in the one spelling every surface renders
-(`./src/lib.rs`, #5996); the path inside `canonical_id` is the plain
-repository-relative form (`src/lib.rs`), and the `file` filter accepts
-either. Selection
+the same bare workspace-relative spelling as `ripr_get_gap`'s
+`location.file` and the path inside `canonical_id` (for example,
+`src/lib.rs`). A location outside the root retains its full stable spelling.
+The `file` filter accepts both `src/lib.rs` and `./src/lib.rs`. Selection
 is the shared CLI/LSP diagnostic-budget authority over the snapshot's
 canonical items; eligibility is the producer's candidate-actionability
 predicate captured at projection time, so non-actionable items appear as
@@ -796,6 +796,14 @@ completeness fact and, like `ripr agent card`, fails with the typed
 `incomplete_inventory` code (and no card) while the inventory is truncated or
 its completeness could not be established, so it never reports
 `readiness.repair_ready` true over a truncated inventory (#9231).
+
+The same applies to a seam whose inline test target has uncommitted changes:
+the shared repair gate refuses it (`seam_gate_refused`), `ripr_get_repair_card`
+refuses with `incomplete_inventory` naming the file instead of reporting
+`readiness.repair_ready` true, and `ripr_prepare_repair`'s `next` is
+`commit_then_refresh` (commit or stash that file, then refresh). An item whose
+`probe:` finding id names no seam is resolved once more by its readable gap id,
+the identity `ripr repair` and the card accept (#15307).
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise

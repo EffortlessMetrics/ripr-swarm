@@ -187,6 +187,7 @@ pub fn check() -> Result<(), String> {
     validate_architecture_maps(&mut findings);
     validate_agents_operating_contract(&mut findings);
     validate_shared_review_conversation_route(&mut findings);
+    validate_gemini_route(&mut findings);
     for (provider, instructions, root, other_root, override_path) in PROVIDERS {
         let text = match fs::read_to_string(instructions) {
             Ok(text) => text,
@@ -544,6 +545,43 @@ fn shared_finish_pr_route_findings(skill_text: &str) -> Vec<String> {
     .filter(|route| !skill_text.contains(**route))
     .map(|route| format!("is missing shared finish-pr route `{route}`"))
     .collect()
+}
+
+// This is a source-level check. Gemini's actual context and skill loading
+// still require a runtime observation.
+fn validate_gemini_route(findings: &mut Vec<String>) {
+    match gemini_route_inputs() {
+        Ok((pointer, competing_paths)) => {
+            if !matches!(pointer.as_slice(), b"@./AGENTS.md\n" | b"@./AGENTS.md\r\n") {
+                findings.push("gemini: GEMINI.md must contain only @./AGENTS.md".into());
+            }
+            for path in competing_paths {
+                findings.push(format!(
+                    "gemini: {path} conflicts with the shared AGENTS.md and .agents/skills route"
+                ));
+            }
+        }
+        Err(error) => findings.push(error),
+    }
+}
+
+pub(crate) fn gemini_route_inputs() -> Result<(Vec<u8>, Vec<&'static str>), String> {
+    let metadata = fs::symlink_metadata("GEMINI.md")
+        .map_err(|error| format!("gemini: GEMINI.md unreadable: {error}"))?;
+    if !metadata.is_file() {
+        return Err("gemini: GEMINI.md must be a regular file".into());
+    }
+    let pointer =
+        fs::read("GEMINI.md").map_err(|error| format!("gemini: GEMINI.md unreadable: {error}"))?;
+    let mut competing_paths = Vec::new();
+    for path in [".gemini/settings.json", ".gemini/skills"] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => competing_paths.push(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("gemini: cannot inspect {path}: {error}")),
+        }
+    }
+    Ok((pointer, competing_paths))
 }
 
 fn validate_shared_review_conversation_route(findings: &mut Vec<String>) {

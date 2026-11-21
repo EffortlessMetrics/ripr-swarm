@@ -511,9 +511,10 @@ Under an explicit JSON request, a `ripr repair`, `ripr continue` or
 writes the minimal `cli_refusal` document on stdout. Its `error.code` is that
 `RepairRefusalCode`, the added `error.disposition` is that code's
 disposition (`retryable`, `terminal`, `needs_selection`, `not_started`), and
-`error.message` is the prose without the code line. `error.next` is always
-`null`: these steps can quote a user-supplied item or selector, so the
-document never lifts one into a runnable field. The context that
+`error.message` is the prose without the code line. `error.next` is `null`
+except `no_current_attempt`, whose owner composes `ripr status --root <root>`
+from the bound root (#15260): these steps can quote a user-supplied item or
+selector, so the document never lifts one into a runnable field. The context that
 `repair_needs_item` (its next-action block) and `attempt_baseline_blocked`
 (the attempt status) print above their prose stays on stderr only; the
 selection codes carry theirs as `choices` (amendment #14980). The façade's before-phase

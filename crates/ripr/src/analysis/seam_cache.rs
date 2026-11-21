@@ -62,7 +62,7 @@ use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
-    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root, root_contains_detectable_python,
     source_dir_contains_detectable_python, source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -1447,7 +1447,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and need a re-serialization of every entry to verify, so they are not read.
 /// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.62";
+/// `1.63`: a unit owner's tail block of `;`-terminated statements is not
+/// probed as `return_value` (#15459); `1.62` facts still carry that shape.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.63";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4839,8 +4841,8 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// Hash the adapter-owned workspace identities that can change analysis.
 /// Cargo consumes manifest contents recursively. The Python inputs tracked
 /// here are presence-only, exactly as no-config detection consumes them:
-/// root marker files and detectable Python source below root `src`/`tests`
-/// (bounded to two presence booleans — never a per-file enumeration).
+/// root marker files, root source presence, and detectable Python source below
+/// root `src`/`tests` (presence booleans, never a per-file enumeration).
 /// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
 /// detectable TypeScript source below `src`/`tests`) binds the same way.
 /// A package-led JavaScript root (#11336: root `package.json` plus detectable
@@ -4854,6 +4856,7 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// cache entries without any input change.
 fn hash_workspace_manifests(root: &Path) -> String {
     let cargo_identity = hash_named_workspace_files(root, "Cargo.toml");
+    let python_root_source = root_contains_detectable_python(root);
     let present_python_markers: Vec<&str> = PYTHON_PROJECT_MARKERS
         .iter()
         .copied()
@@ -4875,7 +4878,8 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
         .collect();
     let javascript_led_root = detect_javascript_led_root(root);
-    if present_python_markers.is_empty()
+    if !python_root_source
+        && present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
@@ -4885,6 +4889,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
     }
 
     let mut identity = format!("cargo={cargo_identity}\n");
+    if python_root_source {
+        identity.push_str("python_root_source=1\n");
+    }
     for marker in present_python_markers {
         identity.push_str("python_marker=");
         identity.push_str(marker);
@@ -5544,7 +5551,8 @@ mod tests {
         // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.62");
+        // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.63");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -8511,6 +8519,29 @@ mod tests {
             std::fs::remove_file(&nested).map_err(|err| format!("remove nested {dir}: {err}"))?;
         }
 
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn flat_python_presence_changes_detection_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("flat-python-presence");
+        std::fs::create_dir_all(&root).map_err(|err| format!("mkdir: {err}"))?;
+        let baseline = hash_workspace_manifests(&root);
+        let source = root.join("shop.py");
+        std::fs::write(&source, "first").map_err(|err| format!("write: {err}"))?;
+        let present = hash_workspace_manifests(&root);
+        assert_ne!(baseline, present);
+        std::fs::write(&source, "second").map_err(|err| format!("edit: {err}"))?;
+        assert_eq!(present, hash_workspace_manifests(&root));
+        std::fs::write(root.join("test_shop.py"), "test").map_err(|err| format!("test: {err}"))?;
+        std::fs::remove_file(&source).map_err(|err| format!("remove source: {err}"))?;
+        assert_eq!(present, hash_workspace_manifests(&root));
+        std::fs::remove_file(root.join("test_shop.py"))
+            .map_err(|err| format!("remove test: {err}"))?;
+        std::fs::write(root.join("generated_shop.py"), "ignored")
+            .map_err(|err| format!("generated: {err}"))?;
+        assert_eq!(baseline, hash_workspace_manifests(&root));
         ignore_remove_dir_all(&root);
         Ok(())
     }

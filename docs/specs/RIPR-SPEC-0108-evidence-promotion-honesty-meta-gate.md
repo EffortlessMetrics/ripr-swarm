@@ -182,6 +182,19 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      carries a digest and is not listed fails, and a missing or non-array
      `report_digest_required` is a violation rather than a disabled guard
      (#12816).
+     Against the accepted base, removing a required entry while its original
+     report path still exists fails. Removing the entry together with deleting
+     the report is allowed (#12856); the other corpus checks still apply.
+     Qualification uses the admission-verified first parent; legacy runs use
+     HEAD's first parent read from Git objects (the event payload base can be
+     stale once the base branch moves): a PR run must be on the two-parent
+     merge checkout and a queue run on the single-parent squash (in a batched
+     group that parent is the previous entry), and local runs use the Git
+     merge base. Missing or malformed base evidence
+     fails closed. This path comparison does not detect relocation and is not
+     an authenticity check. Candidate-controlled validator changes require
+     independent review; the current gate does not provide trusted-base
+     matcher enforcement or validate the legacy PR integration's second parent.
      Scope of the guarantee: the digest is recomputed from the file's own
      bytes, so anyone who can recompute it can bless an edit. The check
      detects a stale or hand-edited capture. It is not a tamper-proof seal and
@@ -826,6 +839,9 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Test | Spec control |
 |---|---|
+| `pre_label_requires_exact_ordered_published_parents` | The published composition has the advertised target and PR head as its ordered parents |
+| `published_composition_checks_all_reports_and_reasoned_pins` | The pre-label command accepts current reports and valid historical pins and refuses stale compositions, stale reports and malformed pins |
+| `batch_binds_each_record_even_for_repeated_oids_and_embedded_newlines` | The Git batch reader checks each blob identity, type, size and terminator |
 | `nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory` | Typed partial outcome and limitation mutations fail despite the retained generic advisory |
 | `partial_analysis_assertion_requires_every_identity_and_count_field` | Missing typed limitation identity or count is rejected |
 | `cargo run -p xtask -- check-evidence-promotion-honesty` | End-to-end gate pass |
@@ -897,6 +913,7 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Component | Location |
 |---|---|
+| Pre-label composition and report checks | `xtask/src/evidence_promotion/pre_label.rs::check` |
 | Corpus manifest | `fixtures/evidence-promotion-honesty-corpus/corpus.json` |
 | First external patch | `fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff` |
 | Gate implementation | `xtask/src/main.rs::check_evidence_promotion_honesty` |

@@ -119,6 +119,10 @@ and the crate name resolves to its plain registry package for the importing
 file's manifest (the existing drop-in manifest authority, RIPR-SPEC-0197: no
 `package`, `path`, `git`, `registry`, `[patch]` or `.cargo` substitution) and
 is not shadowed by a workspace package, module or `extern crate` rename.
+A plain import that binds the crate name in the same file (`use other::vstd;`
+or `use other::vstd::{self};`) also takes the path over, as it does for the
+standard roots, so the glob stays foreign; an absolute `::vstd::prelude::*`
+still names the extern crate.
 
 Evidence for "exports no assertion macro", read from the published crate
 sources (the clones are not vendored):

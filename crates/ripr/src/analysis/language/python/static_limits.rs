@@ -3,7 +3,9 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{
     PythonBandReading, PythonBandSource, parse_expression, python_band_reading,
 };
-use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::assertion_selection::{
+    PythonAssertionFocus, is_result_pin_shape, select_relevant_assertion,
+};
 use super::callee_patch::callee_only_patch;
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
@@ -351,6 +353,32 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test compares the result with `approx(..., rel=..., abs=...)`; the preview adapter does not evaluate the tolerance band, so it cannot tell whether a numeric edit stays inside it. Verify with a runtime test or tighten the tolerance.".to_string(),
         });
     }
+    // #15250: for a logging-only edit the selection keeps a result-pin shape
+    // only when the assertion's text names `caplog`. If its gate (the strongest
+    // conjuncts) does not, the pin is what would grade it (`f(5) is False and
+    // "x" not in caplog.text`, or `caplog` only in a failure message), and that
+    // pin passes on both versions: abstain instead of crediting it.
+    if log_evidence.is_none()
+        && focus.withholds_result_pins()
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                select_relevant_assertion(&candidate.test.assertions, Some(focus))
+                    .assertion()
+                    .is_some_and(|assertion| {
+                        is_result_pin_shape(assertion.oracle_shape)
+                            && !assertion.gate_text.contains("caplog")
+                    })
+            })
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnsupportedSyntax,
+            evidence: "static_limit unsupported_syntax: related test pins the owner's result beside a `caplog` read of the changed log call"
+                .to_string(),
+            missing: "Static limit `unsupported_syntax`: a related Python test asserts the owner's result in the same assertion that reads `caplog`; the result does not change when only a logging call changes, and the preview adapter does not evaluate the captured-log part of that assertion. Assert the logged text in its own `assert` statement.".to_string(),
+        });
+    }
     if log_evidence.is_none()
         && changed_logging_call_literal(trimmed).is_some_and(|literal| {
             related_candidates_have_log_membership_limit(related_candidates, focus, literal)
@@ -421,6 +449,18 @@ pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     })
 }
 
+/// Whether `limit` is the implicit-dunder `dynamic_dispatch` limit: the one
+/// that states ripr "does not claim that no test reaches the owner". Its reach
+/// stage must read `unknown`, never `no` (#15339).
+pub(super) fn is_implicit_dunder_dispatch_limit(limit: &PythonStaticLimit) -> bool {
+    matches!(limit.kind, StaticLimitKind::DynamicDispatch)
+        && limit.evidence.contains(IMPLICIT_DUNDER_EVIDENCE_MARKER)
+}
+
+/// Shared by both producers in `implicit_dunder_dispatch_limit` so the
+/// predicate above cannot drift from their evidence wording.
+const IMPLICIT_DUNDER_EVIDENCE_MARKER: &str = "implicitly by";
+
 /// A dunder method owner (`Cache.__setitem__`) with no related test, in a
 /// workspace whose tests import the owner class or module. Python calls these
 /// methods through syntax (`cache[key] = value`, `Cache(...)`) on instances the
@@ -444,7 +484,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
             .then(|| PythonStaticLimit {
                 kind: StaticLimitKind::DynamicDispatch,
                 evidence: format!(
-                    "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
+                    "static_limit dynamic_dispatch: dunder method `{}` is invoked {IMPLICIT_DUNDER_EVIDENCE_MARKER} Python syntax",
                     owner.qualified_name
                 ),
                 missing: format!(
@@ -486,7 +526,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
     Some(PythonStaticLimit {
         kind: StaticLimitKind::DynamicDispatch,
         evidence: format!(
-            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes implicitly by syntax",
+            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes {IMPLICIT_DUNDER_EVIDENCE_MARKER} syntax",
             owner.qualified_name
         ),
         missing: format!(
@@ -1471,9 +1511,19 @@ fn related_candidates_have_log_membership_limit(
                     // snapshot is the evaluator's question, not a reason to
                     // report a gap (#10151).
                     let gate_text = substitute_caplog_aliases(candidate.test, &assertion.gate_text);
+                    // The gate keeps only the strongest conjuncts, so a strong
+                    // result pin beside a caplog read (`f(5) is False and "x" in
+                    // caplog.text`) leaves the read in the full text only (#15250).
+                    let mut literals = caplog_membership_literals(&gate_text);
+                    if literals.is_empty() {
+                        literals = caplog_membership_literals(&substitute_caplog_aliases(
+                            candidate.test,
+                            &assertion.text,
+                        ));
+                    }
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    caplog_membership_literals(&gate_text)
+                    literals
                         .iter()
                         .any(|checked| {
                             words(&checked.literal)

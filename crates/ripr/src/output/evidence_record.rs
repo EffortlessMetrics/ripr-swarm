@@ -6,6 +6,7 @@
 //! baselines, or change seam grip classifications.
 
 use crate::agent::loop_commands::{
+    PILOT_AFTER_SNAPSHOT_ARTIFACT, PILOT_BEFORE_SNAPSHOT_ARTIFACT,
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
     shell_arg,
@@ -377,7 +378,7 @@ pub(crate) fn evidence_record_for(
 /// against the attempt's retained before snapshot rather than any path the
 /// document itself names, #4379). The command flows into every verify
 /// projection — `recommendation.verify_command`,
-/// `canonical_item.verify_command`, and the parsed
+/// `canonical_item.verify_command`, and the typed
 /// `canonical_item.command_specs.verify` — so the three cannot disagree.
 pub(crate) fn evidence_record_with_verify_command(
     entry: &ClassifiedSeam,
@@ -394,9 +395,8 @@ pub(crate) fn evidence_record_with_verify_command(
 
 /// [`evidence_record_with_verify_command`] for a verify display bound to a
 /// selected root (#3948, #3999). The display names the concrete root so it
-/// replays from any directory; typed recovery binds that same root, so the
-/// parsed `command_specs.verify` keeps the portable argv and a display whose
-/// root was substituted afterwards still fails closed.
+/// replays from any directory. The producer's `command_specs.verify` keeps
+/// portable argv and is present only for a matching snapshot route.
 pub(crate) fn evidence_record_with_bound_verify_command(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
@@ -745,13 +745,7 @@ fn canonical_item_for(
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            // The verify display is the portable `--root .` shape or one
-            // bound to `verify_root`; recovery binds the same root, so either
-            // yields the portable argv.
-            .and_then(|display| {
-                crate::agent::command_specs::agent_command_spec_from_display(display, verify_root)
-                    .or_else(|| bound_snapshot_verify_spec(display, verify_root))
-            }),
+            .and_then(|display| snapshot_verify_spec(display, verify_root)),
         receipt_command_spec: evidence_state.is_actionable().then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
                 ".",
@@ -764,31 +758,27 @@ fn canonical_item_for(
     }
 }
 
-/// Typed spec for the producer's own bound snapshot verify display (#3948).
-/// A root carrying shell punctuation (`&`, `$`, ...) renders quoted and
-/// pastes correctly, but display recovery refuses those characters in any
-/// word. The producer knows its inputs, so it rebuilds the display from them
-/// and grants the trusted spec only on a byte-for-byte match; any other or
-/// substituted display still recovers nothing.
-///
-/// The rebuild uses the same `root_display` builder the display itself
-/// came from, not a fresh bind (#7937): a rooted selected root such as
-/// `/tmp/repo` is absolute on POSIX but only rooted on Windows, where
-/// binding re-spelled it against the process drive and the producer's own
-/// display failed its own byte-match, losing every typed spec. `root_display`
-/// binds absolute roots, keeps the portable relative spellings verbatim, and
-/// agrees with the display on every host and input family.
-fn bound_snapshot_verify_spec(
-    display: &str,
-    verify_root: &std::path::Path,
-) -> Option<crate::domain::CommandSpec> {
+/// Construct argv from the snapshot producer's paths and require its exact
+/// display before attaching it to the record. Other displays remain copyable.
+fn snapshot_verify_spec(display: &str, verify_root: &std::path::Path) -> Option<CommandSpec> {
+    use crate::agent::command_specs::{PORTABLE_ROOT, agent_verify_command_spec};
+
     let root = crate::agent::loop_commands::root_display(&verify_root.to_string_lossy());
-    let spec = crate::agent::command_specs::agent_verify_command_spec(
-        &root,
-        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-        None,
-    );
+    let spec = if root == PORTABLE_ROOT && display == VERIFY_COMMAND {
+        agent_verify_command_spec(
+            PORTABLE_ROOT,
+            PILOT_BEFORE_SNAPSHOT_ARTIFACT,
+            PILOT_AFTER_SNAPSHOT_ARTIFACT,
+            None,
+        )
+    } else {
+        agent_verify_command_spec(
+            &root,
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            None,
+        )
+    };
     (spec.display == display && spec.validate().is_ok()).then_some(spec)
 }
 
@@ -3266,10 +3256,10 @@ mod tests {
     /// The default family is the editor pilot family (pinned above); a
     /// producer whose document writes its own snapshots replaces the family
     /// in every verify projection at once — `recommendation.verify_command`,
-    /// `canonical_item.verify_command`, and the parsed
+    /// `canonical_item.verify_command`, and the typed
     /// `command_specs.verify` — so the three cannot disagree (#4379).
     #[test]
-    fn verify_command_family_flows_into_every_verify_projection() -> Result<(), String> {
+    fn verify_command_family_flows_into_every_verify_projection() {
         let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
         let workflow = workflow_snapshot_verify_command();
         let json = evidence_record_json_value(&evidence_record_with_verify_command(
@@ -3289,30 +3279,39 @@ mod tests {
         let spec = &json["canonical_item"]["command_specs"]["verify"];
         assert_eq!(
             spec["human_display"], workflow,
-            "command spec must recover from the same display"
+            "command spec must carry the same published display"
         );
-        let args: Vec<String> = spec["args"]
-            .as_array()
-            .ok_or_else(|| format!("verify spec args must be an array: {spec}"))?
-            .iter()
-            .filter_map(|arg| arg.as_str().map(str::to_string))
-            .collect();
-        for family_path in [
-            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-        ] {
-            if !args.contains(&family_path.to_string()) {
-                return Err(format!(
-                    "verify spec args must read {family_path}: {args:?}"
-                ));
-            }
-        }
-        if args.iter().any(|arg| arg.contains("pilot/")) {
-            return Err(format!(
-                "workflow family must not name pilot paths: {args:?}"
-            ));
-        }
-        Ok(())
+        assert_eq!(
+            spec["args"],
+            json!([
+                "agent",
+                "verify",
+                "--root",
+                ".",
+                "--before",
+                "target/ripr/workflow/before.repo-exposure.json",
+                "--after",
+                "target/ripr/workflow/after.repo-exposure.json",
+                "--json"
+            ])
+        );
+        assert_eq!(spec["role"], "verify");
+        assert_eq!(spec["execution_mode"], "direct");
+
+        // Change exactly one snapshot argument. The same public text fields
+        // still carry the supplied display, without publishing typed argv.
+        let changed = "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/other.repo-exposure.json --json";
+        let alternate = evidence_record_json_value(&evidence_record_with_verify_command(
+            &entry,
+            None,
+            Some(changed),
+        ));
+        assert_eq!(alternate["recommendation"]["verify_command"], changed);
+        assert_eq!(alternate["canonical_item"]["verify_command"], changed);
+        assert_eq!(
+            alternate["canonical_item"]["command_specs"]["verify"],
+            Value::Null
+        );
     }
 
     /// #3948: a standalone root with shell punctuation renders a quoted,

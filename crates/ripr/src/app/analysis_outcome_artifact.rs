@@ -178,7 +178,11 @@ pub(crate) fn validate_analysis_outcome_artifact(
             CHECK_OUTPUT_SCHEMA_VERSION
         )));
     }
-    if value.get("root").and_then(Value::as_str) != Some(root_display) {
+    if !recorded_root_matches(
+        root,
+        root_display,
+        value.get("root").and_then(Value::as_str),
+    ) {
         return Err(invalid(
             "Analysis outcome artifact root does not match the review root.",
         ));
@@ -265,6 +269,20 @@ pub(crate) fn validate_analysis_outcome_artifact(
         }
     }
     Ok(outcome)
+}
+
+/// #15239: the artifact records the producer's spelling of the root and the
+/// reviewer passes its own, so `--root .` and `--root "$PWD"` name the same
+/// directory with different strings. Accept an identical spelling, or two
+/// spellings that canonicalize to the same existing directory (a relative
+/// spelling resolves against the process working directory, as the CLI
+/// resolves `--root`). A missing root, or one that canonicalizes elsewhere,
+/// still fails closed.
+fn recorded_root_matches(root: &Path, root_display: &str, recorded: Option<&str>) -> bool {
+    recorded.is_some_and(|recorded| {
+        recorded == root_display
+            || crate::output::gap_source_subject::same_root(root, Path::new(recorded))
+    })
 }
 
 fn invalid(reason: impl Into<String>) -> AnalysisOutcomeArtifactError {
@@ -662,6 +680,80 @@ mod tests {
         assert_eq!(working_tree_identity_as_commit, mismatch);
         assert_eq!(committed_identity_as_working_tree, mismatch);
         assert_eq!(working_tree_identity_without_head, mismatch);
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_differently_spelled_same_root_and_refuses_another_directory() -> Result<(), String> {
+        // #15239: the artifact records an absolute root while the reviewer
+        // passes a relative one (`--root .` in the CLI). Lib tests run with
+        // the crate manifest directory as the working directory, so `../..`
+        // is a relative spelling of the workspace root.
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let cwd = std::env::current_dir().map_err(|error| format!("current dir: {error}"))?;
+        assert_eq!(
+            std::fs::canonicalize(&cwd).map_err(|error| format!("canonicalize cwd: {error}"))?,
+            std::fs::canonicalize(manifest)
+                .map_err(|error| format!("canonicalize manifest: {error}"))?,
+            "test precondition: lib tests run from the crate manifest directory"
+        );
+        let outcome = complete_outcome(AnalysisOutcomeKind::CompleteNoFindings)?;
+        let absolute = workspace_root()?;
+        let absolute_display = absolute.display().to_string();
+        let relative = Path::new("../..");
+        let absolute_recorded = artifact(&outcome, true)?;
+        assert_eq!(
+            absolute_recorded["root"],
+            Value::String(absolute_display.clone()),
+            "fixture records the absolute root"
+        );
+
+        // Absolute recording, relative review root.
+        assert_eq!(
+            validate_analysis_outcome_artifact(relative, "../..", &absolute_recorded),
+            Ok(outcome.clone())
+        );
+        // Relative recording, absolute review root.
+        let mut relative_recorded = absolute_recorded.clone();
+        relative_recorded["root"] = Value::String("../..".to_string());
+        assert_eq!(
+            validate_analysis_outcome_artifact(&absolute, &absolute_display, &relative_recorded),
+            Ok(outcome.clone())
+        );
+        // A non-normalized absolute spelling of the same directory.
+        let mut dotted_recorded = absolute_recorded.clone();
+        dotted_recorded["root"] =
+            Value::String(absolute.join("crates").join("..").display().to_string());
+        assert_eq!(
+            validate_analysis_outcome_artifact(&absolute, &absolute_display, &dotted_recorded),
+            Ok(outcome.clone())
+        );
+
+        // Another existing directory still fails closed, in either spelling.
+        let mismatch = Err(AnalysisOutcomeArtifactError::Invalid(
+            "Analysis outcome artifact root does not match the review root.".to_string(),
+        ));
+        let mut other_absolute = absolute_recorded.clone();
+        other_absolute["root"] = Value::String(manifest.display().to_string());
+        assert_eq!(
+            validate_analysis_outcome_artifact(relative, "../..", &other_absolute),
+            mismatch
+        );
+        let mut other_relative = absolute_recorded.clone();
+        other_relative["root"] = Value::String(".".to_string());
+        assert_eq!(
+            validate_analysis_outcome_artifact(&absolute, &absolute_display, &other_relative),
+            mismatch
+        );
+        // A missing root member fails closed.
+        let mut no_root = absolute_recorded;
+        if let Some(object) = no_root.as_object_mut() {
+            object.remove("root");
+        }
+        assert_eq!(
+            validate_analysis_outcome_artifact(&absolute, &absolute_display, &no_root),
+            mismatch
+        );
         Ok(())
     }
 
