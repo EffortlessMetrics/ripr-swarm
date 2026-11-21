@@ -68,7 +68,10 @@ queued commit's tree must also equal the live head merged onto the group base
 PR's own `refs/pull/<n>/head` and required to match the head read from the API).
 A different head, extra content, a merge conflict, a moved PR ref or missing
 history refuses. Admission is per constituent PR in `merge_group.base_sha..merge_group.head_sha` (#8082): every constituent commit must form a linear single-parent squash chain, bind to its live PR head (`git merge-tree --write-tree <prev> <head>`) and `mergeQueueEntry`, pass candidate/cut/review/thread admission, and belong to the base repository before self-hosted runners are selected. The
-`merge-ready` label still requests full PR qualification on the installed route.
+`merge-ready` label requests the protected PR Result on the installed route. A successful
+docs-only classification uses the docs gate. Other changes select the applicable
+product lanes. The Result also requires admission and the applicable VS Code
+checks.
 The [staged route](MERGE_FLOW.md#staged-admission-and-group-qualification)
 keeps the deliberate label for one metadata-only job and reserves product CI
 for G. Its admission check has not been installed.
@@ -578,7 +581,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Installed request for full PR qualification. The staged generation retains the label for bounded Ready-PR admission. |
+| `merge-ready` | Installed request for the protected PR Result using the selected docs or product lanes. The staged generation retains the label for bounded Ready-PR admission. |
 | `full-ci` | Select broader proof in the retained protected caller, including extension e2e. It must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes or start retired auxiliary workflows. Demotes `ripr-waive` for this PR. |
 | `release-check` | Target vocabulary for release-surface selection; it does not start the retired auxiliary CI route. Callable CI uses `run_release_proof`. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |

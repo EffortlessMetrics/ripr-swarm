@@ -64,7 +64,11 @@ The installed reader uses authenticated GraphQL for thread resolution. The
 credential-free check needs a supported source for any state it claims.
 
 Freeze the trunk and three independent, ordered heads. Verify one real
-qualification on the full group's exact checkout and tree. Inspect the
+qualification on the full group's exact checkout and tree. Observe all three
+PRs landing through the native queue in frozen order, with the final sandbox
+trunk tree equal to the qualified group tree. Record the protected landing
+commits and the final trunk SHA. A green group that never lands fails this
+positive control. Inspect the
 canonical product result on each prefix. Verify it is absent or pending
 and that no skipped, neutral or legacy result satisfies the requirement. A
 failing middle must be ejected and the recomposed group must earn its own
@@ -208,7 +212,8 @@ Sequence the rollout:
    Full legacy PR qualification was kept during the bounded queue bootstrap.
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
-5. Retire the remaining duplicate label and child routes coherently. The bounded
+5. Keep the deliberate `merge-ready` admission trigger. Retire its old PR-side
+   product work and the duplicate child routes after the protected rehearsal. The bounded
    main-push retirement already keeps full H/G authority, cold recomputation and
    cheap landed observation. Distinct incident/deep/release obligations remain.
 6. Observe a real operating cohort before declaring economics or adoption accepted.
