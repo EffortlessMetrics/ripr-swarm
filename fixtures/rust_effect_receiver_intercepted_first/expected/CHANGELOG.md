@@ -36,3 +36,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_effect_receiver_intercepted_first (4)
+
+Reason:
+RIPR-SPEC-0108: The notifier.send call remains present on both sides. Describe the changed argument in the full human view rather than claiming removal (#15364).
+
+Command:
+`cargo xtask goldens bless rust_effect_receiver_intercepted_first --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

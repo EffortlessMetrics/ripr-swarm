@@ -111,6 +111,7 @@ Finding 3: WARNING ./src/lib.rs:6
 Changed
   before: if end > start {
   after:  end > start
+          (condition only; before is the whole old line; open ./src/lib.rs:6 to read the new line)
 Change type
   a condition or comparison changed
   family: predicate

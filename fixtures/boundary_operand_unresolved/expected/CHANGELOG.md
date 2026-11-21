@@ -128,3 +128,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_operand_unresolved (11)
+
+Reason:
+RIPR-SPEC-0158: The after value is the condition from an else-if, while before displays the entire if line. Explain this difference in the full human view (#15584).
+
+Command:
+`cargo xtask goldens bless boundary_operand_unresolved --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
