@@ -1986,7 +1986,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "mutating",
             "dist/ripr-distribution-catalog.json by default (--out or DISTRIBUTION_CATALOG_OUT overrides)",
             false,
-            false,
+            true,
             "Builds the candidate release distribution catalog outside tracked source at dist/ripr-distribution-catalog.json by default; --out or DISTRIBUTION_CATALOG_OUT selects the output path.",
         ),
         command_entry(
@@ -3130,7 +3130,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "mutating",
             "editors/vscode/dist",
             false,
-            false,
+            true,
             "Admits the staged distribution catalog, builds the VS Code extension package, and proves the packaged catalog bytes.",
         ),
         command_entry(
