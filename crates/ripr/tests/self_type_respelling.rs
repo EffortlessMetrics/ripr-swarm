@@ -271,6 +271,15 @@ fn a_spelling_the_files_do_not_prove_equivalent_stays_probed() -> Result<(), Str
             ),
         ),
         (
+            "an attribute macro receives the enclosing module",
+            shaped(
+                "#[bridge::module]\nmod inner {\n    pub struct Shell(pub u8);\n    impl Shell {\n\
+                 \x20       pub fn make(n: u8) -> Shell {\n            Shell(n)\n        }\n\
+                 \x20       pub fn twice(n: u8) -> Shell {",
+                "        }\n    }\n}",
+            ),
+        ),
+        (
             "the line is outside every impl",
             shaped(
                 "impl Shell {\n    pub fn make(n: u8) -> Shell {\n        Shell(n)\n    }\n}\n\

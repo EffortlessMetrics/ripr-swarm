@@ -183,7 +183,8 @@ all of these hold on each side:
 - only the associated item that holds the token sits between it and that
   `impl`, no enclosing block declares an item or `use`, no generic
   parameter or binding pattern in that item spells the type name, and the
-  item and the `impl` carry only token-blind attributes (`inline`, `cfg`,
+  item, the `impl` and every module around it carry only token-blind
+  attributes (`inline`, `cfg`,
   `allow`, `doc`, ...), so no attribute macro receives the spelling;
 - neither file declares the type with generic parameters (a defaulted
   parameter lets `Wrap::new()` infer what `Self::new()` fixes);

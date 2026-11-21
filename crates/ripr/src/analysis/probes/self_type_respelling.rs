@@ -19,8 +19,9 @@
 //! - between the token and that `impl` there is only the associated item
 //!   that holds it: a nested item would give `Self` another meaning, and a
 //!   generic parameter, block-level item or `use` could rebind the name;
-//! - the `impl` and that associated item carry only attributes that never
-//!   read their tokens, so no attribute macro can observe the spelling;
+//! - the `impl`, that associated item and every module around the `impl`
+//!   carry only attributes that never read their tokens, so no attribute
+//!   macro can observe the spelling;
 //! - neither file declares the type with generic parameters (a defaulted
 //!   parameter makes `Shell::new()` infer what `Self::new()` fixes).
 //!
@@ -314,6 +315,9 @@ fn governed_by_impl_of(token: &SyntaxToken, type_name: &str) -> bool {
         if let Some(implementation) = ast::Impl::cast(node.clone()) {
             return impl_names_bare_type(&implementation, type_name)
                 && token_blind_attributes(&implementation)
+                // An attribute macro on an enclosing module receives the
+                // whole `impl` as tokens.
+                && node.ancestors().skip(1).all(|outer| holder_is_token_blind(&outer))
                 && holder
                     .as_ref()
                     .is_none_or(|item| held_directly(item, &implementation));
