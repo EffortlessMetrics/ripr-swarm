@@ -594,6 +594,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "gh-pr-status --pr <number>",
         "ci-budget [--workflow <name>] [--limit <n>] [--input <path>]",
         "merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]",
+        "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
         "module-health [--threshold <n>]",
         "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
         "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
@@ -972,6 +973,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Reads the current ripr-swarm merge/protection surface through GET-only GitHub endpoints or a sanitized --input snapshot and writes one MQ0 current-state packet; desired settings, live observation, apply-route capability, and rollback capture stay separate facts. It never mutates settings, rulesets, workflows, branches, PRs, or secrets, and it does not evaluate a future queue desired state.",
+        ),
+        command_entry(
+            "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
+            "external_state_read",
+            "<new-output-directory>/{queue-pages.json,queue-conflicts.json}",
+            false,
+            false,
+            "Compares frozen PR heads to pinned main using a disposable bare Git store, without changing GitHub or scheduling CI.",
         ),
         command_entry(
             "module-health [--threshold <n>]",

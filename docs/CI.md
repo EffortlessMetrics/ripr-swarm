@@ -1560,6 +1560,45 @@ trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
 
+#### Inspect queued heads against main
+
+Run `cargo xtask merge-queue conflicts <new-output-directory>` to inspect the
+current private swarm queue on demand. It requires Git with `--attr-source`
+and `merge-tree --write-tree`, authenticated read
+access through `gh`, and Git read access to the swarm through SSH. The output
+directory's parent must exist. The initial fetch can use the operator's configured
+transport and credential helpers. It disables hooks and fetches complete
+objects. The later Git comparisons disable lazy fetching, ignore system and
+global Git configuration such as custom merge drivers, use each compared
+base commit as the source for repository attributes (including built-in merge
+rules), ignore the user attributes file, and do not check out
+the candidate trees. An unsupported `--attr-source` is detected once and leaves every head
+unexamined with a Git upgrade hint. The command records the paginated queue response
+as `queue-pages.json`, fetches the observed commits into a fresh bare
+`objects.git`, and writes `queue-conflicts.json`. To repeat the comparison on
+exactly the same input, pass `--input <saved-queue-pages.json>` with a new
+output directory. Normal completion and handled failures remove the private
+object store. A killed process may leave `<new-output-directory>/objects.git`;
+remove that directory after confirming its command has exited.
+
+Each entry compares the PR's observed head to the same main commit. GitHub's
+queue order and speculative merge-group results are separate evidence.
+Pagination refuses differing main commits, inconsistent counts or positions,
+and repeated PRs. The pages describe the observed membership during the
+read; GitHub can change membership afterward.
+
+A conflict lists Git's paths. Where the same path stays conflicted up to a
+verified first-parent edge, the report identifies the commit at which its
+latest continuous conflicting interval began. The command walks back at most
+64 first-parent edges per conflicted head after finishing the base comparisons.
+A null boundary carries the reason history could not establish the transition.
+The whole command gives its child operations a shared 480-second budget.
+Missing objects, timeouts and other failed comparisons produce an explicit
+`unexamined` row and a nonzero exit once the report has been written. A failed
+census cannot produce a complete report. The operator can inspect the evidence
+and coordinate with the PR owner. The command has no GitHub write operation
+and the scheduled watchdog does not invoke it (#14705).
+
 ### Issue Staleness Watchdog
 
 Open investigation issues often cite repo-rooted `path:line` evidence that
