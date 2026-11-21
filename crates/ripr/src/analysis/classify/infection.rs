@@ -3126,6 +3126,7 @@ mod tests {
                     literal_length_boundary: None,
                     slice_counter_boundary: None,
                     unary_tail: None,
+                    literal_condition: None,
                 },
                 false,
                 false,
