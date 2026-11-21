@@ -207,6 +207,10 @@ discovered normally and use isolated tool fixtures. Those controls establish
 sequencing and failure handling, not a real SDK, native host, full setup pass,
 saved-environment restoration or measured resource envelope.
 
+Run `cargo test -p xtask --bin xtask golden_drift` to check the classification
+of human evidence drift, including the detail-window swap from
+`manual_let_else_pairing`, and its Markdown and JSON reports.
+
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
