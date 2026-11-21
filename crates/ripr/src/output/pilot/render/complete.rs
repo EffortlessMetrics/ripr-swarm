@@ -1502,7 +1502,7 @@ fn push_changed_file_limitations(
         out.push_str(&terminal_safe(format!(
             "{prefix}: {}: {}. {}\n",
             limitation.kind.as_str(),
-            limitation.kind.plain_label(),
+            limitation.plain_label(),
             limitation.recovery.detail
         )));
     }

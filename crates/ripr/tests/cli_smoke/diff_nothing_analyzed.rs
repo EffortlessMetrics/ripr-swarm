@@ -309,3 +309,54 @@ fn a_binary_rendered_copy_read_as_added_source_is_not_named_unread() -> TestResu
     );
     Ok(())
 }
+
+const MODE_ONLY_LIB: &str =
+    "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n";
+
+/// #15862: a well-formed mode-only diff keeps the `malformed_diff` schema
+/// token, but the human limitation line must not call it unparseable next to
+/// the detail that says it is well formed. Garbage input keeps the parse label.
+#[test]
+fn a_mode_only_diff_is_not_labelled_unparseable() -> TestResult {
+    let human_for = |name: &str, sections: &[&str]| -> TestResult<(String, serde_json::Value)> {
+        let (root, diff) = intake_workspace(name, sections)?;
+        let _cleanup = DeclaredHunkScratch(root.clone());
+        let human = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["check", "--diff", &diff],
+        )?;
+        let json = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["check", "--diff", &diff, "--format", "json"],
+        )?;
+        Ok((
+            String::from_utf8_lossy(&human.stdout).into_owned(),
+            serde_json::from_slice(&json.stdout)?,
+        ))
+    };
+    let (human, json) = human_for("diff-mode-only-label", &[MODE_ONLY_LIB])?;
+    // Pin the stimulus: the producer recorded the non-text limitation.
+    let limitations = &json["analysis_outcome"]["outcome"]["limitations"];
+    assert_eq!(limitations[0]["kind"], "malformed_diff", "{json}");
+    assert!(
+        limitations[0]["bounded_detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("well formed")),
+        "{json}"
+    );
+    assert!(
+        human.contains("Limitation: the diff has only binary or file-mode changes during"),
+        "{human}"
+    );
+    assert!(!human.contains("could not be parsed"), "{human}");
+
+    let (garbage, _) = human_for("diff-garbage-label-control", &["this is not a diff\n"])?;
+    assert!(
+        garbage.contains("Limitation: the diff could not be parsed during"),
+        "{garbage}"
+    );
+    assert!(!garbage.contains("binary or file-mode"), "{garbage}");
+    Ok(())
+}

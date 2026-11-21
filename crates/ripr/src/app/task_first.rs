@@ -2787,7 +2787,7 @@ pub(crate) fn incomplete_limitation_summary(output: &super::CheckOutput) -> Stri
     else {
         return "the run disclosed no analysis outcome".to_string();
     };
-    let mut summary = limitation.kind.plain_label().to_string();
+    let mut summary = limitation.plain_label().to_string();
     if let Some(path) = &limitation.path {
         summary.push_str(&format!(" (in `{path}`)"));
     }
