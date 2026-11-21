@@ -481,7 +481,7 @@ impl PacketRun {
 
     /// `ripr ARGS` from the workspace root, its output in the job log.
     fn ripr(&self, args: &[String]) -> StageResult {
-        self.spawn(args, Stdio::inherit())
+        self.spawn(args, None)
     }
 
     /// `ripr ARGS > OUT`: the file is truncated before the command runs, as
@@ -528,14 +528,19 @@ impl PacketRun {
                 .push(format!("{prefix}ripr {} > {out}", args.join(" ")));
             return Ok(());
         }
-        self.spawn_env(args, Stdio::from(file), env)
+        self.spawn_env(args, Some(file), env)
     }
 
-    fn spawn(&self, args: &[String], stdout: Stdio) -> StageResult {
+    fn spawn(&self, args: &[String], stdout: Option<fs::File>) -> StageResult {
         self.spawn_env(args, stdout, &[])
     }
 
-    fn spawn_env(&self, args: &[String], stdout: Stdio, env: &[(&str, &str)]) -> StageResult {
+    fn spawn_env(
+        &self,
+        args: &[String],
+        stdout: Option<fs::File>,
+        env: &[(&str, &str)],
+    ) -> StageResult {
         match self.spawn_code(args, stdout, env)? {
             Some(0) => Ok(()),
             Some(code) => Err(format!("`ripr {}` exited {code}", args.join(" "))),
@@ -547,11 +552,21 @@ impl PacketRun {
     }
 
     /// Runs one child and returns its exit code (`None` when a signal ended
-    /// it). A recorded run reports `Some(0)`.
+    /// it). A recorded run reports `Some(0)`. `stdout` is the file the child's
+    /// report goes to; `None` sends it to the job log.
+    ///
+    /// Everything the child sends to the job log sits inside a
+    /// `::stop-commands::` window. A child's report and notices quote
+    /// repository text (a path, an assertion, a test name), and a pull request
+    /// can name a file `x<newline>::error::...`, which the runner would
+    /// otherwise read as a workflow command. The child's stderr joins this
+    /// process's stdout so both reach the runner as one ordered stream: the
+    /// runner reads the two pipes independently, so a last stderr line could
+    /// otherwise land after the resume marker.
     fn spawn_code(
         &self,
         args: &[String],
-        stdout: Stdio,
+        stdout: Option<fs::File>,
         env: &[(&str, &str)],
     ) -> Result<Option<i32>, String> {
         if let Some(recorded) = &self.recorded {
@@ -560,14 +575,16 @@ impl PacketRun {
                 .push(format!("ripr {}", args.join(" ")));
             return Ok(Some(0));
         }
+        let token = workflow_command_pause_token();
+        println!("::stop-commands::{token}");
         let _ = std::io::stdout().flush();
         let mut command = Command::new(&self.exe);
         command
             .args(args)
             .current_dir(&self.root)
             .stdin(Stdio::null())
-            .stdout(stdout)
-            .stderr(Stdio::inherit());
+            .stdout(stdout.map_or_else(Stdio::inherit, Stdio::from))
+            .stderr(Stdio::from(std::io::stdout()));
         if self.quiet {
             command.env(crate::cli::progress::QUIET_ENV, "1");
         }
@@ -575,13 +592,14 @@ impl PacketRun {
             command.env(name, value);
         }
         let shown = format!("ripr {}", args.join(" "));
-        let status = OwnedProcess::spawn(command)
-            .and_then(|mut child| child.wait())
-            .map_err(|err| {
-                format!(
-                    "`{shown}` could not run: {err}; check that command is installed and on PATH"
-                )
-            })?;
+        let status = OwnedProcess::spawn(command).and_then(|mut child| child.wait());
+        // The marker starts its own line even when the child's last line had
+        // no newline; a marker glued to that line would leave every later
+        // command of the step unread.
+        println!("\n::{token}::");
+        let status = status.map_err(|err| {
+            format!("`{shown}` could not run: {err}; check that command is installed and on PATH")
+        })?;
         Ok(status.code())
     }
 
@@ -1305,7 +1323,7 @@ impl PacketRun {
             "--out",
             "target/ripr/workflow",
         ]);
-        match self.spawn_code(&start, Stdio::inherit(), &[])? {
+        match self.spawn_code(&start, None, &[])? {
             Some(0) => {}
             // Exit 3 is "ripr declined" (docs/EXIT_CODES.md): ripr ran and
             // chose not to start a repair for this seam. That is an expected
@@ -1569,7 +1587,7 @@ impl PacketRun {
         if !self.settings.gate_baseline.is_empty() {
             argv.extend(args(&["--baseline", &self.settings.gate_baseline]));
         }
-        let code = self.spawn_code(&argv, Stdio::inherit(), &[])?;
+        let code = self.spawn_code(&argv, None, &[])?;
         // #14841: a blocked gate keeps exit 3 for the packet.
         self.gate_blocked = code == Some(3);
         gate_stage_result(
@@ -1998,6 +2016,19 @@ fn recorded_labels(path: &Path) -> Vec<String> {
         })
         .filter(|label| !label.is_empty() && label != "null")
         .collect()
+}
+
+/// A fresh resume token for one `::stop-commands::` window. The pull request's
+/// content is fixed before the run, so a token it cannot predict is one it
+/// cannot print; `RandomState` draws its keys from the operating system.
+fn workflow_command_pause_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let draw = || {
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    };
+    format!("ripr-{:016x}{:016x}", draw(), draw())
 }
 
 /// Workflow-command data encoding for an `::error` message.

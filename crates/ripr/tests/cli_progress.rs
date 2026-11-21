@@ -1817,6 +1817,17 @@ fn strip_narration(stderr: &str) -> String {
         .join("\n")
 }
 
+/// Where a command's narration lands. `reports ci-packet` replays each
+/// child's stderr on its own stdout, inside a `::stop-commands::` window, so
+/// its children's narration is read from both streams.
+fn narration_log(path: &str, output: &Output) -> String {
+    let stderr = stderr_text(output);
+    if path != "reports ci-packet" {
+        return stderr;
+    }
+    format!("{}\n{stderr}", String::from_utf8_lossy(&output.stdout))
+}
+
 fn run_catalog_command(args: &[String], quiet_env: Option<&str>) -> Result<Output, String> {
     let mut command = ripr();
     command.args(args).env_remove("RIPR_QUIET");
@@ -2083,16 +2094,17 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
         }
         let quiet_err = stderr_text(&quiet);
         let loud_err = stderr_text(&loud);
-        let leaked = narration_lines(&quiet_err);
+        let leaked = narration_lines(&narration_log(&path, &quiet));
         if !leaked.is_empty() {
             failures.push(format!(
                 "{path}: RIPR_QUIET=1 still printed narration: {leaked:?}\nstderr={quiet_err}"
             ));
             continue;
         }
-        if MUST_EMIT_NARRATION.contains(&path.as_str()) && narration_lines(&loud_err).is_empty() {
+        let loud_log = narration_log(&path, &loud);
+        if MUST_EMIT_NARRATION.contains(&path.as_str()) && narration_lines(&loud_log).is_empty() {
             failures.push(format!(
-                "{path} loud run emitted no progress, so RIPR_QUIET has nothing to drop: {loud_err}"
+                "{path} loud run emitted no progress, so RIPR_QUIET has nothing to drop: {loud_log}"
             ));
             continue;
         }
@@ -2121,7 +2133,7 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
             ));
             continue;
         }
-        let leaked = narration_lines(&flag_err);
+        let leaked = narration_lines(&narration_log(&path, &flag));
         if !leaked.is_empty() {
             failures.push(format!(
                 "{path}: --quiet still printed narration: {leaked:?}\nstderr={flag_err}"

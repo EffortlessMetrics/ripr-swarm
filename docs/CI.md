@@ -2159,6 +2159,13 @@ failure rules, and `--step NAME` reruns one step locally. The packet exits
 `3` when the gate blocked and nothing else required failed, and `2` when a
 required step could not complete ([EXIT_CODES.md](EXIT_CODES.md#ci-integration)).
 
+Each child command's output, stderr included, reaches the job log on the
+packet's stdout inside a `::stop-commands::` window with a fresh random token.
+A report quotes repository text, and a pull request can name a file
+`x<newline>::error::...`; inside the window the runner reads no line of it as
+a workflow command (#15918). The packet's own group markers, step errors and
+changed-line annotations are printed outside the windows.
+
 When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
 loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
 [EXIT_CODES.md](EXIT_CODES.md)); it is an expected outcome, not a failed step,
