@@ -1,4 +1,4 @@
-//! Exported factories that build an instance of a getter owner's own class.
+//! Factories that build an instance of an instance-member owner's own class.
 //!
 //! A test cannot construct a class the module only exposes through a factory,
 //! and it often reads the changed getter on the value the factory returned:
@@ -16,7 +16,19 @@
 //! the getter. This module records, on each getter owner, the exported
 //! factories that return a fresh instance of the owner's class, so the
 //! relation layer can treat a receiver bound to such a factory call like a
-//! receiver bound to `new Class(...)` (RIPR-SPEC-0243 decision 23, #10402). The analysis is
+//! receiver bound to `new Class(...)` (RIPR-SPEC-0243 decision 23, #10402).
+//!
+//! An ordinary method owner gets the same factories (#15924): `const c =
+//! makeCart(); c.apply(...)` runs `Cart.apply`. Both owner kinds also record
+//! the STATIC factories of their class (`static make(): Cart { return new
+//! Cart(); }`, reached as `Cart.make()`), marked
+//! [`TypeScriptInstanceKind::StaticFactory`]: a static method that is the
+//! only member of its name in the class, is not async, a generator,
+//! an accessor, computed or decorated, passes the same return and mention
+//! checks as an exported factory, and is not named by any member assignment
+//! in the file.
+//!
+//! The analysis is
 //! syntax-only, same-file and fail-closed. A factory qualifies only when:
 //!
 //! - it is the only top-level declaration of its name: a plain (not async, not
@@ -54,7 +66,8 @@ struct FactoryDeclaration<'a> {
     class_name: Option<String>,
 }
 
-/// Record, on each getter owner, the exported factories of its class.
+/// Record, on each getter or ordinary-method owner, the exported and static
+/// factories of its class.
 pub(crate) fn assign_instance_factories(
     program: &oxc_ast::ast::Program<'_>,
     source: &SourceText<'_>,
@@ -64,7 +77,7 @@ pub(crate) fn assign_instance_factories(
 ) {
     let wanted: BTreeSet<&str> = owners
         .iter()
-        .filter(|owner| is_getter_owner(owner))
+        .filter(|owner| is_instance_member_owner(owner))
         .filter_map(|owner| owner.class_name.as_deref())
         .filter(|class_name| !repeated_names.contains(*class_name))
         .collect();
@@ -86,6 +99,7 @@ pub(crate) fn assign_instance_factories(
             &mut exports,
         );
     }
+    let static_factories = static_factories(program, text, &wanted);
     let class_member_sources = class_member_sources(owners);
     let (supers, decorated_classes) = class_supers(program);
     let facts = ClassFacts {
@@ -98,7 +112,7 @@ pub(crate) fn assign_instance_factories(
     };
     let mut additions: Vec<(usize, Vec<TypeScriptModuleEntry>)> = Vec::new();
     for (index, owner) in owners.iter().enumerate() {
-        if !is_getter_owner(owner) {
+        if !is_instance_member_owner(owner) {
             continue;
         }
         let Some(class_name) = owner.class_name.as_deref() else {
@@ -115,7 +129,8 @@ pub(crate) fn assign_instance_factories(
                     other.file == owner.file
                         && other.class_name.as_deref() == Some(class_name)
                         && other.name == owner.name
-                        && other.method_kind == TypeScriptMethodKind::Getter
+                        && other.owner_kind == owner.owner_kind
+                        && other.method_kind == owner.method_kind
                 })
                 .count()
                 != 1
@@ -137,10 +152,23 @@ pub(crate) fn assign_instance_factories(
                     class_member: None,
                     decorated: None,
                     instance_factory: true,
+                    instance_kind: TypeScriptInstanceKind::ExportedFactory,
                     hops: 0,
                     cross_module: None,
                 });
             }
+        }
+        for name in static_factories.get(class_name).into_iter().flatten() {
+            entries.push(TypeScriptModuleEntry {
+                name: name.clone(),
+                exported_as_default: false,
+                class_member: None,
+                decorated: None,
+                instance_factory: true,
+                instance_kind: TypeScriptInstanceKind::StaticFactory,
+                hops: 0,
+                cross_module: None,
+            });
         }
         entries.sort();
         entries.dedup();
@@ -249,10 +277,95 @@ fn class_chain_cannot_replace_getter(
 /// Longest `extends` chain followed; a longer one refuses.
 const MAX_CLASS_CHAIN: usize = 4;
 
-fn is_getter_owner(owner: &TypeScriptOwner) -> bool {
+/// A getter (reached by a property read) or an ordinary instance method
+/// (reached by a member call) of a named class.
+fn is_instance_member_owner(owner: &TypeScriptOwner) -> bool {
     owner.owner_kind == OwnerKind::Method
-        && owner.method_kind == TypeScriptMethodKind::Getter
+        && matches!(
+            owner.method_kind,
+            TypeScriptMethodKind::Getter | TypeScriptMethodKind::Ordinary
+        )
         && owner.class_name.is_some()
+}
+
+/// `class name -> static factory names`: the static methods of each wanted
+/// top-level class whose every return is `new <that class>(...)`.
+fn static_factories(
+    program: &oxc_ast::ast::Program<'_>,
+    text: &str,
+    wanted: &BTreeSet<&str>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut visit = |class: &Class<'_>| {
+        let Some(class_name) = class.id.as_ref().map(|id| id.name.as_str()) else {
+            return;
+        };
+        if !wanted.contains(class_name) {
+            return;
+        }
+        // Every plain member name with how often the class declares it; a
+        // key this scan cannot name could be any of them.
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut unnamed_key = false;
+        let mut candidates: Vec<String> = Vec::new();
+        for element in &class.body.body {
+            let (key, computed) = match element {
+                ClassElement::MethodDefinition(method) => (&method.key, method.computed),
+                ClassElement::PropertyDefinition(field) => (&field.key, field.computed),
+                ClassElement::AccessorProperty(field) => (&field.key, field.computed),
+                ClassElement::StaticBlock(_) => {
+                    unnamed_key = true;
+                    continue;
+                }
+                ClassElement::TSIndexSignature(_) => continue,
+            };
+            if matches!(key, PropertyKey::PrivateIdentifier(_)) {
+                continue;
+            }
+            let Some(name) = property_key_name(key).filter(|_| !computed) else {
+                unnamed_key = true;
+                continue;
+            };
+            *counts.entry(name.clone()).or_default() += 1;
+            if let ClassElement::MethodDefinition(method) = element
+                && method.r#static
+                && method.kind == oxc_ast::ast::MethodDefinitionKind::Method
+                && method.decorators.is_empty()
+                && function_factory_class(&method.value, text, wanted).as_deref()
+                    == Some(class_name)
+            {
+                candidates.push(name);
+            }
+        }
+        if unnamed_key {
+            return;
+        }
+        candidates.retain(|name| {
+            counts.get(name) == Some(&1)
+                && is_safe_javascript_identifier(name)
+                && !super::class_entries::assigns_member_named(text, name)
+        });
+        if !candidates.is_empty() {
+            out.insert(class_name.to_string(), candidates);
+        }
+    };
+    for statement in &program.body {
+        match statement {
+            Statement::ClassDeclaration(class) => visit(class),
+            Statement::ExportNamedDeclaration(export) => {
+                if let Some(Declaration::ClassDeclaration(class)) = export.declaration.as_ref() {
+                    visit(class);
+                }
+            }
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
+                    visit(class);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Source text of every method of each `(file, class)`, so an instance-level

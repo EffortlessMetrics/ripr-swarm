@@ -138,6 +138,17 @@ impl TypeScriptOwner {
     }
 }
 
+/// One member a test file calls on an ES namespace import of a barrel, with
+/// the declaration the member binds (#15923): `lib.member` is `name` as
+/// declared by `module` (a normalized module path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptBarrelNamespaceMember {
+    pub(crate) local: String,
+    pub(crate) member: String,
+    pub(crate) module: String,
+    pub(crate) name: String,
+}
+
 /// Test block extracted from a TypeScript / JavaScript test file.
 ///
 /// Covers syntax-first Jest/Vitest `test('name', fn)`, `it('name', fn)`,
@@ -191,8 +202,19 @@ pub(crate) struct TypeScriptTest {
     /// file-level code included) except as its own import binding and as
     /// direct calls `local.member(`; one pair per directly called member, so
     /// calls of several members credit each of them (RIPR-SPEC-0243 rule 5).
+    /// Also holds, for each ES namespace import (`import * as local`) the
+    /// whole file uses only as a member receiver it never writes, one pair
+    /// per directly called member (#15923); read those through
+    /// [`TypeScriptTest::namespace_member_calls_in_file`].
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Shared<(String, String)>,
+    /// What each member the file calls on an ES namespace import of a BARREL
+    /// (`import * as lib from '../src'; lib.f()`) resolves to through the
+    /// bounded re-export chain (#15923). Derived from the workspace's
+    /// re-export index after extraction, once per run, by
+    /// `ReExportIndex::record_barrel_namespace_members`; never persisted.
+    #[serde(skip)]
+    pub(crate) barrel_namespace_members_in_file: Shared<TypeScriptBarrelNamespaceMember>,
     /// Names the containing test file writes more than once (their
     /// declaration initializer plus a reassignment, update or loop target),
     /// so a binding such as `let f = require('./owner')` may no longer hold
@@ -269,6 +291,22 @@ pub(crate) struct TypeScriptTest {
 }
 
 impl TypeScriptTest {
+    /// `(local, member)` for each member the file calls on an ES namespace
+    /// import (`import * as local`) that it uses only as a never-written
+    /// member receiver (#15923). Held in `default_member_only_locals_in_file`
+    /// beside the default-import pairs; the two never share a local.
+    pub(crate) fn namespace_member_calls_in_file(
+        &self,
+    ) -> impl Iterator<Item = &(String, String)> + '_ {
+        self.default_member_only_locals_in_file
+            .iter()
+            .filter(|(local, _)| {
+                self.imports_in_file.iter().any(|import| {
+                    import.namespace && import.imported.is_none() && import.local == *local
+                })
+            })
+    }
+
     /// The file line a rendered pointer to `assertion` should name.
     pub(crate) fn evidence_line(&self, assertion: &TypeScriptAssertion) -> usize {
         self.factory_call_line.unwrap_or(assertion.line)

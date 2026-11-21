@@ -118,6 +118,34 @@ pub(crate) struct ReExportIndex {
     /// Names each module assigns exactly once onto its CommonJS exports: a
     /// whole-module forward into that module resolves only these (#15284).
     commonjs_own_names: HashMap<String, HashSet<String>>,
+    /// Import-then-export forwards (#15922): `import { N as l } from './A';
+    /// export { l as M }` (or `export const M = l`) as `(module, M) -> (N,
+    /// A_module)`. An import binding is immutable, so the export is the
+    /// source's binding exactly as `export { N as M } from './A'` is. Kept
+    /// apart from `entries` so the strict enum walk, which finishes such a
+    /// binding through the module's own imports, is unchanged.
+    import_forwards: HashMap<(String, String), (String, String)>,
+    /// Every top-level class that extends a plain identifier, with its file
+    /// (#15924). Read by [`Self::inheriting_subclasses`].
+    class_heritage: Vec<(PathBuf, super::class_heritage::ClassHeritageFact)>,
+}
+
+/// Most classes followed as inheritors of one changed member (#15924). Past
+/// it the rest are dropped, which only withholds reach.
+const MAX_INHERITING_SUBCLASSES: usize = 16;
+
+/// Longest `extends` chain followed from the owner's class to a subclass.
+const MAX_SUBCLASS_DEPTH: usize = 3;
+
+/// One class on an `extends` walk from the owner's class.
+struct SubclassFrame {
+    module: String,
+    class: String,
+    default_export: bool,
+    /// Modules of the classes between the owner's class and this one, this
+    /// one included.
+    chain: BTreeSet<String>,
+    depth: usize,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -247,6 +275,8 @@ impl ReExportIndex {
         let mut commonjs_forwards: HashMap<String, String> = HashMap::new();
         let mut commonjs_own_names: HashMap<String, HashSet<String>> = HashMap::new();
         let mut commonjs_entries: Vec<((String, String), (String, String))> = Vec::new();
+        let mut import_forwards: HashMap<(String, String), (String, String)> = HashMap::new();
+        let mut class_heritage = Vec::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
             let path = normalized_path(file);
@@ -287,6 +317,15 @@ impl ReExportIndex {
                 entries.entry(key).or_insert_with(|| value);
             }
             star_edges.extend(file_facts.star_edges);
+            for (key, value) in file_facts.import_forwards {
+                import_forwards.entry(key).or_insert(value);
+            }
+            class_heritage.extend(
+                file_facts
+                    .class_heritage
+                    .into_iter()
+                    .map(|fact| (relative.clone(), fact)),
+            );
             commonjs_entries.extend(file_facts.commonjs_entries);
             for (from, to) in file_facts.commonjs_forwards {
                 commonjs_forwards.entry(from).or_insert(to);
@@ -342,6 +381,8 @@ impl ReExportIndex {
             rename_aliases: HashMap::new(),
             commonjs_forwards,
             commonjs_own_names,
+            import_forwards,
+            class_heritage,
         };
         index.admit_commonjs_entries(commonjs_entries);
         index.index_outbound_calls();
@@ -393,7 +434,7 @@ impl ReExportIndex {
             }
         }
         self.rename_aliases.clear();
-        for ((_, exported), (original, _)) in &self.entries {
+        for ((_, exported), (original, _)) in self.entries.iter().chain(&self.import_forwards) {
             if exported != original {
                 self.rename_aliases
                     .entry(original.clone())
@@ -531,6 +572,7 @@ impl ReExportIndex {
                         class_member: None,
                         decorated: None,
                         instance_factory: false,
+                        instance_kind: TypeScriptInstanceKind::default(),
                         hops: u8::try_from(total).unwrap_or(u8::MAX),
                         cross_module: Some(TypeScriptCrossModuleLink {
                             file: file.clone(),
@@ -594,6 +636,145 @@ impl ReExportIndex {
             && (found_name == target.name
                 || (found_name == "default" && target.exported_as_default));
         lands_on_target.then(|| visited.into_inner())
+    }
+
+    /// The classes that inherit `owner` (an ordinary method or getter of a
+    /// class) unchanged, as [`TypeScriptInstanceKind::Subclass`] entries
+    /// (#15924): `new Subclass()` then builds an instance whose `owner.name`
+    /// is the owner's code.
+    ///
+    /// Each `extends` identifier must bind the class one step up the chain:
+    /// a same-file class declaration, or an ES import that resolves through
+    /// [`Self::resolve_export`] (relative or aliased specifier, bounded
+    /// re-export chain; an ambiguous star export fails closed) to that
+    /// class's own declaration. No class on the chain may declare, assign on
+    /// `this` or otherwise be able to replace the member
+    /// (`ClassHeritageFact::opaque`). Only an exported subclass is listed,
+    /// but an unexported one still carries the chain to its own subclasses.
+    /// The chain is bounded by [`MAX_SUBCLASS_DEPTH`] and the result by
+    /// [`MAX_INHERITING_SUBCLASSES`]. Every module on a chain is recorded so
+    /// a test that mocks one is refused per test.
+    pub(crate) fn inheriting_subclasses(
+        &self,
+        owner: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Vec<TypeScriptModuleEntry> {
+        let Some(class_name) = owner.class_name.as_deref() else {
+            return Vec::new();
+        };
+        if self.class_heritage.is_empty()
+            || owner.owner_kind != OwnerKind::Method
+            || !matches!(
+                owner.method_kind,
+                TypeScriptMethodKind::Ordinary | TypeScriptMethodKind::Getter
+            )
+            || owner.commonjs_default_export
+            || !is_safe_javascript_identifier(&owner.name)
+        {
+            return Vec::new();
+        }
+        let owner_module = normalized_module_path(&owner.file);
+        let mut visited: BTreeSet<(String, String)> =
+            BTreeSet::from([(owner_module.clone(), class_name.to_string())]);
+        let mut frontier = std::collections::VecDeque::from([SubclassFrame {
+            module: owner_module,
+            class: class_name.to_string(),
+            default_export: owner.class_default_export,
+            chain: BTreeSet::new(),
+            depth: 0,
+        }]);
+        let mut entries = Vec::new();
+        while let Some(frame) = frontier.pop_front() {
+            if frame.depth >= MAX_SUBCLASS_DEPTH {
+                continue;
+            }
+            for (file, fact) in &self.class_heritage {
+                let module = normalized_module_path(file);
+                let key = (module.clone(), fact.name.clone());
+                if fact.opaque
+                    || fact.members.iter().any(|member| member == &owner.name)
+                    || visited.contains(&key)
+                    || !self.class_extends(file, &module, fact, &frame, alias_map, workspace_root)
+                {
+                    continue;
+                }
+                visited.insert(key);
+                let mut chain = frame.chain.clone();
+                chain.insert(module.clone());
+                if fact.exported {
+                    if entries.len() >= MAX_INHERITING_SUBCLASSES {
+                        return entries;
+                    }
+                    entries.push(TypeScriptModuleEntry {
+                        name: fact.name.clone(),
+                        exported_as_default: fact.default_export,
+                        class_member: None,
+                        decorated: None,
+                        instance_factory: true,
+                        instance_kind: TypeScriptInstanceKind::Subclass,
+                        hops: 0,
+                        cross_module: Some(TypeScriptCrossModuleLink {
+                            file: file.clone(),
+                            via_modules: chain.iter().cloned().collect(),
+                            chain_names: Vec::new(),
+                        }),
+                    });
+                }
+                frontier.push_back(SubclassFrame {
+                    module,
+                    class: fact.name.clone(),
+                    default_export: fact.default_export,
+                    chain,
+                    depth: frame.depth + 1,
+                });
+            }
+        }
+        entries
+    }
+
+    /// Whether `fact`'s `extends` identifier, written in `file`, binds the
+    /// class `base` stands for.
+    fn class_extends(
+        &self,
+        file: &Path,
+        module: &str,
+        fact: &super::class_heritage::ClassHeritageFact,
+        base: &SubclassFrame,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> bool {
+        let imports = self.enum_imports.get(module);
+        let matching: Vec<&TypeScriptImport> = imports
+            .into_iter()
+            .flatten()
+            .filter(|import| import.local == fact.base)
+            .collect();
+        match matching.as_slice() {
+            // No import binds the name: a class of the same file.
+            [] => imports.is_some() && module == base.module && fact.base == base.class,
+            [import] if !import.namespace => {
+                let Some(imported) = import.imported.as_deref() else {
+                    return false;
+                };
+                let Some(source) = normalized_relative_import_module(
+                    file,
+                    &import.source,
+                    alias_map,
+                    workspace_root,
+                ) else {
+                    return false;
+                };
+                matches!(
+                    self.resolve_export(&source, imported, 0, &mut Vec::new(), &|_| false),
+                    ExportResolution::Found(found_module, found_name)
+                        if found_module == base.module
+                            && (found_name == base.class
+                                || (found_name == "default" && base.default_export))
+                )
+            }
+            _ => false,
+        }
     }
 
     /// This module's `export *` targets, sorted and de-duplicated — exactly
@@ -1062,6 +1243,35 @@ impl ReExportIndex {
         mocked: &dyn Fn(&str) -> bool,
         enum_context: Option<&EnumBindingContext<'_>>,
     ) -> ExportResolution {
+        // Import-then-export (#15922): the exported name is the import
+        // binding, so it resolves in the imported module like an explicit
+        // `export { N as name } from`. Checked before the module's own
+        // names: the same statement also records `name` as a local export
+        // (or a self-hop rename). The enum walk keeps its own import
+        // follower (`enum_local_binding`).
+        if enum_context.is_none()
+            && let Some((original, source)) = self
+                .import_forwards
+                .get(&(module.to_string(), name.to_string()))
+        {
+            if hops >= MAX_REEXPORT_HOPS {
+                return ExportResolution::Unknown;
+            }
+            return match self.resolve_export_with_context(
+                source,
+                original,
+                hops + 1,
+                stack,
+                mocked,
+                enum_context,
+            ) {
+                // The import asserts the source exports the name.
+                ExportResolution::NotFound => {
+                    ExportResolution::Found(self.canonical_module(source), original.clone())
+                }
+                resolved => resolved,
+            };
+        }
         if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
         {
             if source == module {
@@ -1339,6 +1549,13 @@ impl ReExportIndex {
         if let Some(target) = self.namespace_exports.get(&frame) {
             return Some(self.canonical_module(target));
         }
+        // A namespace re-exported again by import-then-export (#15922).
+        if let Some((original, source)) = self.import_forwards.get(&frame) {
+            stack.push(frame);
+            let resolved = self.resolve_namespace_export(source, original, hops + 1, stack, mocked);
+            stack.pop();
+            return resolved;
+        }
         if self
             .local_exports
             .get(&module)
@@ -1476,6 +1693,97 @@ impl ReExportIndex {
             })
             .collect();
         changed.then_some(imports)
+    }
+
+    /// Resolve, for every test file, the members it calls on an ES namespace
+    /// import of a barrel (`import * as lib from '../src'; lib.f()`) to the
+    /// declaration each one binds (#15923). A member name is the exported
+    /// name, so it follows the bounded chain a named import follows.
+    ///
+    /// Fail closed: the namespace local must be used, across the whole file,
+    /// only as a member receiver that is never written (so it is never
+    /// shadowed, stubbed, spied on, destructured, spread or passed anywhere),
+    /// no mock specifier may be unresolved, and a mocked module on the chain,
+    /// an ambiguous, cyclic or over-deep chain records nothing. A namespace
+    /// of the declaring module itself is the direct-import rules' subject
+    /// and is not recorded.
+    pub(crate) fn record_barrel_namespace_members(
+        &self,
+        tests: &mut [TypeScriptTest],
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) {
+        if self.entries.is_empty()
+            && self.star_edges.is_empty()
+            && self.import_forwards.is_empty()
+            && self.commonjs_forwards.is_empty()
+        {
+            return;
+        }
+        let mut resolved: HashMap<
+            *const Vec<TypeScriptImport>,
+            Shared<TypeScriptBarrelNamespaceMember>,
+        > = HashMap::new();
+        for test in tests {
+            if test.namespace_member_calls_in_file().next().is_none() {
+                continue;
+            }
+            let members = resolved
+                .entry(test.imports_in_file.identity())
+                .or_insert_with(|| {
+                    Shared::from(self.barrel_namespace_members(test, alias_map, workspace_root))
+                });
+            if !members.is_empty() {
+                test.barrel_namespace_members_in_file = members.clone();
+            }
+        }
+    }
+
+    fn barrel_namespace_members(
+        &self,
+        test: &TypeScriptTest,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Vec<TypeScriptBarrelNamespaceMember> {
+        let Some(mocked_modules) = self.mocked_module_names(test, alias_map, workspace_root) else {
+            return Vec::new();
+        };
+        let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
+        let mut members = Vec::new();
+        for import in test
+            .imports_in_file
+            .iter()
+            .filter(|import| import.namespace && import.imported.is_none())
+        {
+            let Some(module) = normalized_relative_import_module(
+                &test.file,
+                &import.source,
+                alias_map,
+                workspace_root,
+            ) else {
+                continue;
+            };
+            let barrel = self.canonical_module(&module);
+            for (local, member) in test.namespace_member_calls_in_file() {
+                if *local != import.local || member == "default" {
+                    continue;
+                }
+                let ExportResolution::Found(target_module, target_name) =
+                    self.resolve_export(&module, member, 0, &mut Vec::new(), &mocked)
+                else {
+                    continue;
+                };
+                if target_module != barrel && !mocked(&target_module) {
+                    members.push(TypeScriptBarrelNamespaceMember {
+                        local: local.clone(),
+                        member: member.clone(),
+                        module: target_module,
+                        name: target_name,
+                    });
+                }
+            }
+        }
+        members
     }
 
     /// Apply [`Self::with_class_barrel_imports`] to every test, one rewritten
@@ -1643,6 +1951,30 @@ impl ReExportIndex {
             .collect();
         changed.then_some(imports)
     }
+}
+
+/// The locals of `test`'s ES namespace imports of a barrel whose member named
+/// like `owner` is `owner`'s own export (#15923): `lib` for `import * as lib
+/// from '../src'` when `lib.<owner>` resolves to the owner's declaration. A
+/// renamed export is not listed: the member the test calls must be spelled
+/// like the owner, which is what every receiver rule reads.
+pub(crate) fn barrel_namespace_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+) -> Vec<String> {
+    if test.barrel_namespace_members_in_file.is_empty() {
+        return Vec::new();
+    }
+    let owner_module = normalized_module_path(&owner.file);
+    let mut receivers = Vec::new();
+    for member in test.barrel_namespace_members_in_file.iter() {
+        if member.member == owner.name
+            && lands_on_owner(&member.module, &member.name, &owner_module, owner)
+        {
+            push_unique_string(&mut receivers, member.local.clone());
+        }
+    }
+    receivers
 }
 
 /// Whether the test body replaces or spies on a member of the `require()`
@@ -1824,6 +2156,14 @@ pub(crate) struct ModuleExportFacts {
     /// (#15284).
     #[serde(default)]
     pub(crate) commonjs_entries: Vec<((String, String), (String, String))>,
+    /// Import-then-export forwards (#15922), the same shape as `entries`:
+    /// `import { N as l } from './A'; export { l as M }` or `export const M =
+    /// l` as `(module, M) -> (N, A_module)`.
+    #[serde(default)]
+    pub(crate) import_forwards: Vec<((String, String), (String, String))>,
+    /// Top-level classes that extend a plain identifier (#15924).
+    #[serde(default)]
+    pub(crate) class_heritage: Vec<super::class_heritage::ClassHeritageFact>,
 }
 
 impl ModuleExportFacts {
@@ -1841,6 +2181,13 @@ impl ModuleExportFacts {
         };
         string_pair_bytes(&self.entries)
             .saturating_add(string_pair_bytes(&self.commonjs_entries))
+            .saturating_add(string_pair_bytes(&self.import_forwards))
+            .saturating_add(
+                self.class_heritage
+                    .iter()
+                    .map(super::class_heritage::ClassHeritageFact::approx_bytes)
+                    .sum::<usize>(),
+            )
             .saturating_add(tuple_bytes(&self.star_edges))
             .saturating_add(tuple_bytes(&self.commonjs_forwards))
             .saturating_add(
@@ -1916,6 +2263,7 @@ pub(crate) fn module_export_facts(
     let module = normalized_module_path(relative);
     let mut facts = ModuleExportFacts {
         enum_imports: extract_imports_for_test_file(body),
+        class_heritage: super::class_heritage::class_heritage_facts(body, source),
         ..ModuleExportFacts::default()
     };
     for statement in body {
@@ -1976,6 +2324,27 @@ pub(crate) fn module_export_facts(
             facts.unstable_enum_roots.push(name.clone());
         }
     }
+    let import_bindings = es_import_bindings(body);
+    // Record `exported` as the import binding `local` forwarded out of this
+    // module (#15922). The source resolves on disk like an `export ... from`.
+    let forward_import = |facts: &mut ModuleExportFacts, local: &str, exported: String| {
+        let Some((source, imported)) = import_bindings.get(local) else {
+            return;
+        };
+        let Some(resolved) =
+            normalized_relative_import_module(relative, source, alias_map, Some(workspace_root))
+        else {
+            return;
+        };
+        facts.re_exports_from_source = true;
+        let key = (module.clone(), exported);
+        match imported {
+            Some(imported) => facts
+                .import_forwards
+                .push((key, (imported.clone(), resolved))),
+            None => facts.namespace_exports.push((key, resolved)),
+        }
+    };
     for stmt in body {
         match stmt {
             Statement::ExportAllDeclaration(export_all) => {
@@ -2018,6 +2387,26 @@ pub(crate) fn module_export_facts(
                 }
                 if let Some(declaration) = &export.declaration {
                     push_declaration_export_names(declaration, &mut facts.local_exports);
+                    // `export const M = l` over an import binding `l`: a
+                    // `const` whose whole initializer is the bare import.
+                    if let Declaration::VariableDeclaration(variables) = declaration
+                        && variables.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                    {
+                        for declarator in &variables.declarations {
+                            if let Some(exported) = declarator.id.get_binding_identifier()
+                                && let Some(Expression::Identifier(local)) = declarator
+                                    .init
+                                    .as_ref()
+                                    .map(module_entries::unwrap_type_wrappers)
+                            {
+                                forward_import(
+                                    &mut facts,
+                                    local.name.as_str(),
+                                    exported.name.as_str().to_string(),
+                                );
+                            }
+                        }
+                    }
                     continue;
                 }
                 let Some(re_source) = &export.source else {
@@ -2036,6 +2425,7 @@ pub(crate) fn module_export_facts(
                         };
                         let exported_name = module_export_name_text(&specifier.exported)
                             .unwrap_or_else(|| local_name.clone());
+                        forward_import(&mut facts, &local_name, exported_name.clone());
                         if exported_name == local_name {
                             facts.local_exports.push(local_name);
                             continue;
@@ -2090,6 +2480,45 @@ pub(crate) fn module_export_facts(
     facts.commonjs_forwards = commonjs.forwards;
     facts.commonjs_own_names = commonjs.own_names;
     facts
+}
+
+/// The module's ES import bindings: `local -> (specifier, imported name)`,
+/// `None` for a namespace import. Type-only imports bind no value and
+/// `require()` bindings are mutable, so neither is listed.
+fn es_import_bindings(
+    body: &oxc_allocator::Vec<'_, Statement<'_>>,
+) -> HashMap<String, (String, Option<String>)> {
+    let mut bindings = HashMap::new();
+    for statement in body {
+        let Statement::ImportDeclaration(import) = statement else {
+            continue;
+        };
+        if import.import_kind == ImportOrExportKind::Type {
+            continue;
+        }
+        let source = import.source.value.to_string();
+        for specifier in import.specifiers.iter().flatten() {
+            let (local, imported) = match specifier {
+                ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                    if specifier.import_kind == ImportOrExportKind::Type {
+                        continue;
+                    }
+                    let Some(imported) = module_export_name_text(&specifier.imported) else {
+                        continue;
+                    };
+                    (specifier.local.name.as_str(), Some(imported))
+                }
+                ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                    (specifier.local.name.as_str(), Some("default".to_string()))
+                }
+                ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                    (specifier.local.name.as_str(), None)
+                }
+            };
+            bindings.insert(local.to_string(), (source.clone(), imported));
+        }
+    }
+    bindings
 }
 
 /// Value names bound by an exported declaration. Type-only declarations
@@ -2552,6 +2981,14 @@ pub(crate) fn owner_call_relation(
             alias_map,
             workspace_root,
         )
+    }) {
+        return Some(TypeScriptRelationKind::ReExportChainFollowed);
+    }
+    // ES namespace import of a barrel, `lib.owner(...)` (#15923).
+    if barrel_namespace_receivers(test, owner).iter().any(|local| {
+        contains_member_call_name(&test.body_text, local, &owner.name)
+            && !local_identifier_declared_in_test_body(&test.body_text, local)
+            && !enclosing_scope_shadows(test, local)
     }) {
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
@@ -3122,7 +3559,7 @@ pub(crate) fn receiver_owner_call_relation(
             )
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
-    false
+    factory_built_method_call(test, owner, alias_map, workspace_root)
 }
 
 /// Getter owner (#13592-B4) observed only as a literal key of a property
@@ -3454,16 +3891,55 @@ fn factory_built_getter_read(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    let factories: Vec<&TypeScriptModuleEntry> = owner
-        .module_entries
+    let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+    factory_built_receivers(test, owner, &masked, alias_map, workspace_root)
         .iter()
-        .filter(|entry| entry.instance_factory)
-        .collect();
-    if factories.is_empty() || !is_safe_javascript_identifier(&owner.name) {
+        .any(|receiver| expect_actual_references_member(&masked, receiver, &owner.name))
+}
+
+/// Ordinary method owner called on a receiver a factory of the owner's class
+/// built (#15924): `const c = makeCart(); c.apply(...)` or `const c =
+/// Cart.make(); c.apply(...)`. Every identity gate is
+/// [`factory_built_receivers`]'s; the call may sit anywhere in the test body,
+/// as it may for a receiver bound to `new Class(...)`.
+fn factory_built_method_call(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    if owner.method_kind != TypeScriptMethodKind::Ordinary {
         return false;
     }
     let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
-    let body = masked.as_str();
+    factory_built_receivers(test, owner, &masked, alias_map, workspace_root)
+        .iter()
+        .any(|receiver| contains_member_call_name(&masked, receiver, &owner.name))
+}
+
+/// The locals the test body binds to a fresh instance of the owner's class
+/// through a factory the owner's module establishes: an exported function
+/// reached through a resolved import, or a static method reached through a
+/// resolved binding of the class (`Cart.make()`, #15924). `body` is the
+/// test body with literals and comments masked. See
+/// [`factory_built_getter_read`] for the gates.
+fn factory_built_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    body: &str,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    let factories: Vec<&TypeScriptModuleEntry> = owner
+        .module_entries
+        .iter()
+        .filter(|entry| {
+            entry.instance_factory && entry.instance_kind != TypeScriptInstanceKind::Subclass
+        })
+        .collect();
+    if factories.is_empty() || !is_safe_javascript_identifier(&owner.name) {
+        return Vec::new();
+    }
     // Whole-file replacement facts: a spy, mock, redefinition or member
     // assignment anywhere in the test file (a `beforeEach`, a top-level
     // `Object.defineProperty(Class.prototype, ...)`) may replace the getter or
@@ -3475,9 +3951,12 @@ fn factory_built_getter_read(
         || class_entries::assigns_member_named(body, &owner.name)
         || spies_on_member_named(&test.body_text, &owner.name)
     {
-        return false;
+        return Vec::new();
     }
     let mut callees: Vec<String> = Vec::new();
+    // The names the test binds the owner's own class under, for a static
+    // factory; computed only when the owner has one.
+    let mut class_names: Option<Vec<String>> = None;
     for factory in &factories {
         // Any spy, mock or assignment naming the factory refuses it, not only
         // the fabrication shapes (`mockReturnValueOnce` and kin replace the
@@ -3491,6 +3970,15 @@ fn factory_built_getter_read(
             )
             || class_entries::assigns_member_named(body, &factory.name)
         {
+            continue;
+        }
+        if factory.instance_kind == TypeScriptInstanceKind::StaticFactory {
+            let class_names = class_names.get_or_insert_with(|| {
+                own_constructor_names_for_method_owner(test, owner, alias_map, workspace_root)
+            });
+            for class_name in class_names.iter() {
+                push_unique_string(&mut callees, format!("{class_name}.{}", factory.name));
+            }
             continue;
         }
         for import in &test.imports_in_file {
@@ -3518,16 +4006,16 @@ fn factory_built_getter_read(
             && !local_identifier_declared_in_test_body(&test.body_text, root)
     });
     if callees.is_empty() {
-        return false;
+        return Vec::new();
     }
     factory_receiver_names(body, &callees)
-        .iter()
-        .any(|receiver| {
+        .into_iter()
+        .filter(|receiver| {
             !enclosing_scope_shadows(test, receiver)
                 && !body_binds_shadow_identifier(&test.body_text, receiver)
                 && !method_parameter_binds(body, receiver)
-                && expect_actual_references_member(body, receiver, &owner.name)
         })
+        .collect()
 }
 
 /// `true` when any `spyOn(` call (call-through included, accessor spies such as
@@ -3795,6 +4283,15 @@ pub(crate) fn owner_method_receiver_names(
             for constructor in &constructor_names {
                 push_unique_string(&mut receivers, format!("new {constructor}"));
             }
+            // A receiver a factory of the owner's class built (#15924).
+            if owner.method_kind == TypeScriptMethodKind::Ordinary {
+                let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+                for receiver in
+                    factory_built_receivers(test, owner, &masked, alias_map, workspace_root)
+                {
+                    push_unique_string(&mut receivers, receiver);
+                }
+            }
             receivers
         }
         _ => Vec::new(),
@@ -3874,6 +4371,91 @@ pub(crate) fn class_names_for_class_method_owner(
 }
 
 pub(crate) fn constructor_names_for_method_owner(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    let mut names = own_constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+    for name in inheriting_constructor_names(test, owner, alias_map, workspace_root) {
+        push_unique_string(&mut names, name);
+    }
+    names
+}
+
+/// The names the test constructs a class that INHERITS the owner under
+/// (#15924): `SpecialCart` for `class SpecialCart extends BaseCart` when the
+/// owner is a `BaseCart` method `SpecialCart` does not redefine
+/// ([`TypeScriptInstanceKind::Subclass`] entries, established by
+/// `ReExportIndex::inheriting_subclasses`). Each subclass is named exactly as
+/// its own methods' owners would name it (same-file name, resolved named,
+/// default or namespace import, minus any rebinding).
+///
+/// Fail closed: a mock of any module on the `extends` chain, and any spy,
+/// mock, redefinition or member assignment in the test file that names the
+/// member, withhold every subclass name.
+fn inheriting_constructor_names(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    let subclasses: Vec<(&TypeScriptModuleEntry, &TypeScriptCrossModuleLink)> = owner
+        .module_entries
+        .iter()
+        .filter(|entry| {
+            entry.instance_factory && entry.instance_kind == TypeScriptInstanceKind::Subclass
+        })
+        .filter_map(|entry| entry.cross_module.as_ref().map(|link| (entry, link)))
+        .collect();
+    if subclasses.is_empty()
+        || !matches!(
+            owner.method_kind,
+            TypeScriptMethodKind::Ordinary | TypeScriptMethodKind::Getter
+        )
+    {
+        return Vec::new();
+    }
+    let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
+    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY)
+        || replaced(&owner.name)
+        || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
+        || spies_on_member_named(&test.body_text, &owner.name)
+        || class_entries::assigns_member_named(
+            &super::classifier::ts_mask_literals_and_comments(&test.body_text),
+            &owner.name,
+        )
+    {
+        return Vec::new();
+    }
+    let skeleton = owner_skeleton(owner);
+    let mut names = Vec::new();
+    for (entry, link) in subclasses {
+        if link
+            .via_modules
+            .iter()
+            .any(|module| test_mocks_module(test, module, alias_map, workspace_root))
+        {
+            continue;
+        }
+        let subclass = TypeScriptOwner {
+            file: link.file.clone(),
+            class_name: Some(entry.name.clone()),
+            class_default_export: entry.exported_as_default,
+            commonjs_default_export: false,
+            ..skeleton.clone()
+        };
+        for name in
+            own_constructor_names_for_method_owner(test, &subclass, alias_map, workspace_root)
+        {
+            push_unique_string(&mut names, name);
+        }
+    }
+    names
+}
+
+/// The names the test constructs the owner's OWN class under.
+fn own_constructor_names_for_method_owner(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,

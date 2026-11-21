@@ -301,7 +301,8 @@ fn extract_tests_expanding_suite_factories(
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
-        let member_only = default_member_only_locals(&imports, &code);
+        let mut member_only = default_member_only_locals(&imports, &code);
+        member_only.extend(namespace_member_call_locals(&imports, &code));
         if !member_only.is_empty() {
             let member_only: Shared<_> = member_only.into();
             for test in &mut tests {
@@ -2125,6 +2126,84 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
     pairs
 }
 
+/// `(local, member)` for each member the file directly calls
+/// (`local.member(`) on an ES namespace import (`import * as local`) whose
+/// local is used, across the whole file, only as its own import binding and
+/// as a member receiver the file never writes (#15923). A member read is
+/// allowed and records nothing. Any other use withholds every pair of that
+/// local: a bare mention (an argument such as `spyOn(local, ..)`, a spread, a
+/// destructure, a shadowing declaration or parameter), an index access, a
+/// member assignment, update or `delete`, and a member of another object
+/// spelled the same.
+fn namespace_member_call_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    const WRITES: [&str; 17] = [
+        "++", "--", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=",
+        "&&=", "||=", "??=",
+    ];
+    let ident = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut pairs = Vec::new();
+    for import in imports
+        .iter()
+        .filter(|import| import.namespace && import.imported.is_none())
+    {
+        let mut members: Vec<String> = Vec::new();
+        let mut clean = true;
+        for at in word_occurrences(code, &import.local) {
+            let before = code[..at].trim_end();
+            // The binding itself: `import * as local`.
+            if before
+                .strip_suffix("as")
+                .is_some_and(|rest| rest.trim_end().ends_with('*'))
+            {
+                continue;
+            }
+            let rest = &code[at + import.local.len()..];
+            let name = ["?.", "!.", "."]
+                .iter()
+                .find_map(|dot| rest.strip_prefix(dot))
+                .map(|after| {
+                    let name: String = after.chars().take_while(|ch| ident(*ch)).collect();
+                    let tail = &after[name.len()..];
+                    (name, tail)
+                });
+            let Some((name, tail)) = name.filter(|(name, _)| !name.is_empty()) else {
+                clean = false;
+                break;
+            };
+            let after = tail.trim_start();
+            let assigned =
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+            let prefix_write = before.ends_with("++")
+                || before.ends_with("--")
+                || before
+                    .strip_suffix("delete")
+                    .is_some_and(|rest| !rest.ends_with(ident));
+            if before.ends_with(['.', '#'])
+                || assigned
+                || prefix_write
+                || WRITES.iter().any(|write| after.starts_with(write))
+            {
+                clean = false;
+                break;
+            }
+            if tail.starts_with('(') && !members.contains(&name) {
+                members.push(name);
+            }
+        }
+        if clean {
+            pairs.extend(
+                members
+                    .into_iter()
+                    .map(|member| (import.local.clone(), member)),
+            );
+        }
+    }
+    pairs
+}
+
 /// Top-level mock factories (`function f() { return { ... }; }` or
 /// `const f = () => ({ ... });`) whose name the file uses only as a direct
 /// call `f(`, each with the source of its returned object literal. A file
@@ -3509,6 +3588,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
