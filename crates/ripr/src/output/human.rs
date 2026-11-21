@@ -920,13 +920,13 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         if plain {
             out.push_str(&format!(
                 "  Limitation: {} during {}",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label(),
             ));
         } else {
             out.push_str(&format!(
                 "  Limitation: {} during {} ({} at {})",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label(),
                 limitation.kind.as_str(),
                 limitation.producer_stage.as_str()
