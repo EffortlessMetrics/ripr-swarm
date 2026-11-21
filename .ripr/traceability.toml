@@ -9964,6 +9964,8 @@ tests = [
   "xtask/src/tests.rs::evidence_promotion_human_oracle_line_rejects_diagnostic_overrides",
   "xtask/src/tests.rs::evidence_promotion_semantic_assertions_retain_related_test_identity",
   "xtask/src/evidence_promotion.rs::related_test_assertion_tests::requires_source_identity",
+  "xtask/src/evidence_promotion.rs::case_file_tests::a_corpus_language_that_matches_no_finding_language_is_a_violation",
+  "xtask/src/evidence_promotion.rs::case_file_tests::finding_languages_cover_every_router_extension_without_owner_or_summary",
   "crates/ripr/src/analysis/probes/path_only_argument.rs::tests::given_ordering_variant_swap_then_it_is_path_only",
   "crates/ripr/src/analysis/probes/path_only_argument.rs::tests::given_value_argument_change_then_it_is_not_path_only",
   "crates/ripr/src/analysis/probes/path_only_argument.rs::tests::given_other_enums_or_bare_names_then_it_is_not_claimed",
