@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Add `cargo xtask release-authority`: a canonical release authorization packet, a repository-owned authorizer policy keyed on stable GitHub user ids, and a read-only verifier that re-reads one exact issue comment and writes a deterministic receipt. It posts nothing, creates no ref and requests no credential ([ripr#1651](https://github.com/EffortlessMetrics/ripr/issues/1651)).
