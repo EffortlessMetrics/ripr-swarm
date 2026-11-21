@@ -162,6 +162,43 @@ where
     }
 }
 
+/// Run the post-analysis route lookups (`repair` and `agent stub` starts)
+/// under `remaining`, what the analysis left of the check budget. `None`
+/// (budget disabled) runs `work` with no deadline.
+///
+/// The lookups classify every spot in the selected finding's file, so a file
+/// with thousands of spots in one function could keep `ripr check` running
+/// for minutes after an analysis that had finished inside `--timeout`. When
+/// the deadline passes, the token `work` runs under is cancelled, the
+/// lookup's next checkpoint stops it, and the route is reported as not
+/// offered; the findings already produced are unaffected. Cancellation is
+/// cooperative, like the analysis budget's.
+pub(super) fn run_routes_within<T>(remaining: Option<Duration>, work: impl FnOnce() -> T) -> T {
+    let Some(remaining) = remaining else {
+        return work();
+    };
+    // A separate token with the caller's interrupt flags: the deadline must
+    // stop only the lookup, never the render that follows it.
+    let token = current_token().map_or_else(AnalysisCancellationToken::new, |caller| {
+        caller.for_check_budget_worker()
+    });
+    let watchdog_token = token.clone();
+    let (finished, wait) = mpsc::channel::<()>();
+    std::thread::scope(|scope| {
+        // If the watchdog cannot start, the lookup runs unbounded as before.
+        let _watchdog = std::thread::Builder::new()
+            .name("ripr-check-route-budget".to_string())
+            .spawn_scoped(scope, move || {
+                if wait.recv_timeout(remaining) == Err(mpsc::RecvTimeoutError::Timeout) {
+                    watchdog_token.cancel(AnalysisAbortKind::DeadlineExceeded);
+                }
+            });
+        let result = with_token(&token, work);
+        drop(finished);
+        result
+    })
+}
+
 /// The refusal diagnostic for an analysis worker that stopped without a
 /// result, shared by `check` and `pilot`. `narrow` names the command's own
 /// way to reduce scope.
@@ -213,6 +250,64 @@ thread_local! {
 mod tests {
     use super::*;
     use crate::core_error::CheckFailureKind;
+
+    /// A lookup that outlives what is left of the budget is stopped at its
+    /// next checkpoint with the deadline abort, and only the lookup: the
+    /// caller's own token is not cancelled, so the render that follows runs.
+    #[test]
+    fn route_lookup_is_stopped_when_the_remaining_budget_runs_out() {
+        let caller = AnalysisCancellationToken::new();
+        let started = std::time::Instant::now();
+        let observed = with_token(&caller, || {
+            run_routes_within(Some(Duration::from_millis(50)), || {
+                while crate::analysis::cancellation::checkpoint().is_ok() {
+                    if started.elapsed() > Duration::from_secs(30) {
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                crate::analysis::cancellation::current_abort_kind()
+            })
+        });
+        assert_eq!(observed, Some(AnalysisAbortKind::DeadlineExceeded));
+        assert_eq!(caller.abort_kind(), None);
+        assert!(caller.checkpoint().is_ok());
+    }
+
+    /// A lookup that finishes inside the budget returns its result with no
+    /// abort recorded, and a disabled budget runs it with no deadline token.
+    #[test]
+    fn route_lookup_inside_the_budget_is_not_cancelled() {
+        let inside = run_routes_within(Some(Duration::from_secs(30)), || {
+            (
+                7_u32,
+                crate::analysis::cancellation::checkpoint().is_ok(),
+                crate::analysis::cancellation::current_abort_kind(),
+            )
+        });
+        assert_eq!(inside, (7, true, None));
+        let disabled = run_routes_within(None, || {
+            crate::analysis::cancellation::current_token().is_none()
+        });
+        assert!(disabled);
+    }
+
+    /// No budget left (the analysis used all of it) stops the lookup at its
+    /// first checkpoint instead of running it unbounded.
+    #[test]
+    fn route_lookup_with_no_budget_left_stops_at_the_first_checkpoint() {
+        let started = std::time::Instant::now();
+        let stopped = run_routes_within(Some(Duration::ZERO), || {
+            while crate::analysis::cancellation::checkpoint().is_ok() {
+                if started.elapsed() > Duration::from_secs(30) {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            true
+        });
+        assert!(stopped);
+    }
 
     #[cfg(unix)]
     #[test]

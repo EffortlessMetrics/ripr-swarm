@@ -171,6 +171,11 @@ pub(crate) enum RepairRouteRefusal {
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
     ClassificationFailed,
+    /// Classifying seams in the finding's file was stopped because the check
+    /// time budget ran out. The lookup runs after the analysis and spends
+    /// only what the analysis left of `--timeout`, so a file with thousands
+    /// of spots cannot keep `ripr check` running past its budget.
+    LookupBudgetSpent,
     /// The repo seam-limit authority was unreadable, or the classified
     /// candidate set exceeded the configured limit.
     SeamLimit,
@@ -268,6 +273,11 @@ impl RepairRouteRefusal {
             Self::ClassificationFailed => format!(
                 "no repair start offered: classifying the finding's spots failed; \
                  `{full_gate_command}` may print the underlying error"
+            ),
+            Self::LookupBudgetSpent => format!(
+                "no repair start offered: looking it up in this finding's file ran out of the \
+                 check time budget (`--timeout`), so it was stopped; the finding above is \
+                 complete, and `{full_gate_command}` looks the start up without that budget"
             ),
             Self::SeamLimit => {
                 format!(
@@ -1276,6 +1286,17 @@ mod tests {
                 && config.contains("rerun `ripr check`")
                 && !config.contains("full gate's answer"),
             "config refusal must name the file and the rerun: {config}"
+        );
+        // A lookup the check budget stopped names the budget and the command
+        // that looks the start up without it; it is not a failure.
+        let spent = RepairRouteRefusal::LookupBudgetSpent.advisory(gate);
+        assert!(
+            spent.starts_with("no repair start offered: ")
+                && spent.contains("check time budget (`--timeout`)")
+                && spent.contains("the finding above is complete")
+                && spent.contains(gate)
+                && !spent.contains("failed"),
+            "{spent}"
         );
         let classification = RepairRouteRefusal::ClassificationFailed.advisory(gate);
         assert!(

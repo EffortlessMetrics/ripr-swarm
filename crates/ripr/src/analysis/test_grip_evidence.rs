@@ -27,6 +27,7 @@ pub(crate) mod summary;
 pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
 pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
+mod whole_body_match;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
 pub(in crate::analysis) use both_diff_versions::test_fails_on_both_diff_versions;
@@ -1992,29 +1993,23 @@ fn arm_scrutinee_argument(seam: &RepoSeam, owner: &FunctionSummary) -> Option<(u
     if !is_plain_literal_pattern(target) {
         return None;
     }
-    let (scrutinee, arms) = whole_body_match_arms(owner)?;
+    let table = whole_body_match::owner_arm_table(owner);
+    let table = table.as_ref().as_ref()?;
     let (_, parameters) = arm_owner_signature(owner)?;
-    let parameter = parameters.iter().position(|name| *name == scrutinee)?;
-    for (pattern, line) in arms {
-        if line == seam.display_line() && pattern.trim() == target {
-            return Some((parameter, target.to_string()));
-        }
-        // An earlier arm naming the same literal (alone or in a `|`
-        // alternation) takes that input first, so the changed arm never runs.
-        if !pattern.split('|').all(is_plain_literal_pattern)
-            || pattern
-                .split('|')
-                .any(|alternative| same_literal_value(alternative, target))
-        {
-            return None;
-        }
-    }
-    None
+    let parameter = parameters
+        .iter()
+        .position(|name| *name == table.scrutinee())?;
+    table
+        .arm_runs_first(seam.display_line(), target)
+        .then(|| (parameter, target.to_string()))
 }
 
 /// Whether two plain literal patterns can match the same input: equal text,
 /// or two integers of equal value however written (`01`, `-0`, `0`). An
 /// integer too large to read counts as equal, so the caller refuses.
+/// The arm table answers this by index; this pairwise form is the reference
+/// its tests compare against.
+#[cfg(test)]
 fn same_literal_value(left: &str, right: &str) -> bool {
     let (left, right) = (left.trim(), right.trim());
     let integer = |text: &str| {
@@ -2407,7 +2402,16 @@ fn whole_body_match_arms(owner: &FunctionSummary) -> Option<(String, Vec<(String
     if !body[arms_close + 1..body_close].trim().is_empty() {
         return None;
     }
-    let line_of = |offset: usize| owner.start_line + body[..offset].matches('\n').count();
+    // Arm offsets only grow, so the line is counted from the previous arm
+    // instead of from the start of the body: recounting made a long match
+    // cost its length squared.
+    let mut line = owner.start_line;
+    let mut counted_to = 0usize;
+    let mut line_of = |offset: usize| {
+        line += body[counted_to..offset].matches('\n').count();
+        counted_to = offset;
+        line
+    };
     let mut arms = Vec::new();
     let mut at = arms_open + 1;
     loop {

@@ -49,6 +49,7 @@ pub(crate) enum Product {
     OwnerFoldPlan,
     OwnerBranchIndex,
     ModuleDeclarationGate,
+    OwnerMatchArms,
 }
 
 impl Product {
@@ -77,6 +78,7 @@ impl Product {
             Self::OwnerFoldPlan => "owner_fold_plan",
             Self::OwnerBranchIndex => "owner_branch_index",
             Self::ModuleDeclarationGate => "module_declaration_gate",
+            Self::OwnerMatchArms => "owner_match_arms",
         }
     }
 }

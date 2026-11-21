@@ -2306,19 +2306,29 @@ fn check_inner(
         // reported) these cache entries once; the route passes below are
         // secondary builds that must not repeat that warning.
         let _secondary_pass = crate::analysis::SecondaryPassGuard::enter();
-        let mut seam_index = None;
-        let repair_route = crate::app::task_first::check_repair_route(
-            &limited_check_input.root,
-            &config,
-            &output,
-            &mut seam_index,
-        );
-        let stub_routes = app::test_stub::check_stub_routes(
-            &limited_check_input.root,
-            &config,
-            &output,
-            &mut seam_index,
-        );
+        // Both lookups classify every spot in the finding's file. They spend
+        // only what the analysis left of the check budget (as the last-commit
+        // fallback does, #13644), so a file with thousands of spots cannot
+        // hold a finished check past `--timeout`.
+        let route_budget =
+            check_timeout.map(|budget| budget.saturating_sub(analysis_started.elapsed()));
+        let (repair_route, stub_routes) =
+            super::check_budget::run_routes_within(route_budget, || {
+                let mut seam_index = None;
+                let repair_route = crate::app::task_first::check_repair_route(
+                    &limited_check_input.root,
+                    &config,
+                    &output,
+                    &mut seam_index,
+                );
+                let stub_routes = app::test_stub::check_stub_routes(
+                    &limited_check_input.root,
+                    &config,
+                    &output,
+                    &mut seam_index,
+                );
+                (repair_route, stub_routes)
+            });
         navigation
             .with_stub_routes(stub_routes)
             // #8166 Slice C: the repair line reuses the producer-owned

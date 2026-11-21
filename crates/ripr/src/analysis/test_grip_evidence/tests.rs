@@ -23016,6 +23016,46 @@ fn whole_body_match_reads_arms_past_quotes_in_comments() -> Result<(), String> {
     Ok(())
 }
 
+/// A generated lookup: one `match` of 5,000 literal arms, each on its own
+/// line. Every arm is a seam that asks whether a test passing its literal
+/// runs it. Reading the match again per arm, and recounting lines from the
+/// top of the body per arm inside each read, cost the arm count cubed: 8,000
+/// arms kept a release `ripr check` busy for 135 seconds after its analysis
+/// had finished. The table is read once per owner and answers by index.
+#[test]
+fn every_arm_of_a_long_match_is_answered_in_linear_time() -> Result<(), String> {
+    const ARMS: usize = 5_000;
+    let mut source = String::from("pub fn rate(kind: u32) -> u32 {\n    match kind {\n");
+    for arm in 0..ARMS {
+        source.push_str(&format!("        {arm} => {},\n", arm + 1));
+    }
+    source.push_str("        _ => 0,\n    }\n}\n");
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "rate")
+        .ok_or("fixture must hold `rate`")?;
+    let _scope = crate::analysis::syntax::run_memo::enter();
+    let started = Instant::now();
+    for arm in 0..ARMS {
+        let table = whole_body_match::owner_arm_table(owner);
+        let table = table.as_ref().as_ref().ok_or("the match must be read")?;
+        // Arm `arm` sits on file line `arm + 3`.
+        if !table.arm_runs_first(arm + 3, &arm.to_string()) {
+            return Err(format!("arm {arm} must be the first to take its literal"));
+        }
+        if table.arm_runs_first(arm + 4, &arm.to_string()) {
+            return Err(format!("arm {arm} is not on the next line"));
+        }
+    }
+    let elapsed = started.elapsed();
+    if elapsed > Duration::from_secs(20) {
+        return Err(format!("{ARMS} arms took {elapsed:?}"));
+    }
+    Ok(())
+}
+
 /// Earlier-arm duplicates compare integer values, not spellings.
 #[test]
 fn same_literal_value_compares_integers_by_value() {

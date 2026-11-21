@@ -3118,6 +3118,14 @@ pub(crate) fn check_repair_route(
         &evidence_files,
         seam_index,
     ) else {
+        // The caller runs this lookup under what is left of the check budget;
+        // a classification stopped by that deadline is named as such, not as
+        // a failure the full gate might explain.
+        if crate::analysis::cancellation::current_abort_kind()
+            == Some(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
+        {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::LookupBudgetSpent);
+        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::ClassificationFailed);
     };
     match crate::analysis::repo_exposure_seam_limit() {

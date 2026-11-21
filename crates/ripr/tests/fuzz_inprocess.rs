@@ -765,3 +765,78 @@ fn large_test_module_regression_finishes_within_the_deadline() -> Result<(), Str
     }
     Ok(())
 }
+
+/// A generated lookup the structure fuzz found: an owner whose body is one
+/// `match` of thousands of literal arms, with one arm changed. The analysis
+/// finishes in well under a second, but the repair-start lookup that follows
+/// it classifies every arm of the file. It ran outside `--timeout` and reread
+/// the match per arm, so 8,000 arms held a release `ripr check --timeout 5`
+/// for 135 seconds, and 20,000 arms for longer than anyone waited.
+///
+/// The lookup now spends only what the analysis left of the budget. The case
+/// must end within the budget plus a grace for the last checkpoint, whether
+/// the lookup finished or was stopped, and with the answer the analysis
+/// exists to give: a finding on the changed arm. A refusal, or a run that
+/// skipped the owner, would end in time without that finding.
+#[test]
+fn large_literal_match_ends_inside_the_check_budget() -> Result<(), String> {
+    const ARMS: usize = 6_000;
+    const CHANGED_ARM: usize = 7;
+    const BUDGET: Duration = Duration::from_secs(25);
+    const GRACE: Duration = Duration::from_secs(30);
+    let mut source =
+        String::from("pub fn price(amount: u64, years: u32) -> u64 {\n    match amount {\n");
+    for arm in 0..ARMS {
+        source.push_str(&format!("        {arm} => {},\n", arm + 2));
+    }
+    source.push_str("        _ => years as u64,\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn discounts() {\n        assert_eq!(price(3, 0), 5);\n    }\n}\n");
+    let changed_line = CHANGED_ARM + 3;
+    let new_arm = format!("        {CHANGED_ARM} => {},", CHANGED_ARM + 2);
+    if source.lines().nth(changed_line - 1) != Some(new_arm.as_str()) {
+        return Err(format!(
+            "fixture does not hold the changed arm on line {changed_line}"
+        ));
+    }
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{changed_line},1 +{changed_line},1 @@\n-        {CHANGED_ARM} => {},\n+{new_arm}\n",
+        CHANGED_ARM + 1
+    );
+    let workspace = Workspace::create(&[
+        ("Cargo.toml", CARGO_TOML.as_bytes()),
+        ("src/lib.rs", source.as_bytes()),
+        ("ripr.toml", languages_toml().as_bytes()),
+        ("fuzz.diff", diff.as_bytes()),
+    ])?;
+    let artifact = workspace.root.join("artifact.json");
+    // The repair-start lookup runs for the human and JSON renders; `--quiet`
+    // alone keeps the human render, which is the one that held the terminal.
+    workspace
+        .check_within(
+            BUDGET + GRACE,
+            &[
+                "--timeout".to_string(),
+                BUDGET.as_secs().to_string(),
+                "--write-artifact".to_string(),
+                artifact.display().to_string(),
+            ],
+        )
+        .map_err(|error| format!("{ARMS}-arm match ({} bytes): {error}", source.len()))?
+        .map_err(|error| format!("the check refused the input: {error}"))?;
+    let text = std::fs::read_to_string(&artifact)
+        .map_err(|error| format!("read check artifact failed: {error}"))?;
+    let report: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("check artifact is not JSON: {error}"))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check artifact has no findings array".to_string())?;
+    let reported = findings
+        .iter()
+        .any(|finding| finding["probe"]["location"]["line"].as_u64() == Some(changed_line as u64));
+    if !reported {
+        return Err(format!(
+            "the changed arm on line {changed_line} was not reported ({} findings)",
+            findings.len()
+        ));
+    }
+    Ok(())
+}

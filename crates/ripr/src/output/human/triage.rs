@@ -1387,6 +1387,7 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
 /// (`SeveralBindingSeams`, `SeveralSpotsOnChangedLine`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
+/// `LookupBudgetSpent`,
 /// `GapRouteUnavailable`, `SeamRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
 /// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
 /// repair route".
@@ -1399,6 +1400,7 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
                 | RepairRouteRefusal::Ineligible { .. }
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
+                | RepairRouteRefusal::LookupBudgetSpent
                 | RepairRouteRefusal::GapRouteUnavailable { .. }
                 | RepairRouteRefusal::SeamRouteUnavailable { .. }
                 | RepairRouteRefusal::ConfigUnreadable
@@ -3156,6 +3158,7 @@ mod tests {
             },
             RepairRouteRefusal::SeamLimit,
             RepairRouteRefusal::ClassificationFailed,
+            RepairRouteRefusal::LookupBudgetSpent,
             RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 },
             // #15157: a tie on the changed line is a choice ripr will not
             // make, not a missing route.
