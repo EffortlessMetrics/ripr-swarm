@@ -143,6 +143,22 @@ fn repeats_scalar_properties(old: &serde_json::Map<String, Value>, branch: &Valu
         })
 }
 
+/// The other alternative supported by this proof is a syntactically valid
+/// required-name list. Do not let one true branch hide a malformed sibling.
+fn required_names_only(branch: &Value) -> bool {
+    let Some(branch) = branch.as_object().filter(|branch| branch.len() == 1) else {
+        return false;
+    };
+    let Some(names) = branch.get("required").and_then(Value::as_array) else {
+        return false;
+    };
+    let mut seen = BTreeSet::new();
+    !names.is_empty()
+        && names
+            .iter()
+            .all(|name| name.as_str().is_some_and(|name| seen.insert(name)))
+}
+
 fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
     // Boolean schemas: `true` accepts everything, `false` nothing.
     match (old, new) {
@@ -341,11 +357,20 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
         } else if old.get(key).is_none()
             && let Some(alternatives) = new.get(key)
         {
-            let covered = key == "anyOf"
+            // Widening an existing oneOf arm could overlap another arm. This
+            // implication is only a proof for the document root.
+            let covered = path == "#"
+                && key == "anyOf"
                 && alternatives.as_array().is_some_and(|branches| {
-                    branches
-                        .iter()
-                        .any(|branch| repeats_scalar_properties(old, branch))
+                    let mut retained = false;
+                    for branch in branches {
+                        if repeats_scalar_properties(old, branch) {
+                            retained = true;
+                        } else if !required_names_only(branch) {
+                            return false;
+                        }
+                    }
+                    retained
                 });
             if !covered {
                 out.push(format!("{path}: {key} constraint added"));
@@ -610,7 +635,7 @@ mod tests {
         let old = json!({"type":"object","properties":{"root":{"type":"string","minLength":1},
             "other":{"type":"integer"}}});
         let guard = json!({"properties":{"root":{"type":"string","minLength":1}}});
-        let refusal = json!({"required":["status"],"properties":{"status":{"const":"refused"}}});
+        let refusal = json!({"required":["status","error"]});
         let mut widened = old.clone();
         widened["properties"]["root"] = json!({"type":"string"});
         widened["anyOf"] = json!([guard, refusal]);
@@ -621,7 +646,7 @@ mod tests {
             )
         };
         if !accepted(&widened) {
-            return Err("optional old field must remain optional; old string guard suffices".into());
+            return Err("old property guard rejected".into());
         }
         for bad in [
             json!({"properties":{"root":{"minLength":2}}}),
@@ -636,12 +661,88 @@ mod tests {
                 return Err(format!("unproven guard accepted: {bad}"));
             }
         }
+        for malformed in [
+            json!({"required":"status"}),
+            json!({"required":["status","status"]}),
+            json!({"required":[true]}),
+            json!({"format":"unknown"}),
+        ] {
+            let mut candidate = widened.clone();
+            candidate["anyOf"] = json!([guard, malformed]);
+            if accepted(&candidate) {
+                return Err(format!(
+                    "invalid or unsupported alternative accepted: {malformed}"
+                ));
+            }
+        }
         let mut exclusive = old.clone();
         exclusive["oneOf"] = json!([guard, refusal]);
         let mut sibling = widened.clone();
         sibling["properties"]["other"]["minimum"] = json!(1);
         if accepted(&exclusive) || accepted(&sibling) {
             return Err("oneOf overlap or sibling narrowing escaped the checker".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn published_check_root_widening_does_not_admit_overlapping_cache_receipts()
+    -> Result<(), String> {
+        let mut before: Value =
+            serde_json::from_str(include_str!("../../schemas/ripr/check.schema.json"))
+                .map_err(|e| e.to_string())?;
+        let guard = json!({"properties":{"root":{"type":"string","minLength":1}}});
+        let alternatives = json!([guard,{"required":["status","error"]}]);
+        // Exercise both generations of the published file as #15842 lands.
+        let obj = before.as_object_mut().ok_or("expected schema object")?;
+        if let Some(existing) = obj.remove("anyOf")
+            && existing != alternatives
+        {
+            return Err("check root alternatives changed".into());
+        }
+        before["properties"]["root"] = json!({"type":"string","minLength":1});
+        let mut after = before.clone();
+        after["properties"]["root"] = json!({"type":"string"});
+        after["anyOf"] = alternatives;
+        if !matches!(
+            assess(&before, &after),
+            Compat::Compatible { breaking: 0, .. }
+        ) {
+            return Err("real check root widening rejected".into());
+        }
+
+        let cache = &before["properties"]["file_fact_cache"];
+        let mut bad = before.clone();
+        let arm = bad
+            .pointer_mut("/properties/file_fact_cache/oneOf/1")
+            .and_then(Value::as_object_mut)
+            .ok_or("missing cache object alternative")?;
+        arm.remove("type");
+        arm.insert(
+            "anyOf".into(),
+            json!([{"properties":{"hits":{"type":"integer"}}},{"required":["status"]}]),
+        );
+        let mut old_errors = Vec::new();
+        let mut new_errors = Vec::new();
+        crate::verification_contracts::validate_value_against_schema(
+            &Value::Null,
+            cache,
+            &before,
+            "cache".into(),
+            &mut old_errors,
+        );
+        crate::verification_contracts::validate_value_against_schema(
+            &Value::Null,
+            &bad["properties"]["file_fact_cache"],
+            &bad,
+            "cache".into(),
+            &mut new_errors,
+        );
+        if !old_errors.is_empty()
+            || new_errors.is_empty()
+            || !matches!(assess(&before, &bad), Compat::Violations(_))
+        {
+            return Err("null cache receipt became invalid without a compatibility refusal".into());
         }
         Ok(())
     }
