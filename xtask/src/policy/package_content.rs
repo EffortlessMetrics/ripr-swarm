@@ -3,7 +3,8 @@
 //! `cargo package -p ripr --list` / `-p ripr-contract --list` must not carry
 //! test-only sources: the `src/testing/**` support tree, out-of-line unit-test
 //! modules (`tests.rs`, `tests/**`, `*_tests.rs`), corpus-test modules
-//! (`corpus_tests`) or Kani proof modules (`kani_proofs`). Those files inflate
+//! (`corpus_tests`) or Kani proof modules (`kani_proofs`, `*_kani.rs`,
+//! `kani_smoke.rs`). Those files inflate
 //! the crates.io upload, can push it over the size limit, and ship test
 //! scaffolding to downstream consumers. Fail-closed: a package list that
 //! cannot be obtained or is empty is a violation, never a silent pass.
@@ -75,23 +76,33 @@ const PRODUCTION_ALLOWLIST: &[(&str, &str, &str)] = &[
 pub(crate) fn check_package_content() -> Result<(), String> {
     let mut violations = Vec::new();
     for package in PACKAGES {
-        let command = format!("cargo package -p {package} --list");
-        let package_list = crate::run_output("cargo", &["package", "-p", package, "--list"])
-            .map_err(|err| {
-                format!(
-                    "{command} failed; packaged content cannot be judged without the list cargo would ship: {err}"
-                )
-            })?;
-        violations.extend(package_content_violations(package, &package_list));
+        let package_list = crate::run_output("cargo", &["package", "-p", package, "--list"]);
+        collect_package_violations(package, package_list, &mut violations);
     }
     finish_policy_report(report_spec(), &violations)
+}
+
+/// Fold one package listing into `violations`. A failed listing is itself a
+/// violation, never an early exit: the report must still be written for this
+/// run and findings from the other package must not be lost.
+fn collect_package_violations(
+    package: &str,
+    package_list: Result<String, String>,
+    violations: &mut Vec<String>,
+) {
+    match package_list {
+        Ok(list) => violations.extend(package_content_violations(package, &list)),
+        Err(err) => violations.push(format!(
+            "`cargo package -p {package} --list` failed; packaged content cannot be judged without the list cargo would ship: {err}"
+        )),
+    }
 }
 
 fn report_spec() -> PolicyReportSpec<'static> {
     PolicyReportSpec {
         report_file: "package-content.md",
         check: "check-package-content",
-        why_it_matters: "the `.crate` Cargo ships must contain only production sources. Test-only modules (`src/testing/**`, `tests.rs`, `tests/**`, `*_tests.rs`, `corpus_tests`, `kani_proofs`) inflate the upload toward the crates.io size limit and ship test scaffolding downstream. Production modules named `*_tests.rs` are exempt only via the exact-path allowlist in package_content.rs.",
+        why_it_matters: "the `.crate` Cargo ships must contain only production sources. Test-only modules (`src/testing/**`, `tests.rs`, `tests/**`, `*_tests.rs`, `corpus_tests`, `kani_proofs`, `*_kani.rs`) inflate the upload toward the crates.io size limit and ship test scaffolding downstream. Production modules named `*_tests.rs` are exempt only via the exact-path allowlist in package_content.rs.",
         fix_kind: FixKind::AuthorDecisionRequired,
         recommended_fixes: &[
             "Exclude test-only paths from the crate `include` list in its Cargo.toml (negated patterns after the production includes), or move the test-only code behind the publish stage.",
@@ -154,6 +165,14 @@ fn forbidden_rule(path: &str) -> Option<&'static str> {
         .any(|c| *c == "kani_proofs" || *c == "kani_proofs.rs")
     {
         return Some("kani_proofs path");
+    }
+    // Kani harnesses renamed through `#[path]` (`#[cfg(kani)] mod kani_proofs`
+    // backed by `causal_delta_kani.rs`) and the crate-root smoke harness keep
+    // proof-only code under names the `kani_proofs` component never matches.
+    // Production Kani reporting code (`kani_report.rs`, `kani_import.rs`)
+    // matches neither shape and stays shippable.
+    if basename.ends_with("_kani.rs") || basename == "kani_smoke.rs" {
+        return Some("Kani proof file");
     }
     if basename == "tests.rs" {
         return Some("tests.rs module");
@@ -290,6 +309,7 @@ tests/integration.rs
         assert_eq!(violations.len(), 9, "{violations:?}");
         for needle in [
             "src/testing/mod.rs",
+            "src/testing/fixture_git.rs",
             "src/domain/tests.rs",
             "src/domain/identity/tests.rs",
             "src/analysis/widget_tests.rs",
@@ -307,6 +327,74 @@ tests/integration.rs
             violations
                 .iter()
                 .all(|v| v.contains("cargo package -p ripr --list"))
+        );
+    }
+
+    #[test]
+    fn backslash_paths_are_classified_like_forward_slash_paths() {
+        for (list, want) in [
+            ("src\\domain\\widget_tests.rs\n", 1),
+            ("src\\testing\\fixture.rs\n", 1),
+            ("src\\domain\\tests.rs\n", 1),
+            ("tests\\integration.rs\n", 1),
+            ("examples\\sample\\tests\\pricing.rs\n", 0),
+            ("src\\analysis\\classify\\related_tests.rs\n", 0),
+        ] {
+            assert_eq!(
+                package_content_violations("ripr", list).len(),
+                want,
+                "list={list:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn renamed_kani_proofs_are_flagged_in_both_crates() {
+        // `#[cfg(kani)] #[path = "causal_delta_kani.rs"] mod kani_proofs;` and
+        // its siblings ship under proof names, not `kani_proofs` components.
+        for (package, path) in [
+            ("ripr-contract", "src/domain/causal_delta_kani.rs"),
+            ("ripr-contract", "src/domain/probe_kani.rs"),
+            ("ripr", "src/bounded_input_kani.rs"),
+            ("ripr", "src/analysis/diff/parse/hunk_kani.rs"),
+            ("ripr", "src/kani_smoke.rs"),
+            ("ripr", "src\\terminal_text_kani.rs"),
+        ] {
+            let violations = package_content_violations(package, path);
+            assert_eq!(violations.len(), 1, "{package} {path}: {violations:?}");
+            assert!(violations[0].contains("Kani proof file"), "{violations:?}");
+        }
+        // Production Kani reporting code is not a proof harness.
+        for path in ["src/output/kani_report.rs", "src/app/kani_import.rs"] {
+            assert_eq!(
+                package_content_violations("ripr", path),
+                Vec::<String>::new(),
+                "{path} is production Kani reporting code"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_listing_becomes_a_violation_without_losing_other_findings() {
+        let mut violations = Vec::new();
+        collect_package_violations(
+            "ripr",
+            Ok("src/testing/mod.rs\n".to_owned()),
+            &mut violations,
+        );
+        collect_package_violations(
+            "ripr-contract",
+            Err("cargo exited with code 101".to_owned()),
+            &mut violations,
+        );
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(
+            violations[0].contains("src/testing/mod.rs"),
+            "{violations:?}"
+        );
+        assert!(
+            violations[1].contains("ripr-contract") && violations[1].contains("failed"),
+            "{violations:?}"
         );
     }
 
