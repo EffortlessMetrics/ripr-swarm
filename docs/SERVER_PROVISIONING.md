@@ -200,8 +200,10 @@ negative requires the intended checksum diagnostic, no running fallback server,
 and no completed install receipt. Request counts distinguish manifest refusal
 from archive refusal. Tests cannot use `RIPR_TEST_SERVER_PATH`.
 
-The HTTPS mirror serves the original placement-independent manifest and archive
-bytes. An empty server-version override selects the installed distribution
+The workflow acquires VS Code before entering a fresh Linux network namespace.
+The runner account serves the original placement-independent manifest and
+archive bytes at a documentation-only HTTPS address on port 443. The namespace
+has only its loopback interface. An empty server-version override selects the installed distribution
 catalog. Archive tampering changes one byte at the same size. A
 throwaway certificate is trusted only by the disposable test-host process via
 `NODE_EXTRA_CA_CERTS`; the CA private key is removed and excluded from uploads.

@@ -657,7 +657,17 @@ jobs:
       - name: Exercise packaged VSIX against the same-run qualified Linux archive
         # The local mirror serves the exact qualified manifest and archive.
         # The VSIX carries the catalog bound to those manifest bytes.
-        run: xvfb-run -a node editors/vscode/out/test/managedDownload/rehearse.js
+        run: |
+          instrument=editors/vscode/out/test/managedDownload/rehearse.js
+          vscode="$(node "$instrument" --acquire-vscode)"
+          test -x "$vscode"
+          sudo unshare --net -- /bin/bash -euc '
+            ip link set lo up
+            ip address add 192.0.2.1/32 dev lo
+            sysctl -qw net.ipv4.ip_unprivileged_port_start=443
+            exec sudo -u "$1" -- env -i HOME="$2" PATH="$3" GITHUB_REPOSITORY="$4" \
+              xvfb-run -a node "$5" "$6"
+          ' bash "$(id -un)" "$HOME" "$PATH" "$GITHUB_REPOSITORY" "$instrument" "$vscode"
 
       - name: Retain managed-download composition evidence
         if: ${{ always() }}

@@ -3,7 +3,8 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as https from 'https';
 import * as path from 'path';
-import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath, runTests } from '@vscode/test-electron';
+import { networkInterfaces } from 'os';
+import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath, runTests, SilentReporter } from '@vscode/test-electron';
 import { admitSubject, CASES, digest, retainHostCase, servedBytes, TARGET } from './contract';
 
 const repo = path.resolve(__dirname, '../../../../..');
@@ -15,6 +16,23 @@ function command(program: string, args: string[], cwd = repo, env = process.env)
 }
 
 async function main(): Promise<void> {
+  const output = path.resolve(process.env.RIPR_MANAGED_DOWNLOAD_OUTPUT ??
+    path.join(repo, 'target/ripr/managed-download'));
+  if (process.argv[2] === '--acquire-vscode') {
+    fs.mkdirSync(output, { recursive: true });
+    const executable = await downloadAndUnzipVSCode({ cachePath: path.join(output, 'vscode-cache'), reporter: new SilentReporter() });
+    console.log(executable);
+    return;
+  }
+  const vscodeExecutablePath = process.argv[2];
+  assert.ok(vscodeExecutablePath && path.isAbsolute(vscodeExecutablePath), 'supply the pre-acquired VS Code executable');
+  // The workflow provisions a TEST-NET endpoint on the only interface of a
+  // fresh network namespace. No public address or machine-wide port is used.
+  const endpoint = '192.0.2.1';
+  const interfaces = networkInterfaces();
+  assert.deepStrictEqual(Object.keys(interfaces), ['lo'], 'the host requires an isolated network namespace');
+  assert.ok(interfaces.lo?.some((address) => address.address === endpoint));
+
   assert.strictEqual(process.platform, 'linux', 'this rehearsal currently selects Linux x64 only');
   assert.strictEqual(process.arch, 'x64');
   assert.notStrictEqual(process.env.NODE_TLS_REJECT_UNAUTHORIZED, '0');
@@ -29,8 +47,6 @@ async function main(): Promise<void> {
   const archiveName = `ripr-server-v${qualification.version}-${TARGET}.tar.gz`;
   const archive = fs.readFileSync(path.join(dist, archiveName));
   const subject = admitSubject(originalManifest, archive, qualification, source, tree);
-  const output = path.resolve(process.env.RIPR_MANAGED_DOWNLOAD_OUTPUT ??
-    path.join(repo, 'target/ripr/managed-download'));
   fs.mkdirSync(output, { recursive: true });
   // Never reset a previous run's profile/cache or evidence.
   const root = fs.mkdtempSync(path.join(output, 'run-'));
@@ -57,7 +73,7 @@ async function main(): Promise<void> {
     release_qualification_claimed: false, publication_performed: false };
   try {
     command('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-sha256', '-days', '1', '-nodes',
-      '-keyout', key, '-out', cert, '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1']);
+      '-keyout', key, '-out', cert, '-subj', `/CN=${endpoint}`, '-addext', `subjectAltName=IP:${endpoint}`]);
     fs.chmodSync(key, 0o600);
     server = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (request, response) => {
       if (request.url === `/${manifestName}`) {
@@ -72,11 +88,12 @@ async function main(): Promise<void> {
     });
     await new Promise<void>((resolve, reject) => {
       server!.once('error', reject);
-      server!.listen(0, '127.0.0.1', resolve);
+      server!.listen(443, endpoint, resolve);
     });
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
-    const mirror = `https://127.0.0.1:${address.port}`;
+    assert.strictEqual(address.port, 443);
+    const mirror = `https://${endpoint}`;
     const manifestPath = path.join(root, manifestName);
     fs.writeFileSync(manifestPath, originalManifest);
     const manifestSha256 = digest(originalManifest);
@@ -93,7 +110,6 @@ async function main(): Promise<void> {
     fs.copyFileSync(builtVsix, vsix, fs.constants.COPYFILE_EXCL);
     const vsixSha256 = digest(fs.readFileSync(vsix));
     receipt.vsix_sha256 = vsixSha256;
-    const vscodeExecutablePath = await downloadAndUnzipVSCode({ cachePath: path.join(output, 'vscode-cache') });
     const [cli, ...cliArgs] = resolveCliArgsFromVSCodeExecutablePath(vscodeExecutablePath, { reuseMachineInstall: true });
     const environment = { ...process.env, NODE_EXTRA_CA_CERTS: cert,
       RIPR_TEST_SERVER_PATH: undefined, RIPR_TEST_PACKAGED_SERVER_PATH: undefined };
