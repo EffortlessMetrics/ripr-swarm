@@ -2504,6 +2504,11 @@ fn ts_decode_simple_escapes(inner: &str) -> String {
     while at < bytes.len() {
         if bytes[at] == b'\\' && at + 1 < bytes.len() {
             match bytes[at + 1] {
+                b'\\' => {
+                    out.push('\\');
+                    at += 2;
+                    continue;
+                }
                 b't' => {
                     out.push('\t');
                     at += 2;
