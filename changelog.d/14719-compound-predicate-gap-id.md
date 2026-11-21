@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- The Rust gap ID (`canonical_gap.normalized_discriminator`) of a changed predicate with exactly one top-level comparison, such as `s.starts_with('-') && s.len() > 1`, now names that comparison's boundary (`s.len==1`), matching the finding's evidence and missing-check advice, instead of the whole conjunction. Repair by that ID picks the most-specific spot on the line, the inner comparison. Other predicate shapes keep their existing IDs (#14719).

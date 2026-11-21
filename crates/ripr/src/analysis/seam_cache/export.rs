@@ -9,6 +9,11 @@ use std::fs::{self, Metadata, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// The version of the `ripr cache export` success report, published as
+/// `schemas/ripr/cache-export.schema.json`. It versions this report, not the
+/// copied cache layers.
+pub(crate) const CACHE_EXPORT_SCHEMA_VERSION: &str = "0.1";
+
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct CacheExportReport {
     pub(crate) schema_version: &'static str,
@@ -164,7 +169,7 @@ fn export_selected(
         ));
     }
     let mut report = CacheExportReport {
-        schema_version: "0.1",
+        schema_version: CACHE_EXPORT_SCHEMA_VERSION,
         cache_dir: output.to_path_buf(),
         classified_entries: 0,
         file_fact_entries: 0,

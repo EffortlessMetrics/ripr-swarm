@@ -339,7 +339,15 @@ pub(crate) fn render_diff_report_json(report: &DiffReport) -> Result<String, Str
     super::json::render_pretty_with_newline(report, "ripr diff report")
 }
 
+/// Human `ripr diff` report. Repository text (file paths, seam ids, evidence)
+/// reaches it verbatim, so the finished report goes through the same
+/// [`crate::terminal_text::terminal_safe`] escape as `ripr check` (#14285).
+/// The JSON report keeps raw values for its own encoder.
 pub(crate) fn render_diff_report_human(report: &DiffReport) -> String {
+    crate::terminal_text::terminal_safe(render_diff_report_human_unescaped(report))
+}
+
+fn render_diff_report_human_unescaped(report: &DiffReport) -> String {
     let mut out = String::new();
     out.push_str("RIPR diff status: ");
     out.push_str(&report.run_status);
@@ -598,6 +606,64 @@ mod tests {
         let report = report_for(PathBuf::from("repo"), PathBuf::from("repo/src/lib.rs"));
         assert_eq!(report.changed_seams[0].file, "repo/src/lib.rs");
         assert_eq!(report.changed_seams[0].line, 2);
+    }
+
+    /// The raw characters a hostile file name would emit to the terminal.
+    fn raw_terminal_controls(text: &str) -> Vec<char> {
+        text.chars()
+            .filter(|ch| {
+                (ch.is_control() && *ch != '\n' && *ch != '\t')
+                    || matches!(
+                        *ch,
+                        '\u{061c}'
+                            | '\u{200e}'..='\u{200f}'
+                            | '\u{202a}'..='\u{202e}'
+                            | '\u{2066}'..='\u{2069}'
+                    )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn human_report_escapes_terminal_controls_from_a_hostile_file_name() -> Result<(), String> {
+        let hostile = "repo/src/e\u{1b}]0;PWNED\u{07}\u{1b}[31mx\u{1b}[2J\u{202e}.rs";
+        let report = report_for(PathBuf::from("repo"), PathBuf::from(hostile));
+        // `report_for` keeps `changed_files` plain; the hostile name rides on
+        // the changed seam's file, which the human report prints.
+        assert!(
+            report.changed_seams[0].file.contains('\u{1b}'),
+            "precondition: the seam carries the raw hostile path: {:?}",
+            report.changed_seams[0].file
+        );
+        assert!(
+            render_diff_report_human_unescaped(&report).contains('\u{1b}'),
+            "precondition: the unescaped body carries raw ESC"
+        );
+        let human = render_diff_report_human(&report);
+        let raw = raw_terminal_controls(&human);
+        assert!(raw.is_empty(), "raw control/bidi chars {raw:?} in: {human}");
+        assert!(
+            human.contains("e\\u{1b}]0;PWNED\\u{07}\\u{1b}[31mx\\u{1b}[2J\\u{202e}.rs"),
+            "hostile path must render with the check report's \\u{{XX}} spelling: {human}"
+        );
+        // The machine format keeps the raw value for its own encoder.
+        let json = render_diff_report_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| format!("diff json parses: {err}"))?;
+        assert_eq!(
+            value["changed_seams"][0]["file"].as_str(),
+            Some(report.changed_seams[0].file.as_str()),
+            "JSON keeps the raw path"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn human_report_for_a_plain_file_name_is_unchanged_by_the_escape() {
+        let report = report_for(PathBuf::from("repo"), PathBuf::from("repo/src/lib.rs"));
+        let human = render_diff_report_human(&report);
+        assert_eq!(human, render_diff_report_human_unescaped(&report));
+        assert!(human.contains('\n') && raw_terminal_controls(&human).is_empty());
     }
 
     #[test]

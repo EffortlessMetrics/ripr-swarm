@@ -1,0 +1,17 @@
+[[extend]]
+id = "RIPR-SPEC-0443"
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/tuple_guard.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/value_contradiction/branch_index.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::tuple_field_guard_agrees_with_the_per_test_oracle_grade",
+  "crates/ripr/tests/computed_return_tail/tuple_guard.rs::tuple_and_primitive_missed_branches_read_weak",
+  "crates/ripr/tests/computed_return_tail/tuple_guard.rs::unresolved_or_reaching_calls_keep_their_credit",
+  "crates/ripr/tests/computed_return_tail/tuple_guard.rs::bound_add_operands_select_the_edited_branch",
+  "crates/ripr/tests/computed_return_tail/tuple_guard.rs::edited_else_and_mixed_parameter_types",
+]
+fixtures = [
+  "fixtures/rust_tuple_guard_other_branch",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_tuple_guard_other_branch.json",
+]

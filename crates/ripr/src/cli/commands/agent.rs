@@ -597,14 +597,12 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
     route_preview_only_empty_brief(&input.root, &config, &working_set, &mut selection);
     add_agent_brief_provenance_warning(&input.root, &mut selection);
     crate::app::agent_brief::attach_agent_brief_arm_results(&input.root, &mut selection);
-    output::agent_brief::render_agent_brief_json(
-        &input.root,
-        &input.mode,
-        &config,
-        &working_set,
-        &selection,
-    )
-    .map_err(CoreError::from)
+    let render = if options.line_ranges {
+        output::agent_brief::render_agent_brief_line_ranges_json
+    } else {
+        output::agent_brief::render_agent_brief_json
+    };
+    render(&input.root, &input.mode, &config, &working_set, &selection).map_err(CoreError::from)
 }
 
 /// #13791: an empty brief over a scope whose changed code is TypeScript or
@@ -612,7 +610,9 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
 /// instead of "under the current config", which implies a config change
 /// would help. The seam inventory is Rust-only, so none would. Only the
 /// empty-scope warning is replaced; a brief that shows seams, or a scope
-/// with Rust or other changed code, keeps its wording.
+/// with Rust or other changed code, keeps its wording. The #13571 sibling
+/// branch below covers the opposite case — Python code whose adapter is
+/// not enabled at all — where a config change is exactly the fix.
 ///
 /// The route's `check` replays the brief's own input: a saved patch through
 /// `--diff` (resolved by the brief's diff path owner), a base through
@@ -643,7 +643,19 @@ fn route_preview_only_empty_brief(
     };
     let languages =
         app::task_first::preview_only_scope_languages(scope_paths, &config.languages.enabled);
-    if languages.is_empty() {
+    // #13571: when the preview predicate stays empty because Python is not
+    // enabled at all (a flat-layout repo with no marker and no `ripr.toml`),
+    // the generic "under the current config" line is misleading in the
+    // other direction: a config change is exactly what would help, and
+    // `ripr check` analyzed none of the change. Name that enable step
+    // before the `check` route, mirroring `agent_status`'s
+    // disabled-language wording; never claim no config change adds a seam.
+    let disabled_python = if languages.is_empty() {
+        app::task_first::disabled_python_scope_languages(scope_paths, &config.languages.enabled)
+    } else {
+        Vec::new()
+    };
+    if languages.is_empty() && disabled_python.is_empty() {
         return;
     }
     let resolved_diff = match working_set.diff.as_deref() {
@@ -675,12 +687,21 @@ fn route_preview_only_empty_brief(
     else {
         return;
     };
-    *warning = format!(
-        "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
-        working_set.source.as_str(),
-        languages.join(" and "),
-        app::task_first::preview_seam_route(root, input, &languages)
-    );
+    if !languages.is_empty() {
+        *warning = format!(
+            "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
+            working_set.source.as_str(),
+            languages.join(" and "),
+            app::task_first::preview_seam_route(root, input, &languages)
+        );
+    } else {
+        *warning = format!(
+            "No seams matched the requested scope (source: {}): the changed code is Python, but Python is not enabled in ripr.toml [languages], so ripr did not analyze it; add \"python\" to `[languages] enabled` in ripr.toml, then run `{}` {}.",
+            working_set.source.as_str(),
+            app::task_first::preview_check_command(root, input),
+            app::task_first::preview_check_findings(input)
+        );
+    }
 }
 
 fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {
@@ -952,6 +973,13 @@ pub(in crate::cli) fn translate_seam_id_for(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
+            if matches!(surface, SeamIdSurface::Repair)
+                && let Some(hint) = crate::app::task_first::static_unknown_repair_hint(seam_id)
+            {
+                return Err(SeamIdTranslateError::Refused(format!(
+                    "{label} --seam-id `{seam_id}` cannot start a repair: {hint}"
+                )));
+            }
             let list = format!("`ripr pilot --root {root_arg}` to list current repair IDs");
             // The shared resolver just ran and returned `Unknown`, so the
             // packet surface's `ripr repair <finding-id>` recovery route
@@ -1630,7 +1658,22 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
 /// selector fails closed instead of reading anything.
 fn run_agent_attempt_status(options: &AgentStatusOptions, attempt: &str) -> Result<(), String> {
     let attempt_id = crate::app::repair_attempt::RepairAttemptId::parse(attempt.to_string())
-        .map_err(|error| format!("agent status --attempt: {error}"))?;
+        .map_err(|error| {
+            // #15260: under `--json` the malformed ID is a typed refusal whose
+            // `next` is the command that lists attempt IDs, composed from the
+            // bound root, never from the typed value.
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            );
+            crate::cli::usage_refusal::invalid_value_with_next(
+                attempt,
+                &format!("agent status --attempt: {error}"),
+                &format!(
+                    "ripr agent status --root {root}{}",
+                    crate::app::repair_attempt::quoted_store_flag(options.store.as_deref())
+                ),
+            )
+        })?;
     let report = app::agent_status::build_agent_attempt_status(
         &options.root,
         &options.root,
@@ -2628,8 +2671,9 @@ fn run_agent_repair_phase(
         facade_start,
     } = options;
     // #11598: `--quiet` / `RIPR_QUIET` drop this phase's progress narration
-    // and `wrote <path>` lines. Refusal prose, the attempt id and the next
-    // command are results and always print.
+    // and `wrote <path>` lines. Refusal prose, the attempt id, the next
+    // command and the output-location warning (#15282: a redirect into the
+    // worktree fails the attempt) always print.
     // `--json` here does not imply quiet: the phase narration is the
     // protocol-bearing stderr (attempt command, refusal prose) that agents
     // read, so only `--quiet` / `RIPR_QUIET` drop the progress and `wrote`

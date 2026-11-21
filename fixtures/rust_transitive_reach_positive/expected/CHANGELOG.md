@@ -821,3 +821,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_positive (37)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

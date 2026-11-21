@@ -488,6 +488,26 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
         }
     }
 
+    // #14291: the identity fields must name exactly the record this ripr
+    // writes and reads. The receipt lifecycle reader already requires these
+    // values, so a receipt that passed here on shape alone would read as no
+    // receipt there.
+    for (field, expected) in [
+        ("kind", "receipt"),
+        ("tool", "ripr"),
+        ("schema_version", RECEIPT_SCHEMA_VERSION),
+    ] {
+        let found = &value[field];
+        if found.as_str() != Some(expected) {
+            return Err(format!(
+                "receipt at {} is not a ripr receipt this version reads: `{field}` is {}, expected {expected:?}; {}; check the path, or rewrite the receipt with `ripr receipt write`",
+                path.display(),
+                describe_untrusted_value(found),
+                identity_refusal_reason(field)
+            ));
+        }
+    }
+
     // A present `canonical_gap_id` must be a nonblank string: SPEC-0079 binds
     // a receipt to a gap identity, and `check_receipt` must not coerce a
     // null/numeric/blank value to "" and then report structural validity.
@@ -538,6 +558,37 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
     })?;
 
     Ok(())
+}
+
+/// A short, printable description of an untrusted JSON value for an error
+/// message: a short printable string is echoed, anything else is named by its
+/// shape so the file's content never floods or corrupts the terminal.
+fn describe_untrusted_value(value: &serde_json::Value) -> String {
+    const MAX_ECHO_CHARS: usize = 32;
+    match value {
+        serde_json::Value::String(text)
+            if text.chars().count() <= MAX_ECHO_CHARS
+                && text.chars().all(|ch| !ch.is_control()) =>
+        {
+            format!("{text:?}")
+        }
+        serde_json::Value::String(_) => "a long or non-printable string".to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(_) => "a boolean".to_string(),
+        serde_json::Value::Number(_) => "a number".to_string(),
+        serde_json::Value::Array(_) => "an array".to_string(),
+        serde_json::Value::Object(_) => "an object".to_string(),
+    }
+}
+
+/// Why a receipt whose identity field names another record is refused.
+fn identity_refusal_reason(field: &str) -> &'static str {
+    match field {
+        "schema_version" => "this ripr reads only that schema",
+        _ => {
+            "`receipt check` reads only receipts written by `ripr receipt write`, not an agent repair receipt or another tool's record"
+        }
+    }
 }
 
 /// A receipt without `current_head` predates HEAD binding: ripr 0.10 and
@@ -1058,6 +1109,129 @@ mod tests {
                     Err(format!("error should mention canonical_gap_id, got: {err}"))
                 }
             }
+        }
+    }
+
+    /// #14291: `kind`, `tool` and `schema_version` must name the record this
+    /// ripr writes; a writer-produced receipt in the same test stays valid.
+    #[test]
+    fn receipt_check_rejects_foreign_identity_fields() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-receipt-check-identity-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir failed: {e}"))?;
+        let base = serde_json::json!({
+            "schema_version": RECEIPT_SCHEMA_VERSION,
+            "tool": "ripr",
+            "kind": "receipt",
+            "canonical_gap_id": "gap:demo",
+            "verify_command": "cargo test",
+            "verify_status": "passed",
+            "current_head": "0123456789abcdef0123456789abcdef01234567",
+            "written_at": "2026-10-01T00:00:00Z"
+        });
+        let check = |name: &str, value: &serde_json::Value| {
+            let path = dir.join(format!("{name}.json"));
+            std::fs::write(&path, value.to_string())
+                .map_err(|e| format!("write receipt failed: {e}"))?;
+            Ok::<_, String>(check_receipt(&ReceiptCheckOptions {
+                gap: None,
+                path: Some(path),
+                ledger: None,
+                json: false,
+            }))
+        };
+        let long = "x".repeat(200);
+        let cases: Vec<(&str, &str, serde_json::Value, &str)> = vec![
+            (
+                "future_schema",
+                "schema_version",
+                serde_json::json!("9.9"),
+                "\"9.9\"",
+            ),
+            (
+                "zero_schema",
+                "schema_version",
+                serde_json::json!("0.0"),
+                "\"0.0\"",
+            ),
+            (
+                "numeric_schema",
+                "schema_version",
+                serde_json::json!(0.1),
+                "a number",
+            ),
+            (
+                "agent_kind",
+                "kind",
+                serde_json::json!("agent_receipt"),
+                "\"agent_receipt\"",
+            ),
+            (
+                "other_tool",
+                "tool",
+                serde_json::json!("other-tool"),
+                "\"other-tool\"",
+            ),
+            (
+                "long_tool",
+                "tool",
+                serde_json::json!(long),
+                "a long or non-printable string",
+            ),
+            (
+                "control_kind",
+                "kind",
+                serde_json::json!("rec\u{1b}[2J"),
+                "a long or non-printable string",
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (name, field, found, described) in cases {
+            let mut receipt = base.clone();
+            receipt[field] = found;
+            match check(name, &receipt)? {
+                Ok((text, _)) => failures.push(format!("{name}: accepted: {text}")),
+                Err(err) => {
+                    let expected = match field {
+                        "schema_version" => RECEIPT_SCHEMA_VERSION,
+                        "tool" => "ripr",
+                        _ => "receipt",
+                    };
+                    let names_field =
+                        err.contains(&format!("`{field}` is {described}, expected {expected:?};"));
+                    let next_step = err.contains("rewrite");
+                    if !names_field || !next_step || err.contains(&"x".repeat(40)) {
+                        failures.push(format!("{name}: unexpected error: {err}"));
+                    }
+                }
+            }
+        }
+        // A receipt missing `current_head` keeps the #4737 explanation even
+        // when an identity field is also wrong.
+        let mut pre_head = base.clone();
+        pre_head["kind"] = serde_json::json!("agent_receipt");
+        if let Some(object) = pre_head.as_object_mut() {
+            object.remove("current_head");
+        }
+        match check("pre_head", &pre_head)? {
+            Err(err) if err.contains("missing required field `current_head`") => {}
+            other => failures.push(format!("pre-HEAD receipt: {other:?}")),
+        }
+        // Control: the writer's own receipt still checks as valid.
+        let written = write_receipt(&write_opts("gap:demo", "passed"))?;
+        let written: serde_json::Value =
+            serde_json::from_str(&written).map_err(|e| format!("parse written receipt: {e}"))?;
+        match check("written", &written)? {
+            Ok((text, _)) if text.contains("structurally valid") => {}
+            other => failures.push(format!("writer-produced receipt: {other:?}")),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
         }
     }
 

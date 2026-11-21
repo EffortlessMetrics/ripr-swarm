@@ -1,0 +1,7 @@
+# Registers the declared [[test]] target crate-name controls for #15332 under RIPR-SPEC-0172.
+[[extend]]
+id = "RIPR-SPEC-0172"
+tests = [
+  "crates/ripr/tests/declared_test_target_crate_name.rs::a_declared_test_target_outside_tests_pairs_its_crate_named_call",
+  "crates/ripr/tests/declared_test_target_crate_name.rs::a_file_no_test_target_declares_stays_uncredited",
+]

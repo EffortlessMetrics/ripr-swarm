@@ -9,7 +9,7 @@
 use crate::cli::CommandError;
 use crate::cli::commands_options::GateOptions;
 use crate::cli::help;
-use crate::cli::parse::{expect_value, reconcile_root};
+use crate::cli::parse::{default_output_under_root, expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::io::IsTerminal;
@@ -98,6 +98,16 @@ fn evaluate_and_write(options: &GateOptions) -> Result<(), CommandError> {
     ) {
         eprintln!("{warning}");
     }
+    for unavailable in output::gate::gate_decision_unavailable_inputs(&report) {
+        // "optional labels_json PATH is unavailable: why" names the field;
+        // say the flag the caller typed.
+        let rest = unavailable.strip_prefix("optional ").unwrap_or(unavailable);
+        let (field, detail) = rest.split_once(' ').unwrap_or((rest, ""));
+        let flag = format!("--{}", field.replace('_', "-"));
+        eprintln!(
+            "ripr gate: {flag} {detail}; the decision was evaluated without it. Pass a readable file of the kind {flag} names, or drop the flag"
+        );
+    }
     let rendered_json = output::gate::render_gate_decision_json(&report)?;
     let rendered_md = output::gate::render_gate_decision_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
@@ -124,6 +134,12 @@ fn evaluate_and_write(options: &GateOptions) -> Result<(), CommandError> {
 }
 
 fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
+    parse_gate_options_for(args, "gate evaluate")
+}
+
+/// `command` names the command actually run in a refused-root message, so
+/// `gate check` does not blame `gate evaluate` (#15249).
+fn parse_gate_options_for(args: &[String], command: &str) -> Result<GateOptions, String> {
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut repo_exposure = None;
@@ -142,7 +158,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut mode = output::gate::GateMode::VisibleOnly;
     let mut mode_explicit = false;
     let mut acknowledgement_labels = Vec::new();
-    let mut out = PathBuf::from(output::gate::DEFAULT_GATE_OUT);
+    let mut out = None;
     let mut out_md = None;
 
     let mut i = 0usize;
@@ -233,7 +249,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             }
             "--out" => {
                 i += 1;
-                out = non_empty_path_arg(args, i, "--out", "gate")?;
+                out = Some(non_empty_path_arg(args, i, "--out", "gate")?);
             }
             "--out-md" => {
                 i += 1;
@@ -244,8 +260,12 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
         i += 1;
     }
 
+    // #15378: the default report lands under --root, where ci-summary and
+    // the report's own hints read it; an explicit --out keeps its meaning.
+    let out =
+        out.unwrap_or_else(|| default_output_under_root(&root, output::gate::DEFAULT_GATE_OUT));
     let out_md = out_md.unwrap_or_else(|| output::gate::markdown_path_for(&out));
-    // Destinations follow the invoking cwd, independently of --root. Resolve
+    // Explicit destinations follow the invoking cwd, independently of --root. Resolve
     // relative/absolute spellings without traversing the filesystem, then use
     // the shared native lexical comparison (no symlink/case-folding guarantee).
     let absolute_out =
@@ -258,7 +278,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
                 .to_string(),
         );
     }
-    require_existing_gate_root(&root)?;
+    crate::cli::commands_context::ensure_command_root_dir(&root, command)?;
     Ok(GateOptions {
         input: output::gate::GateEvaluateInput {
             root,
@@ -295,6 +315,11 @@ const DEFAULT_GATE_CHECK_GUIDANCE: &str = "target/ripr/review/comments.json";
 struct GateCheckPlan {
     review_comments_args: Vec<String>,
     guidance_out: PathBuf,
+    /// True when `--guidance-out` was passed. A defaulted guidance path sits
+    /// under `<root>/target/ripr` (#15378), which the root's report-output
+    /// containment already guards; only an explicit path, which resolves
+    /// against the invoking directory, takes the cwd containment checks.
+    guidance_explicit: bool,
     gate: GateOptions,
 }
 
@@ -320,8 +345,10 @@ fn gate_check_with_producer(
     // Refuse escaping output paths (for example a committed `target` symlink)
     // before deleting anything, not only before the producer writes.
     crate::atomic_file::ensure_report_output_contained(&plan.gate.input.root)?;
-    crate::atomic_file::ensure_relative_output_contained(&plan.guidance_out)?;
-    ensure_guidance_parent_contained(&plan.guidance_out)?;
+    if plan.guidance_explicit {
+        crate::atomic_file::ensure_relative_output_contained(&plan.guidance_out)?;
+        ensure_guidance_parent_contained(&plan.guidance_out)?;
+    }
     remove_stale_guidance(&plan.guidance_out)?;
     if let Err(error) = produce(&plan.review_comments_args) {
         // The producer can fail after it wrote a complete-looking document
@@ -458,10 +485,11 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
     let mut review_args: Vec<String> = Vec::new();
     let mut gate_args: Vec<String> = Vec::new();
     let mut root_explicit = false;
+    let mut root = PathBuf::from(".");
     let mut base = None;
     let mut head = None;
     let mut mode = None;
-    let mut guidance_out = PathBuf::from(DEFAULT_GATE_CHECK_GUIDANCE);
+    let mut guidance_out = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -485,7 +513,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
             }
             "--guidance-out" => {
                 i += 1;
-                guidance_out = non_empty_path_arg(args, i, flag, "gate check")?;
+                guidance_out = Some(non_empty_path_arg(args, i, flag, "gate check")?);
             }
             // #13895: the suppression policy belongs to the producer, so a
             // suppressed seam reaches the gate as non-blocking.
@@ -504,6 +532,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
             "--root" => {
                 i += 1;
                 let value = non_empty_string_arg(args, i, flag, "gate check")?;
+                root = reconcile_root(&root, root_explicit, &value, "gate check")?;
                 root_explicit = true;
                 review_args.extend([flag.to_string(), value.clone()]);
                 gate_args.extend([flag.to_string(), value]);
@@ -529,6 +558,11 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
         crate::cli::usage_refusal::missing_required("--base", "gate check requires --base <rev>; pass the pull request's base, for example `ripr gate check --base origin/main`")
     })?;
     let head = head.unwrap_or_else(|| "HEAD".to_string());
+    // #15378: the default guidance lands under --root, next to the gate
+    // report and where `reports ci-summary --root` reads it.
+    let guidance_explicit = guidance_out.is_some();
+    let guidance_out = guidance_out
+        .unwrap_or_else(|| default_output_under_root(&root, DEFAULT_GATE_CHECK_GUIDANCE));
     review_args.extend([
         "--base".to_string(),
         base,
@@ -554,11 +588,12 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
         "--mode".to_string(),
         mode.unwrap_or_else(|| output::gate::GateMode::Acknowledgeable.as_str().to_string()),
     ]);
-    let gate = parse_gate_options(&gate_args)?;
+    let gate = parse_gate_options_for(&gate_args, "gate check")?;
     refuse_overlapping_outputs(&guidance_out, &gate)?;
     Ok(GateCheckPlan {
         review_comments_args: review_args,
         guidance_out,
+        guidance_explicit,
         gate,
     })
 }
@@ -585,17 +620,6 @@ fn missing_candidate_input_message(
         (false, false) => {
             "gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
         }
-    }
-}
-
-fn require_existing_gate_root(root: &Path) -> Result<(), String> {
-    if root.is_dir() {
-        Ok(())
-    } else {
-        Err(format!(
-            "gate evaluate --root {} is not a directory; pass --root naming an existing repository directory",
-            root.display()
-        ))
     }
 }
 
@@ -1745,6 +1769,115 @@ mod tests {
         assert_eq!(ok, Ok(()));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         Ok(())
+    }
+
+    /// #15378: with a named root and no explicit destinations, the guidance
+    /// and the gate report land under the root, where `reports ci-summary
+    /// --root` and the report's own hints read them.
+    #[test]
+    fn gate_check_plan_puts_default_outputs_under_a_named_root() -> Result<(), String> {
+        let root = unique_command_test_dir("gate-check-plan-default-root");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let root_arg = root.display().to_string();
+        let plan = parse_gate_check_plan(&args(&["--root", &root_arg, "--base", "abc123"]))?;
+        let guidance = root.join(DEFAULT_GATE_CHECK_GUIDANCE);
+        assert_eq!(plan.guidance_out, guidance);
+        assert!(
+            !plan.guidance_explicit,
+            "a defaulted guidance path is guarded by the root's containment"
+        );
+        assert_eq!(
+            plan.review_comments_args.last(),
+            Some(&guidance.display().to_string()),
+            "review-comments must write the root-relative default: {:?}",
+            plan.review_comments_args
+        );
+        let absolute_guidance =
+            std::path::absolute(&guidance).map_err(|err| format!("absolute: {err}"))?;
+        assert_eq!(plan.gate.input.pr_guidance, Some(absolute_guidance));
+        assert_eq!(plan.gate.out, root.join(output::gate::DEFAULT_GATE_OUT));
+        assert_eq!(
+            plan.gate.out_md,
+            root.join("target/ripr/reports/gate-decision.md")
+        );
+        // An explicit relative destination keeps its invoking-directory meaning.
+        let explicit = parse_gate_check_plan(&args(&[
+            "--root",
+            &root_arg,
+            "--base",
+            "abc123",
+            "--guidance-out",
+            "target/gc/comments.json",
+            "--out",
+            "target/gc/gate.json",
+        ]))?;
+        assert_eq!(
+            explicit.guidance_out,
+            PathBuf::from("target/gc/comments.json")
+        );
+        assert!(explicit.guidance_explicit);
+        assert_eq!(explicit.gate.out, PathBuf::from("target/gc/gate.json"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #15378 end to end: `gate check --root <dir>` without destinations
+    /// writes the guidance and the decision under `<dir>/target/ripr`.
+    #[test]
+    fn gate_check_with_a_named_root_writes_default_reports_under_it() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("gate-check-default-root");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        fixture_git_ok(&root, &["init", "-q", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "Gate Check"),
+            ("user.email", "gate-check@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        let write = |path: &str, text: &str| {
+            std::fs::write(root.join(path), text).map_err(|err| format!("write {path}: {err}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"gatecheckroot\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write(
+            "src/lib.rs",
+            "pub fn is_large(n: u32) -> bool {\n    n > 10\n}\n",
+        )?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        write(
+            "src/lib.rs",
+            "pub fn is_large(n: u32) -> bool {\n    n >= 10\n}\n",
+        )?;
+        fixture_git_ok(&root, &["commit", "-q", "-am", "change"])?;
+
+        let root_arg = root.display().to_string();
+        let result = gate(&args(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~1",
+            "--mode",
+            "visible-only",
+        ]));
+        assert_eq!(result, Ok(()), "visible-only never blocks on findings");
+        for report in [
+            "target/ripr/review/comments.json",
+            "target/ripr/review/comments.md",
+            "target/ripr/reports/gate-decision.json",
+            "target/ripr/reports/gate-decision.md",
+        ] {
+            assert!(
+                root.join(report).is_file(),
+                "default report must land under --root: {report}"
+            );
+        }
+        remove_fixture_tree(&root)
     }
 
     #[test]

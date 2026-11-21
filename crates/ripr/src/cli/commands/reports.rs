@@ -261,11 +261,24 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    let reasons = output::typescript_limitations::typescript_limitation_blocked_reasons(&report);
+    if !reasons.is_empty() {
+        return Err(format!(
+            "reports ts-limitations could not use --check-output: {}; the report was written as `blocked`. Pass --check-output naming `ripr check --format json` output, e.g. `ripr check --format json > check.json`",
+            reasons.join("; ")
+        ));
+    }
     Ok(())
 }
 
 fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     let options = parse_typescript_false_actionable_options(args)?;
+    // #15249: the shared root refusal, before the corpus is read or a report
+    // is written. `--root` is the report's label; its outputs follow `--out`.
+    crate::cli::commands_context::ensure_command_root_dir(
+        Path::new(&options.root),
+        "reports ts-false-actionable",
+    )?;
     // An unreadable corpus means the command could not complete: surface the
     // read failure (exit 2 per docs/EXIT_CODES.md) instead of writing a
     // `blocked` report and exiting 0 as if the run succeeded.
@@ -291,6 +304,14 @@ fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    let reasons =
+        output::typescript_false_actionable::typescript_false_actionable_blocked_reasons(&report);
+    if !reasons.is_empty() {
+        return Err(format!(
+            "reports ts-false-actionable could not use --corpus: {}; the report was written as `blocked`. Pass --corpus naming a TypeScript false-actionable audit corpus JSON with schema_version 0.1",
+            reasons.join("; ")
+        ));
+    }
     Ok(())
 }
 

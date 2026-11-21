@@ -843,7 +843,21 @@ fn has_method_segment(text: &str, name: &str) -> bool {
 }
 
 pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
-    (line.contains("assert_eq!") || line.contains("assert_ne!")) && line.contains('{')
+    if !(line.contains("assert_eq!") || line.contains("assert_ne!")) || !line.contains('{') {
+        return false;
+    }
+    // Keep the existing whole-object heuristic outside raw literals. Their
+    // contents, including quoted JSON, cannot introduce a struct operand.
+    let mut start = 0;
+    for (open, close, raw) in super::super::mask::string_literal_spans(line) {
+        if raw {
+            if line[start..open].contains('{') {
+                return true;
+            }
+            start = close + 1;
+        }
+    }
+    line[start..].contains('{')
 }
 
 /// RIPR-SPEC-0231 rule 1: `assert_ne!`, `debug_assert_ne!` and any other

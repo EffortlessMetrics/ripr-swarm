@@ -28,6 +28,9 @@ pub(super) enum CliCommand {
     CoverageGrip(Vec<String>),
     AssistantLoop(Vec<String>),
     FirstPr(Vec<String>),
+    /// The `start-here` alias of `first-pr`: same behavior, but refusals name
+    /// the command the caller actually ran (#15249).
+    StartHere(Vec<String>),
     FirstAction(Vec<String>),
     Reports(Vec<String>),
     Calibrate(Vec<String>),
@@ -134,7 +137,12 @@ impl CliCommand {
             Some(command) => match crate::cli::command_catalog::resolve_top_level(command) {
                 Some(entry) => {
                     reject_unsupported_extended_help(entry.dispatch, command, &command_args)?;
-                    Ok(cli_command_from_dispatch(entry.dispatch, command_args))
+                    Ok(match cli_command_from_dispatch(entry.dispatch, command_args) {
+                        CliCommand::FirstPr(args) if command == "start-here" => {
+                            CliCommand::StartHere(args)
+                        }
+                        other => other,
+                    })
                 }
                 None => {
                     // `ripr --bogus check` typed a command after the stray
@@ -352,6 +360,13 @@ fn unknown_command_message(command: &str, command_typed: bool) -> String {
     if command == "version" {
         return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
             .to_string();
+    }
+    // A word that is exactly a family's subcommand (`ripr ci-summary`) is that
+    // nested command typed without its family; name the full path.
+    if let Some(path) = crate::cli::command_catalog::nested_route_for_subcommand(command) {
+        return format!(
+            "unknown command {command:?}. Did you mean `ripr {path}`? Run `ripr --help`."
+        );
     }
     match closest_command(command) {
         Some(suggestion) => {
@@ -636,7 +651,7 @@ mod tests {
                 CliCommand::AssistantLoop(Vec::new()),
             ),
             (Some("first-pr"), CliCommand::FirstPr(Vec::new())),
-            (Some("start-here"), CliCommand::FirstPr(Vec::new())),
+            (Some("start-here"), CliCommand::StartHere(Vec::new())),
             (Some("first-action"), CliCommand::FirstAction(Vec::new())),
             (Some("reports"), CliCommand::Reports(Vec::new())),
             (Some("calibrate"), CliCommand::Calibrate(Vec::new())),
@@ -794,6 +809,18 @@ mod tests {
     }
 
     #[test]
+    fn nested_subcommand_at_top_level_suggests_full_path() {
+        assert_eq!(
+            unknown_command_error("ci-summary", false),
+            "unknown command \"ci-summary\". Did you mean `ripr reports ci-summary`? Run `ripr --help`."
+        );
+        assert_eq!(
+            unknown_command_error("ci-packet", false),
+            "unknown command \"ci-packet\". Did you mean `ripr reports ci-packet`? Run `ripr --help`."
+        );
+    }
+
+    #[test]
     fn closest_command_ignores_unrelated_short_names() {
         assert_eq!(closest_command("bogus"), None);
         assert_eq!(closest_command("chekc"), Some("check"));
@@ -841,7 +868,7 @@ mod tests {
         // start-here alias should also work via help.
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["start-here"])),
-            Ok(CliCommand::FirstPr(args(&["--help"])))
+            Ok(CliCommand::StartHere(args(&["--help"])))
         );
     }
 

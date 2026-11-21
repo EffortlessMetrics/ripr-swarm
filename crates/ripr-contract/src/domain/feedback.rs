@@ -778,4 +778,187 @@ mod tests {
         );
         Ok(())
     }
+
+    fn payload(reason: FeedbackReason) -> FeedbackPayload {
+        FeedbackPayload {
+            identity: identity("snap-1", Some("gap:alpha")),
+            actor_kind: ActorKind::Agent,
+            review_status: ReviewStatus::Unreviewed,
+            review_actor_kind: None,
+            reason,
+            judgment_override: None,
+            note: None,
+        }
+    }
+
+    fn other(judgment: FeedbackJudgment, note: &str) -> FeedbackPayload {
+        FeedbackPayload {
+            judgment_override: Some(judgment),
+            note: Some(note.to_string()),
+            ..payload(FeedbackReason::Other)
+        }
+    }
+
+    #[test]
+    fn every_closed_token_parses_back_to_its_value() {
+        for judgment in [
+            FeedbackJudgment::Useful,
+            FeedbackJudgment::Incorrect,
+            FeedbackJudgment::Unclear,
+            FeedbackJudgment::Expensive,
+            FeedbackJudgment::IntentionalNoAction,
+        ] {
+            assert_eq!(FeedbackJudgment::parse(judgment.as_str()), Ok(judgment));
+        }
+        assert_eq!(
+            FeedbackJudgment::IntentionalNoAction.as_str(),
+            "intentional_no_action"
+        );
+        for actor in [ActorKind::Human, ActorKind::Agent, ActorKind::Unknown] {
+            assert_eq!(ActorKind::parse(actor.as_str()), Ok(actor));
+        }
+        assert_eq!(
+            [ActorKind::Human, ActorKind::Agent, ActorKind::Unknown].map(ActorKind::as_str),
+            ["human", "agent", "unknown"]
+        );
+        for status in [
+            ReviewStatus::Unreviewed,
+            ReviewStatus::ReviewedAccepted,
+            ReviewStatus::ReviewedRejected,
+        ] {
+            assert_eq!(ReviewStatus::parse(status.as_str()), Ok(status));
+        }
+        assert_eq!(ReviewStatus::ReviewedRejected.as_str(), "reviewed_rejected");
+        assert_eq!(
+            [
+                ReferenceState::Current,
+                ReferenceState::Historical,
+                ReferenceState::Mismatched
+            ]
+            .map(ReferenceState::as_str),
+            ["current", "historical", "mismatched"]
+        );
+        for reason in FeedbackReason::all() {
+            assert_eq!(FeedbackReason::parse(reason.as_str()), Ok(reason));
+        }
+        assert_eq!(FeedbackJudgment::parse("Useful").ok(), None);
+        assert_eq!(ActorKind::parse("bot").ok(), None);
+        assert_eq!(ReviewStatus::parse("reviewed").ok(), None);
+        assert_eq!(FeedbackReason::parse("").ok(), None);
+    }
+
+    #[test]
+    fn each_optional_identity_is_refused_when_blank_or_holding_a_control_character() {
+        type Field = fn(&mut ResultIdentity) -> &mut Option<String>;
+        let fields: [(&str, Field); 4] = [
+            ("--item", |id| &mut id.canonical_item),
+            ("--route-digest", |id| &mut id.route_digest),
+            ("--attempt", |id| &mut id.attempt_id),
+            ("--receipt", |id| &mut id.receipt_id),
+        ];
+        for (label, field) in fields {
+            for bad in [" ", "", "id\n2", "id\u{7}"] {
+                let mut subject = identity("snap-1", Some("gap:alpha"));
+                *field(&mut subject) = Some(bad.to_string());
+                assert_eq!(
+                    subject.validate(),
+                    Err(format!(
+                        "feedback {label} must be a non-empty identity without control characters; pass the id exactly as the finding printed it"
+                    )),
+                    "{label} {bad:?}"
+                );
+            }
+            let mut absent = identity("snap-1", Some("gap:alpha"));
+            *field(&mut absent) = None;
+            assert_eq!(absent.validate(), Ok(()), "{label}");
+        }
+        let mut control = identity("snap\t1", None);
+        assert!(control.validate().err().is_some());
+        control.snapshot_id = "snap-1".to_string();
+        assert_eq!(control.validate(), Ok(()));
+    }
+
+    #[test]
+    fn the_note_limit_counts_bytes_and_admits_exactly_the_maximum() {
+        let at_limit = other(
+            FeedbackJudgment::Useful,
+            &"a".repeat(FEEDBACK_NOTE_MAX_BYTES),
+        );
+        assert_eq!(at_limit.validate(), Ok(()));
+        let over = other(
+            FeedbackJudgment::Useful,
+            &"a".repeat(FEEDBACK_NOTE_MAX_BYTES + 1),
+        );
+        assert_eq!(
+            over.validate(),
+            Err("feedback --note exceeds 1024 bytes; use a shorter note".to_string())
+        );
+        // 512 two-byte characters fit; one more does not.
+        let multibyte = other(FeedbackJudgment::Useful, &"\u{e9}".repeat(513));
+        assert!(multibyte.validate().err().is_some());
+        assert_eq!(
+            other(FeedbackJudgment::Useful, "a\0b").validate(),
+            Err(
+                "feedback --note must not contain NUL; remove the NUL character and retry"
+                    .to_string()
+            )
+        );
+        // A closed reason may still carry a note.
+        let noted = FeedbackPayload {
+            note: Some("context".to_string()),
+            ..payload(FeedbackReason::TooSlow)
+        };
+        assert_eq!(noted.validate(), Ok(()));
+    }
+
+    #[test]
+    fn an_unreviewed_payload_cannot_carry_a_review_actor() {
+        let carried = FeedbackPayload {
+            review_actor_kind: Some(ActorKind::Human),
+            ..payload(FeedbackReason::TooSlow)
+        };
+        assert_eq!(
+            carried.validate(),
+            Err(
+                "unreviewed feedback cannot carry --review-actor; drop it or set --review"
+                    .to_string()
+            )
+        );
+        let reviewed = FeedbackPayload {
+            review_status: ReviewStatus::ReviewedRejected,
+            review_actor_kind: Some(ActorKind::Agent),
+            ..payload(FeedbackReason::TooSlow)
+        };
+        assert_eq!(reviewed.validate(), Ok(()));
+    }
+
+    #[test]
+    fn canonical_bytes_list_every_identity_field_in_a_fixed_order() {
+        let full = FeedbackPayload {
+            identity: ResultIdentity {
+                snapshot_id: "snap-1".to_string(),
+                canonical_item: Some("gap:alpha".to_string()),
+                route_digest: Some("route-1".to_string()),
+                attempt_id: Some("attempt-2".to_string()),
+                receipt_id: Some("receipt-3".to_string()),
+            },
+            actor_kind: ActorKind::Human,
+            review_status: ReviewStatus::ReviewedAccepted,
+            review_actor_kind: Some(ActorKind::Agent),
+            reason: FeedbackReason::Other,
+            judgment_override: Some(FeedbackJudgment::Expensive),
+            note: Some("slow on CI".to_string()),
+        };
+        assert_eq!(
+            full.canonical_bytes(),
+            "v1\nsnapshot=snap-1\nitem=gap:alpha\nroute=route-1\nattempt=attempt-2\nreceipt=receipt-3\nactor=human\nreview=reviewed_accepted\nreview_actor=agent\nreason=other\njudgment=expensive\nnote=slow on CI\n"
+        );
+        let mut sparse = payload(FeedbackReason::TooSlow);
+        sparse.identity.canonical_item = None;
+        sparse.identity.route_digest = None;
+        assert_eq!(
+            sparse.canonical_bytes(),
+            "v1\nsnapshot=snap-1\nitem=\nroute=\nattempt=\nreceipt=\nactor=agent\nreview=unreviewed\nreview_actor=\nreason=too_slow\njudgment=expensive\nnote=\n"
+        );
+    }
 }

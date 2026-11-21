@@ -41,6 +41,11 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_write_options(args)?;
+    // #15249: an explicit `--root` that is not a directory is the shared root
+    // refusal, before the git HEAD lookup or any receipt write.
+    if let Some(root) = opts.root.as_deref() {
+        crate::cli::commands_context::ensure_command_root_dir(root, "receipt write")?;
+    }
     // Receipts land under `target/ripr/receipts`, never the cache, so an
     // explicit `RIPR_CACHE_DIR` must not waive the link check, and the default
     // path is cwd-relative when `--root` is omitted (#11477).
@@ -90,7 +95,18 @@ fn run_receipt_check(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_check_options(args)?;
-    let (msg, cross_ref) = check_receipt(&opts)?;
+    // #15260: under `--json` a receipt or ledger that cannot be used is the
+    // shared refusal document on stdout, not an empty stdout plus prose.
+    // The missing-selector refusal is a required-flag error, not an unusable
+    // input, and stays with the required-flag owner.
+    let names_a_receipt = opts.path.is_some() || opts.gap.is_some();
+    let (msg, cross_ref) = check_receipt(&opts).map_err(|message| {
+        if names_a_receipt {
+            crate::cli::usage_refusal::input_unusable(None, &message)
+        } else {
+            message
+        }
+    })?;
     if opts.json {
         // Machine-readable mode: one JSON document carrying the typed
         // cross-reference verdict. The human sentence stays the default.

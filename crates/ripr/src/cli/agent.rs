@@ -47,6 +47,7 @@ pub(super) struct AgentStartOptions {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentBriefOptions {
+    pub(super) line_ranges: bool,
     pub(super) root: PathBuf,
     /// `--root` was typed, so the root is used as given (#8902).
     pub(super) root_explicit: bool,
@@ -365,10 +366,14 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut test_result: Option<PathBuf> = None;
     let mut store: Option<PathBuf> = None;
     let mut json = false;
+    let mut quiet = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json = true,
+            // Same meaning as `ripr repair --quiet`: the flag twin of
+            // `RIPR_QUIET`, which this phase already honors.
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
                 let reconciled = reconcile_root(
@@ -770,7 +775,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         test_result,
         store,
         json,
-        quiet: false,
+        quiet,
         facade_start: false,
     }))
 }
@@ -859,6 +864,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     let mut root_explicit = false;
     let mut working_set: Option<WorkingSetCandidate> = None;
     let mut json = false;
+    let mut line_ranges = false;
     let mut max_seams = DEFAULT_AGENT_BRIEF_MAX_SEAMS;
     let mut max_seams_explicit = false;
 
@@ -907,6 +913,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
                 )?;
             }
             "--json" => json = true,
+            "--line-ranges" => line_ranges = true,
             "--max-seams" => {
                 refuse_repeated_flag(max_seams_explicit, "agent brief", "--max-seams")?;
                 i += 1;
@@ -927,6 +934,12 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         })?
         .into_working_set();
 
+    if line_ranges && !json {
+        return Err(
+            "agent brief --line-ranges requires --json; add --json to the command".to_string(),
+        );
+    }
+
     if !json {
         return Err(
             "agent brief requires --json (the supported output for this subcommand); add --json to the command".to_string(),
@@ -934,6 +947,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     }
 
     Ok(AgentBriefOptions {
+        line_ranges,
         root,
         root_explicit,
         working_set,
@@ -1964,6 +1978,24 @@ mod tests {
         assert_eq!(parse(&["--json"]), Some(true));
     }
 
+    /// `agent repair` takes `--quiet` like `ripr repair`, the flag twin of
+    /// the `RIPR_QUIET` switch the phase already honors; it leaves `--json`
+    /// alone.
+    #[test]
+    fn agent_repair_quiet_flag_is_the_ripr_quiet_twin() {
+        let parse = |extra: &[&str]| {
+            let mut values = vec!["repair", "--seam-id", "seam:sample", "--phase", "before"];
+            values.extend_from_slice(extra);
+            match parse_agent_args(&args(&values)) {
+                Ok(AgentCommand::Repair(options)) => Some((options.quiet, options.json)),
+                _ => None,
+            }
+        };
+        assert_eq!(parse(&[]), Some((false, false)));
+        assert_eq!(parse(&["--quiet"]), Some((true, false)));
+        assert_eq!(parse(&["--quiet", "--json"]), Some((true, true)));
+    }
+
     #[test]
     fn agent_repair_parses_before_and_exact_after() {
         assert_eq!(
@@ -2561,6 +2593,7 @@ mod tests {
         assert_eq!(
             parse_agent_args(&args(&["brief", "--diff", "change.diff", "--json"])),
             Ok(AgentCommand::Brief(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
@@ -2583,6 +2616,7 @@ mod tests {
                 "2",
             ])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("repo"),
                 root_explicit: true,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
@@ -2597,6 +2631,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--base", "main", "--json"])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Base("main".to_string()),
@@ -2615,6 +2650,7 @@ mod tests {
                 "--json",
             ])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Files(vec![
@@ -2632,6 +2668,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--seam-id", "f3c9e4d21a0b7c88", "--json",])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::SeamId("f3c9e4d21a0b7c88".to_string()),
@@ -3443,7 +3480,10 @@ mod tests {
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs"])),
-            Err("--at expects FILE:LINE, got \"src/lib.rs\"".to_string())
+            Err(
+                "--at expects FILE:LINE (for example src/lib.rs:12), got \"src/lib.rs\""
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs:abc"])),

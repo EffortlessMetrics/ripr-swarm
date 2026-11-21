@@ -2,7 +2,7 @@ pub(super) const REPORTS_HELP: &str = r#"Write reviewer-first report projections
 
 Usage:
   ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
-  ripr reports ci-packet [--root PATH] [--step NAME]...
+  ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
   ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
@@ -26,6 +26,7 @@ Index options:
 CI packet options:
   --root PATH           Checkout to analyze and write target/ripr and target/ci under. Defaults to current directory.
   --step NAME           Run only the named step (repeatable), still under its condition, to reproduce one step locally.
+  --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 CI summary options:
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
@@ -46,8 +47,8 @@ Kani result options:
   --input PATH          Existing Kani native result JSON. Required.
   --binding PATH        Source, configuration and native-artifact binding JSON. Required.
   --root PATH           Root for the bound source files. Defaults to current directory.
-  --out PATH            JSON report. Defaults to target/ripr/reports/kani.json under --root.
-  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani.md under --root.
+  --out PATH            JSON report. Defaults to target/ripr/reports/kani-import.json under --root.
+  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani-import.md under --root.
 
 TypeScript limitation options:
   --check-output PATH   Existing `ripr check --json` output to aggregate.

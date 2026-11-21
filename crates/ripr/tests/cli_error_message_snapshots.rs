@@ -184,7 +184,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["evidence-health", "--root", "/ripr-missing-root"],
         exit: 2,
-        stderr: "ripr: evidence-health root /ripr-missing-root does not exist or is not a directory; pass `--root <dir>` naming the workspace directory\n",
+        stderr: "ripr: evidence-health root /ripr-missing-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)\n",
     },
     // An option typed before the command. The `ripr check` example may only
     // name a spelling `check` accepts: `ripr -q check` used to be told to run
