@@ -1657,9 +1657,11 @@ fn nested_python_root_hint(
 }
 
 /// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
-/// Names Rust only when the analyzed root actually has Rust markers (#7648).
+/// Names Rust only when the analyzed root has Rust markers or a crate nested
+/// below it (#7648): a root with `backend/Cargo.toml` has its Rust files
+/// analyzed, and a list without `rust` would switch that off.
 fn preview_enablement_toml(output: &CheckOutput) -> String {
-    let rust_detected = crate::domain::rust_markers_at(&output.root);
+    let rust_detected = crate::domain::enablement_tip_keeps_rust(&output.root);
     // Keep the preview languages this diff shows are already on (their
     // advisories say so), then add every language still off, so one edit
     // enables them all (#15288). A preview language enabled in ripr.toml but
