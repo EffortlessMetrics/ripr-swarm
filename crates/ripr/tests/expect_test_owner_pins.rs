@@ -89,6 +89,28 @@ const NEW: &str = "format!(\"w{}\", x * 3)";
 const IMPORT: &str = "use expect_test::expect;";
 
 #[test]
+fn incomplete_source_recognizes_only_the_expect_receiver() -> Result<(), String> {
+    let imports = "use expect_test::expect;\nfn broken() { let = ; }";
+    for test in [
+        "expect![\"w12\"].assert_eq(&render(4));",
+        "expect![[\"w12\"]].assert_eq(\n        &render(4));",
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_eq!(
+            finding["classification"], "weakly_exposed",
+            "{test}: {finding}"
+        );
+    }
+    let test = "expect![\"w12\"]; Other.assert_eq(&render(4));";
+    let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+    assert_eq!(
+        finding["classification"], "reachable_unrevealed",
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
 fn every_parsed_inline_expect_spelling_pins_the_owner() -> Result<(), String> {
     for test in [
         "expect![[\"w12\"]].assert_eq(&render(4));",
