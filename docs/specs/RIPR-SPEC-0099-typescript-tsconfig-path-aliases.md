@@ -266,7 +266,8 @@ Own-package build entry (#15342): when a relative directory import names the
 importer's own package and its JavaScript `main` names unindexed build output,
 the adapter can attribute the import to the manifest's single `source` or a
 unique indexed `src/` counterpart with the same build stem. Both the source
-and manifest must be tracked. A competing module, package directory index,
+and manifest must be tracked. A declared filename with an extension must
+match as written. A competing module, package directory index,
 or root export, an ambiguous source, and a source owned by a nested package
 withhold the relation. For a nested package the adapter checks sibling files
 as well as directory indexes. It withholds for `.js`, `.jsx`, `.mjs`, `.cjs`,

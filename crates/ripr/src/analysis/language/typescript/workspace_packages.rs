@@ -195,11 +195,20 @@ impl WorkspacePackages {
             }
         }
         let mirror = src_mirror(manifest.get("main")?.as_str()?)?;
-        let target = match manifest.get("source") {
+        let declared = manifest.get("source");
+        let target = match declared {
             Some(value) => value.as_str()?,
             None => &mirror,
         };
         let source = self.source_file_for(dir, target)?;
+        // A filename supplied with its extension must match as written.
+        // An absent src/entry.ts cannot designate src/entry.ts.ts.
+        if declared.is_some()
+            && Path::new(target).extension().is_some()
+            && source != normalize(&dir.join(target))
+        {
+            return None;
+        }
         let path = Path::new(&source);
         if super::discovery::is_test_file(path)
             || package_root_for_file_path(path, root).as_deref() != Some(dir)

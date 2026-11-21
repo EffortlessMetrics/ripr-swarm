@@ -288,6 +288,7 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
             ("src/other.ts", owner),
             ("src/ambiguous.ts", owner),
             ("src/ambiguous.tsx", owner),
+            ("src/missing.ts.ts", owner),
             (
                 "test/public.test.ts",
                 "import emitter from '..';\nimport { expect } from 'chai';\nit('returns a value', () => { expect(emitter()).to.equal(42); });\n",
@@ -306,6 +307,7 @@ fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<()
         "src/other.ts",
         "src/ambiguous.ts",
         "src/ambiguous.tsx",
+        "src/missing.ts.ts",
     ];
     let changes = paths.map(|file| changed_with_lines(file, &[(2, "  return 42;")]));
     let bundle = "dist/emitter.js";
