@@ -31,10 +31,7 @@
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{
-    ExposureClass, Finding, NextActionCheckCase, OracleStrength, ProbeFamily, RelatedTest,
-    RelationConfidence,
-};
+use crate::domain::{ExposureClass, Finding, NextActionCheckCase, ProbeFamily, RelatedTest};
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
@@ -224,8 +221,9 @@ fn render_report(
     let mut tests: Vec<TestRef> = Vec::new();
     let budget = gap_line_budget(rows.len());
     for finding in rows.iter().take(budget) {
-        let test_ref =
-            strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
+        let test_ref = finding
+            .headline_related_test()
+            .map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
         out.push('\n');
         push_stage_rows(&mut out, finding);
@@ -476,7 +474,7 @@ pub(super) fn render_finding(
     } else if is_test_side_gap(finding) {
         (
             "open=a test-side gap remains: no related test is shown to notice this change; static advisory, not runtime proof",
-            strongest_test(finding),
+            finding.headline_related_test(),
         )
     } else if triage::limit_leaves_weak_assertion_open(finding) {
         (
@@ -496,19 +494,22 @@ pub(super) fn render_finding(
         // the advisory qualifier instead of falling through to the
         // "documented route is a co-located test" stop, which told agents to
         // write another test after theirs closed the gap.
-        let terminal = if triage::is_preview_limited(finding) {
+        let representative = finding.headline_related_test();
+        let terminal = if representative.is_none() {
+            "done=finding classified exposed; no discriminating test identified among the retained rows; static advisory, not runtime proof"
+        } else if triage::is_preview_limited(finding) {
             "done=preview-language evidence is advisory only; a related test appears to notice this change; verify the assertion independently; static advisory, not runtime proof"
         } else {
             "done=a related test appears to notice this change; static advisory, not runtime proof"
         };
-        (terminal, noticing_test(finding))
+        (terminal, representative)
     } else {
         (
             // #13238: same vocabulary as the check surface's terminal line —
             // a static limit is not "nothing more is fixable"; the human
             // surface names the co-located-test route for this finding.
             "stop=no test-side gap is offered for this finding from static evidence; the documented route is a co-located test that reaches and observes the changed behavior; static advisory, not runtime proof",
-            strongest_test(finding),
+            finding.headline_related_test(),
         )
     };
     let mut tests: Vec<TestRef> = Vec::new();
@@ -806,8 +807,9 @@ fn render_limited_records(
         .collect();
     let mut tests: Vec<TestRef> = Vec::new();
     for finding in records.iter().take(MIN_GAP_LINES) {
-        let test_ref =
-            strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
+        let test_ref = finding
+            .headline_related_test()
+            .map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
         out.push('\n');
         push_stage_rows(&mut out, finding);
@@ -1155,62 +1157,6 @@ struct TestRef {
     line: String,
 }
 
-/// The related test an agent should open first (#13603): the relation
-/// confidence the producer already ranks rows by (`ripr context`, the human
-/// headline) leads, so a test that calls the changed function outranks one
-/// linked only by file location; oracle strength breaks ties within a
-/// confidence tier. A row without a recorded relation ranks with `Opaque`.
-fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
-    finding
-        .related_tests
-        .iter()
-        .filter(|test| test.is_contributing())
-        .min_by_key(|test| {
-            (
-                test.relation_confidence
-                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
-                // #14454, #14483: within a confidence tier, a row whose
-                // assertion cannot observe the change is never the test to
-                // edit while another row can (the shared observation tier).
-                std::cmp::Reverse(test.observation_tier()),
-                strength_rank(&test.oracle_strength),
-            )
-        })
-}
-
-/// The related test a `done=` line names as the one that appears to notice
-/// the change: the strongest oracle leads, so a direct caller holding only a
-/// smoke check is never named as the noticer over a test that pins the value;
-/// relation confidence breaks ties (#13603 review). The shared observation
-/// tier leads (#14483), so a strong oracle on a test with no established path
-/// to the change is never named as the noticer while a reaching test is
-/// listed.
-fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
-    finding
-        .related_tests
-        .iter()
-        .filter(|test| test.is_contributing())
-        .min_by_key(|test| {
-            (
-                std::cmp::Reverse(test.observation_tier()),
-                strength_rank(&test.oracle_strength),
-                test.relation_confidence
-                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
-            )
-        })
-}
-
-fn strength_rank(strength: &OracleStrength) -> u8 {
-    match strength {
-        OracleStrength::Strong => 0,
-        OracleStrength::Medium => 1,
-        OracleStrength::Weak => 2,
-        OracleStrength::Smoke => 3,
-        OracleStrength::None => 4,
-        OracleStrength::Unknown => 5,
-    }
-}
-
 /// Index (1-based) of `test` in the shared table, adding it on first use so a
 /// test that grips several gaps is written once.
 fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usize {
@@ -1339,7 +1285,7 @@ fn twin_fold_key(root: &Path, finding: &Finding, value: &str) -> String {
     // word why the same assertion misses differently (the field row says
     // `missing_exact_assertion`, the predicate `observation_unconfirmed`);
     // the test's identity is what both rows must share.
-    let test = strongest_test(finding).map(|test| {
+    let test = finding.headline_related_test().map(|test| {
         format!(
             "{}:{} {} {} {:?}",
             repository_display_path(root, &test.file),
@@ -1407,7 +1353,7 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
 /// The strongest related test's full `tN=` identity and the `stages=` row,
 /// compared unclipped by both row folds.
 fn test_and_stages_key(root: &Path, finding: &Finding) -> (Option<String>, String) {
-    let test = strongest_test(finding).map(|test| {
+    let test = finding.headline_related_test().map(|test| {
         format!(
             "{}:{} {} {} {:?} {:?}",
             repository_display_path(root, &test.file),

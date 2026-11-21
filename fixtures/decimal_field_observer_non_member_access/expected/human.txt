@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:default_config:return_value:return_value:config_timeout_secs_30_retries_1
   Changed behavior: Config { timeout_secs: 30, retries: 1, }
   Missing check (1 of 3): No detected assertion observes the changed value, error, field, or effect
-  Related test: tests/config.rs:7 decimal_observation_does_not_name_retries (asserts, but not on the changed value)
+  No discriminating test identified: the retained rows do not identify an observer (1 matched before the display limit).
   Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
   Evidence: reach yes · infection yes · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

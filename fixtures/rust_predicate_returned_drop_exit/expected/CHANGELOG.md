@@ -319,3 +319,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_predicate_returned_drop_exit (26)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_predicate_returned_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -191,3 +191,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (17)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

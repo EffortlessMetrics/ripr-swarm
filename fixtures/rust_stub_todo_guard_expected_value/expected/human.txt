@@ -19,7 +19,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:price:return_value:return_value:amount-10
   Changed behavior: amount - 10
   Missing check: No strong assertion was detected
-  Related test (1 of 2 matched rows): src/lib.rs:19 equality_discriminator (ripr could not confirm that this assertion observes the changed behavior)
+  No discriminating test identified: the retained rows do not identify an observer (2 matched before the display limit).
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

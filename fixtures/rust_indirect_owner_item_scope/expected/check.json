@@ -147,8 +147,8 @@
         }
       ],
       "stop_reasons": ["gap_evidence_unresolved"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
       "recommended_next_step": "`outer_owner_value_still_observes_the_change` (src/lib.rs:10) passes the owner as a function value, and ripr does not follow the indirect call to the assertion, so ripr does not report a gap. Check that the assertion's expected value differs between the old and the new behavior; add a test only if it does not.",
       "suggested_next_action": "`outer_owner_value_still_observes_the_change` (src/lib.rs:10) passes the owner as a function value, and ripr does not follow the indirect call to the assertion, so ripr does not report a gap. Check that the assertion's expected value differs between the old and the new behavior; add a test only if it does not.",
       "language": "rust",

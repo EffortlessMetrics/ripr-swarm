@@ -81,8 +81,8 @@
         }
       ],
       "stop_reasons": ["transitive_reach_unresolved"],
-      "oracle_kind": "whole_object_equality",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
       "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
       "language": "rust",
@@ -168,8 +168,8 @@
         }
       ],
       "stop_reasons": ["transitive_reach_unresolved"],
-      "oracle_kind": "whole_object_equality",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
       "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
       "language": "rust",

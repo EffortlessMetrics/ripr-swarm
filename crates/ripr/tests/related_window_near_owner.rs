@@ -3,7 +3,10 @@
 //! must fill the eight-row related-test window ahead of tests that only share
 //! the file and sort earlier by name.
 
-use ripr::{CheckInput, Finding, Mode, OutputFormat, check_workspace};
+use ripr::app::check_workspace_with_config;
+use ripr::config::RiprConfig;
+use ripr::domain::LanguageId;
+use ripr::{CheckInput, Finding, Mode, OutputFormat};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -68,19 +71,28 @@ fn findings() -> Result<Vec<Finding>, String> {
     scratch.write("src/lib.rs", &after)?;
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-        if x <= y {\n+        if x < y {\n";
     scratch.write("change.diff", diff)?;
-    let output = check_workspace(CheckInput {
-        root: scratch.0.clone(),
-        diff_file: Some(scratch.0.join("change.diff")),
-        mode: Mode::Ready,
-        format: OutputFormat::Json,
-        include_unchanged_tests: true,
-        ..CheckInput::default()
-    })?;
+    let output = analyze_change(&scratch, LanguageId::Rust)?;
     Ok(output
         .findings
         .into_iter()
         .filter(|finding| finding.probe.location.line == 4)
         .collect())
+}
+
+fn analyze_change(scratch: &Scratch, language: LanguageId) -> Result<ripr::CheckOutput, String> {
+    let mut config = RiprConfig::default();
+    config.languages.enabled = vec![language];
+    check_workspace_with_config(
+        CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(scratch.0.join("change.diff")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        },
+        &config,
+    )
 }
 
 #[test]
@@ -123,6 +135,128 @@ fn wrapper_tests_fill_the_window_before_file_only_neighbours() -> Result<(), Str
     assert!(
         wrapper_rows.iter().all(|position| *position < first_bump),
         "wrapper tests lead the file-only rows: {names:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn javascript_boundary_headline_follows_the_asserted_input() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write("package.json", r#"{"type":"module"}"#)?;
+    scratch.write(
+        "index.js",
+        "export function admitted(n) {\n  return n > 10;\n}\n",
+    )?;
+    scratch.write("change.diff", "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -2 +2 @@\n-  return n >= 10;\n+  return n > 10;\n")?;
+    // Exchange only the inputs: the credited test must change even though the
+    // names, locations, call paths and oracle strengths are identical.
+    for (first, second, expected) in [(20, 10, "second"), (10, 20, "first")] {
+        scratch.write(
+            "index.test.js",
+            &format!(
+                r#"import {{test}} from 'node:test';
+import assert from 'node:assert/strict';
+import {{admitted}} from './index.js';
+test('first', () => {{
+  assert.equal(admitted({first}), true);
+}});
+test('second', () => {{
+  assert.equal(admitted({second}), true);
+}});
+"#
+            ),
+        )?;
+        let output = analyze_change(&scratch, LanguageId::TypeScript)?;
+        let [finding] = output.findings.as_slice() else {
+            return Err(format!(
+                "expected one changed predicate, got {}",
+                output.findings.len()
+            ));
+        };
+        assert_eq!(finding.related_tests.len(), 2);
+        assert_eq!(
+            finding.headline_related_test().map(|row| row.name.as_str()),
+            Some(expected)
+        );
+    }
+    Ok(())
+}
+
+/// The first row calls itertools.count; only the second calls the changed owner.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_headline_uses_the_credited_count_call() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write(
+        "seq.py",
+        "def count(seq):\n    return sum(2 for _ in seq)\n",
+    )?;
+    scratch.write("change.diff", "diff --git a/seq.py b/seq.py\n--- a/seq.py\n+++ b/seq.py\n@@ -2 +2 @@\n-    return sum(1 for _ in seq)\n+    return sum(2 for _ in seq)\ndiff --git a/sandbox/tests/test_core.py b/sandbox/tests/test_core.py\n--- a/sandbox/tests/test_core.py\n+++ b/sandbox/tests/test_core.py\n@@ -4 +4 @@\n-    assert next(count(1)) == 1\n+    assert next(count()) == 0\n")?;
+    scratch.write(
+        "sandbox/tests/test_core.py",
+        "from itertools import count\n\ndef test_unzip():\n    assert next(count()) == 0\n",
+    )?;
+    scratch.write(
+        "tests/test_seq.py",
+        "from seq import count\n\ndef test_count():\n    assert count(iter([1, 2, 3, 4])) == 4\n",
+    )?;
+    let output = analyze_change(&scratch, LanguageId::Python)?;
+    let [finding] = output.findings.as_slice() else {
+        return Err(format!(
+            "expected one changed generator increment, got {}",
+            output.findings.len()
+        ));
+    };
+    let names: Vec<_> = finding
+        .related_tests
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect();
+    assert_eq!(names, ["test_unzip", "test_count"]);
+    assert_eq!(
+        finding.headline_related_test().map(|row| row.name.as_str()),
+        Some("test_count")
+    );
+    Ok(())
+}
+
+/// Calling the threshold and asserting another input in the same test does
+/// not observe the change. The raw row still retains its exact-value grade.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_headline_pairs_the_assertion_with_its_boundary_call() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/python_module_constant_boundary_rival_control");
+    for (target, source) in [
+        ("change.diff", "diff.patch"),
+        ("svc/a/src/pricing.py", "input/svc/a/src/pricing.py"),
+    ] {
+        scratch.write(
+            target,
+            &std::fs::read_to_string(fixture.join(source)).map_err(|e| e.to_string())?,
+        )?;
+    }
+    scratch.write("svc/b/tests/test_pricing.py",
+        "from svc.a.src.pricing import discounted_total\n\ndef test_above():\n    assert discounted_total(20000) == 18000\n\ndef test_split():\n    discounted_total(10000)\n    assert discounted_total(20000) == 18000\n")?;
+    let output = analyze_change(&scratch, LanguageId::Python)?;
+    let [finding] = output.findings.as_slice() else {
+        return Err("expected one boundary finding".to_string());
+    };
+    assert_eq!(finding.related_tests.len(), 2);
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|row| row.oracle_strength == ripr::domain::OracleStrength::Strong)
+    );
+    assert!(finding.headline_related_test().is_none());
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|s| s.starts_with("related_test_observer_missing: "))
     );
     Ok(())
 }

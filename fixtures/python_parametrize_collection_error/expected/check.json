@@ -87,7 +87,7 @@
       ],
       "stop_reasons": [],
       "oracle_kind": "unknown",
-      "oracle_strength": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "",
       "suggested_next_action": "",
       "language": "python",

@@ -239,3 +239,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — type_header_bound_not_field (20)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

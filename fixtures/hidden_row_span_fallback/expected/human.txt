@@ -22,7 +22,7 @@ Start here:
   Changed behavior: throw new RangeError("read limit exceeded");
   Missing check (1 of 2): Only heuristic TypeScript test links were found for `check`; verify the
     suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
-  Related test: tests/limits.test.ts:1 check smoke
+  No discriminating test identified: only name or file matches were retained, with no established test path (1 matched before the display limit).
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
     exact-value assertion for the missing check `throws RangeError matching "read limit exceeded"`;
     no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are

@@ -230,3 +230,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_pairing_sibling_owner (18)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_owner --reason "..."`
+
+Updated:
+- `expected/check.json`

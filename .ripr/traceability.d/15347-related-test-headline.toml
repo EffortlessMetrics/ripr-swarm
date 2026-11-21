@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr-contract/src/domain/python_changed_headline_row.rs::tests::headline_prefers_the_observer_in_either_position",
+  "crates/ripr/src/output/human/agent_tests.rs::check_formats_and_capped_packet_select_the_same_observer",
+  "crates/ripr/src/output/human/agent_tests.rs::rendered_packet_preserves_proximity_only_disclosure",
+  "crates/ripr/tests/related_window_near_owner.rs::python_headline_uses_the_credited_count_call",
+  "crates/ripr/tests/related_window_near_owner.rs::javascript_boundary_headline_follows_the_asserted_input",
+]

@@ -12008,9 +12008,8 @@ mod tests {
         Ok(())
     }
 
-    /// #5496: the human digest names a related test with the shared sentence
-    /// when that row owns a miss, and with no reason when the first row is the
-    /// withheld mock-oracle row.
+    /// #5496, #15347: the digest uses only the selected row's miss. Reordering
+    /// the weak sibling must not transfer its explanation to the mock row.
     #[cfg(feature = "lang-python")]
     #[test]
     fn python_production_digest_reason_follows_the_named_row() -> Result<(), String> {
@@ -12040,19 +12039,27 @@ mod tests {
             "{digest}"
         );
         assert!(!digest.contains(&why), "{digest}");
-        let mut explained_first = finding.clone();
-        explained_first
+        let mut reordered = finding.clone();
+        reordered
             .related_tests
-            .retain(|row| row.name != explained.name);
-        explained_first.related_tests.insert(0, explained.clone());
-        let digest = super::sections::render_finding_digest_with_config(
-            &explained_first,
-            &config,
-            Path::new("."),
-        );
+            .sort_by_key(|row| row.name != explained.name);
+        let reordered_digest =
+            super::sections::render_finding_digest_with_config(&reordered, &config, Path::new("."));
         assert!(
-            digest.contains(&format!(" {} ({why})\n", explained.name)),
-            "{digest}"
+            reordered_digest.contains(&format!(" {}\n", withheld.name)),
+            "{reordered_digest}"
+        );
+        assert!(!reordered_digest.contains(&why), "{reordered_digest}");
+
+        // When the weak row alone is selected, its actual reason must survive.
+        reordered
+            .related_tests
+            .retain(|row| row.name == explained.name);
+        let single_digest =
+            super::sections::render_finding_digest_with_config(&reordered, &config, Path::new("."));
+        assert!(
+            single_digest.contains(&format!(" {} ({why})\n", explained.name)),
+            "{single_digest}"
         );
         Ok(())
     }

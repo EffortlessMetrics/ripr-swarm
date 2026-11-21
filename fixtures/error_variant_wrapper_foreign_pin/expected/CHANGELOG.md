@@ -672,3 +672,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (52)
+
+Reason:
+RIPR-SPEC-0224: project the eligible test into the headline while preserving current-main reach limits, base-side guidance, and JSX owner calls (#15347).
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

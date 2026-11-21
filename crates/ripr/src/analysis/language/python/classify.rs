@@ -41,8 +41,8 @@ use super::related_tests::{
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{
-    AlignmentPrep, CreditedAssertion, SinkAlignment, classify_sink_alignment_prepared,
-    enclosing_literal_pair,
+    AlignmentPrep, CreditedAssertion, SinkAlignment, enclosing_literal_pair,
+    sink_alignment_and_rows,
 };
 use super::static_limits::{
     LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword, cross_module_reach_limit,
@@ -827,7 +827,7 @@ fn classify_change_for_owner_inner<'a>(
             &built_prep
         }
     };
-    let alignment = classify_sink_alignment_prepared(
+    let (alignment, row_alignments) = sink_alignment_and_rows(
         owner,
         line_text,
         old_line_text,
@@ -2266,6 +2266,17 @@ fn classify_change_for_owner_inner<'a>(
         format!("owner: {}", owner.qualified_name),
         format!("owner_kind: {}", owner.kind_label()),
     ];
+    if related.len() > 1 && matches!(class, ExposureClass::Exposed) {
+        if let Some(boundary) = &boundary {
+            evidence.extend(boundary.headline_observers(
+                &related,
+                &row_alignments,
+                &related_candidates,
+            ));
+        } else {
+            surfaced_alignment.append_headline_observers(&related, &row_alignments, &mut evidence);
+        }
+    }
     if !owner.decorators.is_empty() {
         evidence.push(format!("owner_decorators: {}", owner.decorators.join(", ")));
     }

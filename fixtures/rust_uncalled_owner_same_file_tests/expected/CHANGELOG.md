@@ -532,3 +532,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (45)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

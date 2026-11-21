@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
   Missing check: samples.len() == 0
-  Related test (1 of 7 matched rows): src/lib.rs:83 mean_latency_smoke (has no assertion)
+  No discriminating test identified: the retained rows do not identify an observer (7 matched before the display limit).
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · assertion missing
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

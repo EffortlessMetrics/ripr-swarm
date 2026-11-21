@@ -23,3 +23,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_generic_trait_sibling_impl_named_operator (3)
+
+Reason:
+RIPR-SPEC-0224: project the eligible test into the headline while preserving current-main reach limits, base-side guidance, and JSX owner calls (#15347).
+
+Command:
+`cargo xtask goldens bless rust_generic_trait_sibling_impl_named_operator --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

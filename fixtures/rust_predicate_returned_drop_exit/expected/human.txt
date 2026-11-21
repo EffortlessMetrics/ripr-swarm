@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:make:predicate_boundary:predicate:x==10
   Changed behavior: x >= 10
   Missing check: No strong assertion was detected
-  Related test (1 of 2 matched rows): src/lib.rs:23 boundary (ripr could not confirm that this assertion observes the changed behavior)
+  No discriminating test identified: the retained rows do not identify an observer (2 matched before the display limit).
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

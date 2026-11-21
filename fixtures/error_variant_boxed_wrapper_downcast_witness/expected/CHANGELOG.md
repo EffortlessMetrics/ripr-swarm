@@ -814,3 +814,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (60)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`

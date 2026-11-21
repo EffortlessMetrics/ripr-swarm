@@ -504,3 +504,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_adversarial_same_method_other_type (40)
+
+Reason:
+RIPR-SPEC-0224: disclose name-only matches (#15347). The same regenerated output counts ten repair spots on the unchanged base binary as well.
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

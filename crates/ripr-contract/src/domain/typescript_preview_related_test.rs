@@ -1,15 +1,14 @@
 //! Family-aware TypeScript/JavaScript preview related-test selection (#5505).
 //!
-//! One row identity for the check headline, preview card, packet projection,
-//! JSON oracle summary, verify-command inference, and miss explanation.
+//! The repair preview and the representative headline reuse the same family
+//! and assertion-reference checks within their respective eligibility rules.
 
 use super::{
     Finding, LanguageId, OracleKind, OracleStrength, ProbeFamily, RelatedTest,
     typescript_oracle_seam::ts_oracle_kind_matches_seam,
 };
 
-/// The one TypeScript/JavaScript preview related-test row shared by every
-/// single-row projection surface (#11228 tie-break, #5505 family evidence).
+/// The TypeScript/JavaScript row used by repair previews and command inference (#11228 tie-break, #5505 family evidence).
 ///
 /// Producer `typescript_oracle_evidence_ref` may name a different family-
 /// relevant row than raw strength ranking, but it must not displace a related
@@ -54,6 +53,41 @@ fn strongest_family_relevant_related_test<'a>(
         }
     }
     best
+}
+
+/// Diff headlines need a discriminating row. Repair cards may instead use a
+/// family-relevant test as the place to add a missing assertion (#5505).
+pub(super) fn typescript_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    if finding.has_headline_observer_evidence() {
+        return finding.headline_observers().first().copied();
+    }
+    let family = &finding.probe.family;
+    let candidates = || {
+        finding
+            .oracle_related_tests()
+            .filter(|row| finding.headline_candidate(row))
+    };
+    let family_rows =
+        || candidates().filter(|row| typescript_row_carries_family_oracle(row, family));
+    let family_ranked = family_rows().min_by_key(|row| std::cmp::Reverse(row.headline_rank()));
+    if let Some(best) = family_ranked
+        && finding.class == super::ExposureClass::Exposed
+        && family_rows().any(|other| {
+            other.headline_rank() == best.headline_rank()
+                && (other.file != best.file || other.line != best.line || other.name != best.name)
+        })
+    {
+        // The metadata ref below names the last strongest family assertion.
+        // With equally plausible tests it cannot identify an observer.
+        return None;
+    }
+    if let Some(row) = related_test_for_typescript_oracle_evidence_ref(finding)
+        && finding.headline_candidate(row)
+        && oracle_ref_row_matches_missing_check_family(finding, row, family_ranked)
+    {
+        return Some(row);
+    }
+    family_ranked.or_else(|| candidates().min_by_key(|row| std::cmp::Reverse(row.headline_rank())))
 }
 
 fn related_test_for_typescript_oracle_evidence_ref(finding: &Finding) -> Option<&RelatedTest> {

@@ -24,7 +24,7 @@ Start here:
   Missing check: Related test `test_truthiness` never runs (`later binding of the test name`), so no
     test can notice this change to `__bool__`; remove the control or add an active pytest or
     unittest test with an exact-value assertion
-  Related test: tests/test_money.py:4 test_truthiness
+  No discriminating test identified: the retained rows do not identify an observer (1 matched before the display limit).
   Evidence: reach weak · infection yes · propagation weak · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

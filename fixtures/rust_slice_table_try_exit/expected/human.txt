@@ -18,7 +18,7 @@ Start here:
   Missing check (1 of 2): Changed boundary input is unresolved: slice length `samples.len()` is
     outside the bounded eager immutable literal table family; not every input cardinality is
     established; activation/infection is unknown
-  Related test (1 of 6 matched rows): src/lib.rs:57 mean_lies_between_min_and_max (has no assertion)
+  No discriminating test identified: the retained rows do not identify an observer (6 matched before the display limit).
   Next step: Open the related test, check whether it reaches the changed code, and inspect other
     existing tests. Trace their inputs through the local or computed operand (including default and
     empty cases) to see which side of the changed condition they exercise, then name an input that

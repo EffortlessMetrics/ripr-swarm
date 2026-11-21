@@ -122,6 +122,34 @@ fn rewrite_non_utf8_finding_paths(findings: &[Finding]) -> Vec<Finding> {
                     crate::analysis::stable_path_text(&finding.probe.location.file),
                 );
             }
+            if finding
+                .related_tests
+                .iter()
+                .any(|row| row.file.to_str().is_none())
+            {
+                for reference in &mut finding.evidence {
+                    if !reference.starts_with("related_test_observer: ") {
+                        continue;
+                    }
+                    let mut matches = finding
+                        .related_tests
+                        .iter()
+                        .filter(|row| row.headline_observer_evidence() == *reference);
+                    let Some(row) = matches.next() else {
+                        continue;
+                    };
+                    if matches.next().is_some() {
+                        *reference =
+                            "related_test_observer_missing: ambiguous source location".to_string();
+                    } else if row.file.to_str().is_none() {
+                        *reference = format!(
+                            "related_test_observer: {}:{}",
+                            crate::analysis::stable_path_text(&row.file),
+                            row.line
+                        );
+                    }
+                }
+            }
             for related in &mut finding.related_tests {
                 if related.file.to_str().is_none() {
                     related.file =
@@ -708,6 +736,47 @@ mod raw_path_tests {
             .map_err(|error| format!("artifact serializes: {error}"))?;
         assert!(serialized.contains("pricing_%FF.rs"));
         let _ = FlowSinkKind::ReturnValue;
+        Ok(())
+    }
+
+    #[test]
+    fn raw_path_observer_survives_artifact_replay() -> Result<(), String> {
+        let mut finding = raw_byte_finding();
+        let observed = finding.related_tests[0].clone();
+        let mut decoy = observed.clone();
+        decoy.name = "decoy".to_string();
+        decoy.file = PathBuf::from("tests/decoy.rs");
+        finding.related_tests.insert(0, decoy);
+        finding.evidence.push(observed.headline_observer_evidence());
+        let selected = |f: &Finding| f.headline_related_test().map(|row| row.name.clone());
+        assert_eq!(selected(&finding), Some(observed.name.clone()));
+        let rewritten = rewrite_non_utf8_finding_paths(&[finding]);
+        let encoded = serde_json::to_vec(&rewritten).map_err(|e| e.to_string())?;
+        let replay: Vec<Finding> = serde_json::from_slice(&encoded).map_err(|e| e.to_string())?;
+        assert_eq!(selected(&replay[0]), Some(observed.name));
+        Ok(())
+    }
+
+    #[test]
+    fn ambiguous_raw_observer_stays_unselected_after_replay() -> Result<(), String> {
+        use std::os::unix::ffi::OsStringExt;
+        let mut finding = raw_byte_finding();
+        let mut rival = finding.related_tests[0].clone();
+        rival.name = "rival".to_string();
+        let mut bytes = rival.file.clone().into_os_string().into_vec();
+        let invalid = bytes
+            .iter_mut()
+            .find(|byte| **byte == 0xff)
+            .ok_or("fixture needs an invalid byte")?;
+        *invalid = 0xfe;
+        rival.file = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+        let reference = finding.related_tests[0].headline_observer_evidence();
+        assert_eq!(rival.headline_observer_evidence(), reference);
+        finding.evidence.push(reference);
+        finding.related_tests.push(rival);
+        assert!(finding.headline_related_test().is_none());
+        let rewritten = rewrite_non_utf8_finding_paths(&[finding]);
+        assert!(rewritten[0].headline_related_test().is_none());
         Ok(())
     }
 

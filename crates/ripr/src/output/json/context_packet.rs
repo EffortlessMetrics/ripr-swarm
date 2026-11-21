@@ -36,7 +36,15 @@ pub(crate) fn render_context_packet_with_explain_command(
     root: &Path,
 ) -> String {
     let stop_reasons = stop_reason_values(finding);
-    let mut packet = ContextPacket::from_finding(finding, max_related_tests, stop_reasons, root);
+    // Reconcile provisional preview-actionability messages before the DTO
+    // adds packet-specific disclosures, including an absent headline.
+    let mut packet = ContextPacket::from_finding_with_missing(
+        finding,
+        max_related_tests,
+        stop_reasons,
+        root,
+        projected_preview_actionability_missing(finding),
+    );
     // #8743: resolve severity through the caller's config so the packet
     // matches `ripr check --json` exactly, including user overrides. The
     // DTO's `from_finding` seed is the class profile default for callers
@@ -45,10 +53,6 @@ pub(crate) fn render_context_packet_with_explain_command(
         .severity_for_file(&finding.probe.location.file)
         .for_exposure(&finding.class)
         .as_str();
-    // The DTO starts with raw analysis evidence; resolve the provisional preview
-    // packet-availability message using the same validator-backed projection as
-    // the check surface and next-step reconciliation. Keep real missing facts.
-    packet.missing = projected_preview_actionability_missing(finding);
     if let (Some(witness), Some(command)) = (packet.witness.as_mut(), explain_command) {
         witness.explain_command = command;
     }

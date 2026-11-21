@@ -7687,6 +7687,22 @@
         },
         {
           "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "discounted value is not the full amount",
+          "file": "tests/discount.test.ts",
+          "line": 1,
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "discounted value is not deeply equal to the full amount",
+          "file": "tests/discount.test.ts",
+          "line": 5,
           "kind": "relational_check",
           "strength": "weak"
         },
@@ -8264,7 +8280,7 @@
       "tier": "pure",
       "source_fixture": "fixtures/typescript_strong_oracle",
       "vector": "strong_exact_value_oracle_with_unanchored_relation_stays_weakly_exposed",
-      "reason": "#4103 relation-anchor gate: the fixture test bare-calls applyDiscount with no import/declaration anchor, so the strong exact-value oracle no longer promotes and the finding holds at weakly_exposed with the relation disclosed heuristic-only. Oracle classification stays independent of relation credit (exact_value/strong asserted). The TypeScript must_promote controls remain ts_ava_t_is_exact_value, ts_tape_equal_exact_value, and ts_same_method_owner_identity_positive_control, whose tests are import-anchored.",
+      "reason": "#4103 relation-anchor gate: the fixture test bare-calls applyDiscount with no import/declaration anchor, so the strong exact-value oracle no longer promotes and the finding holds at weakly_exposed with the relation disclosed heuristic-only. Both raw assertion rows remain exact_value/strong. The heuristic relation leaves the finding summary unknown/none. The TypeScript must_promote controls remain ts_ava_t_is_exact_value, ts_tape_equal_exact_value, and ts_same_method_owner_identity_positive_control, whose tests are import-anchored.",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -8277,6 +8293,22 @@
         },
         {
           "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "at threshold discounts",
+          "file": "tests/discount.test.ts",
+          "line": 5,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "above threshold discounts",
+          "file": "tests/discount.test.ts",
+          "line": 9,
           "kind": "exact_value",
           "strength": "strong"
         },
@@ -11130,8 +11162,8 @@
         },
         {
           "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
+          "kind": "unknown",
+          "strength": "none"
         },
         {
           "type": "expected_related_test",
@@ -11172,8 +11204,8 @@
         },
         {
           "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
+          "kind": "unknown",
+          "strength": "none"
         },
         {
           "type": "expected_related_test",
@@ -11214,8 +11246,8 @@
         },
         {
           "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
+          "kind": "unknown",
+          "strength": "none"
         },
         {
           "type": "expected_related_test",

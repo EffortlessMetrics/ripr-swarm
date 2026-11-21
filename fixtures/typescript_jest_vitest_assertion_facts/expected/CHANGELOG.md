@@ -960,3 +960,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (49)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`

@@ -33,3 +33,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_stub_todo_guard_expected_value (4)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_stub_todo_guard_expected_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

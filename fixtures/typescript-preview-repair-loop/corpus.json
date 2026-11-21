@@ -27,7 +27,7 @@
       "changed_owner": "applyDiscount",
       "probe_family": "predicate",
       "oracle_kind": "unknown",
-      "oracle_strength": "unknown",
+      "oracle_strength": "none",
       "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "static_limit_kind": null,
@@ -177,8 +177,8 @@
       "classification": "weakly_exposed",
       "changed_owner": "loadProfile",
       "probe_family": "error_path",
-      "oracle_kind": "broad_error",
-      "oracle_strength": "weak",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "static_limit_kind": null,
@@ -226,8 +226,8 @@
       "classification": "weakly_exposed",
       "changed_owner": "notify",
       "probe_family": "side_effect",
-      "oracle_kind": "smoke_only",
-      "oracle_strength": "smoke",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "static_limit_kind": null,
@@ -324,8 +324,8 @@
       "classification": "weakly_exposed",
       "changed_owner": "applyDiscount",
       "probe_family": "predicate",
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "gap_state": "static_limitation",
       "actionability_category": "mocked_module",
       "static_limit_kind": "mocked_module",
@@ -362,7 +362,7 @@
         "no RIPR Zero authority",
         "no support-tier promotion"
       ],
-      "reason": "The mocked-module case is the false-actionable guard: exact assertions do not override a named static limitation. The test bare-calls applyDiscount with no import anchor (#4103 shape 1), so exposure holds at weakly_exposed while the exact-value oracle classification (exact_value/strong) stays readable; oracle classification is independent of relation credit."
+      "reason": "The mocked-module case is the false-actionable guard: exact assertions do not override a named static limitation. The test bare-calls applyDiscount with no import anchor (#4103 shape 1), so exposure holds at weakly_exposed while the raw test and advisory card retain exact_value/strong. The heuristic-only finding has no representative oracle."
     },
     {
       "id": "javascript_already_observed_unchanged",
@@ -373,8 +373,8 @@
       "classification": "weakly_exposed",
       "changed_owner": "applyDiscount",
       "probe_family": "predicate",
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "static_limit_kind": null,
@@ -412,7 +412,7 @@
         "no RIPR Zero authority",
         "no support-tier promotion"
       ],
-      "reason": "The unchanged case proves separately labeled JavaScript preview evidence stays useful without creating repair work. The test bare-calls applyDiscount with no import anchor (#4103 shape 1), so exposure credit is withheld at weakly_exposed and the gap is advisory with an incomplete packet contract, while the exact-value oracle classification (exact_value/strong) survives. must_not_claim_already_observed guards against a spurious terminal already_observed promotion."
+      "reason": "The unchanged case proves separately labeled JavaScript preview evidence stays useful without creating repair work. The test bare-calls applyDiscount with no import anchor (#4103 shape 1), so exposure credit is withheld at weakly_exposed and the gap is advisory with an incomplete packet contract, while the raw test and advisory card retain exact_value/strong. The heuristic-only finding has no representative oracle. must_not_claim_already_observed guards against a spurious terminal already_observed promotion."
     },
     {
       "id": "typescript_load_profile_already_observed_unchanged",

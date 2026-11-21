@@ -20,7 +20,7 @@ Start here:
     helper-built receiver under a changed closure, a hand-written recording double, or an async
     owner driven by an executor helper in the test's file), so ripr cannot say whether the check
     notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
-  Related test (1 of 5 matched rows): src/lib.rs:52 fixture_total (ripr could not confirm that this assertion observes the changed behavior)
+  No discriminating test identified: the retained rows do not identify an observer (5 matched before the display limit).
   Next step: `fixture_total` (src/lib.rs:52) pins the owner's result on a receiver a test helper
     builds, and ripr does not read what the helper puts in it for the changed closure to run over,
     so ripr does not report a gap. Check that the test's setup reaches the changed code and that its

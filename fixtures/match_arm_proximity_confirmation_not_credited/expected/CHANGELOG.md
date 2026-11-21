@@ -389,3 +389,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (31)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

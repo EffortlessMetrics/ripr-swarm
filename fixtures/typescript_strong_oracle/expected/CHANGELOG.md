@@ -949,3 +949,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_strong_oracle (43)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless typescript_strong_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

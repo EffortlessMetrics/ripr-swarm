@@ -14,7 +14,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:is_separator:predicate_boundary:predicate:c==lit2c_c==lit3b
   Changed behavior: c == ',' || c == ';'
-  Related test (1 of 2 matched rows): src/lib.rs:11 dot_does_not_separate
+  Related test (1 of 2 matched rows): src/lib.rs:9 semicolon_separates
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

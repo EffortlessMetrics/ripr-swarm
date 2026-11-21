@@ -378,6 +378,8 @@ pub(crate) fn render_finding_digest_with_config(
             test.line,
             test.name
         ));
+    } else if !finding.related_tests.is_empty() {
+        out.push_str(&format!("  {}\n", finding.missing_related_test_headline()));
     }
     if let Some(placement) = repair_placement_from_evidence(finding) {
         out.push_str(&format!("  Suggested test file: {}\n", placement.test_file));

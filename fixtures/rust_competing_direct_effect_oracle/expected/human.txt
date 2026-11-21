@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:impl Iterator for Counter::next:call_deletion:call_deletion:self.sink.set_1
   Changed behavior: self.sink.set(1)
   Missing check: No strong assertion was detected
-  Related test (1 of 2 matched rows): src/lib.rs:15 direct_smoke (has no assertion)
+  No discriminating test identified: the retained rows do not identify an observer (2 matched before the display limit).
   Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

@@ -1,9 +1,9 @@
 //! CLI regression for one related-test selection rule (#11228).
 //!
-//! A weak direct call is listed before a strong call through a barrel
-//! re-export. Every TypeScript surface must name the strong row: the human
-//! `Related test` headline, the human-full preview card and the check JSON
-//! oracle summary. Inline temp repo; the test drives the built binary.
+//! A weak direct call is listed before a boundary assertion through a barrel
+//! re-export. The human headline, full preview card and JSON oracle summary
+//! name that row when it exercises the changed boundary. The off-boundary
+//! assertion is strong in its own row but cannot establish observation.
 
 #![cfg(feature = "lang-typescript")]
 
@@ -65,7 +65,12 @@ fn workspace() -> Result<WorkspaceGuard, String> {
     write_file(
         root,
         "tests/pricing.test.ts",
-        "import { discount } from '../src/pricing';\nimport { discount as barrelDiscount } from '../src/index';\ndescribe('discount', () => {\n  it('direct weak', () => { expect(discount(200)).toBeTruthy(); });\n  it('barrel strong', () => { expect(barrelDiscount(50)).toBe(50); });\n});\n",
+        "import { discount } from '../src/pricing';\nit('direct weak', () => { expect(discount(200)).toBeTruthy(); });\n",
+    )?;
+    write_file(
+        root,
+        "tests/barrel.test.ts",
+        "import { discount } from '../src/index';\nit('barrel strong', () => { expect(discount(100)).toBe(80); });\n",
     )?;
     let mut diff = String::from(
         "diff --git a/src/pricing.ts b/src/pricing.ts\n--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@ -1,6 +1,6 @@\n",
@@ -123,15 +128,52 @@ fn headline_card_and_json_summary_name_the_strong_row() -> Result<(), String> {
         matches!((weak_at, strong_at), (Some(weak), Some(strong)) if weak < strong),
         "the control needs the weak row listed before the strong row: {finding}"
     );
-    let strongest = rows
-        .iter()
-        .filter_map(|row| row.get("oracle_strength").and_then(|value| value.as_str()))
-        .any(|strength| strength == "strong");
-    assert!(strongest, "one row must be strong: {finding}");
+    let strong = strong_at
+        .and_then(|index| rows.get(index))
+        .ok_or("missing barrel row")?;
+    assert_eq!(
+        strong["relation_reason"], "re_export_chain_followed",
+        "{strong}"
+    );
+    assert_eq!(strong["oracle_strength"], "strong", "{strong}");
     assert_eq!(
         finding.get("oracle_strength").and_then(|v| v.as_str()),
         Some("strong"),
         "the summary describes the strong row the headline names: {finding}"
     );
+
+    let full = check(&guard.root, "human-full")?;
+    assert!(
+        full.lines()
+            .any(|line| line.trim() == "related test: tests/barrel.test.ts:2 barrel strong"),
+        "{full}"
+    );
+
+    // The same exact assertion off the boundary cannot observe >= becoming >.
+    write_file(
+        &guard.root,
+        "tests/barrel.test.ts",
+        "import { discount } from '../src/index';\nit('barrel strong', () => { expect(discount(50)).toBe(50); });\n",
+    )?;
+    let off_boundary = check(&guard.root, "human")?;
+    let off_headline = off_boundary
+        .lines()
+        .find(|line| line.trim_start().starts_with("Related test"))
+        .ok_or_else(|| format!("missing advisory row: {off_boundary}"))?;
+    assert!(off_headline.contains("direct weak"), "{off_headline}");
+    assert!(
+        off_headline.contains("assertion too weak"),
+        "{off_headline}"
+    );
+    let off_json: serde_json::Value =
+        serde_json::from_str(&check(&guard.root, "json")?).map_err(|error| error.to_string())?;
+    let off_finding = &off_json["findings"][0];
+    assert_eq!(off_finding["oracle_strength"], "smoke");
+    let off_strong = off_finding["related_tests"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["name"] == "barrel strong"))
+        .ok_or("off-boundary barrel assertion was not retained")?;
+    assert_eq!(off_strong["oracle_strength"], "strong");
+    assert_eq!(off_strong["miss"], "observation_unconfirmed");
     Ok(())
 }

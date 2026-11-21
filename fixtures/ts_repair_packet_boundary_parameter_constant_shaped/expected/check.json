@@ -188,8 +188,8 @@
         "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
       },
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
       "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == LIMIT`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
       "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == LIMIT`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
       "language": "typescript",

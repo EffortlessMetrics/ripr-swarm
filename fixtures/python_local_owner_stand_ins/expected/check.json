@@ -196,8 +196,8 @@
         "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
        },
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`.",
       "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`.",
       "language": "python",

@@ -17,7 +17,7 @@ Start here:
   Analyzer limit: A test may reach this change through an internal helper-call chain ripr cannot
     fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named
     limitation, not a coverage claim
-  Related test: src/lib.rs:13 subject (ripr could not confirm that this assertion observes the changed behavior)
+  No discriminating test identified: only name or file matches were retained, with no established test path (1 matched before the display limit).
   Next step: Tests cannot close this static-analysis limitation: ripr cannot trace entry
     `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named
     path and existing assertions through the public API; add a test only for an independently

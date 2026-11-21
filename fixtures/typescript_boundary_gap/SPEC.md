@@ -51,8 +51,8 @@ The TypeScript preview adapter:
   references `applyDiscount(`,
 - runs the assertion-shape walker (#767) but extracts no
   `expect(...).matcher(...)` chain — the tests use raw control flow
-  (`if (result !== ...) throw`) instead — so the strongest oracle is
-  `unknown`,
+  (`if (result !== ...) throw`) instead. Both rows have `unknown` oracle grades. Neither row supplies
+  a headline, so the finding reports kind `unknown` and strength `none`,
 - classifies the changed predicate line as `weakly_exposed` because a
   related test reaches the owner but no strong discriminator is
   observable.

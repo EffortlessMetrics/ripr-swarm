@@ -57,3 +57,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_predicate_added_disjunct_sibling_field (6)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless rust_predicate_added_disjunct_sibling_field --reason "..."`
+
+Updated:
+- `expected/human.txt`

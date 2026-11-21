@@ -81,8 +81,8 @@
         }
       ],
       "stop_reasons": ["no_changed_rust_line"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "unknown",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
@@ -160,8 +160,8 @@
         }
       ],
       "stop_reasons": ["no_changed_rust_line"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "unknown",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
@@ -239,8 +239,8 @@
         }
       ],
       "stop_reasons": ["no_changed_rust_line"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "unknown",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",

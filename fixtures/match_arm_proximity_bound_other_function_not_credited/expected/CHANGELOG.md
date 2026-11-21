@@ -55,3 +55,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — match_arm_proximity_bound_other_function_not_credited (6)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_bound_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

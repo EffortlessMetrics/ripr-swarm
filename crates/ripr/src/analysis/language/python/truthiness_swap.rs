@@ -358,6 +358,7 @@ pub(super) fn python_truthiness_swap_evidence(
     let discriminator = distinguishing_example(&name, old_test, new_test)?;
     crate::analysis::classify::sort_value_facts(&mut observed_values);
     Some(PythonBoundaryEvidence {
+        observed_calls: Default::default(),
         activation: BoundaryActivation::Missing,
         discriminator: Some(discriminator),
         observed_values,

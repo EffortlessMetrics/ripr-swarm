@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:impl From<&str> for Cents::from:return_value:return_value:cents_value.len_as_u64+1
   Changed behavior: Cents(value.len() as u64 + 1)
   Missing check (1 of 3): No detected assertion observes the changed value, error, field, or effect
-  Related test: src/lib.rs:21 unsuffixed_units_convert_to_cents (no established call path to the changed code; linked by name only)
+  No discriminating test identified: only name or file matches were retained, with no established test path (1 matched before the display limit).
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the
     changed behavior. Add or strengthen a test only if that inspection finds a gap

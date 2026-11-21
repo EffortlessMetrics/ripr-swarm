@@ -744,3 +744,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guarded_result_match_fail_closed (56)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

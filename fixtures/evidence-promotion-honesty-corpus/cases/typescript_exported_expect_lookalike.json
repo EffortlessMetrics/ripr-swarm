@@ -23,7 +23,7 @@
     {
       "type": "expected_oracle",
       "kind": "unknown",
-      "strength": "unknown"
+      "strength": "none"
     },
     {
       "type": "expected_related_test",

@@ -140,6 +140,9 @@ pub(super) enum BoundaryActivation {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PythonBoundaryEvidence {
     pub(super) activation: BoundaryActivation,
+    /// Literal owner calls at the edited boundary. Keys retain the source statement
+    /// so a separate observation in the same test cannot inherit activation.
+    pub(super) observed_calls: std::collections::BTreeSet<(std::path::PathBuf, usize, String)>,
     /// The equality discriminator that pins the changed boundary
     /// (`qty == item.on_hand`), named only when both operands are simple
     /// names or literals.
@@ -149,6 +152,55 @@ pub(super) struct PythonBoundaryEvidence {
     pub(super) observed_values: Vec<ValueFact>,
     /// Why the boundary is observed, missing, or unresolved.
     pub(super) reason: String,
+}
+
+impl PythonBoundaryEvidence {
+    fn assertion_is_witnessed(
+        &self,
+        file: &std::path::Path,
+        assertion: &super::PythonAssertion,
+    ) -> bool {
+        self.observed_calls.contains(&(
+            file.to_owned(),
+            assertion.line,
+            assertion.text.trim().to_string(),
+        ))
+    }
+
+    pub(super) fn headline_observers(
+        &self,
+        rows: &[crate::domain::RelatedTest],
+        alignments: &[super::sink_alignment::PythonRowSinkAlignment],
+        candidates: &[PythonRelatedCandidate<'_>],
+    ) -> Vec<String> {
+        let mut observers = Vec::new();
+        for ((row, state), candidate) in rows.iter().zip(alignments).zip(candidates) {
+            if state.state
+                != super::sink_alignment::PythonRowSinkAlignmentState::ConfirmedChangedSink
+                || !candidate.relation.uses_oracle()
+            {
+                continue;
+            }
+            let test = candidate.test;
+            let matched = state.credited.as_ref().is_some_and(|credit| {
+                credit.test_file == row.file
+                    && credit.test_name == row.name
+                    && test.file == row.file
+                    && test.line == row.line
+                    && test.assertions.iter().any(|assertion| {
+                        assertion.text == credit.text
+                            && self.assertion_is_witnessed(&row.file, assertion)
+                    })
+            });
+            if matched {
+                observers.push(row.headline_observer_evidence());
+            }
+        }
+        if observers.is_empty() {
+            observers.push("related_test_observer_missing: no credited assertion paired with the changed boundary".to_string());
+        }
+        observers
+    }
 }
 
 /// Boundary evidence for a changed Predicate line that contains a relational
@@ -274,6 +326,7 @@ pub(super) fn python_boundary_evidence(
                 // either way: unknown, never a missing-boundary gap.
                 return Some(PythonBoundaryEvidence {
                     activation: BoundaryActivation::Unresolved,
+                    observed_calls: Default::default(),
                     discriminator: None,
                     observed_values: Vec::new(),
                     reason: format!(
@@ -319,6 +372,7 @@ pub(super) fn python_boundary_evidence(
     if observed_values.is_empty() {
         return Some(PythonBoundaryEvidence {
             activation: BoundaryActivation::Unresolved,
+            observed_calls: Default::default(),
             discriminator,
             observed_values,
             reason: format!(
@@ -341,12 +395,23 @@ pub(super) fn python_boundary_evidence(
         };
         return Some(PythonBoundaryEvidence {
             activation: BoundaryActivation::Missing,
+            observed_calls: Default::default(),
             discriminator,
             observed_values,
             reason,
         });
     };
 
+    let mut observed_calls = std::collections::BTreeSet::new();
+    let mut call_counts = BTreeMap::new();
+    for row in &rows {
+        *call_counts.entry((&row.file, row.line)).or_insert(0usize) += 1;
+    }
+    let mut record_observed = |row: &CallRow| {
+        if call_counts.get(&(&row.file, row.line)) == Some(&1) {
+            observed_calls.insert((row.file.clone(), row.line, row.text.trim().to_string()));
+        }
+    };
     let mut observed_new = false;
     let mut observed_old = false;
     let mut left_values = Vec::new();
@@ -436,6 +501,7 @@ pub(super) fn python_boundary_evidence(
                 .map(|right_value| (left_value, right_value))
         }) {
             observed_new = true;
+            record_observed(row);
             observed_values.push(ValueFact {
                 file: Some(row.file.clone()),
                 line: row.line,
@@ -463,6 +529,7 @@ pub(super) fn python_boundary_evidence(
                 && literals_equal(old_left_value, old_right_value) == Some(true)
             {
                 observed_old = true;
+                record_observed(row);
                 observed_values.push(ValueFact {
                     file: Some(row.file.clone()),
                     line: row.line,
@@ -506,6 +573,7 @@ pub(super) fn python_boundary_evidence(
             crate::analysis::classify::sort_value_facts(&mut observed_values);
             return Some(PythonBoundaryEvidence {
                 activation: BoundaryActivation::Missing,
+                observed_calls: Default::default(),
                 discriminator: None,
                 observed_values,
                 reason: format!(
@@ -525,6 +593,7 @@ pub(super) fn python_boundary_evidence(
         crate::analysis::classify::sort_value_facts(&mut observed_values);
         return Some(PythonBoundaryEvidence {
             activation: BoundaryActivation::Missing,
+            observed_calls: Default::default(),
             discriminator: Some(format!("{} == {}", step.variable, step.value)),
             observed_values,
             reason: format!(
@@ -592,6 +661,7 @@ pub(super) fn python_boundary_evidence(
         )
     };
     Some(PythonBoundaryEvidence {
+        observed_calls,
         activation: if observed {
             BoundaryActivation::Observed
         } else {

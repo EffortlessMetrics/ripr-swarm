@@ -152,8 +152,8 @@
         "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
       },
       "stop_reasons": [],
-      "oracle_kind": "broad_error",
-      "oracle_strength": "weak",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: broad error evidence does not establish the missing check `rejects Error matching \"missing id\"`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "suggested_next_action": "TypeScript preview advisory: broad error evidence does not establish the missing check `rejects Error matching \"missing id\"`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
@@ -303,8 +303,8 @@
         "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
       },
       "stop_reasons": [],
-      "oracle_kind": "exact_error_variant",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `rejects Error matching \"missing id\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `rejects Error matching \"missing id\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",

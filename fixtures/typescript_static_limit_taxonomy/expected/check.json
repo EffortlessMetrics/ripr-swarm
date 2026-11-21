@@ -255,8 +255,8 @@
         "why_not_actionable": "static limit `dynamic_dispatch` prevents bounded TypeScript repair guidance"
       },
       "stop_reasons": [],
-      "oracle_kind": "smoke_only",
-      "oracle_strength": "smoke",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.; no actionable repair packet is emitted.",
       "suggested_next_action": "TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before issuing a repair packet.; no actionable repair packet is emitted.",
       "language": "typescript",
@@ -388,8 +388,8 @@
         "why_not_actionable": "static limit `missing_import_graph` prevents bounded TypeScript repair guidance"
       },
       "stop_reasons": [],
-      "oracle_kind": "smoke_only",
-      "oracle_strength": "smoke",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: static limit `missing_import_graph`; Repair route: add import graph support or inspect the imported implementation before issuing a repair packet.; no actionable repair packet is emitted.",
       "suggested_next_action": "TypeScript preview advisory: static limit `missing_import_graph`; Repair route: add import graph support or inspect the imported implementation before issuing a repair packet.; no actionable repair packet is emitted.",
       "language": "javascript",
@@ -521,8 +521,8 @@
         "why_not_actionable": "static limit `metaprogramming` prevents bounded TypeScript repair guidance"
       },
       "stop_reasons": [],
-      "oracle_kind": "smoke_only",
-      "oracle_strength": "smoke",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "TypeScript preview advisory: static limit `metaprogramming`; Repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet.; no actionable repair packet is emitted.",
       "suggested_next_action": "TypeScript preview advisory: static limit `metaprogramming`; Repair route: add metaprogramming-aware modeling or keep the finding as human-review-only before issuing a repair packet.; no actionable repair packet is emitted.",
       "language": "javascript",

@@ -804,3 +804,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_related_test_matching (37)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless typescript_related_test_matching --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

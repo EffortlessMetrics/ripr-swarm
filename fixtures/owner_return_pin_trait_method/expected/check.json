@@ -164,7 +164,7 @@
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
+      "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
       "recommended_next_step": "",
       "suggested_next_action": "",

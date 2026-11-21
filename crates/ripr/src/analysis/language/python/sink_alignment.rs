@@ -83,6 +83,45 @@ pub(in crate::analysis::language::python) struct PythonRowSinkAlignment {
 }
 
 impl SinkAlignment {
+    /// Preserve the aggregate's exact credit and allow independently credited
+    /// identical assertions to tie. A same-diff stamp can then choose among
+    /// them without promoting an unrelated test that has the same grade.
+    pub(super) fn append_headline_observers(
+        &self,
+        rows: &[RelatedTest],
+        alignments: &[PythonRowSinkAlignment],
+        evidence: &mut Vec<String>,
+    ) {
+        let Some(credit) = self.credited.as_ref().filter(|_| self.observes()) else {
+            return;
+        };
+        let mut counts = std::collections::BTreeMap::new();
+        for row in rows {
+            *counts.entry((&row.file, &row.name)).or_insert(0usize) += 1;
+        }
+        let mut observers = Vec::new();
+        for (row, state) in rows.iter().zip(alignments) {
+            let identity = (&row.file, &row.name);
+            if counts.get(&identity) != Some(&1) {
+                continue;
+            }
+            let equivalent = state.credited.as_ref().is_some_and(|other| {
+                (&other.test_file, &other.test_name) == identity
+                    && other.text == credit.text
+                    && other.kind == credit.kind
+                    && state.observed_sink == self.observed_sink
+            });
+            if identity == (&credit.test_file, &credit.test_name) || equivalent {
+                observers.push(row.headline_observer_evidence());
+            }
+        }
+        // A receipt is only needed to distinguish rows. Equal evidence on
+        // every row leaves the ordinary same-rank changed-test rule in force.
+        if observers.len() != rows.len() {
+            evidence.extend(observers);
+        }
+    }
+
     /// The decision the classifier uses, derived from the alignment so the two
     /// can never drift. A strong oracle observes the owner when the alignment is
     /// `direct`/`alias`/`changed_sink_token`. An empty token set cannot establish
@@ -1073,7 +1112,7 @@ pub(super) fn classify_sink_alignment_prepared(
     .0
 }
 
-fn sink_alignment_and_rows(
+pub(super) fn sink_alignment_and_rows(
     owner: &PythonOwner,
     line_text: &str,
     old_line_text: Option<&str>,

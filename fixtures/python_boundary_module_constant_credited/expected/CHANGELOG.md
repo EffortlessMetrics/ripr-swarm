@@ -81,3 +81,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_boundary_module_constant_credited (8)
+
+Reason:
+RIPR-SPEC-0224: project the selected related-test observer or disclose that no eligible row identifies one (#15347).
+
+Command:
+`cargo xtask goldens bless python_boundary_module_constant_credited --reason "..."`
+
+Updated:
+- `expected/check.json`

@@ -4,9 +4,9 @@
 //! single place that turns it into prose, so human, JSON, LSP and agent output
 //! say the same thing about the same test.
 
-use crate::domain::{
-    Finding, LanguageId, ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason,
-};
+#[cfg(test)]
+use crate::domain::LanguageId;
+use crate::domain::{Finding, ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
 /// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
 const SCRIPT_OBSERVATION_UNCONFIRMED: &str =
@@ -29,15 +29,7 @@ pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTe
 
 /// The row the human `Related test` headline names for one finding.
 pub(crate) fn headline_related_test_for_finding(finding: &Finding) -> Option<&RelatedTest> {
-    if matches!(
-        finding.language,
-        Some(LanguageId::TypeScript | LanguageId::JavaScript)
-    ) {
-        return typescript_script_preview_related_test(finding);
-    }
-    // #14027: a Python finding prefers a same-strength row in a test file the
-    // diff changed over a later-sorting untouched file; otherwise first row.
-    crate::domain::python_headline_related_test(finding)
+    finding.headline_related_test()
 }
 
 /// Legacy entry point for table tests that only hold related-test rows.
@@ -762,30 +754,18 @@ mod tests {
             headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
             Some("c")
         );
-        // The tier reads only the recorded miss, never the relation: a row
-        // linked by file location may still reach the owner through a helper.
-        // `no_assertion` ranks with the observing rows (a reaching test is
-        // where the missing assertion goes), ahead of `assertion_not_observing`.
+        // A same-file row with no assertion and a contradicted assertion
+        // are navigation evidence. Neither supplies the headline.
         let mut located = rust.clone();
         located.related_tests[1].relation_reason = Some(RelationReason::SameTestFile);
         located.related_tests[1].miss = Some(RelatedTestMiss::NoAssertion);
         located.related_tests[2].miss = Some(RelatedTestMiss::AssertionNotObserving);
-        assert_eq!(
-            headline_related_test_for_finding(&located).map(|t| t.name.as_str()),
-            Some("b")
-        );
-        // An unknown-edge miss ranks with the observing rows too.
+        assert!(headline_related_test_for_finding(&located).is_none());
         let mut unknown = rust.clone();
         unknown.related_tests[2].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
-        assert_eq!(
-            headline_related_test_for_finding(&unknown).map(|t| t.name.as_str()),
-            Some("c")
-        );
+        assert!(headline_related_test_for_finding(&unknown).is_none());
         rust.related_tests.truncate(2);
-        assert_eq!(
-            headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
-            Some("b")
-        );
+        assert!(headline_related_test_for_finding(&rust).is_none());
         let stamped = python_finding(rows.clone(), vec![changed_stamp("tests/test_b.py", 2)]);
         assert_eq!(
             headline_related_test_for_finding(&stamped).map(|t| t.name.as_str()),

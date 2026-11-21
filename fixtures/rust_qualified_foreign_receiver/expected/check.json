@@ -160,8 +160,8 @@
         }
       ],
       "stop_reasons": ["gap_evidence_unresolved"],
-      "oracle_kind": "whole_object_equality",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "`foreign_size_hint_is_observed` (tests/size_hints.rs:2), `unicode_module_receiver_is_not_the_local_type` (tests/size_hints.rs:10) names `WhileSome` and uses it, and the language may call `size_hint` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `size_hint`, so it does not report a gap. Check that an assertion in that test would fail if `size_hint` returned the wrong value; add a test only if none does.",
       "suggested_next_action": "`foreign_size_hint_is_observed` (tests/size_hints.rs:2), `unicode_module_receiver_is_not_the_local_type` (tests/size_hints.rs:10) names `WhileSome` and uses it, and the language may call `size_hint` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `size_hint`, so it does not report a gap. Check that an assertion in that test would fail if `size_hint` returned the wrong value; add a test only if none does.",
       "language": "rust",

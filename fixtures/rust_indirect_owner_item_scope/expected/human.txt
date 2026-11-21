@@ -18,7 +18,7 @@ Start here:
     as the argument of an executor helper such as `block_on`. Whether the test's assertion observes
     the changed behavior is not established, so ripr does not claim a gap; this is a named
     limitation, not a coverage claim
-  Related test (1 of 3 matched rows): src/lib.rs:10 outer_owner_value_still_observes_the_change (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 3 matched rows): src/lib.rs:10 outer_owner_value_still_observes_the_change (assertion too weak to tell the old behavior from the new)
   Next step: `outer_owner_value_still_observes_the_change` (src/lib.rs:10) passes the owner as a
     function value, and ripr does not follow the indirect call to the assertion, so ripr does not
     report a gap. Check that the assertion's expected value differs between the old and the new

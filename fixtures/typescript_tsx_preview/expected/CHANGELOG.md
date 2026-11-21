@@ -817,3 +817,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tsx_preview (40)
+
+Reason:
+RIPR-SPEC-0224: project the eligible test into the headline while preserving current-main reach limits, base-side guidance, and JSX owner calls (#15347).
+
+Command:
+`cargo xtask goldens bless typescript_tsx_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

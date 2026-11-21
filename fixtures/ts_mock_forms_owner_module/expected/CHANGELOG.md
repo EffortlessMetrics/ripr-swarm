@@ -408,3 +408,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_mock_forms_owner_module (35)
+
+Reason:
+RIPR-SPEC-0224: bind the headline to the asserted boundary call and retain heuristic preview matches for navigation (#15347).
+
+Command:
+`cargo xtask goldens bless ts_mock_forms_owner_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

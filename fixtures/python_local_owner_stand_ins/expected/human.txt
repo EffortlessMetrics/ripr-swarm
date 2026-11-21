@@ -24,7 +24,7 @@ Start here:
   Missing check (1 of 2): A strong Python oracle reaches `fee`, but its assertion does not observe
     the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test (1 of 7 matched rows): tests/test_aliased_mock.py:5 test_local_aliased_mock (ripr could not confirm that this assertion observes the changed behavior)
+  No discriminating test identified: the retained rows do not identify an observer (7 matched before the display limit).
   Suggested test file: tests/test_aliased_mock.py
   Suggested test: test_local_aliased_mock
   Test node: tests/test_aliased_mock.py::test_local_aliased_mock

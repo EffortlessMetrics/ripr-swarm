@@ -2862,13 +2862,12 @@ The evidence-first fields are additive in schema `0.2`:
   without the field reads every row as `contributing`. `miss` never changes
   which decision paths consume a row, and the role is not runtime execution
   evidence.
-- `oracle_kind` and `oracle_strength` summarize the strongest related oracle
-  currently visible to the finding among the rows best placed to observe the
-  change (`RelatedTest::observation_tier`, RIPR-SPEC-0224, #14483): a
-  `no_call_path` row or an `assertion_not_observing` row speaks for the finding only
-  when no better-placed row is listed, so the summary can read `weak` or
-  `none` while an unreached test holds a strong oracle. TypeScript and
-  JavaScript findings summarize the shared preview row instead.
+- `oracle_kind` and `oracle_strength` describe the related test selected for
+  the finding's headline (RIPR-SPEC-0224). The human headline, agent reference
+  and bounded context packet use the same selection. With no eligible
+  representative, these fields read `unknown` and `none`. Each raw related
+  row keeps its own oracle grade. The preview repair card can still identify
+  a test to edit when the finding has no observed test to name.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
   integrations.
 - Both are always present and may be the empty string, which is the producer's

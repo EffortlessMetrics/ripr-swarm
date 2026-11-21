@@ -24,7 +24,7 @@ Start here:
     `pytest.collection(python_functions)`; static evidence does not establish that its body runs and
     an assertion failure fails verification. Add an independent active test or inspect the
     activation condition
-  Related test: tests/test_money.py:4 test_truthiness
+  No discriminating test identified: the retained rows do not identify an observer (1 matched before the display limit).
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
