@@ -152,6 +152,7 @@ pub(crate) use language::{
 };
 #[cfg(feature = "lang-typescript")]
 pub(crate) use probes::normalize_expression;
+pub(crate) use probes::{before_is_whole_line_over_condition, old_condition_of_whole_line};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };

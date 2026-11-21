@@ -684,39 +684,8 @@ fn match_arm_head_only_note(
 /// so the row says it is the condition and where the new line is. The block
 /// is located on comment/string-masked text, so a `{` inside a literal is not
 /// a block. Display only: `before` and `after` are printed unchanged.
-fn condition_only_note(
-    finding: &Finding,
-    before: Option<&str>,
-    after: &str,
-    root: &Path,
-) -> Option<String> {
-    if finding.probe.family != ProbeFamily::Predicate {
-        return None;
-    }
-    let after = after.trim();
-    let before = before?.trim();
-    if before == after || crate::analysis::mask_comments_and_strings(after).contains('{') {
-        return None;
-    }
-    // A block opens at bracket depth zero; a `{` inside parentheses or
-    // brackets is a closure body or struct literal within a cut condition
-    // (`v.iter().any(|x| { x > 1 })`), not a whole line's block.
-    let mut depth = 0_usize;
-    let opens_block = crate::analysis::mask_comments_and_strings(before)
-        .bytes()
-        .any(|byte| match byte {
-            b'(' | b'[' => {
-                depth += 1;
-                false
-            }
-            b')' | b']' => {
-                depth = depth.saturating_sub(1);
-                false
-            }
-            b'{' => depth == 0,
-            _ => false,
-        });
-    if !opens_block {
+fn condition_only_note(finding: &Finding, root: &Path) -> Option<String> {
+    if !crate::analysis::before_is_whole_line_over_condition(finding) {
         return None;
     }
     Some(format!(
@@ -770,13 +739,18 @@ pub(super) fn render_finding_with_shared_sections(
     let before_text = finding.probe.before.as_deref();
     if let Some(before) = &finding.probe.before {
         out.push_str(&wrapped_fragment("  before: ", before));
+        // #15420: the old condition at the granularity of `after`, when the
+        // whole old line has one readable `if`/`while` head.
+        if let Some(condition) = crate::analysis::old_condition_of_whole_line(finding) {
+            out.push_str(&wrapped_fragment("          old condition: ", &condition));
+        }
     }
     if let Some(after) = &finding.probe.after {
         out.push_str(&wrapped_fragment("  after:  ", after));
         if let Some(note) = match_arm_head_only_note(finding, before_text, after, root) {
             out.push_str(&note);
         }
-        if let Some(note) = condition_only_note(finding, before_text, after, root) {
+        if let Some(note) = condition_only_note(finding, root) {
             out.push_str(&note);
         }
     } else {

@@ -1,0 +1,12 @@
+# Carry the old condition of a whole old line to the witness, MCP gap and explain (#15420).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/analysis/probes/old_condition.rs::tests::reads_the_condition_of_the_only_head_on_the_line",
+  "crates/ripr/src/analysis/probes/old_condition.rs::tests::refuses_a_line_whose_condition_is_not_established",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::witness_names_the_old_condition_of_a_whole_old_line",
+  "crates/ripr/src/domain/diagnostic_witness.rs::tests::witness_omits_the_old_condition_when_it_is_not_established",
+  "crates/ripr/src/mcp/gaps.rs::tests::get_gap_names_the_old_condition_of_a_whole_old_line",
+  "crates/ripr/tests/condition_granularity.rs::a_condition_and_body_edit_pairs_the_old_condition_with_the_new_one",
+  "crates/ripr/tests/condition_granularity.rs::a_condition_only_edit_keeps_the_cut_before_and_adds_no_field",
+]

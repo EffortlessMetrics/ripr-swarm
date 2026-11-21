@@ -5335,6 +5335,22 @@ rejected. Unknown witness properties are accepted and ignored by the typed
 reader, so typed reserialization does not preserve those properties. Consumers
 that need to forward unknown properties must retain the complete JSON value.
 `witness.confidence.value` is rendered at the contract's two-decimal precision, matching SARIF `properties.confidence` and the finding `confidence` (#10717).
+`witness.before_condition` (#15420, additive, optional) is the old line's
+`if`/`while` condition for a Rust predicate whose `before` is the whole old
+line while `after` is only the new condition. That pairing happens when the
+same line also changed outside the condition
+(`if total >= 100 { total - 10 } else { total }` to
+`if total > 200 { total - 25 } else { total }`): `before` stays the whole old
+line, `before_condition` is `total >= 100` and `after` is `total > 200`. It is
+display evidence at the granularity of `after`; `before` is unchanged. The
+field is absent when `before` is already the old condition, and when the old
+condition is not established from the line: a second `if`/`while` head on the
+line, an `if let` or `while let`, a match guard, or a block expression inside
+the condition. MCP `ripr_get_gap` and `ripr_prepare_repair` carry the same
+value as `changed_behavior.before_condition` (present only when read), and
+the MCP gap brief's `changed:` line pairs it with `after`. The editor hover
+prints it as `old condition`, and human `ripr explain` prints an
+`old condition:` row under `before:`.
 Renderers must not infer evidence from paths, lines, classes, or prose.
 `probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr

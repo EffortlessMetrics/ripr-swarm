@@ -348,6 +348,7 @@ mod tests {
             probe_family: "predicate".to_string(),
             changed_expression: "x >= 0".to_string(),
             before: None,
+            before_condition: None,
             after: Some("x >= 0".to_string()),
             expected_sink: None,
             missing_discriminators: Vec::new(),

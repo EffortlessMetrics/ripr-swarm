@@ -8863,8 +8863,9 @@ mod tests {
 
         let rendered = render_finding(&finding);
 
-        assert!(rendered.contains("  before: if total >= 100 { total - 10 } else { total }\n"));
-        assert!(rendered.contains("  after:  total > 200\n"));
+        assert!(rendered.contains(
+            "  before: if total >= 100 { total - 10 } else { total }\n          old condition: total >= 100\n  after:  total > 200\n"
+        ));
         assert!(
             rendered.contains("(condition only; before is the whole old line; open "),
             "a condition-only after row over a whole old line must say so; got:\n{rendered}"
@@ -8905,6 +8906,17 @@ mod tests {
         arm.probe.before = Some("x if a > 1 => { 2 }".to_string());
         arm.probe.after = Some("x if a > 2 =>".to_string());
         assert!(!render_finding(&arm).contains(note));
+
+        // The old condition row (#15420) appears only when the whole old
+        // line has one readable head: a cut `before` and a two-head or
+        // `if let` line print none, though the last two keep the note.
+        let row = "old condition:";
+        assert!(predicate("while n >= 1 { n -= 1 }", "n > 2").contains("old condition: n >= 1\n"));
+        assert!(!predicate("total >= 100", "total > 200").contains(row));
+        let two_heads = predicate("if a > 1 { 1 } else if b > 2 { 2 }", "b > 3");
+        assert!(two_heads.contains(note) && !two_heads.contains(row));
+        let pattern = predicate("if let Shape { side } = shape { side }", "side > 3");
+        assert!(pattern.contains(note) && !pattern.contains(row));
     }
 
     /// The `expr:` fallback is the same rendered fragment reached through a
