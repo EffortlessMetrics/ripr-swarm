@@ -72,6 +72,18 @@
         },
         "changed_files_by_language": {
           "maxItems": 0
+        },
+        "suppressed_by_policy": {
+          "const": 0
+        },
+        "withheld_by_owner_opt_out": {
+          "const": 0
+        },
+        "conflicting_expressions": {
+          "const": 0
+        },
+        "proof_harness_only": {
+          "const": 0
         }
       }
     },

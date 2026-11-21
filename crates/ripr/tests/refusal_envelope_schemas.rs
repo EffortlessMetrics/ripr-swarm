@@ -36,6 +36,13 @@ struct Derived {
     echoes_mode: bool,
 }
 
+const OPTIONAL_SUMMARY_COUNTS: &[&str] = &[
+    "suppressed_by_policy",
+    "withheld_by_owner_opt_out",
+    "conflicting_expressions",
+    "proof_harness_only",
+];
+
 const DERIVED: [Derived; 4] = [
     Derived {
         path: RERUN_REFUSAL_SCHEMA,
@@ -219,6 +226,10 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
         // artifact still produces a typed refusal echoing that exact spelling.
         if derived.path == CONTEXT_REFUSAL_SCHEMA {
             expected["properties"]["root"] = json!({"type": "string"});
+            // A context refusal cannot carry positive optional summary counts.
+            for &counter in OPTIONAL_SUMMARY_COUNTS {
+                expected["properties"]["summary"]["properties"][counter] = json!({"const": 0});
+            }
         }
         if let Some(properties) = expected["properties"].as_object_mut() {
             if !derived.echoes_mode {
@@ -273,6 +284,8 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
     let root = fixture_repo("context-artifact", false)?;
     let artifact = root.join("missing.json").display().to_string();
     let captured = (|| {
+        write(&root, "ripr.toml", "[analysis]\nmode = \"deep\"\n")?;
+        let schema = published_schema::read(CONTEXT_REFUSAL_SCHEMA)?;
         for format in ["json", "json-compact"] {
             let args = [
                 "context",
@@ -300,8 +313,6 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                 "context",
                 "--at",
                 "src/lib.rs:1",
-                "--mode",
-                "deep",
                 "--from",
                 &artifact,
                 "--format",
@@ -314,6 +325,19 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                 return Err(format!(
                     "unexpected mode or base in {format} artifact refusal"
                 ));
+            }
+            for &counter in OPTIONAL_SUMMARY_COUNTS {
+                let mut bad = document.clone();
+                let summary = bad
+                    .get_mut("summary")
+                    .and_then(Value::as_object_mut)
+                    .ok_or("the refusal has no summary object")?;
+                summary.insert(counter.to_string(), json!(1));
+                if conforms(&bad, &schema).is_ok() {
+                    return Err(format!(
+                        "{format} schema accepted a positive {counter} refusal count"
+                    ));
+                }
             }
             let empty_root = refusal_json(&args, Path::new(""), 2)?;
             if empty_root.get("root").and_then(Value::as_str) != Some("") {
