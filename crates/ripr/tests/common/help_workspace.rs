@@ -28,12 +28,18 @@ static NEXT_WORKSPACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 pub(super) fn in_help_workspace(
     test: impl FnOnce(&std::path::Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    in_help_workspace_under(&std::env::temp_dir(), test)
+}
+
+pub(super) fn in_help_workspace_under(
+    parent: &std::path::Path,
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let parent = std::env::temp_dir();
-    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let sequence = NEXT_WORKSPACE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let root = parent.join(format!(
         "ripr-group-help-{}-{nonce}-{sequence}",

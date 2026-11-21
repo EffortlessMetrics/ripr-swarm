@@ -1,0 +1,8 @@
+# Registers the --no-prefix binary section reader (#15665) under
+# RIPR-SPEC-0083: a prefixless binary source is named by its whole path.
+[[extend]]
+id = "RIPR-SPEC-0083"
+tests = [
+  "crates/ripr/src/analysis/diff/path.rs::tests::prefixless_binary_sections_read_only_on_exact_agreement",
+  "crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_source_file_rendered_as_binary_makes_the_outcome_incomplete",
+]

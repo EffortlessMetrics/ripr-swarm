@@ -273,15 +273,20 @@ pub(crate) fn validate_analysis_outcome_artifact(
 
 /// #15239: the artifact records the producer's spelling of the root and the
 /// reviewer passes its own, so `--root .` and `--root "$PWD"` name the same
-/// directory with different strings. Accept an identical spelling, or two
-/// spellings that canonicalize to the same existing directory (a relative
-/// spelling resolves against the process working directory, as the CLI
-/// resolves `--root`). A missing root, or one that canonicalizes elsewhere,
-/// still fails closed.
+/// directory with different strings. The producer writes `root` through the
+/// stable path encoder (`output::path::display_path`, `%` as `%25`), so the
+/// recorded text is decoded once with its own decoder before any comparison;
+/// the raw encoded text is never matched, since a literal `100%25x`
+/// directory and an encoded `100%x` root share one spelling. After decoding,
+/// accept the reviewer's own spelling, or a spelling that canonicalizes to
+/// the same existing directory (a relative spelling resolves against the
+/// process working directory, as the CLI resolves `--root`). A missing root,
+/// or one that canonicalizes elsewhere, still fails closed.
 fn recorded_root_matches(root: &Path, root_display: &str, recorded: Option<&str>) -> bool {
     recorded.is_some_and(|recorded| {
-        recorded == root_display
-            || crate::output::gap_source_subject::same_root(root, Path::new(recorded))
+        let decoded = crate::analysis::decode_stable_path_text(recorded);
+        decoded == Path::new(root_display)
+            || crate::output::gap_source_subject::same_root(root, &decoded)
     })
 }
 
@@ -364,7 +369,7 @@ mod tests {
         Ok(serde_json::json!({
             "schema_version": "0.2",
             "tool": "ripr",
-            "root": root.display().to_string(),
+            "root": crate::output::path::display_path(&root),
             "base": outcome.identity.base_revision.as_deref(),
             "analysis_outcome": {
                 "analysis_complete": declared_complete,
@@ -684,6 +689,89 @@ mod tests {
     }
 
     #[test]
+    fn decodes_the_encoded_root_once_and_keeps_percent_named_workspaces_apart() -> Result<(), String>
+    {
+        // #15239: `ripr check --format json` writes `root` through the stable
+        // path encoder, which spells a literal `%` as `%25`. Two distinct
+        // workspaces, `r_100%x` and a literal `r_100%25x`, therefore record
+        // `r_100%25x` and `r_100%2525x`. Each must accept its own artifact
+        // and refuse the other's: matching the raw recorded text as a path
+        // would let the literal `r_100%25x` workspace accept the `r_100%x`
+        // artifact.
+        let base = std::env::temp_dir().join(format!(
+            "ripr-analysis-outcome-percent-root-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let encoded_looking = base.join("r_100%x");
+        let literal = base.join("r_100%25x");
+        for dir in [&encoded_looking, &literal] {
+            std::fs::create_dir_all(dir).map_err(|error| format!("create {dir:?}: {error}"))?;
+        }
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        let written_for = |root: &Path| -> Value {
+            serde_json::json!({
+                "schema_version": "0.2",
+                "tool": "ripr",
+                "root": crate::output::path::display_path(root),
+                "base": null,
+                "analysis_outcome": {
+                    "analysis_complete": true,
+                    "outcome": outcome
+                }
+            })
+        };
+        let encoded_artifact = written_for(&encoded_looking);
+        let literal_artifact = written_for(&literal);
+        let fixture = (
+            encoded_artifact["root"].as_str().map(str::to_string),
+            literal_artifact["root"].as_str().map(str::to_string),
+        );
+        // The review side passes its own unencoded spelling, as the CLI
+        // callers build it with `output::outcome::display_path`.
+        let check = |root: &Path, value: &Value| {
+            validate_analysis_outcome_artifact(
+                root,
+                &crate::output::outcome::display_path(root),
+                value,
+            )
+        };
+        let own_encoded = check(&encoded_looking, &encoded_artifact);
+        let own_literal = check(&literal, &literal_artifact);
+        let literal_reads_encoded = check(&literal, &encoded_artifact);
+        let encoded_reads_literal = check(&encoded_looking, &literal_artifact);
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(
+            fixture,
+            (
+                Some(format!(
+                    "{}/r_100%25x",
+                    crate::output::path::display_path(&base)
+                )),
+                Some(format!(
+                    "{}/r_100%2525x",
+                    crate::output::path::display_path(&base)
+                )),
+            ),
+            "fixture precondition: the producer encodes each literal `%`"
+        );
+        assert_eq!(own_encoded, Ok(outcome.clone()));
+        assert_eq!(own_literal, Ok(outcome));
+        let mismatch = Err(AnalysisOutcomeArtifactError::Invalid(
+            "Analysis outcome artifact root does not match the review root.".to_string(),
+        ));
+        assert_eq!(literal_reads_encoded, mismatch);
+        assert_eq!(encoded_reads_literal, mismatch);
+        Ok(())
+    }
+
+    #[test]
     fn accepts_differently_spelled_same_root_and_refuses_another_directory() -> Result<(), String> {
         // #15239: the artifact records an absolute root while the reviewer
         // passes a relative one (`--root .` in the CLI). Lib tests run with
@@ -699,7 +787,7 @@ mod tests {
         );
         let outcome = complete_outcome(AnalysisOutcomeKind::CompleteNoFindings)?;
         let absolute = workspace_root()?;
-        let absolute_display = absolute.display().to_string();
+        let absolute_display = crate::output::path::display_path(&absolute);
         let relative = Path::new("../..");
         let absolute_recorded = artifact(&outcome, true)?;
         assert_eq!(

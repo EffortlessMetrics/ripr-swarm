@@ -10,13 +10,16 @@ use std::fs;
 use std::path::Path;
 
 use super::changelog_fragments::{
-    ALLOWED_SECTIONS, CHANGELOG, FRAGMENT_DIR, README, changelog_fragment_violations,
-    fragment_violations, section_of,
+    ALLOWED_SECTIONS, CHANGELOG, FRAGMENT_DIR, README, bullet_entries,
+    changelog_fragment_violations, duplicate_entry_violations, fragment_violations, section_of,
 };
 
 const USAGE: &str = "usage: cargo xtask fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments] [--release-cut]";
 /// Candidate-admission ceiling on changed files in one PR.
 const ADMISSION_FILE_CAP: usize = 160;
+/// Recommended maximum fragments per advance fold-and-delete batch PR so the
+/// batch plus `CHANGELOG.md` stays within 150 changed files.
+const RECOMMENDED_BATCH_LIMIT: usize = 149;
 const UNRELEASED: &str = "## Unreleased";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -60,17 +63,14 @@ pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
     if !options.write {
         println!("dry run: nothing written; pass --write to apply");
     } else if options.keep_fragments {
-        println!("--keep-fragments: fragment files were not deleted");
+        println!(
+            "--keep-fragments: fragment files were not deleted (local inspection only; \
+             check-changelog-fragments rejects PRs that keep fragments duplicating Unreleased entries)"
+        );
     }
     if options.release_cut {
-        // The PR carries every deleted fragment plus CHANGELOG.md.
-        if report.folded.len() + 1 > ADMISSION_FILE_CAP {
-            println!(
-                "warning: {} changed files exceeds the {ADMISSION_FILE_CAP}-file admission cap; \
-                 fold a snapshot ahead of the cut with `--write --keep-fragments --limit` and \
-                 delete in batches (changelog.d/README.md)",
-                report.folded.len() + 1
-            );
+        if let Some(warning) = oversize_release_cut_warning(report.folded.len()) {
+            println!("{warning}");
         }
         if options.write {
             let violations = changelog_fragment_violations(Path::new("."), true)?;
@@ -86,6 +86,22 @@ pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Advisory warning when a release-cut PR (every deleted fragment plus
+/// `CHANGELOG.md`) exceeds the candidate-admission file cap.
+pub(super) fn oversize_release_cut_warning(folded_count: usize) -> Option<String> {
+    let changed_files = folded_count + 1;
+    if changed_files > ADMISSION_FILE_CAP {
+        Some(format!(
+            "warning: {changed_files} changed files exceeds the {ADMISSION_FILE_CAP}-file admission cap \
+             (advisory only, not a write guard); fold and delete in batches ahead of the cut with \
+             `--write --limit {RECOMMENDED_BATCH_LIMIT}` (at most {RECOMMENDED_BATCH_LIMIT} fragments \
+             plus {CHANGELOG} = 150 paths per PR; see {FRAGMENT_DIR}/{README})"
+        ))
+    } else {
+        None
+    }
 }
 
 pub(super) fn parse_args(args: &[String]) -> Result<FoldOptions, String> {
@@ -224,16 +240,20 @@ pub(super) fn fold_text(
     let mut lines: Vec<String> = changelog.lines().map(str::to_string).collect();
     let trailing_newline = changelog.ends_with('\n');
     let mut folded = Vec::new();
+    let mut entry_sources = Vec::new();
     for (name, text) in fragments {
         let (section, body) = parse_fragment(name, text)?;
         let (start, end) = unreleased_range(&lines)?;
-        let block = lines[start..end].join("\n");
-        let entry_text = body.join("\n");
-        if block.contains(&entry_text) {
-            return Err(format!(
-                "refusing to fold {FRAGMENT_DIR}/{name}: its entry text is already in `{UNRELEASED}` (folded earlier?); delete the fragment or fix the duplicate"
+        if entry_sources.is_empty() {
+            entry_sources.push((
+                format!("{CHANGELOG} Unreleased"),
+                bullet_entries(lines[start + 1..end].iter().map(String::as_str)),
             ));
         }
+        entry_sources.push((
+            format!("{FRAGMENT_DIR}/{name}"),
+            bullet_entries(body.iter().map(String::as_str)),
+        ));
         let heading = format!("### {section}");
         let at = match lines[start..end].iter().position(|line| *line == heading) {
             Some(offset) => {
@@ -259,6 +279,10 @@ pub(super) fn fold_text(
         let from = at;
         lines.splice(from..from, insert);
         folded.push((name.clone(), section, count));
+    }
+    let duplicates = duplicate_entry_violations(&entry_sources);
+    if !duplicates.is_empty() {
+        return Err(format!("refusing to fold:\n  {}", duplicates.join("\n  ")));
     }
     let mut out = lines.join("\n");
     if trailing_newline {

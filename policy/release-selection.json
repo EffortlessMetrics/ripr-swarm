@@ -527,7 +527,7 @@
       "owner_issue": 4624,
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
-      "candidate_effect": "Distribution evidence on the candidate: same-target payload identity across archive, wheel and npm.",
+      "candidate_effect": "The 0.11.0 release scope includes the PyPI ripr-rs and npm @effortlessmetrics/ripr alpha adapters. Verify same-target payload identity across the server archive, wheel and npm package on the immutable candidate.",
       "execution_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/4624",
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/2769"

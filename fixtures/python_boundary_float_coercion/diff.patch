@@ -1,0 +1,10 @@
+diff --git a/fmt/stamp.py b/fmt/stamp.py
+--- a/fmt/stamp.py
++++ b/fmt/stamp.py
+@@ -1,5 +1,5 @@
+ def seconds(value):
+     value = float(value)
+-    if value < 0:
++    if value <= 0:
+         raise ValueError("not a positive timestamp")
+     return value

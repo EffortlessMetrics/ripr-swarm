@@ -120,7 +120,7 @@ Input artifacts:
 | Current policy operations JSON | required | Current ceiling, safe and blocked promotion modes, blockers, grouped actions, warnings, unknowns, and input artifact status. |
 | Policy history JSONL | optional | Prior policy snapshots for trend comparison. Missing history produces a single-snapshot report. |
 | Commit | optional | Human-supplied revision identity for the current snapshot. Missing commit is an unknown, not a failure. |
-| PR number | optional | Human-supplied PR identity for the current snapshot. Missing PR number is an unknown, not a failure. |
+| PR number | optional | Human-supplied PR identity for the current snapshot. Missing PR number is an unknown, not a failure. A supplied `--pr-number` must be a positive integer; other values are refused (exit 2) and echoed (#15259). |
 
 The optional durable history input path is:
 
