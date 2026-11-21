@@ -21809,6 +21809,8 @@ pub(crate) fn read_file_policy_test_commands(
             (None, entry.covered_by),
             (Some(FilePolicyHost::Unix), entry.covered_by_unix),
             (Some(FilePolicyHost::Windows), entry.covered_by_windows),
+            (Some(FilePolicyHost::Linux), entry.covered_by_linux),
+            (Some(FilePolicyHost::Macos), entry.covered_by_macos),
         ] {
             for command in values.unwrap_or_default() {
                 if is_cargo_test_command(&command) {
@@ -21828,18 +21830,31 @@ impl FilePolicyHost {
     fn parse(family: &str) -> Result<Self, String> {
         match family {
             "unix" => Ok(Self::Unix),
+            "linux" => Ok(Self::Linux),
+            "macos" => Ok(Self::Macos),
             "windows" => Ok(Self::Windows),
             _ => Err(format!("unsupported file-policy host family `{family}`")),
         }
     }
 
     fn current() -> Result<Self, String> {
-        Self::parse(std::env::consts::FAMILY)
+        Self::parse(match std::env::consts::OS {
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => std::env::consts::FAMILY,
+        })
+    }
+
+    /// Whether this declared scope includes the executing host.
+    fn applies_to(self, host: Self) -> bool {
+        self == host || (self == Self::Unix && matches!(host, Self::Linux | Self::Macos))
     }
 
     fn name(self) -> &'static str {
         match self {
             Self::Unix => "unix",
+            Self::Linux => "linux",
+            Self::Macos => "macos",
             Self::Windows => "windows",
         }
     }
@@ -21927,7 +21942,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                     "classification" => entry.classification = Some(scalar()?),
                     "reason" => entry.reason = Some(scalar()?),
                     "generated_by" => entry.generated_by = Some(scalar()?),
-                    "covered_by" | "covered_by_unix" | "covered_by_windows" => {
+                    "covered_by" | "covered_by_unix" | "covered_by_windows"
+                    | "covered_by_linux" | "covered_by_macos" => {
                         let array_error = || {
                             format!(
                                 "{path}:{field_line} non-Rust allowlist `{key}` requires a string array"
@@ -21948,6 +21964,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                         match key {
                             "covered_by_unix" => entry.covered_by_unix = Some(commands),
                             "covered_by_windows" => entry.covered_by_windows = Some(commands),
+                            "covered_by_linux" => entry.covered_by_linux = Some(commands),
+                            "covered_by_macos" => entry.covered_by_macos = Some(commands),
                             _ => entry.covered_by = Some(commands),
                         }
                     }
@@ -22032,6 +22050,8 @@ fn validate_file_policy_allow_entry(
     for (field, commands) in [
         ("covered_by_unix", &entry.covered_by_unix),
         ("covered_by_windows", &entry.covered_by_windows),
+        ("covered_by_linux", &entry.covered_by_linux),
+        ("covered_by_macos", &entry.covered_by_macos),
     ] {
         if let Some(commands) = commands
             && (commands.is_empty() || commands.iter().any(|value| !is_cargo_test_command(value)))

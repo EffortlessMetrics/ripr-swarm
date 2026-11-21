@@ -1266,7 +1266,8 @@ owner = "ci"
 surface = "ci"
 classification = "tooling"
 reason = "#4988: pinned EM CI requires a Bash script path; minimal shim prepares workspace temp and delegates command ownership to Rust and existing Rust Gates."
-covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+covered_by = []
+covered_by_linux = ["cargo test -p xtask --example contabo_product_proof"]
 
 [[allow]]
 glob = ".ci/contabo-result.sh"
@@ -1275,11 +1276,11 @@ owner = "ci"
 surface = "ci"
 classification = "tooling"
 reason = "#4988: EM CI requires a Bash result script; bounded jq policy consumes the centrally authenticated product import without Cargo bootstrap, another uploader or native-auth implementation."
-# The result-policy test target is cfg(target_os = "linux"); on Windows it
-# enumerates zero tests, which the covered-by check rejects, so the shared
-# product proof covers every host and the policy test covers Unix.
-covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+# The example executes the Linux/Bash contract. The result-policy target
+# also retains static controls on macOS, so its Unix applicability is kept.
+covered_by = []
 covered_by_unix = ["cargo test -p xtask --test contabo_result_policy"]
+covered_by_linux = ["cargo test -p xtask --example contabo_product_proof"]
 
 [[allow]]
 glob = ".ci/contabo-product-contract.json"
@@ -1288,7 +1289,8 @@ owner = "ci"
 surface = "ci"
 classification = "metadata"
 reason = "#4988/#7164: exact source-owned product member declaration recognized by the reviewed central ripr-product transport; preserves native producer paths and bounded custody without authorizing arbitrary .ci files."
-covered_by = ["cargo test -p xtask --example contabo_product_proof product_members_are_bound_to_actual_producer_paths"]
+covered_by = []
+covered_by_linux = ["cargo test -p xtask --example contabo_product_proof product_members_are_bound_to_actual_producer_paths"]
 
 [[allow]]
 glob = "benchmarks/stub_quality/cases/**/Cargo.toml"

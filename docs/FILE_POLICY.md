@@ -27,8 +27,12 @@ in one Rust-read policy file.
 ### Host applicability of test coverage
 
 `covered_by` remains required and applies on every host. Optional
-`covered_by_unix` and `covered_by_windows` arrays supplement those common
-checks with `cargo test` selectors for the named host family. These scoped
+`covered_by_unix`, `covered_by_windows`, `covered_by_linux`, and
+`covered_by_macos` arrays supplement those common checks with `cargo test`
+selectors for the named host family or OS. Unix selectors apply to Linux and
+macOS as well as other Unix hosts; Linux and macOS selectors apply only to
+that OS. Eligibility comes from the executing xtask host, never a selector
+command's `--target` or an environment override. These scoped
 arrays must be nonempty. Unknown platform fields, duplicate keys, malformed
 TOML, and non-test commands in scoped arrays are rejected.
 
@@ -45,6 +49,14 @@ declared applicability, selected counts, and test identities in
 `target/ripr/reports/file-policy.md`. An inapplicable selector is explicitly
 `not_applicable`, with `selected=not_enumerated`; it provides no coverage on
 that host. Enumeration does not claim the tests executed or passed.
+
+The Contabo Bash route uses `covered_by_linux` for its example tests,
+including the contract JSON selector. The result-policy selector keeps its
+existing Unix scope because it retains static tests on macOS. The required common
+`covered_by = []` declares no portable test coverage. Windows and macOS
+report the Linux-scoped example selectors as not applicable; Linux still rejects an empty or
+failed enumeration. Simulated host controls test eligibility only and do not
+establish native Windows/macOS execution or a successful scheduled lane.
 
 For the portable native consumer, common packet-digest and source controls
 remain required on Windows. The native check/pilot integration target and
