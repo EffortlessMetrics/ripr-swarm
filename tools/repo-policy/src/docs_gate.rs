@@ -350,11 +350,51 @@ fn check_static_language(rel: &str, text: &str, violations: &mut Vec<String>) {
     }
 }
 
-use crate::markdown_headings::heading_slugs;
+// Preserve the live outgoing-link contract. Revision fallback compares the
+// separate canonical full-gate anchors offered to unchanged referrers.
+/// GitHub heading slugs for one document, excluding fenced headings, with
+/// `-1`, `-2` suffixes for repeated headings.
+fn outgoing_heading_slugs(text: &str) -> BTreeSet<String> {
+    let mut slugs = BTreeSet::new();
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut fenced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        let Some(heading) = line.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let heading = heading.trim_start_matches('#').trim();
+        if heading.is_empty() {
+            continue;
+        }
+        let mut slug = String::new();
+        for ch in heading.chars() {
+            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+                slug.push(ch.to_ascii_lowercase());
+            } else if ch.is_whitespace() {
+                slug.push('-');
+            }
+        }
+        let seen = counts.entry(slug.clone()).or_default();
+        if *seen == 0 {
+            slugs.insert(slug);
+        } else {
+            slugs.insert(format!("{slug}-{seen}"));
+        }
+        *seen += 1;
+    }
+    slugs
+}
 
 fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec<String>) {
     let base = Path::new(rel).parent().map(Path::to_path_buf);
-    let source_slugs = heading_slugs(text);
+    let source_slugs = outgoing_heading_slugs(text);
     let mut fenced = false;
     for (index, line) in text.lines().enumerate() {
         if line.trim_start().starts_with("```") {
@@ -430,7 +470,7 @@ fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
                 && let Ok(target_text) = std::fs::read_to_string(&candidate)
-                && !heading_slugs(&target_text).contains(fragment)
+                && !outgoing_heading_slugs(&target_text).contains(fragment)
             {
                 violations.push(format!(
                     "{rel}:{} link fragment #{fragment} has no heading in {file_part} [markdown-links]",
@@ -1124,7 +1164,7 @@ fn blob_headings(checkout: &Path, oid: &str) -> Result<BTreeSet<String>, String>
     }
     let text = std::str::from_utf8(&output.stdout)
         .map_err(|e| format!("docs-gate: Markdown blob {oid} is not UTF-8: {e}"))?;
-    Ok(heading_slugs(text))
+    Ok(crate::markdown_headings::heading_slugs(text))
 }
 
 #[cfg(test)]

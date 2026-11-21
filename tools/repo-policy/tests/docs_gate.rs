@@ -519,3 +519,18 @@ fn revision_mode_preserves_non_markdown_link_destinations() -> TestResult {
     fs::remove_dir_all(root)?;
     Ok(())
 }
+
+#[test]
+fn outgoing_links_keep_the_scoped_empty_heading_rule() -> TestResult {
+    let root = fixture(&[("docs/GUIDE.md", "#\n##\n[empty duplicate](#-1)\n")])?;
+    let report = run_docs_gate(&root, &changed(&["docs/GUIDE.md"]))?;
+    if !report.violations.iter().any(|v| v.contains("#-1")) {
+        return Err(format!(
+            "empty headings supplied an outgoing anchor: {}",
+            report.render()
+        )
+        .into());
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
