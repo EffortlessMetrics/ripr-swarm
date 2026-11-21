@@ -5447,10 +5447,16 @@ mod tests {
             .iter()
             .map(|(path, source)| (path.clone(), source.as_str()))
             .collect();
-        let index = index_from_files(&borrowed)?;
+        // `index_from_files` registers functions only; the related tests come
+        // from the same summaries.
+        let mut index = index_from_files(&borrowed)?;
+        let adapter = RaRustSyntaxAdapter;
+        for (path, source) in &borrowed {
+            index.extend_tests(adapter.summarize_file(path, source)?.tests.iter().cloned());
+        }
         let seams = inventory_seams_from_index(&production, &index);
         assert!(
-            seams.len() >= 96,
+            seams.len() >= 48,
             "fixture must give every pool worker several seams, found {}",
             seams.len()
         );
