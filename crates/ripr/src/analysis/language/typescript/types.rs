@@ -768,6 +768,9 @@ pub(crate) enum TypeScriptRelationKind {
     /// shows the test consumes the binding, not that an assertion observes
     /// its initializer, so it never lends oracle credit.
     ModuleValueUse,
+    /// Direct call through the manifest source of an unread package build.
+    /// The runtime bundle may be stale, so this never lends oracle credit.
+    PackageBuildSource,
     SameFileProximity,
     DescribeName,
     TestName,
@@ -787,7 +790,7 @@ impl TypeScriptRelationKind {
             // Below every relation that calls the owner itself.
             Self::ModuleEntryCall | Self::DecoratedMethodCall => 3,
             Self::SameFileProximity => 3,
-            Self::ModuleValueUse => 2,
+            Self::ModuleValueUse | Self::PackageBuildSource => 2,
             Self::DescribeName => 2,
             Self::TestName => 1,
         }
@@ -824,6 +827,7 @@ impl TypeScriptRelationKind {
             Self::ModuleEntryCall => "module_entry_call",
             Self::DecoratedMethodCall => "decorated_method_call",
             Self::ModuleValueUse => "module_value_use",
+            Self::PackageBuildSource => "package_build_source",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
             Self::TestName => "test_name",

@@ -816,7 +816,7 @@
         },
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|src/pricing.ts"
           },
           "level": "warning",
           "locations": [
@@ -833,14 +833,14 @@
             }
           ],
           "message": {
-            "text": "infection_unknown static exposure for predicate probe: export function say(msg: string, loud = true): string {. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
+            "text": "reachable_unrevealed static exposure for predicate probe: export function say(msg: string, loud = true): string {. Next step: TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|src/pricing.ts"
           },
           "properties": {
             "changed_expression": "export function say(msg: string, loud = true): string {",
-            "classification": "infection_unknown",
+            "classification": "reachable_unrevealed",
             "confidence": 0.4,
             "finding_id": "probe:src_pricing.ts:typescript_preview:7d52efbc",
             "flow_sinks": [],
@@ -900,16 +900,16 @@
               "discriminate": {
                 "confidence": "low",
                 "state": "unknown",
-                "summary": "TypeScript preview adapter: infection is `unknown` for this `default_parameter` edit, so whether an assertion discriminates the change is not asked (#10704)."
+                "summary": "TypeScript preview adapter: infection is `no` for this `default_not_applied` edit, so whether an assertion discriminates the change is not asked (#10704)."
               },
               "infect": {
                 "confidence": "low",
-                "state": "unknown",
-                "summary": "TypeScript preview adapter does not model infection for this `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument."
+                "state": "no",
+                "summary": "No related call lets the default of `loud` apply: observed `say` calls: `(\"a\", true)`."
               },
               "observe": {
                 "confidence": "low",
-                "state": "unknown",
+                "state": "weak",
                 "summary": "Strongest extracted oracle kind: `exact_value` (rank 5)"
               },
               "propagate": {
@@ -924,10 +924,8 @@
               }
             },
             "severity": "warning",
-            "stop_reasons": [
-              "infection_evidence_unknown"
-            ],
-            "suggested_next_action": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+            "stop_reasons": [],
+            "suggested_next_action": "TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted.",
             "tool": "ripr",
             "typescript_preview_card": {
               "authority_boundary": "preview_advisory_only",
@@ -963,7 +961,7 @@
               "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
             }
           },
-          "ruleId": "ripr.finding.infection_unknown"
+          "ruleId": "ripr.finding.reachable_unrevealed"
         }
       ],
       "tool": {

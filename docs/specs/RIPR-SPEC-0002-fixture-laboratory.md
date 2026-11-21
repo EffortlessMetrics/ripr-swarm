@@ -27,6 +27,13 @@ parent concurrency. The JSON, human, and `human-full` surfaces remain sequential
 within a case. This bounds Rayon workers, not all native helper or I/O threads;
 dogfood's real-repository children keep their existing environment.
 
+Before a case runs, its per-fixture fact cache is cleared, and a clear that
+cannot be confirmed is reported as a fixture error. On Windows, a removal
+refused as momentarily in use (OS error 5, 32 or 145) is retried with a
+bounded backoff of about 1.6 seconds. A holder that outlives it, and every
+other error on any host, is still reported, naming the attempt count and the
+OS error.
+
 For a `human.txt` mismatch, the drift report compares the five fields in the
 rendered `Evidence:` vector. It lists each changed stage with its old and new
 state. Equal vectors yield `stage_states_unchanged: true`; a change in the
@@ -117,6 +124,15 @@ Given equivalent test intent with multiline assertions, nested tests, reordered
 tests, or assert_matches-style exact error checks, when ripr analyzes the diff,
 then it preserves the same evidence-first classification or documents the
 intentional difference.
+```
+
+Fixture-cache clear:
+
+```text
+Given a per-fixture cache clear that Windows refuses as momentarily in use,
+when the runner retries within its bounded backoff and the holder releases,
+then the case runs; when the holder outlives the backoff, or the error is any
+other kind, then the runner reports a fixture error naming the attempts.
 ```
 
 ## Initial Fixture Set

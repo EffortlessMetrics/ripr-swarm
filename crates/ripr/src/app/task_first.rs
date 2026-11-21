@@ -546,8 +546,7 @@ fn route_not_ready_reason(
             ));
             return label;
         }
-        let file = crate::analysis::stable_path_text(entry.seam.file());
-        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let selector = super::test_stub::stub_selector_args(root.source, &entry.seam, "predicate");
         let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
@@ -560,7 +559,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the boundary test by hand, or run `ripr agent stub{root_flag} --at {at} --kind predicate` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
+            ": write the boundary test by hand, or run `ripr agent stub{root_flag} {selector}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // #10701: a changed return value or error with no test ripr can
@@ -599,8 +598,7 @@ fn route_not_ready_reason(
             ));
             return label;
         }
-        let file = crate::analysis::stable_path_text(entry.seam.file());
-        let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+        let selector = super::test_stub::stub_selector_args(root.source, &entry.seam, kind);
         let root_flag = root.command_root().map_or_else(String::new, |root| {
             format!(
                 " --root {}",
@@ -613,7 +611,7 @@ fn route_not_ready_reason(
             ""
         };
         label.push_str(&format!(
-            ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
+            ": write the test by hand, or run `ripr agent stub{root_flag} {selector}` for a fill-in skeleton{module_note}, then rerun `ripr repair`"
         ));
     }
     // A named stub route already answers "no test calls this"; a second
@@ -1037,6 +1035,27 @@ pub(crate) fn resolve_repair_start(
         },
         || check_run.get().map(|output| output.findings.clone()),
     );
+    // #15278: the reverse of the screen above. The seam inventory reads a
+    // whole seam as already gripped from tests anywhere in the repository, but
+    // `ripr check` judges the changed line; when it reads that line as anything
+    // but exposed, "the existing tests already check it" contradicts it.
+    let refusals = reopen_gripped_that_check_reads_open(
+        refusals,
+        &classified,
+        |entry| matches!(scope, Some(ChangeScope::TouchesSeams(_))) && !off_change(entry),
+        || check_run.get().map(|output| output.findings.clone()),
+    );
+    // A wrapper of a variant that was just reopened is not the same behavior
+    // as a gripped one any more (#15278).
+    let gripped_siblings: Vec<&crate::analysis::ClassifiedSeam> = gripped_siblings
+        .into_iter()
+        .filter(|sibling| {
+            refusals.iter().any(|(entry, refusal)| {
+                entry.seam.id() == sibling.seam.id()
+                    && matches!(refusal, Some((RefusalKind::AlreadyGripped, _)))
+            })
+        })
+        .collect();
     // For each gripped refusal: whether the spot is outside the change, and why.
     let mut gripped_reasons: Vec<(bool, String)> = Vec::new();
     let mut eligible_off_change = 0usize;
@@ -1462,6 +1481,10 @@ const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the co
 /// [`GRIPPED_SPOT_REASON`].
 const CHECK_NOTICED_REASON: &str = "`ripr check` reads this changed code as already noticed by a test, so there is no gap to repair here";
 
+/// Why a changed spot is not called checked when `ripr check` could not run
+/// to confirm it (#15278): nothing is claimed about check's reading.
+const CHECK_UNAVAILABLE_REASON: &str = "ripr could not run `ripr check` to confirm that existing tests notice this changed code, so it is not read as checked; inspect it by hand";
+
 /// Turn the refusal of each changed seam that `ripr check` reads as noticed
 /// into an already-gripped one. Check is the authority for a changed line, and
 /// the seam inventory is a separate producer that follows fewer calls (it does
@@ -1520,6 +1543,90 @@ fn notice_what_check_notices<'a>(
                 RefusalKind::AlreadyGripped,
                 CHECK_NOTICED_REASON.to_string(),
             ));
+        }
+    }
+    refusals
+}
+
+/// Why a changed spot whose whole seam the inventory reads as gripped is still
+/// open: `ripr check` does not read the changed line as noticed (#15278).
+fn check_reads_open_reason(finding: &crate::domain::Finding) -> String {
+    if super::gap_bound_repair::finding_is_static_limited(finding) {
+        CHECK_UNKNOWN_REASON.to_string()
+    } else {
+        format!(
+            "`ripr check` reads this changed code as {} (tests reach it but do not clearly notice it), and the existing tests that grip the spot elsewhere do not close that: write or strengthen the test by hand",
+            finding.class.plain_label()
+        )
+    }
+}
+
+/// The reverse of [`notice_what_check_notices`]: turn the already-gripped
+/// refusal of each changed seam that `ripr check` reads as anything but exposed
+/// into a not-ready one, so bare repair never says "existing tests already
+/// check it, and `ripr check` reports the same" while check reports a gap or a
+/// limit on the changed line (#15278).
+///
+/// Only ever opens a refusal: a seam is never made startable. The finding binds
+/// to its seam through the shared location join
+/// ([`finding_names_seam_by_location`]). Check runs at most once, and only when
+/// a changed seam is read as gripped. `run_check` returns the findings of the
+/// default check, or `None` when it cannot run; then no check claim is
+/// possible, so the changed gripped seams are opened too (fail-closed) with a
+/// reason that makes no claim about check.
+fn reopen_gripped_that_check_reads_open<'a>(
+    mut refusals: Vec<(
+        &'a crate::analysis::ClassifiedSeam,
+        Option<(RefusalKind, String)>,
+    )>,
+    classified: &[crate::analysis::ClassifiedSeam],
+    on_change: impl Fn(&crate::analysis::ClassifiedSeam) -> bool,
+    run_check: impl FnOnce() -> Option<Vec<crate::domain::Finding>>,
+) -> Vec<(
+    &'a crate::analysis::ClassifiedSeam,
+    Option<(RefusalKind, String)>,
+)> {
+    let gripped: Vec<usize> = refusals
+        .iter()
+        .enumerate()
+        .filter(|(_, (entry, refusal))| {
+            on_change(entry) && matches!(refusal, Some((RefusalKind::AlreadyGripped, _)))
+        })
+        .map(|(position, _)| position)
+        .collect();
+    if gripped.is_empty() {
+        return refusals;
+    }
+    let Some(findings) = run_check() else {
+        for position in gripped {
+            refusals[position].1 = Some((
+                RefusalKind::Unverified,
+                CHECK_UNAVAILABLE_REASON.to_string(),
+            ));
+        }
+        return refusals;
+    };
+    for position in gripped {
+        let entry = refusals[position].0;
+        let open: Vec<&crate::domain::Finding> = findings
+            .iter()
+            .filter(|finding| {
+                finding.class != crate::domain::ExposureClass::Exposed
+                    && super::repair_card_handoff::finding_names_seam_by_location(
+                        finding, entry, classified,
+                    )
+            })
+            .collect();
+        // A gap check names leads over a static limit on the same seam, the
+        // way check itself leads with the gap (#14266), so the reason does
+        // not depend on the order of check's findings.
+        let lead = open
+            .iter()
+            .find(|finding| !super::gap_bound_repair::finding_is_static_limited(finding))
+            .or_else(|| open.first());
+        if let Some(finding) = lead {
+            refusals[position].1 =
+                Some((RefusalKind::RouteNotReady, check_reads_open_reason(finding)));
         }
     }
     refusals
@@ -1798,8 +1905,8 @@ pub(crate) fn no_test_route_refusal(
     let file = crate::analysis::stable_path_text(entry.seam.file());
     let line = entry.seam.display_line();
     let family = crate::analysis::probe_family_for_seam_kind(entry.seam.kind());
-    let at = shell_arg(&format!("{file}:{line}"));
-    let stub = format!("ripr agent stub --root {root_arg} --at {at} --kind {family}");
+    let selector = super::test_stub::stub_selector_args(Some(root), &entry.seam, family);
+    let stub = format!("ripr agent stub --root {root_arg} {selector}");
     let inline: Vec<String> = source
         .and_then(crate::analysis::governed_cfg_test_modules)
         .map(|modules| {
@@ -3001,10 +3108,13 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
+    // `gap.file` is stable path text (`%` escaped as `%25`); the seam
+    // classifier opens the file, so it needs the native name.
+    let gap_file = crate::analysis::decode_stable_path_text(&gap.file);
     let Ok(classified) = crate::analysis::classify_seams_in_file_with_shared_index(
         root,
         &config,
-        Path::new(&gap.file),
+        &gap_file,
         &evidence_files,
         seam_index,
     ) else {
@@ -3681,6 +3791,21 @@ pub(crate) fn preview_seam_route(
     )
 }
 
+/// A diff probe can identify a changed expression for inspection even when
+/// its family has no corresponding seam. The id alone carries no diff scope.
+pub(crate) fn static_unknown_repair_hint(item: &str) -> Option<&'static str> {
+    let (file, suffix) = item.strip_prefix("probe:")?.split_once(':')?;
+    let fingerprint = suffix.strip_prefix("static_unknown:")?;
+    let hash = match fingerprint.split_once('.') {
+        Some((hash, ordinal)) if ordinal.parse::<u32>().ok()? >= 2 => hash,
+        Some(_) => return None,
+        None => fingerprint,
+    };
+    (!file.is_empty() && hash.len() == 8 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(
+        "a static_unknown finding ID has no repair seam; inspect this ID with `ripr explain` using the same root and diff options as the original `ripr check`",
+    )
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
     unknown_repair_item_reason(Some(root), item)
 }
@@ -3696,6 +3821,9 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
             no_seam_inventory_reason(language, ""),
             gap_bound_start_pointer(language)
         );
+    }
+    if let Some(hint) = static_unknown_repair_hint(item) {
+        return format!("repair item `{item}` cannot start a repair: {hint}");
     }
     let list = match root {
         Some(root) => format!(
@@ -5239,6 +5367,7 @@ pub(crate) mod tests {
 
     pub(crate) fn weak_related_test() -> crate::analysis::test_grip_evidence::RelatedTestGrip {
         crate::analysis::test_grip_evidence::RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "at_threshold_runs".to_string(),
             file: std::path::PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -5371,6 +5500,161 @@ pub(crate) mod tests {
         });
         assert!(failing.get().is_none() && failing.get().is_none());
         assert_eq!(none_runs.get(), 1);
+    }
+
+    /// #15278: the reverse screen only ever opens a changed gripped seam,
+    /// and only on check's non-exposed reading of it (or when check cannot
+    /// run); its reason does not depend on the order of check's findings.
+    #[test]
+    fn reopen_opens_only_changed_gripped_seams_check_reads_open() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{ExposureClass, Finding};
+        let classified = vec![gate_entry(
+            SeamGripClass::StronglyGripped,
+            vec![weak_related_test()],
+        )];
+        let gripped = || {
+            vec![(
+                &classified[0],
+                Some((RefusalKind::AlreadyGripped, "gripped".to_string())),
+            )]
+        };
+        let finding = |class: ExposureClass| -> Finding {
+            let mut finding = crate::app::repair_card_handoff::tests::producer_gap_finding(
+                "probe:src_pricing.rs:88:predicate",
+                "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                "predicate",
+            );
+            finding.probe.location = crate::domain::SourceLocation::new("src/pricing.rs", 88, 5);
+            finding.class = class;
+            finding
+        };
+        // Fixture check: the synthetic finding binds the seam through the
+        // shared join, so the cases below exercise the real binding.
+        assert!(
+            crate::app::repair_card_handoff::finding_names_seam_by_location(
+                &finding(ExposureClass::WeaklyExposed),
+                &classified[0],
+                &classified,
+            ),
+            "the synthetic finding must bind the gripped seam"
+        );
+        let kind = |refusals: &[(
+            &crate::analysis::ClassifiedSeam,
+            Option<(RefusalKind, String)>,
+        )]| { refusals[0].1.clone() };
+        let runs = std::cell::Cell::new(0usize);
+        let counted = |findings: Option<Vec<Finding>>| {
+            runs.set(runs.get() + 1);
+            findings
+        };
+        // Off the change: untouched, and check never runs.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| false,
+            || counted(Some(vec![finding(ExposureClass::WeaklyExposed)])),
+        );
+        assert_eq!(runs.get(), 0);
+        assert_eq!(kind(&kept), gripped()[0].1);
+        // An open (not gripped) seam is never touched, and check never runs.
+        let open = vec![(
+            &classified[0],
+            Some((RefusalKind::RouteNotReady, "not ready".to_string())),
+        )];
+        let kept = reopen_gripped_that_check_reads_open(
+            open,
+            &classified,
+            |_| true,
+            || counted(Some(Vec::new())),
+        );
+        assert_eq!(runs.get(), 0);
+        assert_eq!(
+            kind(&kept),
+            Some((RefusalKind::RouteNotReady, "not ready".to_string()))
+        );
+        // Check reads the seam exposed, or binds nothing: still gripped.
+        for findings in [vec![finding(ExposureClass::Exposed)], Vec::new()] {
+            let kept = reopen_gripped_that_check_reads_open(
+                gripped(),
+                &classified,
+                |_| true,
+                || counted(Some(findings)),
+            );
+            assert_eq!(kind(&kept), gripped()[0].1);
+        }
+        // Check cannot run: opened, with a reason that claims nothing of check.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| true,
+            || counted(None),
+        );
+        assert_eq!(
+            kind(&kept),
+            Some((
+                RefusalKind::Unverified,
+                CHECK_UNAVAILABLE_REASON.to_string()
+            ))
+        );
+        // Weak beside exposed on one seam: opened with check's weak reading.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| true,
+            || {
+                counted(Some(vec![
+                    finding(ExposureClass::Exposed),
+                    finding(ExposureClass::WeaklyExposed),
+                ]))
+            },
+        );
+        let Some((RefusalKind::RouteNotReady, reason)) = kind(&kept) else {
+            return Err(format!(
+                "a weak reading must open the seam: {:?}",
+                kind(&kept)
+            ));
+        };
+        assert!(
+            reason.starts_with("`ripr check` reads this changed code as weak"),
+            "{reason}"
+        );
+        // A static limit alone opens it with the limit's reason.
+        let kept = reopen_gripped_that_check_reads_open(
+            gripped(),
+            &classified,
+            |_| true,
+            || counted(Some(vec![finding(ExposureClass::StaticUnknown)])),
+        );
+        assert_eq!(
+            kind(&kept),
+            Some((RefusalKind::RouteNotReady, CHECK_UNKNOWN_REASON.to_string()))
+        );
+        // A gap leads over a static limit whatever check's order.
+        for findings in [
+            vec![
+                finding(ExposureClass::StaticUnknown),
+                finding(ExposureClass::WeaklyExposed),
+            ],
+            vec![
+                finding(ExposureClass::WeaklyExposed),
+                finding(ExposureClass::StaticUnknown),
+            ],
+        ] {
+            let kept = reopen_gripped_that_check_reads_open(
+                gripped(),
+                &classified,
+                |_| true,
+                || counted(Some(findings)),
+            );
+            let Some((RefusalKind::RouteNotReady, reason)) = kind(&kept) else {
+                return Err(format!("a gap must open the seam: {:?}", kind(&kept)));
+            };
+            assert!(reason.contains("as weak"), "{reason}");
+        }
+        Ok(())
     }
 
     fn candidate(id: &str) -> (String, RepairCandidateNote) {
@@ -6480,6 +6764,7 @@ pub(crate) mod tests {
         let root = Path::new("/repo");
 
         let targeted = crate::analysis::test_grip_evidence::RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "it_works".to_string(),
             file: std::path::PathBuf::from("src/lib.rs"),
             line: 14,

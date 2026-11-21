@@ -1,0 +1,14 @@
+{
+  "id": "ts_shorthand_sibling",
+  "language": "typescript",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/ts-shorthand-sibling-expected-projection.json",
+  "vector": "unchanged_shorthand_read_after_explicit_literal_edit",
+  "probe_family": "field_construction",
+  "assertions": [
+    { "type": "must_not_report_clean" },
+    { "type": "expected_finding_count", "count": 1 },
+    { "type": "must_not_promote" },
+    { "type": "expected_class", "class": "weakly_exposed" }
+  ]
+}

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The `ripr-check` GitHub Action now fetches and deepens an explicit branch or commit `base` on a shallow checkout, refuses a `base` starting with `-`, compares a push to the default branch with the commit before the push (instead of reporting nothing to check) and a push to another branch with the default branch, keeps up to eight reason lines without progress noise when a check cannot complete, and lists every analysis mode (#15399)

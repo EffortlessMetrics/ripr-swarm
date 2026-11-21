@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::core_error::CoreError;
 use crate::domain::LanguageId;
 
+mod base_advice;
 #[cfg(test)]
 mod contract_tests;
 
@@ -293,7 +294,15 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     warn_if_git_operation_in_progress(root, git_timeout);
 
     let (base, resolved_base_commit) =
-        resolve_effective_base_core_with_commit(root, base, git_timeout)?;
+        match resolve_effective_base_core_with_commit(root, base, git_timeout) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return match unborn_head_worktree_diff(root, base_arg, git_timeout) {
+                    Some(loaded) => loaded,
+                    None => Err(error),
+                };
+            }
+        };
 
     // Bind the origin to the probed identity pair BEFORE deriving it, so the
     // cached tuple is a pure function of `(head_sha, base_sha)`: the hit
@@ -347,6 +356,57 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
         // base than the one this diff used (#7716).
         merge_base_origin: Some(origin),
     })
+}
+
+/// The empty tree is the only "before" a first commit has. `git hash-object`
+/// derives it for the repository's object format (SHA-1 or SHA-256) instead of
+/// hardcoding either id. It hashes the spawn's empty (null) stdin rather than
+/// `/dev/null`, so no platform-specific path is involved.
+fn empty_tree_id(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["hash-object", "-t", "tree", "--stdin"],
+        git_timeout,
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
+    let id = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(id)
+}
+
+/// `--worktree --base HEAD` while `HEAD` is unborn (the first commit, e.g. the
+/// `pre-commit` hook): the staged and worktree content IS the change being
+/// committed, so it is diffed against the empty tree instead of refusing with
+/// "base HEAD does not resolve" and blocking a new project's first commit.
+/// Narrow on purpose: only the literal base `HEAD` (the one revision whose
+/// "before" is exactly the empty tree) and only when Git establishes the
+/// branch is unborn. Any other base, an unreadable HEAD or a probe that cannot
+/// answer keeps the original refusal. No base or merge-base commit is
+/// reported, because none exists.
+fn unborn_head_worktree_diff(
+    root: &Path,
+    base_arg: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Option<Result<LoadedDiff, CoreError>> {
+    if base_arg != Some("HEAD")
+        || !matches!(
+            probe_head_ref_state(root, git_timeout),
+            HeadRefState::Unborn
+        )
+    {
+        return None;
+    }
+    let empty_tree = empty_tree_id(root, git_timeout)?;
+    Some(
+        run_git_diff(root, &empty_tree, &["--submodule=short"], git_timeout, None).map(|text| {
+            LoadedDiff {
+                text,
+                effective_base: Some("HEAD".to_string()),
+                resolved_base_commit: None,
+                merge_base_origin: None,
+            }
+        }),
+    )
 }
 
 /// One resolved worktree-diff origin, cached under the repository identity it
@@ -1490,8 +1550,8 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
     match probe_head_ref_state(root, git_timeout) {
         HeadRefState::Unreadable(message) => return format!(" {message}"),
         HeadRefState::Unborn => {
-            return " This repository has no commits yet; commit once, then analyze \
-                uncommitted edits with `--base HEAD --worktree`."
+            return " This repository has no commits yet; analyze the staged first \
+                commit with `--base HEAD --worktree`, or commit once to get a default base."
                 .to_string();
         }
         HeadRefState::Unknown => return String::new(),
@@ -1777,6 +1837,27 @@ pub fn base_is_checked_out_head_with_parent(
     base: &str,
     git_timeout: Option<Duration>,
 ) -> bool {
+    base_names_checked_out_head(root, base, git_timeout, true)
+}
+
+/// The same rule as [`base_is_checked_out_head_with_parent`] without the
+/// `HEAD~1` requirement: whether the empty range is the checked-out base
+/// branch compared with itself, so the human Start-here line can say "you are
+/// on the comparison base" for a root commit too (#15326).
+pub(crate) fn base_is_checked_out_head(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+) -> bool {
+    base_names_checked_out_head(root, base, git_timeout, false)
+}
+
+fn base_names_checked_out_head(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+    require_parent: bool,
+) -> bool {
     let git = |args: &[&str]| {
         crate::git::run_git_output_with_deadline(
             root,
@@ -1804,7 +1885,7 @@ pub fn base_is_checked_out_head_with_parent(
     // Both spellings below require the base to name HEAD's own commit: an
     // empty range by construction, not a branch that is merely behind.
     let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
-    if !same_commit || commit("HEAD~1").is_none() {
+    if !same_commit || (require_parent && commit("HEAD~1").is_none()) {
         return false;
     }
     if base == branch {
@@ -2231,6 +2312,11 @@ fn missing_ref_repair(
          then re-run"
             .to_string();
     }
+    // #15484: a commit id or a version tag is never brought in by a branch
+    // fetch, so it gets its own fetch before the shallow and branch arms.
+    if let Some(advice) = base_advice::non_branch_ref_repair(root, missing_ref, flag, git_timeout) {
+        return advice;
+    }
     if is_shallow_repository(root, git_timeout) {
         // An ancestor offset of a present commit (`HEAD~5`) needs depth
         // only. A branch, or an offset of one that is absent
@@ -2425,13 +2511,19 @@ fn remote_tracking_advice(
         .collect();
     match found.as_slice() {
         [] => None,
-        [only] => Some(format!(
-            "the fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
-        )),
+        [only] => {
+            // #15484: quote the short `origin/topic` when it resolves to
+            // exactly this ref; a shadowing tag or branch keeps the full ref.
+            let only = base_advice::tracking_ref_spelling(root, only, git_timeout);
+            Some(format!(
+                "The fetched branch is `{only}`, not a local `{missing_ref}`: pass `{flag} {only}`"
+            ))
+        }
         _ => Some(format!(
-            "the fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
+            "The fetched branch exists as {}, not a local `{missing_ref}`: pass `{flag}` with one of those refs",
             found
                 .iter()
+                .map(|tracking| base_advice::tracking_ref_spelling(root, tracking, git_timeout))
                 .map(|tracking| format!("`{tracking}`"))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -5547,7 +5639,8 @@ mod tests {
     fn missing_ref_repair_names_the_remote_tracking_form_it_can_resolve() -> std::io::Result<()> {
         // #8652: a fetch creates `origin/topic`, never a local `topic`.
         // When that remote-tracking ref already resolves, the repair must
-        // name the followable `--base refs/remotes/origin/topic`, not
+        // name the followable `--base origin/topic` (#15484: the short
+        // spelling, since it resolves to exactly that ref), not
         // re-prescribe the fetch that already happened.
         let dir = unique_fixture_root("missing-ref-remote-tracking")?;
         ignore_remove_dir_all(&dir);
@@ -5560,13 +5653,13 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/topic"),
+            repair.starts_with("The fetched branch is `origin/topic`")
+                && repair.contains("--base origin/topic`"),
             "the repair must name the resolvable remote-tracking ref, got: {repair}"
         );
         let head_repair = missing_ref_repair(&dir, "topic", "--head", None);
         assert!(
-            head_repair.contains("--head refs/remotes/origin/topic")
-                && !head_repair.contains("--base"),
+            head_repair.contains("--head origin/topic`") && !head_repair.contains("--base"),
             "the head repair must name its own flag, got: {head_repair}"
         );
 
@@ -5615,16 +5708,16 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/upstream/topic"),
+            repair.contains("--base upstream/topic`"),
             "the repair must name the one existing tracking ref, got: {repair}"
         );
 
         run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
         let repair = missing_ref_repair(&dir, "topic", "--base", None);
         assert!(
-            repair.contains("refs/remotes/origin/topic")
-                && repair.contains("refs/remotes/upstream/topic")
-                && !repair.contains("pass `--base refs/remotes/origin/topic`"),
+            repair.contains("`origin/topic`")
+                && repair.contains("`upstream/topic`")
+                && !repair.contains("pass `--base origin/topic`"),
             "several tracking refs must all be named, none picked, got: {repair}"
         );
 
@@ -5648,7 +5741,7 @@ mod tests {
 
         let repair = missing_ref_repair(&dir, "feature/topic", "--base", None);
         assert!(
-            repair.contains("--base refs/remotes/origin/feature/topic"),
+            repair.contains("--base origin/feature/topic`"),
             "a slashed branch must probe remote-tracking forms, got: {repair}"
         );
 

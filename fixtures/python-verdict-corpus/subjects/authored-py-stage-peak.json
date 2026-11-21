@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-stage-peak",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "5d382f6d6d9680f27aee4b9b0c83b268ebe9a73f1ae0864e0bf0b01224b5a348"
+    },
+    {
+      "path": "src/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "src/subject.py",
+      "sha256": "97d3c3deb5cd0c050e676d0b540bf323f6c3a4e89894a3dd22697690444173ab"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_subject.py",
+      "sha256": "45743bf2394294bd1a2d4e41d1668bc394f416a737e705dcdc7799ccd1a85d2d"
+    }
+  ]
+}

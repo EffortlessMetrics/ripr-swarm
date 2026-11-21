@@ -1,0 +1,12 @@
+# Registers the parser-confirmed single-line code-span tests (#15127) under RIPR-SPEC-0025.
+[[extend]]
+id = "RIPR-SPEC-0025"
+tests = [
+  "crates/ripr/src/output/markdown.rs::single_line_prose_keeps_only_parser_confirmed_code_spans",
+  "crates/ripr/src/output/markdown.rs::single_line_prose_keeps_a_genuine_code_span_verbatim",
+  "crates/ripr/src/output/markdown.rs::single_line_prose_maps_code_spans_after_multibyte_text",
+  "crates/ripr/src/output/markdown.rs::table_cell_text_escapes_a_pipe_inside_a_code_span",
+]
+code = [
+  "crates/ripr/src/output/markdown.rs",
+]
