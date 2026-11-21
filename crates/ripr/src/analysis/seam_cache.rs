@@ -749,7 +749,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.199`: bind explicit Cargo harness flags to the selected target path.
 /// `1.200`: include every directly asserted same-line owner input in classified seams.
 /// `1.201`: refuse old gap evidence for calls erased by test-local empty macros.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.201";
+/// `1.202`: remove return-value seams for unit-tail statement blocks (#15459).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.202";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -989,7 +990,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.201";
 /// `0.201`: match full `1.199` for explicit Cargo target identity.
 /// `0.202`: match full `1.200` for same-line owner inputs.
 /// `0.203`: match full `1.201` for test-local empty macros.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.203";
+/// `0.204`: match full `1.202` for unit-tail statement blocks.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.204";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1230,7 +1232,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.203";
 /// `0.201`: match full `1.199` for explicit Cargo target identity.
 /// `0.202`: match full `1.200` for same-line owner inputs.
 /// `0.203`: match full `1.201` for test-local empty macros.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.203";
+/// `0.204`: match full `1.202` for unit-tail statement blocks.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.204";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5773,7 +5776,7 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.201");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.202");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5919,8 +5922,8 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.203");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.203");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.204");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.204");
     }
 
     #[test]
@@ -6429,6 +6432,7 @@ mod tests {
             ("pre-current-swarm-and-retained-source", "1.195", "0.197"),
             ("pre-protected-rebound-and-deleted-guard", "1.196", "0.198"),
             ("pre-base-constructor-identity", "1.197", "0.199"),
+            ("pre-unit-tail-statement-block", "1.201", "0.203"),
             ("pre-test-local-empty-macro", "1.200", "0.202"),
             ("pre-same-line-owner-inputs", "1.199", "0.201"),
             ("pre-selected-cargo-target", "1.198", "0.200"),
