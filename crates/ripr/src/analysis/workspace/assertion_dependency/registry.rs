@@ -675,9 +675,13 @@ pub(super) enum JsonRootDeclaration {
     Members(Vec<String>),
 }
 
-/// Member manifests one eligibility query may read. A larger workspace keeps
-/// the refusal rather than a partial reading.
+/// Distinct member directories one eligibility query may read a manifest
+/// from. A larger workspace keeps the refusal rather than a partial reading.
 pub(super) const JSON_MEMBER_BUDGET: usize = 256;
+
+/// Directory entries one `prefix/*` member entry may list while looking for
+/// member directories. Plain files are listed but not charged as members.
+const JSON_MEMBER_SCAN_BUDGET: usize = 4096;
 
 /// Pure manifest parse behind [`eligible_json_root`]; callers own the read.
 pub(super) fn json_root_declaration(bytes: &[u8]) -> JsonRootDeclaration {
@@ -701,32 +705,32 @@ pub(super) fn json_root_declaration(bytes: &[u8]) -> JsonRootDeclaration {
     JsonRootDeclaration::Members(members)
 }
 
-/// A member entry the prefilter reads: a relative path of plain components
-/// under the root, optionally ending in one `*` component (`crates/*`). Any
-/// other glob, `..`, or an absolute path is left unread.
+/// A member entry the prefilter reads: `/`-separated plain components under
+/// the root, optionally ending in one `*` component (`crates/*`). Any other
+/// glob, `.` or `..` anywhere, an empty component or an absolute path is left
+/// unread.
 fn supported_member_entry(member: &str) -> bool {
     let literal = member.strip_suffix("/*").unwrap_or(member);
-    !literal.is_empty()
+    // `Path::components` drops interior `.` and repeated separators, so the
+    // written segments are checked first.
+    literal
+        .split('/')
+        .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
         && !literal.contains(['*', '?', '[', ']', '{', '}'])
         && Path::new(literal)
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
-/// Current bytes of each present member manifest, in a stable order. `None`
-/// is an unreadable member directory or manifest, or more than
-/// [`JSON_MEMBER_BUDGET`] manifests.
+/// Current bytes of each present member manifest, in a stable order. Entries
+/// that name the same directory are read once. `None` is an unreadable member
+/// directory or manifest, more than [`JSON_MEMBER_BUDGET`] member directories,
+/// or a `prefix/*` listing over [`JSON_MEMBER_SCAN_BUDGET`] entries.
 pub(super) fn json_member_manifests(root: &Path, members: &[String]) -> Option<Vec<Vec<u8>>> {
-    let mut manifests = Vec::new();
-    let mut read = |directory: PathBuf| -> Option<()> {
-        if let Some(bytes) = read_optional(&directory.join("Cargo.toml"))? {
-            manifests.push(bytes);
-        }
-        (manifests.len() <= JSON_MEMBER_BUDGET).then_some(())
-    };
+    let mut directories = std::collections::BTreeSet::new();
     for member in members {
         let Some(parent) = member.strip_suffix("/*") else {
-            read(root.join(member))?;
+            directories.insert(root.join(member));
             continue;
         };
         let entries = match std::fs::read_dir(root.join(parent)) {
@@ -734,18 +738,23 @@ pub(super) fn json_member_manifests(root: &Path, members: &[String]) -> Option<V
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => return None,
         };
-        let mut directories = Vec::new();
-        for entry in entries {
-            directories.push(entry.ok()?.path());
-            if directories.len() > JSON_MEMBER_BUDGET {
+        for (listed, entry) in entries.enumerate() {
+            if listed >= JSON_MEMBER_SCAN_BUDGET {
                 return None;
             }
-        }
-        directories.sort();
-        for directory in directories {
-            if directory.is_dir() {
-                read(directory)?;
+            let path = entry.ok()?.path();
+            if path.is_dir() {
+                directories.insert(path);
             }
+        }
+    }
+    if directories.len() > JSON_MEMBER_BUDGET {
+        return None;
+    }
+    let mut manifests = Vec::new();
+    for directory in directories {
+        if let Some(bytes) = read_optional(&directory.join("Cargo.toml"))? {
+            manifests.push(bytes);
         }
     }
     Some(manifests)

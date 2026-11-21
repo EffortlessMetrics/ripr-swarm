@@ -292,6 +292,28 @@ fn literal_json_identity_follows_a_member_declaration_under_a_virtual_root() -> 
             !verified("crates/other/tests/save.rs"),
             "a member without the dependency has no edge"
         );
+        // The same answer reaches the assertion: the literal `json!` leaves the
+        // equality credited in the declaring member and refused in the other.
+        let refusal = |member: &str| -> Result<Option<AssertionRefusal>, String> {
+            let tests = "use serde_json::json;\nuse demo::weight;\n#[test]\nfn checks() { let p = json!({\"uri\":\"untitled:save\",\"text\":null}); assert_eq!(weight(4),12); }\n";
+            let lib = format!("{member}/src/lib.rs");
+            let file = format!("{member}/tests/save.rs");
+            let mut index = index(&[(lib.as_str(), WEIGHT_LIB), (file.as_str(), tests)]);
+            index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.file == Path::new(&file))
+                .ok_or("the member test must be indexed")?;
+            let assertion = test.assertions.first().ok_or("the assertion must parse")?;
+            Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+        };
+        let credited = refusal("crates/demo")?;
+        assert!(credited.is_none(), "declaring member: {credited:?}");
+        assert!(
+            refusal("crates/other")?.is_some(),
+            "member without the edge"
+        );
         // The root must name the declaring member for the prefilter to pass.
         write("Cargo.toml", &VIRTUAL.replace("'crates/demo',", ""))?;
         assert!(!verified("crates/demo/tests/save.rs"), "unnamed member");

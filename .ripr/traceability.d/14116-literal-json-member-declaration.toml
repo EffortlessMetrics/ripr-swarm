@@ -7,7 +7,7 @@ tests = [
   "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::a_member_declaration_the_root_does_not_reach_stays_ineligible",
   "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::a_member_table_other_than_normal_or_dev_dependencies_stays_ineligible",
   "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::member_manifest_changes_are_read_on_every_memo_query",
-  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::more_member_manifests_than_the_budget_stay_ineligible",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::more_member_directories_than_the_budget_stay_ineligible",
 ]
 code = [
   "crates/ripr/src/analysis/workspace/assertion_dependency.rs",

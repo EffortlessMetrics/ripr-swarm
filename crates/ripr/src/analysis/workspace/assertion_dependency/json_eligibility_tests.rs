@@ -232,6 +232,10 @@ fn a_member_declaration_the_root_does_not_reach_stays_ineligible()
             "crates/demo",
         ),
         ("[workspace]\nmembers=['./crates/demo']\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates/./demo']\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates//demo']\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates/demo/']\n", "crates/demo"),
+        ("[workspace]\nmembers=['crates/./*']\n", "crates/demo"),
         ("[workspace]\nmembers=['']\n", ""),
         ("[workspace]\nmembers=['/*']\n", "demo"),
         ("[workspace\nmembers=['crates/demo']\n", "crates/demo"),
@@ -312,15 +316,22 @@ fn member_manifest_changes_are_read_on_every_memo_query() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn more_member_manifests_than_the_budget_stay_ineligible() -> Result<(), Box<dyn std::error::Error>>
-{
+fn more_member_directories_than_the_budget_stay_ineligible()
+-> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
-    fixture.write(b"[workspace]\nmembers=['crates/*']\n")?;
+    // The literal entries repeat directories the glob already lists; a
+    // directory is charged once however many entries name it.
+    fixture.write(b"[workspace]\nmembers=['crates/*','crates/m000','crates/m000']\n")?;
     for member in 0..JSON_MEMBER_BUDGET {
-        fixture.write_member(&format!("crates/m{member:03}"), MEMBER)?;
+        fixture.write_member(&format!("crates/m{member:03}"), OTHER)?;
+    }
+    fixture.write_member("crates/m255", MEMBER)?;
+    // Plain files beside the members are listed but are not members.
+    for file in 0..8 {
+        std::fs::write(fixture.0.join(format!("crates/note{file}.md")), b"")?;
     }
     assert!(fixture.eligible(), "at the budget");
-    fixture.write_member("crates/over", OTHER)?;
-    assert!(!fixture.eligible(), "one manifest over the budget");
+    std::fs::create_dir(fixture.0.join("crates/over"))?;
+    assert!(!fixture.eligible(), "one member directory over the budget");
     Ok(())
 }

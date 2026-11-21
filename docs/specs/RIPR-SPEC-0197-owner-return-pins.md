@@ -3931,9 +3931,10 @@ identity, so no cache generation bump is needed.
 The analysis root must declare this dependency directly or in its workspace
 dependency table, or (#14116) name a workspace member that declares it in its
 own normal or dev dependency table. Member entries are read as written: a
-relative path of plain components, optionally ending in one `*` component
-(`crates/*`); any other glob, `..`, `.`, an absolute path or more than 256
-member manifests leaves the root ineligible. This check only decides whether
+relative path of plain `/`-separated components, optionally ending in one `*`
+component (`crates/*`); any other glob, a `.`, `..` or empty component, or an
+absolute path is not read, and more than 256 distinct member directories
+leaves the root ineligible. `workspace.exclude` is not applied here. This check only decides whether
 the metadata process runs. Offline locked Cargo metadata must resolve one canonical package
 and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
 conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
