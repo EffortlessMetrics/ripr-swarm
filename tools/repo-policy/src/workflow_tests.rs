@@ -2093,6 +2093,19 @@ fn named_step_script(text: &str, job: &str, name: &str) -> Result<String, String
     Ok(run.text.clone())
 }
 
+/// Step-level conditions and failure overrides in a job, as trimmed lines. A
+/// guard step that is skipped or allowed to fail guards nothing, and a write
+/// step under `always()` runs after a failed guard.
+fn step_execution_overrides(code: &str) -> Vec<&str> {
+    job_steps(code)
+        .into_iter()
+        .flat_map(str::lines)
+        .filter(|line| line.starts_with("        ") && !line.starts_with("         "))
+        .map(str::trim)
+        .filter(|line| line.starts_with("if:") || line.starts_with("continue-on-error:"))
+        .collect()
+}
+
 fn code_lines(block: &str) -> String {
     block
         .lines()
@@ -2135,6 +2148,12 @@ fn publish_duplicate_violations(text: &str, job: &str, pat: &str) -> Vec<String>
             "{job} publish step must run only when the compared state is absent"
         ));
     }
+    // The publish gate is the only condition any step of this job may carry.
+    for line in step_execution_overrides(&code) {
+        if line != PUBLISH_ONLY_WHEN_ABSENT {
+            violations.push(format!("{job} has a step execution override `{line}`"));
+        }
+    }
     let compare = named_step(&code, PUBLISHED_COMPARE_STEP);
     if !compare.is_some_and(|step| step.lines().any(|line| line.trim() == "id: published")) {
         violations.push(format!("{job} must compare published bytes as `published`"));
@@ -2164,6 +2183,11 @@ fn attach_job_violations(text: &str) -> Vec<String> {
     }
     if code.contains("dist/*") {
         violations.push("attach-release-asset globs dist".to_string());
+    }
+    for line in step_execution_overrides(&code) {
+        violations.push(format!(
+            "attach-release-asset has a step execution override `{line}`"
+        ));
     }
     let Some(upload_at) = code.find("gh release upload") else {
         violations.push("attach-release-asset has no upload to guard".to_string());
@@ -2252,6 +2276,27 @@ fn publish_jobs_decide_duplicates_by_published_bytes_not_version() -> Result<(),
                 block.replace(&format!("      - {compare_step}\n"), ""),
                 "compare published bytes",
             ),
+            (
+                "compare step disabled",
+                block.replace(
+                    "        id: published\n",
+                    "        id: published\n        if: ${{ false }}\n",
+                ),
+                "step execution override",
+            ),
+            (
+                "compare step allowed to fail",
+                block.replace(
+                    "        id: published\n",
+                    "        id: published\n        continue-on-error: true\n",
+                ),
+                "step execution override",
+            ),
+            (
+                "publish runs regardless of the comparison",
+                block.replace(&gate, "        if: ${{ always() }}\n"),
+                "step execution override",
+            ),
         ] {
             assert_ne!(mutated_block, block, "{label} mutation must change {job}");
             let mutated = text.replace(&block, &mutated_block);
@@ -2311,6 +2356,30 @@ fn attach_job_checks_the_receipted_vsix_before_its_release_write() -> Result<(),
             "glob upload restored",
             block.replace("\"dist/$name\"", "dist/*.vsix"),
             "globs dist",
+        ),
+        (
+            "guard step disabled",
+            block.replace(
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n"),
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n        if: ${{{{ false }}}}\n"),
+            ),
+            "step execution override",
+        ),
+        (
+            "guard step allowed to fail",
+            block.replace(
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n"),
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n        continue-on-error: true\n"),
+            ),
+            "step execution override",
+        ),
+        (
+            "upload runs after a failed guard",
+            block.replace(
+                "      - name: Attach VSIX to GitHub Release\n",
+                "      - name: Attach VSIX to GitHub Release\n        if: ${{ always() }}\n",
+            ),
+            "step execution override",
         ),
         (
             "server asset verification no longer needed",
