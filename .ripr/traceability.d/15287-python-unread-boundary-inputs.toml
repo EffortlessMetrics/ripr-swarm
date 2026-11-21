@@ -1,0 +1,16 @@
+# Independent no-promotion controls for unread Python boundary inputs (#15287).
+[[extend]]
+id = "RIPR-SPEC-0028"
+fixtures = [
+  "fixtures/python_boundary_star_args_rows",
+  "fixtures/python_boundary_named_constant_rows",
+  "fixtures/python_boundary_float_coercion",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_boundary_star_args_rows",
+  "fixtures/python_boundary_named_constant_rows",
+  "fixtures/python_boundary_float_coercion",
+]

@@ -47,6 +47,10 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(source: &str, tests: &str) -> Result<Self, String> {
+        Self::with_patch(source, tests, PATCH)
+    }
+
+    fn with_patch(source: &str, tests: &str, patch: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-computed-tail-{}-{}",
@@ -64,12 +68,16 @@ impl TempRepo {
             format!("{source}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{tests}\n}}\n");
         std::fs::write(root.join("src/lib.rs"), lib)
             .map_err(|error| format!("write source failed: {error}"))?;
-        std::fs::write(root.join("diff.patch"), PATCH)
+        std::fs::write(root.join("diff.patch"), patch)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(Self { root })
     }
 
     fn computed_finding(&self) -> Result<Finding, String> {
+        self.return_finding(9, "base * 2")
+    }
+
+    fn return_finding(&self, line: usize, expression: &str) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
             base: None,
@@ -81,13 +89,13 @@ impl TempRepo {
         })?;
         let mut computed = output.findings.into_iter().filter(|finding| {
             finding.probe.family == ProbeFamily::ReturnValue
-                && finding.probe.location.line == 9
-                && finding.probe.expression == "base * 2"
+                && finding.probe.location.line == line
+                && finding.probe.expression == expression
         });
         match (computed.next(), computed.next()) {
             (Some(finding), None) => Ok(finding),
             other => Err(format!(
-                "premise: exactly one return_value finding for `base * 2`, got {other:?}"
+                "premise: exactly one return_value finding for `{expression}` on line {line}, got {other:?}"
             )),
         }
     }
@@ -414,3 +422,6 @@ fn a_compound_assignment_to_the_compared_binding_is_not_a_bare_pin() -> Result<(
     );
     Ok(())
 }
+
+#[path = "computed_return_tail/tuple_guard.rs"]
+mod tuple_guard;

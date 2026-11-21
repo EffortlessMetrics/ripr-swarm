@@ -146,6 +146,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "discounted_total_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 8,

@@ -386,6 +386,22 @@ fn policy_suppression_wins_without_double_counting() -> Result<(), String> {
         "a policy-suppressed finding is not also withheld: {rows:?}"
     );
     assert!(report.get("owner_opt_outs").is_none(), "{report}");
+    let selected = first_id_on_line(&report, 3)?;
+    let explanation = repo.ripr(
+        "explain",
+        &[
+            &selected,
+            "--format",
+            "agent",
+            "--suppression-policy",
+            &policy_arg,
+        ],
+    )?;
+    assert!(
+        explanation.contains("stop=this finding is suppressed by policy"),
+        "{explanation}"
+    );
+    assert!(!explanation.contains(REASON), "{explanation}");
     let summary = &report["summary"];
     let suppressed = summary["suppressed_by_policy"].as_u64().unwrap_or(0);
     assert_eq!(suppressed, rows.len() as u64, "{summary}");
@@ -1058,4 +1074,74 @@ fn fn_nested_in_a_skipped_fn_is_withheld() -> Result<(), String> {
 
     let repo = Repo::new(&nested_fn_lib("#[mutants::skip]"), &nested_fn_diff())?;
     assert_line_withheld_in_scope(&repo.report()?, 4, &baseline, "fn")
+}
+
+#[test]
+fn agent_and_replay_explain_the_recorded_owner_opt_out() -> Result<(), String> {
+    let repo = Repo::new(&two_impl_lib("#[mutants::skip]"), &two_impl_diff())?;
+    let path = repo.base.join("check.json");
+    let artifact = path.to_str().ok_or("non-UTF8 artifact path")?;
+    let report: serde_json::Value =
+        serde_json::from_str(&repo.run(&["--json", "--write-artifact", artifact])?)
+            .map_err(|err| err.to_string())?;
+    let held = first_id_on_line(&report, 5)?;
+    let ordinary = first_id_on_line(&report, 9)?;
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).map_err(|err| err.to_string())?)
+            .map_err(|err| err.to_string())?;
+    let saved = record["owner_opt_outs"]
+        .as_array()
+        .and_then(|entries| entries.iter().find(|entry| entry["finding_id"] == held))
+        .ok_or("artifact must retain the selected finding's decision")?;
+    assert_eq!(saved["reason"], REASON);
+    assert_eq!(saved["owner"], "limit");
+    assert_eq!(saved["scope"], "impl");
+    assert_eq!(saved["scope_label"], "Cart");
+
+    let fresh_agent = repo.ripr("explain", &[&held, "--format", "agent"])?;
+    let ordinary_agent = repo.ripr("explain", &[&ordinary, "--format", "agent"])?;
+    // The supplied diff is identical, but the current attribute now only
+    // quotes the spelling. Replay must use the recorded decision.
+    write(
+        &repo.root.join("src/lib.rs"),
+        &two_impl_lib("#[doc = \"mutants::skip\"]"),
+    )?;
+    let replay_agent = repo.ripr("explain", &[&held, "--format", "agent", "--from", artifact])?;
+    for text in [&fresh_agent, &replay_agent] {
+        assert!(
+            text.lines()
+                .any(|line| line
+                    == "stop=owner_mutants_skip|owner=limit|scope=impl|scope_label=Cart"),
+            "{text}"
+        );
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.starts_with("open=") || line.starts_with("done=")),
+            "{text}"
+        );
+        assert!(
+            text.contains("|missing=-|test=-|") && !text.contains("co-located test"),
+            "{text}"
+        );
+    }
+    let human = repo.ripr("explain", &[&held, "--from", artifact])?;
+    assert_eq!(
+        human.trim(),
+        "Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)"
+    );
+    let trap = repo.ripr("explain", &[&held, "--format", "agent"])?;
+    assert!(!trap.contains(REASON));
+    let ordinary_replay = repo.ripr(
+        "explain",
+        &[&ordinary, "--format", "agent", "--from", artifact],
+    )?;
+    for text in [&ordinary_agent, &ordinary_replay, &trap] {
+        assert!(!text.contains("stop=owner_mutants_skip"), "{text}");
+        assert!(
+            text.contains("co-located test") || text.lines().any(|line| line.starts_with("open=")),
+            "{text}"
+        );
+    }
+    Ok(())
 }
