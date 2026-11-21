@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0451](../specs/RIPR-SPEC-0451-dx-scoreboard-generated-recall-rows.md) | proposed | The DX scoreboard generates the mutation recall-of-missed, flagged-or-unknown and no-seam trust rows from the spot-check receipt counts, fails ingest on impossible or share-inconsistent counts, and projects the three rows only when the selected configuration declares them (#12900) |

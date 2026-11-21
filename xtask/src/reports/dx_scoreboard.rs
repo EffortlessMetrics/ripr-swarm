@@ -967,6 +967,7 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
     }
     if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_SCHEMA_VERSION) {
         let converted = mutation_spot_check_to_input(value)?;
+        let converted = project_declared_optional_rows(converted, config);
         return parse_ingest(&converted, config);
     }
     if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION) {
@@ -2118,6 +2119,35 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     }))
 }
 
+/// The three trust rows #12900 generates from a spot-check receipt. A
+/// `--config` written before they existed never declared them, and ingest
+/// rejects an undeclared metric, so a receipt that carries the new sections
+/// would otherwise fail to load against an older configuration.
+const GENERATED_RECALL_ROWS: [&str; 3] = [
+    "trust.mutation_recall_of_missed",
+    "trust.mutation_recall_flagged_or_unknown",
+    "trust.mutation_no_seam_share",
+];
+
+/// Drop a generated #12900 row the selected configuration does not declare.
+///
+/// Only these three rows are optional. Every other row a receipt names stays
+/// in the projection, so an undeclared metric still fails ingest instead of
+/// disappearing from the scoreboard.
+fn project_declared_optional_rows(mut input: Value, config: &Config) -> Value {
+    let Some(rows) = input["metrics"].as_array_mut() else {
+        return input;
+    };
+    rows.retain(|row| {
+        let Some(id) = row["id"].as_str() else {
+            return true;
+        };
+        !GENERATED_RECALL_ROWS.contains(&id)
+            || config.metric.iter().any(|metric| metric.id == id)
+    });
+    input
+}
+
 /// One generated ratio from a spot-check receipt section's counts.
 /// Returns `(share, numerator, denominator)`, or `None` when the section is
 /// absent (older receipts omit the row) or both counts are zero (no figure
@@ -2133,6 +2163,11 @@ fn spot_check_ratio(
 ) -> Result<Option<(f64, u64, u64)>, String> {
     if section.is_null() {
         return Ok(None);
+    }
+    if !section.is_object() {
+        return Err(format!(
+            "mutation spot-check `{section_name}` must be a JSON object"
+        ));
     }
     let count = |key: &str| {
         section[key].as_u64().ok_or_else(|| {

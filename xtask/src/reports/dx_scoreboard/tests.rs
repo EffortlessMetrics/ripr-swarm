@@ -1659,6 +1659,27 @@ fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(),
 }
 
 #[test]
+fn a_non_object_spot_check_section_fails_with_its_name() {
+    // A present-but-malformed section must name itself. Indexing a string
+    // yields Null, which would otherwise report a missing integer key and
+    // hide that the section itself is the problem.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [],
+        "recall_of_missed": "n/a",
+    });
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|err| err.contains("`recall_of_missed` must be a JSON object")),
+        "a non-object section must name itself"
+    );
+}
+
+#[test]
 fn mutation_spot_check_checked_in_receipt_generates_issue_12900_values() -> Result<(), String> {
     // Pin the generation against the real checked-in receipt: 34/322 strict
     // recall (~11%), 189/322 flagged-or-unknown, 843/1745 no-seam (~48%).
@@ -1686,6 +1707,38 @@ fn mutation_spot_check_checked_in_receipt_generates_issue_12900_values() -> Resu
     assert!(
         value("trust.mutation_no_seam_share").is_some_and(|v| (v - 843.0 / 1745.0).abs() < 1e-9),
         "{input}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_config_without_the_generated_rows_still_loads_the_checked_in_receipt() -> Result<(), String> {
+    // #12900 added three trust rows. A `--config` written before them never
+    // declared them, and ingest rejects an undeclared metric, so the
+    // projection must drop exactly those three and keep every other row
+    // strict: an undeclared pre-#12900 metric still fails.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../metrics/public-proof/mutation-spot-check.json");
+    let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let receipt: Value =
+        serde_json::from_str(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    let mut config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    config
+        .metric
+        .retain(|metric| !GENERATED_RECALL_ROWS.contains(&metric.id.as_str()));
+    let samples = parse_ingest(&receipt, &config)?;
+    let ids: Vec<&str> = samples.iter().map(|sample| sample.metric.as_str()).collect();
+    for id in GENERATED_RECALL_ROWS {
+        assert!(
+            !ids.contains(&id),
+            "{id} survived a config that never declared it: {ids:?}"
+        );
+    }
+    assert!(
+        ids.contains(&"trust.discriminator_claim_agreement"),
+        "the pre-#12900 rows must still load: {ids:?}"
     );
     Ok(())
 }
