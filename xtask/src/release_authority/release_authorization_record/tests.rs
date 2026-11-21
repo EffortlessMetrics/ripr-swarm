@@ -975,10 +975,25 @@ fn release_authorization_record_receipt_identity_is_stable() -> Result<(), Strin
     if forward.json().contains(&root.display().to_string()) || forward.json().contains("/tmp") {
         return Err("the receipt carries an absolute path".to_string());
     }
+    // Lookup time is not semantic: a later read of the same record inside the
+    // window has the same identity. A read that changes the verdict does not.
     let authorized = case(Kind::StableCrates)?;
-    let (one, two) = (authorized.verify(), authorized.verify());
-    if one.receipt_id() != two.receipt_id() || one.receipt_id() == forward.receipt_id() {
-        return Err("receipt identity is not a function of the evaluated record".to_string());
+    let at = |now: u64| {
+        verify(
+            &authorized.world,
+            &authorized.policy,
+            &authorized.locator,
+            &authorized.bindings,
+            now,
+        )
+    };
+    let (one, two) = (at(now()), at(now() + 3_600));
+    if one.receipt_id() != two.receipt_id() || one.json() == two.json() {
+        return Err("lookup time changed the receipt identity".to_string());
+    }
+    let expired = at(now() + 30 * 86_400);
+    if expired.receipt_id() == one.receipt_id() || one.receipt_id() == forward.receipt_id() {
+        return Err("receipt identity is not a function of the evaluated verdict".to_string());
     }
     Ok(())
 }

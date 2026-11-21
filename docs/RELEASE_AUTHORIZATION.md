@@ -204,8 +204,9 @@ credential names, executors, the supersession observations, every check with
 its state, the disposition and reasons. `external_mutation_attempts` and
 `credential_requests` are always `false`.
 
-`receipt_id` is the SHA-256 of the canonical receipt. It does not depend on
-the working directory or on the order in which GitHub enumerates comments.
+`receipt_id` is the SHA-256 of the canonical receipt without
+`evaluated_at_unix`. It does not depend on the working directory, on when the
+lookup ran or on the order in which GitHub enumerates comments.
 The comment id, body digest and issuer id are evidence and are part of it.
 
 ## Claim boundary

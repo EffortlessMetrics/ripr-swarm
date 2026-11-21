@@ -180,6 +180,12 @@ fn verify_record(args: &[String]) -> Result<(), String> {
     println!("disposition: {}", receipt.disposition.as_str());
     if receipt.admits() {
         Ok(())
+    } else if receipt.disposition == release_authorization_record::Disposition::Authorized {
+        Err(
+            "the record evaluates as authorized in a saved-fixture replay; a replay is \
+             never live authority"
+                .to_string(),
+        )
     } else {
         Err(format!(
             "release authorization record is `{}`, not authorized: {}",

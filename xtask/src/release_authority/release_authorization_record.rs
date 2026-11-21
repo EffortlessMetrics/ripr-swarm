@@ -1013,9 +1013,14 @@ fn build_receipt(
         "invalidations": INVALIDATIONS,
         "non_claims": NON_CLAIMS,
     });
-    // The identity is over the canonical form, so key order and pretty
-    // printing are not part of it.
-    let canonical = crate::exact_schema_json::parse(value.to_string().as_bytes())
+    // The identity is over the canonical form without the evaluation time, so
+    // key order, pretty printing and when the lookup ran are not part of it.
+    // What the time decided is already in the validity check and disposition.
+    let mut semantic = value.clone();
+    if let Some(map) = semantic.as_object_mut() {
+        map.remove("evaluated_at_unix");
+    }
+    let canonical = crate::exact_schema_json::parse(semantic.to_string().as_bytes())
         .map(|exact| exact.to_string())
         .unwrap_or_default();
     value["receipt_id"] = json!(digest(canonical.as_bytes()));
