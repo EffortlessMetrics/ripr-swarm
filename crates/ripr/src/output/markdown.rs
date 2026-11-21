@@ -288,6 +288,15 @@ fn prose_once(text: &str) -> String {
             }
         }
     }
+    copy_protected(text, protected, false)
+}
+
+/// Copy `protected` byte ranges of `text` verbatim and neutralise the rest.
+fn copy_protected(
+    text: &str,
+    mut protected: Vec<std::ops::Range<usize>>,
+    literal_markup: bool,
+) -> String {
     protected.sort_unstable_by_key(|range| range.start);
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
@@ -296,12 +305,12 @@ fn prose_once(text: &str) -> String {
             continue;
         }
         if range.start > copied {
-            out.push_str(&neutralize(&text[copied..range.start], false, false));
+            out.push_str(&neutralize(&text[copied..range.start], literal_markup));
         }
         out.push_str(&text[range.start.max(copied)..range.end]);
         copied = range.end;
     }
-    out.push_str(&neutralize(&text[copied..], false, false));
+    out.push_str(&neutralize(&text[copied..], literal_markup));
     out
 }
 
@@ -323,20 +332,66 @@ fn reference_label_code_ranges(
 }
 
 /// Untrusted prose on one line (a list item or a heading): line endings
-/// become spaces so the text cannot start a new block, then [`prose`].
+/// become spaces so the text cannot start a new block. Like [`prose`], only
+/// code spans the Markdown parser confirms stay verbatim (#15127): a lexical
+/// backtick pair can straddle a link destination, title or autolink that the
+/// parser consumes, which would leave a later tag or mention live.
 pub(crate) fn inline_prose(text: &str) -> String {
-    neutralize(&one_line(text), false, true)
+    inline_prose_with(text, false)
 }
 
 /// [`inline_prose`] that also renders `*`, `_`, `[` and `]` literally outside
 /// code spans, for free text that must not turn into emphasis or a link.
 pub(crate) fn inline_prose_literal(text: &str) -> String {
-    neutralize(&one_line(text), true, true)
+    inline_prose_with(text, true)
 }
 
 /// [`inline_prose`] for a GFM table cell: `|` also becomes `\|`.
 pub(crate) fn table_cell_text(text: &str) -> String {
     inline_prose(text).replace('|', "\\|")
+}
+
+fn inline_prose_with(text: &str, literal_markup: bool) -> String {
+    let mut current = one_line(text);
+    loop {
+        let rendered = inline_prose_once(&current, literal_markup);
+        if rendered == current {
+            return rendered;
+        }
+        // Escaping a backtick can change which spans the parser sees, so
+        // reparse until stable. Each changed pass escapes a backtick, HTML
+        // opener, mention prefix or literal marker and escapes are never
+        // reversed, so this terminates.
+        current = rendered;
+    }
+}
+
+fn inline_prose_once(text: &str, literal_markup: bool) -> String {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    // Parse in inline context: the text is emitted inside a list item, heading
+    // or table cell, so a leading `#`, `>` or indentation must not become a
+    // block here. The sentinel shifts every parser offset by its length.
+    const SENTINEL: &str = "x ";
+    let framed = format!("{SENTINEL}{text}");
+    // Keep parser-confirmed code spans verbatim. A run of backticks the parser
+    // left as literal text pairs with nothing here, so it also stays as it was;
+    // a backtick the parser consumed elsewhere (a link destination, title or
+    // autolink) is escaped.
+    let protected = Parser::new_ext(&framed, Options::ENABLE_TABLES)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            let start = range.start.checked_sub(SENTINEL.len())?;
+            let end = range.end.checked_sub(SENTINEL.len())?;
+            let keep = match event {
+                Event::Code(_) => true,
+                Event::Text(literal) => !literal.is_empty() && literal.chars().all(|ch| ch == '`'),
+                _ => false,
+            };
+            keep.then_some(start..end)
+        })
+        .collect();
+    copy_protected(text, protected, literal_markup)
 }
 
 fn one_line(text: &str) -> String {
@@ -347,14 +402,14 @@ fn one_line(text: &str) -> String {
 ///
 /// `@` followed by a username character gains a word joiner (U+2060), so
 /// GitHub renders the text but does not notify the named user or team, and
-/// `<` becomes `&lt;`, so no raw HTML or autolink renders. Only the single-line
-/// callers allow lexical code spans here; [`prose`] copies parsed code ranges
-/// first. Other backticks are escaped so neutralizing an HTML block cannot
+/// `<` becomes `&lt;`, so no raw HTML or autolink renders. Callers copy
+/// parser-confirmed code ranges verbatim first; every other backtick is
+/// escaped so neutralizing an HTML block cannot
 /// create a new span across what used to be a block boundary. A backslash escape
 /// is copied as a pair, so an escaped backtick opens no span; `\@` is not a
 /// pair, since the escaped `@` still renders as a mention. The result is
 /// idempotent, so text read back from a posted body can be rendered again.
-fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
+fn neutralize(text: &str, literal_markup: bool) -> String {
     let chars = text.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(text.len());
     let mut index = 0usize;
@@ -371,12 +426,6 @@ fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
                     index += 1;
                 }
             },
-            '`' if inline_spans => {
-                let run = backtick_run(&chars, index);
-                let end = closing_backtick_run(&chars, index + run, run).unwrap_or(index + run);
-                out.extend(chars.get(index..end).unwrap_or_default());
-                index = end;
-            }
             '`' => {
                 out.push_str("\\`");
                 index += 1;
@@ -407,28 +456,6 @@ fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
         }
     }
     out
-}
-
-fn backtick_run(chars: &[char], start: usize) -> usize {
-    chars
-        .iter()
-        .skip(start)
-        .take_while(|ch| **ch == '`')
-        .count()
-}
-
-/// End (exclusive) of the first run of exactly `len` backticks at or after
-/// `from`, which closes a code span opened by a run of `len`.
-fn closing_backtick_run(chars: &[char], from: usize, len: usize) -> Option<usize> {
-    let mut index = from;
-    while index < chars.len() {
-        let run = backtick_run(chars, index);
-        if run == len {
-            return Some(index + run);
-        }
-        index += run.max(1);
-    }
-    None
 }
 
 /// One-line disclosure emitted in place of a PowerShell variant when the bash
@@ -1892,6 +1919,105 @@ mod tests {
             inline_prose_literal("*a* [l](u) `*k*` snake_case"),
             "\\*a\\* \\[l\\](u) `*k*` snake\\_case"
         );
+    }
+
+    const MIXED_BACKTICK_CASES: &[&str] = &[
+        "gap [x](a`b) <b>bold</b> then `end` is invalid",
+        "gap [x](u \"a`b\") <b>bold</b> then `end` is invalid",
+        "gap <http://a`b> <b>bold</b> then `end` is invalid",
+        "gap [x](a`b) @octocat then `end` is invalid",
+        "[x](a`b) @octocat <b>bold</b> `end` and `<i>` too",
+        "[x](a`b) <b>bold</b> ``end`` then `more` and `x",
+        // Text that would start a block at line start stays inline.
+        "# [x](a`b) <b>h</b> `end`",
+        "> [x](a`b) @octocat `end`",
+        "1. [x](a`b) <i>i</i> `end`",
+        "- [x](a`b) <b>b</b> `end`",
+        "    [x](a`b) <b>b</b> `end`",
+        "[r]: a`b <b>b</b> `end`",
+        "[x][r] `a`b <b>b</b> `end`",
+    ];
+
+    type Helper = fn(&str) -> String;
+
+    /// Raw HTML events and live mentions in the parsed rendering of `rendered`.
+    fn live_html_and_mentions(rendered: &str) -> (Vec<String>, Vec<String>) {
+        use pulldown_cmark::{Event, Parser};
+        let mut html = Vec::new();
+        let mut mentions = Vec::new();
+        for event in Parser::new_ext(rendered, pulldown_cmark::Options::ENABLE_TABLES) {
+            match event {
+                Event::Html(raw) | Event::InlineHtml(raw) => html.push(raw.to_string()),
+                Event::Text(text) => {
+                    let chars: Vec<char> = text.chars().collect();
+                    for (index, ch) in chars.iter().enumerate() {
+                        let next = chars.get(index + 1);
+                        if *ch == '@' && next.is_some_and(|c| c.is_ascii_alphanumeric()) {
+                            mentions.push(text.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (html, mentions)
+    }
+
+    #[test]
+    fn single_line_prose_keeps_only_parser_confirmed_code_spans() {
+        let helpers: [(&str, Helper); 3] = [
+            ("inline_prose", inline_prose),
+            ("inline_prose_literal", inline_prose_literal),
+            ("table_cell_text", table_cell_text),
+        ];
+        for (name, helper) in helpers {
+            for input in MIXED_BACKTICK_CASES {
+                let once = helper(input);
+                let (html, mentions) = live_html_and_mentions(&once);
+                assert!(html.is_empty(), "{name} left raw HTML {html:?}: {once}");
+                assert!(mentions.is_empty(), "{name} left a mention: {once}");
+                assert_eq!(helper(&once), once, "{name} is not idempotent for {input}");
+            }
+            let repro = helper(MIXED_BACKTICK_CASES[0]);
+            assert!(repro.contains("&lt;b>bold&lt;/b>"), "{name}: {repro}");
+        }
+    }
+
+    #[test]
+    fn single_line_prose_keeps_a_genuine_code_span_verbatim() {
+        for helper in [inline_prose, inline_prose_literal, table_cell_text] {
+            assert_eq!(helper("use `<b>` here"), "use `<b>` here");
+            assert_eq!(helper("`@user` and ``a`b``"), "`@user` and ``a`b``");
+        }
+    }
+
+    #[test]
+    fn single_line_prose_maps_code_spans_after_multibyte_text() {
+        // Parser offsets are bytes; multibyte text before and between spans
+        // must not shift which bytes are copied verbatim.
+        let input = "é ✓ <b> `<i>` 日本 @octocat `@u` end";
+        let expected = "é ✓ &lt;b> `<i>` 日本 @\u{2060}octocat `@u` end";
+        for helper in [inline_prose, inline_prose_literal, table_cell_text] {
+            let once = helper(input);
+            assert_eq!(once, expected);
+            assert_eq!(helper(&once), once);
+        }
+    }
+
+    #[test]
+    fn table_cell_text_escapes_a_pipe_inside_a_code_span() {
+        // GFM splits table cells before inline parsing, so a raw `|` inside a
+        // code span would still end the cell; `\|` renders as `|` in the code.
+        let cell = table_cell_text("run `a|b` then a|b");
+        assert_eq!(cell, "run `a\\|b` then a\\|b");
+        let table = format!("| h |\n| --- |\n| {cell} |\n");
+        let codes = pulldown_cmark::Parser::new_ext(&table, pulldown_cmark::Options::ENABLE_TABLES)
+            .filter_map(|event| match event {
+                pulldown_cmark::Event::Code(code) => Some(code.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(codes, vec!["a|b".to_owned()]);
     }
 
     #[test]

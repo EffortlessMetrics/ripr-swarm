@@ -336,18 +336,32 @@ impl AgentStatusCommand {
 }
 
 impl AgentStatusReport {
-    /// The first issued receipt that records no test run. A cold agent reads
-    /// `status: complete` plus movement `improved` as a pass, even when the
-    /// focused test fails; this names the missing test run explicitly.
-    pub(crate) fn unrun_test_receipt(&self) -> Option<&AgentReceiptReading> {
-        self.repair_attempts
+    /// Every issued receipt that records no ripr-run test, paired with its
+    /// attempt id, most telling first (#14146): a caller-reported failure,
+    /// then `none recorded`, then a caller-reported pass, attempt order within
+    /// each. A cold agent reads `status: complete` plus movement `improved` as
+    /// a pass, even when the focused test fails; this names the test-run axis
+    /// explicitly, and one attempt's `none recorded` never hides another
+    /// attempt's reported failure.
+    pub(crate) fn unrun_test_receipts(&self) -> Vec<(&str, &AgentReceiptReading)> {
+        let mut readings = self
+            .repair_attempts
             .iter()
-            .find_map(|attempt| match &attempt.receipt {
+            .filter_map(|attempt| match &attempt.receipt {
                 AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
-                    Some(reading)
+                    Some((attempt.attempt_id.as_str(), reading))
                 }
                 _ => None,
             })
+            .collect::<Vec<_>>();
+        readings.sort_by_key(|(_, reading)| test_run::aggregate_rank(reading));
+        readings
+    }
+
+    /// The one test-run reading the aggregate JSON `test_run` object reports:
+    /// the most telling of [`Self::unrun_test_receipts`].
+    pub(crate) fn unrun_test_receipt(&self) -> Option<(&str, &AgentReceiptReading)> {
+        self.unrun_test_receipts().into_iter().next()
     }
 
     /// #10984: a current gap-bound attempt that finished with its own retained
@@ -2691,7 +2705,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
-        "test_run": report.unrun_test_receipt().map(test_run::test_run_json),
+        "test_run": report.unrun_test_receipt().map(|(attempt_id, reading)| test_run::aggregate_test_run_json(attempt_id, reading)),
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
     });
     serde_json::to_string_pretty(&value)
@@ -2717,8 +2731,19 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         None if nothing_started => rendered.push_str("No repair in progress.\n"),
         None => rendered.push_str("Seam: unknown\n"),
     }
-    if let Some(reading) = report.unrun_test_receipt() {
-        rendered.push_str(&format!("{}\n", test_run::test_run_line(reading)));
+    let test_runs = report.unrun_test_receipts();
+    match test_runs.as_slice() {
+        [(_, reading)] => rendered.push_str(&format!("{}\n", test_run::test_run_line(reading))),
+        // #14146: several finished attempts each speak for themselves, so a
+        // reported failure on one is never hidden behind another's reading.
+        several => {
+            for (attempt_id, reading) in several {
+                rendered.push_str(&format!(
+                    "{}\n",
+                    test_run::attempt_test_run_line(attempt_id, reading)
+                ));
+            }
+        }
     }
 
     if !nothing_started {
@@ -8781,6 +8806,104 @@ mod tests {
                     "{label}: human lost the empty next action:\n{human}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #14146: with several finished attempts, the aggregate test-run reading
+    /// names the attempt it speaks for, and one attempt's `none recorded`
+    /// never hides another attempt's caller-reported failure.
+    #[test]
+    fn aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure()
+    -> Result<(), String> {
+        use crate::output::agent_receipt::ReportedTestRun;
+        let issued = |id: &str, run: Option<ReportedTestRun>| {
+            let mut reading = AgentReceiptReading::from_value(&serde_json::json!({
+                "verification": {"status": "verification_not_run"},
+                "test_changed": "tests/p.rs"
+            }));
+            reading.reported_test_run = run;
+            let mut attempt = synthetic_attempt(id, &format!("seam-{id}"), "finished", None);
+            attempt.receipt = AgentStatusAttemptReceipt::Issued {
+                path: format!("{id}/receipt.json"),
+                reading,
+            };
+            attempt
+        };
+        let report_of = |repair_attempts: Vec<AgentStatusRepairAttempt>| AgentStatusReport {
+            root: ".".to_string(),
+            seam: None,
+            artifacts: Vec::new(),
+            repair_attempts,
+            missing_commands: Vec::new(),
+            next_command: None,
+            warnings: Vec::new(),
+        };
+        let failing = ReportedTestRun {
+            file: "tests/p.rs".to_string(),
+            ran: 1,
+            passed: 0,
+            failed: 1,
+        };
+
+        // A (earlier, no run recorded) and B (reported failure): the reading
+        // first in attempt order is A's, which the old aggregate printed alone.
+        let report = report_of(vec![issued("a", None), issued("b", Some(failing.clone()))]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("Test run (attempt `a`): none recorded. ") {
+            return Err(format!("A's reading must name its attempt:\n{markdown}"));
+        }
+        if !markdown.contains(
+            "Test run (attempt `b`): reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (0 passed, 1 failed). The reported run has a failing test",
+        ) {
+            return Err(format!("B's reported failure must be shown:\n{markdown}"));
+        }
+        if markdown.find("attempt `b`") > markdown.find("attempt `a`") {
+            return Err(format!("the reported failure must come first:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b"
+            || json["test_run"]["status"] != "caller_reported"
+            || json["test_run"]["failed"] != 1
+        {
+            return Err(format!(
+                "JSON must report B's failure: {}",
+                json["test_run"]
+            ));
+        }
+
+        // One finished attempt keeps the unlabeled line; JSON names it.
+        let report = report_of(vec![issued("a", None)]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("\nTest run: none recorded. ")
+            || markdown.contains("Test run (attempt")
+        {
+            return Err(format!("one attempt keeps the plain line:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "a" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "JSON must name the one attempt: {}",
+                json["test_run"]
+            ));
+        }
+
+        // A reported pass ranks behind a missing run on another attempt.
+        let passing = ReportedTestRun {
+            passed: 1,
+            failed: 0,
+            ..failing
+        };
+        let report = report_of(vec![issued("a", Some(passing)), issued("b", None)]);
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "a missing run outranks a reported pass: {}",
+                json["test_run"]
+            ));
         }
         Ok(())
     }

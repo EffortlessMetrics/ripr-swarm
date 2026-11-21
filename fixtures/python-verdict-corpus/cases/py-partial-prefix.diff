@@ -1,0 +1,7 @@
+diff --git a/partial/core.py b/partial/core.py
+--- a/partial/core.py
++++ b/partial/core.py
+@@ -1,2 +1,2 @@
+ def value_of(name):
+-    return "hello" + name
++    return f"hello{name}"

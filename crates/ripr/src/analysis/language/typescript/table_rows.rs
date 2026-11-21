@@ -277,7 +277,9 @@ pub(crate) fn callback_case_assertions(
     returns_to_runner: bool,
 ) -> Option<Vec<TypeScriptAssertion>> {
     let (params, callback_span, body_span) = plain_callback_parameters(callback)?;
-    if rows.iter().any(|row| row.len() != params.len()) {
+    if rows.iter().any(|row| row.len() != params.len())
+        || callback_writes_row(callback, |name| params.iter().any(|p| p == name))
+    {
         return None;
     }
     let text: &str = source;
@@ -292,6 +294,67 @@ pub(crate) fn callback_case_assertions(
         bindings,
         returns_to_runner,
     )
+}
+
+/// Inspect the original callback before replacing a binding or lowering an
+/// indexed row to placeholders. Computed keys and default initializers are
+/// expressions, so a read there does not make the binding a write target.
+pub(super) fn callback_writes_row(
+    callback: &oxc_ast::ast::Argument<'_>,
+    is_row: impl Fn(&str) -> bool,
+) -> bool {
+    use oxc_ast::ast::{
+        AssignmentTargetPropertyIdentifier, SimpleAssignmentTarget, UnaryExpression, UnaryOperator,
+    };
+    use oxc_ast_visit::{Visit, walk};
+
+    struct Writes<F> {
+        is_row: F,
+        found: bool,
+    }
+
+    impl<F: Fn(&str) -> bool> Writes<F> {
+        fn inspect_receiver(&mut self, expr: &Expression<'_>) {
+            if let Some(name) = super::owners::member_root_name(expr) {
+                self.found |= (self.is_row)(name);
+            }
+        }
+    }
+
+    impl<'a, F: Fn(&str) -> bool> Visit<'a> for Writes<F> {
+        fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(id) = target {
+                self.found |= (self.is_row)(id.name.as_str());
+            } else if let Some(member) = target.as_member_expression() {
+                self.inspect_receiver(member.object());
+            } else if let Some(inner) = target.get_expression() {
+                self.inspect_receiver(inner);
+            }
+            walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            prop: &AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.found |= (self.is_row)(prop.binding.name.as_str());
+            walk::walk_assignment_target_property_identifier(self, prop);
+        }
+
+        fn visit_unary_expression(&mut self, unary: &UnaryExpression<'a>) {
+            if unary.operator == UnaryOperator::Delete {
+                self.inspect_receiver(&unary.argument);
+            }
+            walk::walk_unary_expression(self, unary);
+        }
+    }
+
+    let mut writes = Writes {
+        is_row,
+        found: false,
+    };
+    writes.visit_argument(callback);
+    writes.found
 }
 
 /// The assertions of a callback whose body (`body`, standing for the text at
@@ -448,17 +511,6 @@ pub(crate) fn for_table_row_assertions(
     if params.rest.is_some() || params.items.len() > 2 {
         return None;
     }
-    // `delete row[0]` (or of any other binding) changes what a later read
-    // sees, which the per-row substitution cannot represent: fail closed.
-    let callback_text = text.get(callback_span.start as usize..callback_span.end as usize)?;
-    if !super::mock_payload_guard::identifier_offsets(
-        &super::tests_extract::mask_comments_and_strings_text(callback_text),
-        "delete",
-    )
-    .is_empty()
-    {
-        return None;
-    }
     let callback_span = callback_span.start as usize..callback_span.end as usize;
     let body_span = body_span.start as usize..body_span.end as usize;
     let body = text.get(body_span.clone())?;
@@ -498,7 +550,9 @@ pub(crate) fn for_table_row_assertions(
                 names.push(ident.name.to_string());
             }
             let rows = literal_array_rows(table, source)?;
-            if rows.iter().any(|row| row.len() != names.len()) {
+            if rows.iter().any(|row| row.len() != names.len())
+                || callback_writes_row(callback, |name| names.iter().any(|p| p == name))
+            {
                 return None;
             }
             substituted_case_assertions(
@@ -514,7 +568,10 @@ pub(crate) fn for_table_row_assertions(
         }
         oxc_ast::ast::BindingPattern::BindingIdentifier(ident) => {
             let name = ident.name.as_str();
-            if !name.is_ascii() || local_identifier_declared_in_test_body(body, name) {
+            if !name.is_ascii()
+                || local_identifier_declared_in_test_body(body, name)
+                || callback_writes_row(callback, |p| p == name)
+            {
                 return None;
             }
             if let Some(rows) = literal_scalar_rows(table, source) {
