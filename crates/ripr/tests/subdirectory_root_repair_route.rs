@@ -1,7 +1,8 @@
 //! A repository whose Python package lives below the Git top-level: `ripr agent
 //! repair --root <subdir>` refuses ("attempt root ... is not the exact Git
-//! top-level") before any file is written under the subdirectory (#15363).
-//! Withholding the start that `ripr check --root <subdir>` still prints is #15488.
+//! top-level") before any file is written under the subdirectory (#15363),
+//! and `ripr check` / bare `ripr repair` under that root withhold the start
+//! and name the top-level instead of printing one that would refuse (#15488).
 
 #![cfg(feature = "lang-python")]
 
@@ -94,6 +95,97 @@ fn check_at_the_git_top_level_still_offers_the_repair_start() -> Result<(), Stri
     let text = stdout_of(&output);
     if !text.contains("agent repair --gap-id") {
         return Err(format!("top-level check lost its repair start:\n{text}"));
+    }
+    Ok(())
+}
+
+/// #15488 (negative): the same package checked under its subdirectory root
+/// offers no gap-bound start the before phase would refuse; it names the
+/// Git top-level instead. The top-level control above is the positive case.
+#[test]
+fn check_at_a_subdirectory_root_offers_no_repair_start_and_names_the_top_level()
+-> Result<(), String> {
+    let (_guard, top, backend) = monorepo("subdir")?;
+    std::fs::write(
+        backend.join("ripr.toml"),
+        "[languages]\nenabled = [\"python\"]\n",
+    )
+    .map_err(|error| format!("ripr.toml: {error}"))?;
+    let output = ripr(
+        &top,
+        &[
+            "check",
+            "--quiet",
+            "--base",
+            "HEAD~1",
+            "--root",
+            &backend.to_string_lossy(),
+        ],
+    )?;
+    let text = stdout_of(&output);
+    if text.contains("agent repair --gap-id") {
+        return Err(format!(
+            "subdirectory check printed a start the before phase refuses:\n{text}"
+        ));
+    }
+    if !text.contains("is not the exact Git top-level") {
+        return Err(format!(
+            "subdirectory check must name the exact Git top-level refusal:\n{text}"
+        ));
+    }
+    Ok(())
+}
+
+/// #15488 (negative): bare `ripr repair` under a subdirectory root refuses
+/// with the top-level reason instead of deciding a start that the before
+/// phase would then refuse, and writes nothing under that root.
+#[test]
+fn bare_repair_at_a_subdirectory_root_refuses_before_deciding_a_start() -> Result<(), String> {
+    let (_guard, _top, backend) = monorepo("bare")?;
+    let output = ripr(&backend, &["repair", "--root", &backend.to_string_lossy()])?;
+    let combined = format!(
+        "{}{}",
+        stdout_of(&output),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if output.status.code() == Some(0) || !combined.contains("is not the exact Git top-level") {
+        return Err(format!(
+            "expected the top-level refusal, got {:?}:\n{combined}",
+            output.status.code()
+        ));
+    }
+    if backend.join("target").exists() {
+        return Err(format!(
+            "the refusal wrote under the subdirectory root:\n{combined}"
+        ));
+    }
+    Ok(())
+}
+
+/// #15488: the JSON spelling of the same refusal is the typed
+/// `cli_refusal` document (exit 3), not empty stdout, and still writes
+/// nothing under the subdirectory root.
+#[test]
+fn bare_repair_json_at_a_subdirectory_root_prints_the_typed_refusal() -> Result<(), String> {
+    let (_guard, _top, backend) = monorepo("bare-json")?;
+    let output = ripr(
+        &backend,
+        &["repair", "--root", &backend.to_string_lossy(), "--json"],
+    )?;
+    let stdout = stdout_of(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if output.status.code() != Some(3)
+        || !stdout.contains("\"status\": \"refused\"")
+        || !stdout.contains("\"code\": \"subdirectory_root\"")
+        || !stderr.contains("is not the exact Git top-level")
+    {
+        return Err(format!(
+            "expected exit 3 with a subdirectory_root cli_refusal, got {:?}:\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status.code()
+        ));
+    }
+    if backend.join("target").exists() {
+        return Err("the JSON refusal wrote under the subdirectory root".to_string());
     }
     Ok(())
 }
