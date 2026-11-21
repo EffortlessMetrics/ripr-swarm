@@ -5982,6 +5982,7 @@ impl OwnerReturnPin {
         let FunctionContainer::TraitImpl {
             trait_path,
             self_ty,
+            ..
         } = &owner.item.container
         else {
             return None;
@@ -8839,6 +8840,7 @@ fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
             FunctionContainer::TraitImpl {
                 trait_path,
                 self_ty,
+                ..
             },
             true,
         ) => PinCall::Method {
