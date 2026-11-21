@@ -186,6 +186,14 @@ When an expected artifact is missing, the summary or packet index should show
 the missing artifact and the regeneration command when known. If no command is
 known, the missing entry must say so explicitly.
 
+Commands and paths the summary shows from the packets (front panel, first
+action, start-here and the first-action fallback) name the repository root
+(`.`) wherever a packet wrote the runner's checkout path, so they paste into a
+reader's own checkout. That covers the producer's display spelling of the
+root (forward slashes on Windows) and its shell-quoted form: a checkout whose
+path holds an apostrophe or a space is shown as `'.'` inside its quotes. The
+uploaded artifact and the step log keep the real path.
+
 When the pull request analysis did not run, the visible first-run status says
 why instead of leaving the reason in the uploaded start-here report:
 
