@@ -394,6 +394,10 @@ python benchmarks/mutation_spot_check/run_python_calibration.py \
 cargo test -p xtask python_calibration
 ```
 
+The selected Python must provide pytest. The harness checks that
+prerequisite before writing either receipt and exits nonzero without
+replacing the committed receipts when it is missing.
+
 The committed receipt is `python-calibration-receipt.{json,md}`; the xtask
 tests re-derive its precision/recall from the per-mutant rows. It is an
 authored-subject calibration, not a population estimate or suite adequacy.

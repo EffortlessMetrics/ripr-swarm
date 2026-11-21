@@ -31,7 +31,22 @@ SCORED_GRIPS = {"strongly_gripped", "ungripped"}
 
 def run(cmd, cwd, timeout=180):
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    return p.returncode, (p.stdout or "") + (p.stderr or "")
+    return p.returncode, p.stdout or "", p.stderr or ""
+
+
+def resolve_path_arg(value: str) -> str:
+    path = Path(value)
+    if str(path.parent) not in ("", "."):
+        return str(path.resolve())
+    return value
+
+
+def runtime_outcome(pytest_exit):
+    if pytest_exit == 0:
+        return "missed"
+    if pytest_exit == 1:
+        return "caught"
+    return "unscoreable"
 
 
 def copy_subject(src: Path, dst: Path):
@@ -52,6 +67,9 @@ def verdict_for(check: dict, rel_file: str, line: int):
         return "", "", ("analysis_incomplete" if not complete else "no_finding_on_mutated_lines")
     if not complete:
         return "", "", "analysis_incomplete"
+    if len(matched) > 1 and any(
+            not str((f.get("probe", {}) or {}).get("owner", "") or "") for f in matched):
+        return "", "", "ambiguous_verdict"
     pairs = {(f.get("classification", ""), (f.get("probe", {}) or {}).get("owner", "")) for f in matched}
     # python_transitive_reach_unresolved is an honest unknown, not a claim.
     for f in matched:
@@ -81,13 +99,18 @@ def main() -> int:
     args = ap.parse_args()
 
     root = Path(args.repo_root).resolve()
+    args.ripr = resolve_path_arg(args.ripr)
+    args.python = resolve_path_arg(args.python)
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     subjects = {s["name"]: s for s in manifest["subjects"]}
-    _, ripr_version = run([args.ripr, "--version"], root)
-    _, py_version = run([args.python, "--version"], root)
-    _, pytest_version = run([args.python, "-m", "pytest", "--version"], root)
+    ripr_code, ripr_version, _ = run([args.ripr, "--version"], root)
+    py_code, py_version, _ = run([args.python, "--version"], root)
+    pytest_code, pytest_version, pytest_err = run([args.python, "-m", "pytest", "--version"], root)
+    if ripr_code != 0 or py_code != 0 or pytest_code != 0:
+        print(f"prerequisite check failed: ripr={ripr_code} python={py_code} pytest={pytest_code}\n{pytest_err}", file=sys.stderr)
+        return 1
 
-    scratch_root = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="ripr-py-cal-"))
+    scratch_root = Path(args.scratch).resolve() if args.scratch else Path(tempfile.mkdtemp(prefix="ripr-py-cal-"))
     scratch_root.mkdir(parents=True, exist_ok=True)
     rows, baselines = [], {}
     try:
@@ -95,11 +118,12 @@ def main() -> int:
             src = root / subj["path"]
             dst = scratch_root / f"baseline-{name}"
             copy_subject(src, dst)
-            code, out = run([args.python, *subj["test_command"]], dst)
+            code, out, err = run([args.python, *subj["test_command"]], dst)
+            combined = out + err
             baselines[name] = {"exit_code": code, "passed": code == 0,
-                               "summary_tail": out.strip().splitlines()[-1] if out.strip() else ""}
+                               "summary_tail": combined.strip().splitlines()[-1] if combined.strip() else ""}
             if code != 0:
-                print(f"baseline FAILED for {name}:\n{out[-2000:]}", file=sys.stderr)
+                print(f"baseline FAILED for {name}:\n{combined[-2000:]}", file=sys.stderr)
 
         for m in manifest["mutants"]:
             subj = subjects[m["subject"]]
@@ -117,8 +141,8 @@ def main() -> int:
             if not baselines[m["subject"]]["passed"]:
                 runtime, pytest_exit = "unscoreable", None
             else:
-                pytest_exit, _out = run([args.python, *subj["test_command"]], work)
-                runtime = "missed" if pytest_exit == 0 else "caught"
+                pytest_exit, _out, _err = run([args.python, *subj["test_command"]], work)
+                runtime = runtime_outcome(pytest_exit)
 
             # ripr verdict on the same edit (synthetic one-hunk diff).
             diff = (f"diff --git a/{m['file']} b/{m['file']}\n--- a/{m['file']}\n"
@@ -128,7 +152,7 @@ def main() -> int:
             diff_path.write_text(diff, encoding="utf-8")
             (work / "ripr.toml").write_text('[languages]\nenabled = ["rust", "python"]\n', encoding="utf-8")
             token, grip, disposition = "", "", "ripr_check_failed"
-            code, out = run([args.ripr, "check", "--diff", str(diff_path), "--root", str(work),
+            code, out, _err = run([args.ripr, "check", "--diff", str(diff_path), "--root", str(work),
                              "--format", "json", "--quiet"], work)
             if code == 0:
                 try:

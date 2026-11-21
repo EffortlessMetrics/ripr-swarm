@@ -1417,6 +1417,15 @@ reason = "Stdlib-only bounded Python calibration harness (#12901): applies real 
 covered_by = ["cargo test -p xtask --bin xtask python_calibration", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/mutation_spot_check/test_run_python_calibration.py"
+kind = "benchmark_harness_test"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "test"
+reason = "Stdlib unittest controls for the Python calibration harness helpers (#12901): verdict ambiguity, pytest exit mapping, stdout isolation and path resolution."
+covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "tools/ci/shard-verifier-artifact.py"
 kind = "shard_verifier_bootstrap"
 owner = "ci/shard-verifier"
